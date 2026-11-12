@@ -3314,8 +3314,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            model_settings,
         )
         request_context.model_request_parameters = model_request_parameters
 
@@ -3907,7 +3908,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
                 if self.model_response.finish_reason == 'length':
-                    raise exceptions.UnexpectedModelBehavior(
+                    raise exceptions.OutputTokenLimitExceeded(
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
@@ -4403,7 +4404,7 @@ def _raise_if_cut_off_output(
         and _output.is_incomplete_json(error.__cause__)
     ):
         # Chained to the `ValidationError`, as in `run_stream()`.
-        raise exceptions.UnexpectedModelBehavior(_output.truncated_output_message(max_tokens)) from error.__cause__
+        raise exceptions.OutputTokenLimitExceeded(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

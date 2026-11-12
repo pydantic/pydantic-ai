@@ -175,7 +175,7 @@ Within one conversation (runs that continue from `message_history`), a new value
 that prefix. The block keeps the value the conversation started with, and the new version is
 [appended](../agent.md#appending-instruction-changes) to the history as a
 replacement, so the cached conversation behind it stays reusable. That's also why the prompt is
-sent inside a `<context id="capability:managed-prompt-support_agent">` element from the first
+sent inside a `<pyai:context id="capability:managed-prompt-support_agent">` element from the first
 request. Appended changes reach the model as system messages, so keep the prompt, and the `deps`
 fields `render_template=True` fills in, to text you control: see
 [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).

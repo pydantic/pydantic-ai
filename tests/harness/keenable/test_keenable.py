@@ -7,7 +7,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict, Unpack
@@ -100,26 +100,26 @@ def _text(returned: ToolReturn[str]) -> str:
     return value
 
 
-def _capture_requests(monkeypatch: pytest.MonkeyPatch, respond: Callable[[httpx.Request], httpx.Response]):
-    """Route every `httpx.AsyncClient` the code builds through `respond`, recording the requests."""
-    seen: list[httpx.Request] = []
+def _capture_requests(monkeypatch: pytest.MonkeyPatch, respond: Callable[[httpx2.Request], httpx2.Response]):
+    """Route every `httpx2.AsyncClient` the code builds through `respond`, recording the requests."""
+    seen: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
         return respond(request)
 
     monkeypatch.setattr(
-        httpx, 'AsyncClient', functools.partial(httpx.AsyncClient, transport=httpx.MockTransport(handler))
+        httpx2, 'AsyncClient', functools.partial(httpx2.AsyncClient, transport=httpx2.MockTransport(handler))
     )
     return seen
 
 
-class _StalledStream(httpx.AsyncByteStream):
+class _StalledStream(httpx2.AsyncByteStream):
     """A body that stalls after its first chunk, whose close awaits like a real transport's."""
 
     def __init__(self) -> None:
         self.started = anyio.Event()
-        self.closed = False
+        self.closes = 0
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         yield b' '
@@ -129,7 +129,7 @@ class _StalledStream(httpx.AsyncByteStream):
     async def aclose(self) -> None:
         # Inside a cancelled anyio scope, this await would end the close early.
         await anyio.sleep(0)
-        self.closed = True
+        self.closes += 1
 
 
 class TestKeenableSearch:
@@ -407,16 +407,16 @@ class TestKeenableSearchToolset:
 
     @pytest.mark.parametrize('status', [404, 429, 500])
     async def test_transient_http_errors_become_retries(self, status: int):
-        request = httpx.Request('POST', 'https://api.keenable.ai/v1/search/public')
-        error = httpx.HTTPStatusError('boom', request=request, response=httpx.Response(status, request=request))
+        request = httpx2.Request('POST', 'https://api.keenable.ai/v1/search/public')
+        error = httpx2.HTTPStatusError('boom', request=request, response=httpx2.Response(status, request=request))
         client = FakeClient(error=error)
 
         with pytest.raises(ModelRetry, match='Keenable request failed'):
             await _toolset(client).web_search('cats')
 
     async def test_status_retry_prompt_omits_the_request_url(self):
-        request = httpx.Request('GET', 'https://user:secret@proxy.example/v1/fetch?url=https://example.com')
-        error = httpx.HTTPStatusError('boom', request=request, response=httpx.Response(429, request=request))
+        request = httpx2.Request('GET', 'https://user:secret@proxy.example/v1/fetch?url=https://example.com')
+        error = httpx2.HTTPStatusError('boom', request=request, response=httpx2.Response(429, request=request))
         client = FakeClient(error=error)
 
         with pytest.raises(ModelRetry) as excinfo:
@@ -426,11 +426,11 @@ class TestKeenableSearchToolset:
 
     @pytest.mark.parametrize('status', [401, 402, 403])
     async def test_auth_errors_propagate(self, status: int):
-        request = httpx.Request('POST', 'https://api.keenable.ai/v1/search')
-        error = httpx.HTTPStatusError('nope', request=request, response=httpx.Response(status, request=request))
+        request = httpx2.Request('POST', 'https://api.keenable.ai/v1/search')
+        error = httpx2.HTTPStatusError('nope', request=request, response=httpx2.Response(status, request=request))
         client = FakeClient(error=error)
 
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(httpx2.HTTPStatusError):
             await _toolset(client).web_search('cats')
 
     async def test_a_custom_client_value_error_propagates(self):
@@ -442,7 +442,7 @@ class TestKeenableSearchToolset:
             await _toolset(client).web_search('cats')
 
     async def test_network_errors_become_retries(self):
-        client = FakeClient(error=httpx.ConnectError('unreachable'))
+        client = FakeClient(error=httpx2.ConnectError('unreachable'))
 
         with pytest.raises(ModelRetry, match='Keenable request failed'):
             await _toolset(client).get_page('https://example.com/one')
@@ -478,7 +478,7 @@ class TestHttpKeenableClient:
     """
 
     async def test_default_client_is_keyless(self, monkeypatch: pytest.MonkeyPatch):
-        seen = _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
+        seen = _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json={'results': []}))
 
         await HttpKeenableClient().search('cats', max_results=5)
         await HttpKeenableClient().fetch('https://example.com/one')
@@ -494,7 +494,7 @@ class TestHttpKeenableClient:
             client = HttpKeenableClient()
         else:
             client = HttpKeenableClient(api_key='keen_live_x')
-        seen = _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
+        seen = _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json={'results': []}))
 
         await client.search('cats', max_results=5)
         await client.fetch('https://example.com/one')
@@ -505,13 +505,13 @@ class TestHttpKeenableClient:
         assert all('keen_live_x' not in str(request.url) and b'keen_live_x' not in request.content for request in seen)
 
     async def test_an_injected_http_client_carries_every_request_and_stays_open(self):
-        seen: list[httpx.Request] = []
+        seen: list[httpx2.Request] = []
 
-        def respond(request: httpx.Request) -> httpx.Response:
+        def respond(request: httpx2.Request) -> httpx2.Response:
             seen.append(request)
-            return httpx.Response(200, json={'results': [_result('https://example.com/one')], 'content': '# A page'})
+            return httpx2.Response(200, json={'results': [_result('https://example.com/one')], 'content': '# A page'})
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http_client:
             client = HttpKeenableClient(http_client=http_client)
 
             assert await client.search('cats', max_results=5) == [_result('https://example.com/one')]
@@ -521,16 +521,16 @@ class TestHttpKeenableClient:
         assert [request.url.path for request in seen] == ['/v1/search/public', '/v1/fetch/public']
 
     async def test_the_api_key_never_follows_a_redirect(self):
-        seen: list[httpx.Request] = []
+        seen: list[httpx2.Request] = []
 
-        def respond(request: httpx.Request) -> httpx.Response:
+        def respond(request: httpx2.Request) -> httpx2.Response:
             seen.append(request)
-            return httpx.Response(302, headers={'Location': 'http://elsewhere.example/collect'})
+            return httpx2.Response(302, headers={'Location': 'http://elsewhere.example/collect'})
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(respond), follow_redirects=True) as http_client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond), follow_redirects=True) as http_client:
             client = HttpKeenableClient(api_key='keen_live_x', http_client=http_client)
 
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(httpx2.HTTPStatusError):
                 await client.search('cats', max_results=5)
 
         assert [str(request.url) for request in seen] == ['https://api.keenable.ai/v1/search']
@@ -538,7 +538,7 @@ class TestHttpKeenableClient:
     async def test_a_key_httpx_cannot_encode_propagates(self, monkeypatch: pytest.MonkeyPatch):
         # A `UnicodeEncodeError` is a `ValueError`, but a key that cannot go in
         # a header is configuration the model cannot fix.
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json={'results': []}))
         client = HttpKeenableClient(api_key='k\u00e9y')
         toolset = KeenableSearchToolset[None](
             client=client, num_results=5, max_snippet_chars=500, max_page_chars=10_000
@@ -549,17 +549,17 @@ class TestHttpKeenableClient:
 
     async def test_base_url_is_read_from_the_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('KEENABLE_API_URL', 'http://localhost:8080/')
-        seen = _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
+        seen = _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json={'results': []}))
 
         await HttpKeenableClient().search('cats', max_results=5)
 
         assert [str(request.url) for request in seen] == ['http://localhost:8080/v1/search/public']
 
     async def test_http_client_parses_search_and_fetch(self, monkeypatch: pytest.MonkeyPatch):
-        def respond(request: httpx.Request) -> httpx.Response:
+        def respond(request: httpx2.Request) -> httpx2.Response:
             if request.url.path.startswith('/v1/search'):
-                return httpx.Response(200, json={'results': [_result('https://example.com/one'), 'not-a-dict']})
-            return httpx.Response(200, json={'content': '# A page'})
+                return httpx2.Response(200, json={'results': [_result('https://example.com/one'), 'not-a-dict']})
+            return httpx2.Response(200, json={'content': '# A page'})
 
         seen = _capture_requests(monkeypatch, respond)
         client = HttpKeenableClient()
@@ -578,7 +578,7 @@ class TestHttpKeenableClient:
     ):
         # Keenable always sends `results` with a 2xx, so reporting an empty
         # search here would hand the model a false negative.
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json=payload))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json=payload))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match=r'malformed response: `results` is missing or not a list$'):
@@ -588,7 +588,7 @@ class TestHttpKeenableClient:
     async def test_http_client_fetch_tolerates_unexpected_payloads(
         self, monkeypatch: pytest.MonkeyPatch, payload: object
     ):
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json=payload))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json=payload))
 
         page = await HttpKeenableClient().fetch('https://example.com/one')
 
@@ -596,9 +596,9 @@ class TestHttpKeenableClient:
 
     @pytest.mark.parametrize('body', [b'', b'<html>gateway timeout</html>', b'{"results": "\xff"}'])
     async def test_malformed_2xx_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch, body: bytes):
-        # A 2xx that is not JSON is neither an `httpx.HTTPError` nor a deliberate
+        # A 2xx that is not JSON is neither an `httpx2.HTTPError` nor a deliberate
         # exception; without this it would kill the run as a bare decode error.
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=body))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, content=body))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='malformed response'):
@@ -608,7 +608,7 @@ class TestHttpKeenableClient:
 
     async def test_oversized_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(HttpKeenableClient, '_MAX_RESPONSE_BYTES', 32)
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=b'{"results": []}' + b' ' * 64))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, content=b'{"results": []}' + b' ' * 64))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='response body exceeds 32 bytes'):
@@ -616,21 +616,21 @@ class TestHttpKeenableClient:
 
     async def test_a_slow_body_hits_the_request_deadline(self, monkeypatch: pytest.MonkeyPatch):
         # A server that sends a little at a time keeps every read inside the
-        # httpx timeout, so only the deadline on the whole request ends it.
+        # HTTPX timeout, so only the deadline on the whole request ends it.
         stream = _StalledStream()
         monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.001)
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, stream=stream))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='timed out'):
             await toolset.web_search('cats')
-        assert stream.closed
+        assert stream.closes == 1
 
     async def test_a_caller_cancel_lets_the_response_close(self, monkeypatch: pytest.MonkeyPatch):
         # A tool timeout cancels from an anyio scope around the request, and
         # that cancels the response's close too unless the close is shielded.
         stream = _StalledStream()
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
+        _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, stream=stream))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         async def cancel_once_streaming(scope: anyio.CancelScope) -> None:
@@ -643,7 +643,7 @@ class TestHttpKeenableClient:
                 task_group.start_soon(cancel_once_streaming, scope)
                 await toolset.web_search('cats')
         assert scope.cancelled_caught
-        assert stream.closed
+        assert stream.closes == 1
 
     @pytest.mark.parametrize('base_url', ['http://localhost:8080', 'https://keenable.internal'])
     def test_base_url_accepts_https_and_loopback_http(self, base_url: str):
