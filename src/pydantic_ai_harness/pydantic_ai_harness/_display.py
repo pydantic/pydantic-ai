@@ -92,6 +92,8 @@ class LazyDisplay:
         # One start at a time: two would both find no display and start two.
         async with self._lock:
             if even_if_running or not self._running:
+                # Known to run only once a start succeeds: one that fails leaves the next call to start it.
+                self._running = False
                 await self._start()
                 self._running = True
 
