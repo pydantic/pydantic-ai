@@ -1814,7 +1814,7 @@ class TestReplayTelemetry:
         assert _span_names(capfire) == snapshot(['execute_tool live', 'invoke_agent a'])
 
 
-def _run_until_done(agent: Agent[Any, Any]) -> tuple[Any, list[FakeDurableContext]]:
+def _run_until_done(agent: Agent[None, str]) -> tuple[str, list[FakeDurableContext]]:
     """Invoke the handler again after every suspension, with the waits it suspended on over, as Lambda does."""
     contexts = [FakeDurableContext()]
     while True:
