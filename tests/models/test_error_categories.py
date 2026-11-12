@@ -1316,6 +1316,27 @@ CASES = [
         },
     ),
     Case(
+        id='anthropic-stream-spend-cap',
+        model=_anthropic,
+        handler=_sse(
+            _ANTHROPIC_MESSAGE_START,
+            (
+                'error',
+                {
+                    'type': 'error',
+                    'error': {
+                        'type': 'rate_limit_error',
+                        'message': 'You have reached your API usage limits.',
+                        'details': {'error_code': 'enforced_spend_limit_reached'},
+                    },
+                },
+            ),
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error', 'retry_after': None},
+        stream=True,
+    ),
+    Case(
         id='anthropic-ramp-limit',
         model=_anthropic,
         # Also a `rate_limit_error` with a `details.error_code`, but one that waiting lifts.
