@@ -227,7 +227,7 @@ def test_main_adds_only_the_final_answer_system_contract(
         assert TypeAdapter(dict[str, object]).validate_json(config.read_text()) == read_only_config(
             agent='reviewer', provider=provider, steps=GENERAL.max_steps
         )
-        contract = workspace / '.github/pr-review-checks/final-answer.md'
+        contract = workspace / run_pr_review_check.FINAL_ANSWER
         assert env['OPENCODE_CONFIG_CONTENT'] == json.dumps({'instructions': [str(contract)]})
         assert contract.read_text().strip() == (
             'Investigate using the available read tools. For the final response, return exactly one JSON object '

@@ -263,11 +263,12 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. Configured instructions append the
   final-answer JSON contract to system context without replacing OpenCode's builtin guidance.
-  The contract applies only to these checks, not douwebot or threat detection. The job validates the model's answer
-  against its schema. When a Markdown code fence ends the answer, the job validates only that fenced
-  block, so prose before the fence passes; text after it still fails. The check's `max_steps` and
-  `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
-  tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
+  The contract applies only to these checks, not douwebot or threat detection.
+  The job validates the model's answer against its schema. When a Markdown code fence ends the answer,
+  the job validates only that fenced block, so prose before the fence passes; text after it still fails.
+  The check's `max_steps` and `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive
+  starting values, to be tuned down from recorded runs. Token totals are recorded and never capped.
+  With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
   with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the

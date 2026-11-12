@@ -25,6 +25,7 @@ from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 PROMPTS = Path('.github/pr-review-checks/prompts')
+FINAL_ANSWER = Path('.github/pr-review-checks/final-answer.md')
 REVIEW_CONTEXT = Path('.github/.review-context')
 MAX_FINDINGS = 20
 # The instruction layer an agent could load from the head checkout. Their changes stay reviewable in the diffs.
@@ -368,9 +369,7 @@ def main() -> None:
         # Configured instructions follow the builtin system prompt without replacing its tool/security guidance.
         extra_env={
             **telemetry,
-            'OPENCODE_CONFIG_CONTENT': json.dumps(
-                {'instructions': [str(workspace / PROMPTS.parent / 'final-answer.md')]}
-            ),
+            'OPENCODE_CONFIG_CONTENT': json.dumps({'instructions': [str(workspace / FINAL_ANSWER)]}),
         },
     )
     changed = {change.path: change.positions for change in changes}
