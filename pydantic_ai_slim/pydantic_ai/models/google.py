@@ -970,7 +970,7 @@ class GoogleModel(Model[Client]):
                     contents=contents,
                     config=config,
                 )
-        except errors.APIError as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
