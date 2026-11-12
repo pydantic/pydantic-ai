@@ -62,6 +62,7 @@ from ..computer_use import (
     ComputerCallPart,
     ComputerResult,
     ComputerReturnPart,
+    _safety_checks,  # pyright: ignore[reportPrivateUsage]
 )
 from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
@@ -8614,7 +8615,9 @@ def _map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    if computer_return and isinstance(call, ComputerCallPart) and (checks := call.safety_checks):
+    # Read from the stored details as the approval gate reads them: a restored call whose arguments didn't validate
+    # is a plain `ToolCallPart`, and may still have run, approved with corrected arguments.
+    if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
         output['acknowledged_safety_checks'] = [
             responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
                 id=check.id or '', code=check.code, message=check.message
