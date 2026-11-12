@@ -4,7 +4,7 @@ CLI behavior verified 2026-10-21 against Docker 29.2 (runc, in Colima) and Podma
 machine) on macOS, see https://docs.docker.com/reference/cli/docker/ and
 https://docs.podman.io/en/latest/Commands.html. Re-check these before changing how containers are created,
 commands run or stopped, or errors read, by running
-`PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 DOCKER_REQUIRE_LIVE=1 pytest -m docker_live tests/harness/docker_workspace` once
+`PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 DOCKER_REQUIRE_LIVE=1 pytest -m docker_live tests/harness/docker_container` once
 as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 
 - `docker run --workdir` creates a missing directory; `podman run --workdir` refuses it.
@@ -48,7 +48,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
 
-__all__ = ('DockerWorkspaceBackend', 'remove_container')
+__all__ = ('DockerContainerBackend', 'remove_container')
 
 PROVIDER = 'docker'
 
@@ -210,7 +210,7 @@ async def _owned_state(
         raise error(f'could not inspect container {name}: {result.stderr.strip()}')
     label, _, running = result.stdout.strip().rpartition(' ')
     if label != 'true':
-        raise error(f'container {name} was not created by `DockerWorkspace`: it lacks the label {_LABEL}=true')
+        raise error(f'container {name} was not created by `DockerContainer`: it lacks the label {_LABEL}=true')
     return 'running' if running == 'true' else 'stopped'
 
 
@@ -234,7 +234,7 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerWorkspaceBackend(WorkspaceBackend, SupportsCommands):
+class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -243,7 +243,7 @@ class DockerWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     Built without a ref, the first operation creates a container; built with one, it starts that container
     if it is stopped and raises [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError]
     if it is gone. The backend never removes the container: call
-    [`DockerWorkspace.destroy`][pydantic_ai_harness.docker_workspace.DockerWorkspace.destroy] with its ref.
+    [`DockerContainer.destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy] with its ref.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both.

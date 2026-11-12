@@ -1,5 +1,5 @@
 {
   "against": "v2.68.0",
-  "reason": "Harness 0.x: `pydantic_ai_harness.docker_sandbox.DockerSandboxBackend` is now an alias assignment of `DockerWorkspaceBackend`, the same class object at runtime, in a shim module that emits a `HarnessDeprecationWarning`. Under the harness 0.x policy it ships deprecated; the name is kept for a possible future capability built on Docker's microVM-based Docker Sandboxes.",
+  "reason": "Harness 0.x: `pydantic_ai_harness.docker_sandbox.DockerSandboxBackend` is now an alias assignment of `DockerContainerBackend`, the same class object at runtime, in a shim module that emits a `HarnessDeprecationWarning`. Under the harness 0.x policy it ships deprecated; the name is kept for a possible future capability built on Docker's microVM-based Docker Sandboxes.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13245"
 }

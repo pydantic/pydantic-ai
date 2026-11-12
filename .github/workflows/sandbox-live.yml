@@ -118,9 +118,9 @@ jobs:
       - run: |
           upper="$(printf %s "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
           export "PYDANTIC_AI_HARNESS_${upper}_LIVE=1" "${upper}_REQUIRE_LIVE=1"
-          # `DockerWorkspace` is not a sandbox, so its tests live under `docker_workspace`.
+          # `DockerContainer` is not a sandbox, so its tests live under `docker_container`.
           tests="tests/harness/${PROVIDER}_sandbox"
-          [ "$PROVIDER" != docker ] || tests=tests/harness/docker_workspace
+          [ "$PROVIDER" != docker ] || tests=tests/harness/docker_container
           uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "$tests" -q
         env:
           PROVIDER: ${{ matrix.provider }}
@@ -134,9 +134,9 @@ jobs:
           # The server the OpenSandbox step started; other providers ignore it.
           OPEN_SANDBOX_DOMAIN: 127.0.0.1:8080
 
-      # The runners ship Podman too, which `DockerWorkspace` supports through `executable='podman'`.
+      # The runners ship Podman too, which `DockerContainer` supports through `executable='podman'`.
       - if: matrix.provider == 'docker'
-        run: uv run --no-sync pytest -p no:cacheprovider -m docker_live tests/harness/docker_workspace -q
+        run: uv run --no-sync pytest -p no:cacheprovider -m docker_live tests/harness/docker_container -q
         env:
           PYDANTIC_AI_HARNESS_DOCKER_LIVE: "1"
           DOCKER_REQUIRE_LIVE: "1"

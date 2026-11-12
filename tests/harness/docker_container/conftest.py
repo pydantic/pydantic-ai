@@ -1,4 +1,4 @@
-"""Shared fixtures for DockerWorkspace tests."""
+"""Shared fixtures for DockerContainer tests."""
 
 from __future__ import annotations
 

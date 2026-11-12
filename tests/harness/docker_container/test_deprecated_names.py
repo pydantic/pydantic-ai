@@ -10,7 +10,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.docker_workspace import DockerWorkspace, DockerWorkspaceBackend
+from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
 
 def test_shim_warns_and_aliases_old_names() -> None:
@@ -21,12 +21,12 @@ def test_shim_warns_and_aliases_old_names() -> None:
         shim = importlib.import_module('pydantic_ai_harness.docker_sandbox')
 
     with pytest.warns(
-        HarnessDeprecationWarning, match=r'renamed to `pydantic_ai_harness\.docker_workspace`.*security sandbox'
+        HarnessDeprecationWarning, match=r'renamed to `pydantic_ai_harness\.docker_container`.*security sandbox'
     ):
         importlib.reload(shim)
 
-    assert issubclass(shim.DockerSandbox, DockerWorkspace)
-    assert shim.DockerSandboxBackend is DockerWorkspaceBackend
+    assert issubclass(shim.DockerSandbox, DockerContainer)
+    assert shim.DockerSandboxBackend is DockerContainerBackend
 
 
 def test_root_old_names_resolve_to_shim() -> None:
@@ -37,7 +37,7 @@ def test_root_old_names_resolve_to_shim() -> None:
         from pydantic_ai_harness.docker_sandbox import DockerSandbox
 
         assert pydantic_ai_harness.DockerSandbox is DockerSandbox
-        assert pydantic_ai_harness.DockerSandboxBackend is DockerWorkspaceBackend
+        assert pydantic_ai_harness.DockerSandboxBackend is DockerContainerBackend
 
 
 def test_subclass_of_old_name_keeps_its_own_spec_name() -> None:
@@ -55,7 +55,7 @@ def test_subclass_of_old_name_keeps_its_own_spec_name() -> None:
         {'model': 'test', 'capabilities': [{'MyDocker': {'image': 'python:3.13-slim'}}]},
         custom_capability_types=[MyDocker],
     )
-    assert [type(c) for c in agent.root_capability.capabilities if isinstance(c, DockerWorkspace)] == [MyDocker]
+    assert [type(c) for c in agent.root_capability.capabilities if isinstance(c, DockerContainer)] == [MyDocker]
 
 
 def test_old_spec_block_name_loads() -> None:
@@ -68,6 +68,6 @@ def test_old_spec_block_name_loads() -> None:
         custom_capability_types=[DockerSandbox],
     )
 
-    assert [c.image for c in agent.root_capability.capabilities if isinstance(c, DockerWorkspace)] == [
+    assert [c.image for c in agent.root_capability.capabilities if isinstance(c, DockerContainer)] == [
         'python:3.13-slim'
     ]

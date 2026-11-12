@@ -1,7 +1,7 @@
 """Pydantic AI's workspace backend conformance suite, run against real containers.
 
 Opt in with `PYDANTIC_AI_HARNESS_DOCKER_LIVE=1` on a machine with a Docker daemon:
-`PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 uv run pytest -m docker_live tests/harness/docker_workspace`.
+`PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 uv run pytest -m docker_live tests/harness/docker_container`.
 Set `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman` to run it against Podman.
 """
 
@@ -14,7 +14,7 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.docker_workspace import DockerWorkspace, DockerWorkspaceBackend
+from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
@@ -37,13 +37,13 @@ _ALIVE = "grep -qs '^State:[[:space:]]*[^Z]' {}"
 """Exits 0 when a `/proc/<pid>/status` file names a live process: a killed one is gone or a zombie `--init` reaps."""
 
 
-def _backend(docker_args: Sequence[str] = ()) -> DockerWorkspaceBackend:
-    return DockerWorkspaceBackend(image=LIVE_IMAGE, docker_args=docker_args, executable=EXECUTABLE)
+def _backend(docker_args: Sequence[str] = ()) -> DockerContainerBackend:
+    return DockerContainerBackend(image=LIVE_IMAGE, docker_args=docker_args, executable=EXECUTABLE)
 
 
 async def _destroy(backend: WorkspaceBackend) -> None:
     assert backend.ref is not None
-    await DockerWorkspace[None](executable=EXECUTABLE).destroy(backend.ref)
+    await DockerContainer[None](executable=EXECUTABLE).destroy(backend.ref)
 
 
 @pytest.mark.docker_live
@@ -82,7 +82,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
 
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        return lambda ref: DockerWorkspaceBackend(ref=ref, executable=EXECUTABLE)
+        return lambda ref: DockerContainerBackend(ref=ref, executable=EXECUTABLE)
 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
@@ -92,7 +92,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
     async def test_a_timeout_stops_background_children_that_hold_the_output(self, backend: WorkspaceBackend) -> None:
         # `docker exec` waits for the output to close, and killing the client leaves the container's processes
         # running: a fake can't reproduce this, because its processes die with the client.
-        assert isinstance(backend, DockerWorkspaceBackend)
+        assert isinstance(backend, DockerContainerBackend)
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run("sh -c 'echo $$ > child.pid; exec sleep 300' &", shell=True, timeout=2)
         pid = (await backend.run(['cat', 'child.pid'])).stdout.strip()
@@ -102,7 +102,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
 
     async def test_a_timeout_stops_a_command_that_cleared_tmp(self, backend: WorkspaceBackend) -> None:
         # The PID files live outside `/tmp`, so clearing it doesn't stop the timeout from finding the command.
-        assert isinstance(backend, DockerWorkspaceBackend)
+        assert isinstance(backend, DockerContainerBackend)
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run('rm -rf /tmp/* /tmp/.[!.]*; echo $$ > child.pid; exec sleep 300', shell=True, timeout=2)
         pid = (await backend.run(['cat', 'child.pid'])).stdout.strip()
@@ -111,7 +111,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
         assert (await backend.run(_ALIVE.format(f'/proc/{pid}/status'), shell=True)).exit_code != 0
 
     async def test_a_timeout_leaves_a_process_that_started_its_own_session(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, DockerWorkspaceBackend)
+        assert isinstance(backend, DockerContainerBackend)
         detached = "setsid sh -c 'echo $$ > detached.pid; exec sleep 300' > /dev/null 2>&1"
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run(f'{detached} & echo $$ > child.pid; exec sleep 300', shell=True, timeout=2)

@@ -163,7 +163,7 @@ _CAPABILITY_PAGE_META = {
     'memory.md': ('memory', 'Memory'),
     'pixeltable.md': ('pixeltable', 'Pixeltable'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
-    'docker-workspace.md': ('docker_workspace', 'Docker Workspace'),
+    'docker-container.md': ('docker_container', 'Docker Container'),
     'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
