@@ -47,7 +47,7 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._display import png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
-from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse
@@ -208,7 +208,7 @@ class DaytonaDesktop:
                         await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
             raise
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         await self._check_running()
         mouse, keyboard = self._computer_use.mouse, self._computer_use.keyboard
         match action:
