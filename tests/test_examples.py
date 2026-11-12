@@ -128,7 +128,9 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset(
+    {'artifact-scanning.md', 'aws-lambda.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
+)
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
@@ -183,6 +185,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
+                marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
+            if (_is_harness_page(ex.path) and ex.path.name == 'aws-lambda.md') or title == 'request_input_lambda.py':
+                marks.append(
+                    pytest.mark.skipif(
+                        find_spec('aws_durable_execution_sdk_python') is None,
+                        reason='aws-durable-execution-sdk-python not installed',
+                    )
+                )
             if title in _MOVES_CACHE_PREFIX:
                 marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
@@ -875,6 +886,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
+    "What is today's date?": 'Today is January 2, 2032.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
     'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
     'first run': 'Response to first run.',
@@ -899,6 +911,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'A new error was just reported — include it in the summary.': (
         'Updated summary: 12 services updated, all green; one new error in the auth service was just reported.'
     ),
+    'Refactor the billing module': 'Refactored the billing module into smaller functions.',
+    'Then update the changelog.': 'Refactored the billing module and added a changelog entry.',
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
@@ -1167,6 +1181,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
+    # docs/capabilities/request-input.md: the refund waits for the approval endpoint
+    'Refund order 1234, it arrived broken.': ToolCallPart(
+        tool_name='issue_refund', args={'order_id': '1234', 'amount': 50}, tool_call_id='issue_refund_1234'
+    ),
 }
 
 model_routes: dict[str, str] = {
@@ -1993,6 +2011,9 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'issue_refund':
+        # docs/capabilities/request-input.md: the approved refund ran
+        return ModelResponse(parts=[TextPart("I've refunded $50 for order 1234.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
@@ -2092,7 +2113,7 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
-def mock_infer_model(model: Model | KnownModelName) -> Model:
+def mock_infer_model(model: Model | KnownModelName | str) -> Model:
     if model == 'test':
         return TestModel()
 

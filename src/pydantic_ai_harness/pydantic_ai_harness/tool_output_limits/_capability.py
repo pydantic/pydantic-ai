@@ -8,9 +8,10 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard, cast
+from typing import Any, cast
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -23,10 +24,12 @@ from pydantic_ai.messages import (
     UserContent,
     is_multi_modal_content,
 )
-from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness._models import is_request_response_model
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -88,12 +91,12 @@ def _spills(action: Action | None) -> bool:
     while action is not None:
         if isinstance(action, Spill):
             return True
-        action = None if isinstance(action, Passthrough) else action.then
+        action = _next_action(action)
     return False
 
 
 def _default_bands() -> list[Band]:
-    """Lossless spill with a bounded truncation fallback: zero LLM cost, no silent drop."""
+    """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
@@ -613,12 +616,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             model, name='tool_output_limits', instructions='You summarize oversized tool output.'
         )
-        run = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            run = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+            )
         return run.output.strip()
 
     @staticmethod
@@ -627,7 +631,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         model = action.model if action.model is not None else ctx.model
         if isinstance(model, str):
             return model
-        if not _is_request_response_model(model):
+        if not is_request_response_model(model):
             raise UserError(
                 'Summarizing oversized tool output needs a request-response model, but the run '
                 f'uses {type(model).__name__}, which is not one. Set a `model=` on the '
@@ -728,16 +732,6 @@ def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '
     return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
 
 
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    """`TypeGuard` so a mapping narrows to a known element type, not `Unknown`."""
-    return isinstance(value, Mapping)
-
-
-def _is_request_response_model(value: AbstractModel) -> TypeGuard[Model[Any]]:
-    """Narrow an abstract model without losing its provider client type."""
-    return isinstance(value, Model)
-
-
 def _with_handles(
     existing: object,
     value_handle: str | None,
@@ -746,8 +740,8 @@ def _with_handles(
 ) -> dict[str, object]:
     """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
     base: dict[str, object] = {}
-    if _is_mapping(existing):
-        base.update(_copy_mapping(existing))
+    if is_mapping(existing):
+        base.update({str(key): existing[key] for key in existing})
     elif existing is not None:
         base['original_metadata'] = existing
     if value_handle is not None:
@@ -758,26 +752,21 @@ def _with_handles(
     return base
 
 
-def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
-    """Copy an arbitrary mapping with stringified keys (tool metadata is app-defined)."""
-    return {str(key): source[key] for key in source}
-
-
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_desc = f'{len(unit.data):,} bytes (binary)'
+        size_description = f'{len(unit.data):,} bytes (binary)'
         body = f'<{len(unit.data):,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''
         size_unit = 'tokens' if over_tokens else 'chars'
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
-        size_desc = f'{amount:,} {size_unit}'
+        size_description = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = f'[Tool output too large ({size_desc}); stored to handle {handle!r}.{read_hint}]'
+    header = f'[Tool output too large ({size_description}); stored to handle {handle!r}.{read_hint}]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')

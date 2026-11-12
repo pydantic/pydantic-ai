@@ -14,12 +14,13 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Part
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.subagents import DelegationStartEvent, DelegationTask, TaskQuestionEvent
+from pydantic_ai_harness.subagents import DelegationStartedEvent, DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     PROTOCOL,
     ItemAdded,
     ServerMessage,
+    SessionsChanged,
     Snapshot,
     TaskChanged,
     TaskEntry,
@@ -274,9 +275,11 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)))
     with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         web_.run()
-        # A turn ending means the prompt is open, and with it the session's tasks.
+        # A turn ending means the prompt is open, and with it the session's tasks. The browser hears of
+        # the run's end before the session stores it, and of the sessions changing once it has.
         assert web_.post('/api/input', {'text': 'hello'}).json() == {'menu': None}
         receive_until(socket, TurnEnded)
+        receive_until(socket, SessionsChanged)
         conversation = list(web_.shell.session.messages)
         record = finished_task(web_)
         record.user_stopped = True
@@ -321,7 +324,7 @@ def test_workers_echo_steering_only_for_a_live_task() -> None:
         activity='starting',
         usage=RunUsage(),
     )
-    start = DelegationStartEvent(agent_name='Explore', task='look', truncated=False, inherits_tools=False, model=None)
+    start = DelegationStartedEvent(agent_name='Explore', task='look', truncated=False, inherits_tools=False, model=None)
     workers.observe(TaskProgress(task=task, event=start))
     workers.observe(TaskProgress(task=task))
     assert [type(message) for message in published] == [TaskChanged, TaskItems], 'an unchanged row is not sent again'
@@ -355,10 +358,12 @@ def test_a_resumed_or_joined_run_starts_from_the_tasks_history() -> None:
     )
     workers.observe(TaskProgress(task=task))
     assert workers.items() == {}, 'a change of the task alone, such as a question it waits on, starts no transcript'
-    question = TaskQuestionEvent(task_id='t', agent_name='self', question_id='q', question='Which?')
+    question = TaskQuestionAskedEvent(task_id='t', agent_name='self', question_id='q', question='Which?')
     workers.observe(TaskProgress(task=task, event=question))
     assert workers.items() == {}, 'nor does its question, a task-control message'
-    start = DelegationStartEvent(agent_name='self', task='look again', truncated=False, inherits_tools=True, model=None)
+    start = DelegationStartedEvent(
+        agent_name='self', task='look again', truncated=False, inherits_tools=True, model=None
+    )
     start.task_id = 't'
     workers.observe(TaskProgress(task=task, event=start))
     assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'look again'], (

@@ -56,9 +56,10 @@ from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
-    running_on_asyncio,
+    require_asyncio,
 )
 from pydantic_ai_harness._x11 import DESKTOP_IMAGE, DISPLAY, desktop_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
@@ -230,18 +231,13 @@ def check_ref(ref: WorkspaceRef) -> None:
     For refs from message history and for deletion: `get` opens any box of this BoxLite home by name or
     id, so such a ref could otherwise reach a box made by another tool, with host mounts or published ports.
     """
-    _check_provider(ref)
+    check_provider(ref, 'boxlite')
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
             f'BoxLiteSandbox only uses boxes it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}. '
             'To use another box, pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run; '
             "`workspace='new'` starts a fresh box."
         )
-
-
-def _check_provider(ref: WorkspaceRef) -> None:
-    if ref.provider != 'boxlite':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxlite'")
 
 
 def _key(box: _Box) -> str:
@@ -443,7 +439,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
-            _check_provider(ref)
+            check_provider(ref, 'boxlite')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
@@ -497,8 +493,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         create a replacement.
         """
         # Every operation gets the box first, so this one check covers them all.
-        if not running_on_asyncio():
-            raise UserError(ASYNCIO_ONLY)
+        require_asyncio(ASYNCIO_ONLY)
         if self._box is not None:
             return self._box
         # Concurrent first uses wait for each other, so they create one box.
@@ -553,10 +548,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
                     )
                 except _StaleHandle as error:
                     raise WorkspaceUnavailableError(f'The BoxLite box {name!r} was stopped while starting.') from error
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'Could not create working_dir {self._working_dir!r} in BoxLite box {name}: {result.stderr}'
-                    )
+                _check_working_dir_created(result, self._working_dir, name)
             self._box = box
             return box
 
@@ -711,6 +703,11 @@ async def _boot(box: _Box) -> None:
     except boxlite.ConfigError as error:
         # Raised for a host that can't run boxes at all, such as one where BoxLite can't jail its engine.
         raise WorkspaceUnavailableError(f'This host cannot run a BoxLite box: {error}') from error
+
+
+def _check_working_dir_created(result: CommandResult, working_dir: str, name: str) -> None:
+    if result.exit_code != 0:
+        raise WorkspaceError(f'Could not create working_dir {working_dir!r} in BoxLite box {name}: {result.stderr}')
 
 
 def _gone_message(name: str) -> str:

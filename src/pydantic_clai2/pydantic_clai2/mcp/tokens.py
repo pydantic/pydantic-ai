@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from fastmcp import Client
     from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 
-    from pydantic_clai2.mcp._client import SignIn
+    from pydantic_clai2.mcp.client import SignIn
 
 _TOKENS = 'mcp-oauth-token'
 """The collection FastMCP keeps access and refresh tokens in."""
@@ -207,26 +207,26 @@ class OAuthSignIn:
 
     def transport(self) -> 'StreamableHttpTransport | SSETransport':
         """A run's transport. Each call holds its own tokens, so a sign-out reaches the next run."""
-        from pydantic_clai2.mcp._client import StoredOnly
+        from pydantic_clai2.mcp.client import StoredOnly
 
         return self._transport(StoredOnly(self.name, callback_host=self.callback_host, refusal=not_signed_in(self)))
 
     def client(self) -> 'Client[StreamableHttpTransport | SSETransport]':
         """A run's connection; see `transport`."""
-        from pydantic_clai2.mcp import _client
+        from pydantic_clai2.mcp.client import Client
 
-        return _client.Client(self.transport(), init_timeout=self.init_timeout)
+        return Client(self.transport(), init_timeout=self.init_timeout)
 
     async def sign_in(self, *, show: Callable[[str], object]) -> None:
         """Connect once, so FastMCP opens the browser and stores the tokens."""
-        from pydantic_clai2.mcp import _client
+        from pydantic_clai2.mcp.client import Client, Shown
 
-        auth = _client.Shown(self.name, callback_host=self.callback_host, show=show)
-        async with _client.Client(self._transport(auth), init_timeout=OAUTH_TIMEOUT):
+        auth = Shown(self.name, callback_host=self.callback_host, show=show)
+        async with Client(self._transport(auth), init_timeout=OAUTH_TIMEOUT):
             pass
 
     def _transport(self, auth: 'SignIn') -> 'StreamableHttpTransport | SSETransport':
-        from pydantic_clai2.mcp._client import SSETransport, StreamableHttpTransport, http_client
+        from pydantic_clai2.mcp.client import SSETransport, StreamableHttpTransport, http_client
 
         headers = dict(self.headers) if self.headers else None
         if self.sse:

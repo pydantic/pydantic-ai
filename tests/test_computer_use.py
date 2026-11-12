@@ -302,7 +302,7 @@ async def test_a_computer_call_with_safety_checks_refuses_an_external_executor(h
         capabilities=[hooks] if hook_asks else [],
         output_type=[str, DeferredToolRequests],
     )
-    with pytest.raises(UserError, match='approval cannot reach'):
+    with pytest.raises(UserError, match=r'approval cannot reach|the run cannot approve it'):
         await agent.run('Click.')
 
 

@@ -22,8 +22,8 @@ Search tools that return only titles and snippets force a second round of
 fetching before the agent can judge a source, while search tools that return
 full page text flood the context with pages the agent will discard. Wiring a
 search API together with a page fetcher, budgeting what each tool returns, and
-prompting the agent to research methodically is boilerplate every research
-agent reinvents.
+prompting the agent to research methodically has to be done for each research
+agent.
 
 `ExaSearch` bundles that plumbing into a single
 [capability](../capabilities/overview.md): the research tools, per-tool
@@ -56,7 +56,7 @@ print(result.output)
 
 | Tool | Purpose |
 |---|---|
-| `web_search` | Search the web and return the top `num_results` pages, each with title, URL, and its most relevant excerpts. |
+| `web_search` | Search the web and return the top `max_results` pages, each with title, URL, and its most relevant excerpts. |
 | `get_page` | Retrieve the full text of one specific URL -- a promising `web_search` hit, or a URL the user provided. |
 | `deep_search` | Run Exa's multi-step deep search and return a synthesized, cited answer. Opt-in via `include_deep_search=True`. |
 | `exa_agent` | Delegate a research task to an asynchronous Exa agent run. Provided by the separate `ExaAgent` capability. |
@@ -69,8 +69,9 @@ so surveying several sources stays cheap; the agent reads a chosen page with
 `get_page` returns the first `max_text_chars` characters of the page. A longer
 page ends with `[... page text truncated at N characters]`. At the
 10,000-character API maximum Exa cannot return the extra character that reveals
-truncation, so no marker appears. `web_search` returns at most `num_results`
+truncation, so no marker appears. `web_search` returns at most `max_results`
 results, even if Exa returns more.
+`num_results` is the deprecated name of `max_results` and still works, with a warning.
 
 A `web_search` query with no matches returns `No results found for {query!r}.`,
 which the model can relay to the user. An empty page or deep search answer, an
@@ -172,7 +173,7 @@ Every field of `ExaSearch` with its default:
 from pydantic_ai_harness import ExaSearch
 
 ExaSearch(
-    num_results=5,              # results per web_search call (1 to 100)
+    max_results=5,              # results per web_search call (1 to 100)
     max_text_chars=10_000,      # get_page text cap, in characters (1 to 10,000)
     text_summary=False,         # web_search also returns a synthesized text summary
     include_deep_search=False,  # also expose the deep_search tool
@@ -419,7 +420,7 @@ To use the provider's search where there is one and Exa's elsewhere, either:
   from pydantic_ai.capabilities import WebSearch
   from pydantic_ai_harness.exa import ExaSearch
 
-  WebSearch(local=ExaSearch(num_results=10).web_search_tool())
+  WebSearch(local=ExaSearch(max_results=10).web_search_tool())
   ```
 
 Don't combine `WebSearch()` with the default `ExaSearch()` on native-search
@@ -461,7 +462,7 @@ file instead of Python:
 model: {{ anthropic:medium }}
 capabilities:
   - ExaSearch:
-      num_results: 3
+      max_results: 3
       include_deep_search: true
   - ExaAgent:
       effort: low
@@ -474,8 +475,7 @@ from pydantic_ai_harness import ExaAgent, ExaSearch
 agent = Agent.from_file('agent.yaml', custom_capability_types=[ExaSearch, ExaAgent])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate the
-capabilities. The `client` and `runs` fields are not spec-serializable;
+The `client` and `runs` fields are not spec-serializable;
 spec-loaded instances always build the default client from `EXA_API_KEY`. In
 specs, `output_schema` takes the JSON-schema dict form; Pydantic model
 classes are only available when constructing the capability in Python.

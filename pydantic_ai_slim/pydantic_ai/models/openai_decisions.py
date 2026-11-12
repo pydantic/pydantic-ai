@@ -10,7 +10,7 @@ from typing import ClassVar, Literal, assert_never, cast
 from pydantic import JsonValue
 
 from .. import _model_errors
-from .._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
+from .._framing import TOOL_RESULT_TAG, frame_tags
 from .._http import to_httpx2_timeout
 from .._thinking_part import render_replayed_thinking
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -53,7 +53,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    get_user_agent,
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
 )
 from ._sdk_retries import with_max_retries
 from .decision import (
@@ -72,6 +72,7 @@ from .decision import (
     ScoreQuestion,
     _probability_bounds,  # pyright: ignore[reportPrivateUsage]
     _score_fits,  # pyright: ignore[reportPrivateUsage]
+    _text,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -251,9 +252,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
-        extra_headers: dict[str, str] = dict(model_settings.get('extra_headers', {}))
-        if all(name.lower() != 'user-agent' for name in extra_headers):
-            extra_headers['User-Agent'] = get_user_agent()
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
         self._check_request_limits(image_count=len(request.images), question_count=len(request.questions))
         if any(not image.is_image for image in request.images):
             raise UserError('OpenAI Decisions supports image evidence only; `request.images` contains a non-image.')
@@ -473,11 +472,8 @@ class _Conversation:
         else:
             # A trimmed or compacted history can keep a result without its call, which the API refuses natively. It
             # goes on the user channel instead, framed as the tool's so it doesn't read as the user's own words.
-            framed: list[str | MultiModalContent] = [
-                open_tag(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id),
-                *(neutralize_tags(item) if isinstance(item, str) else item for item in part.content_items(mode='str')),
-                close_tag(TOOL_RESULT_TAG),
-            ]
+            open_tag, close_tag = frame_tags(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+            framed: list[str | MultiModalContent] = [open_tag, *part.content_items(mode='str'), close_tag]
             self._user(framed)
 
     def _response_part(self, part: ModelResponsePart, calls: set[str]) -> None:
@@ -518,11 +514,6 @@ class _Conversation:
             raise _unconverted_speech_part_error()
         else:
             assert_never(part)
-
-
-def _text(value: JsonValue) -> str:
-    """A protocol value as the text the API takes: a string as it is, anything else as JSON."""
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
 def _api_error(e: APIError, model_name: str) -> ModelAPIError:

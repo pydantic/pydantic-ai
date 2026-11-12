@@ -9,7 +9,8 @@ as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 
 - `docker run --workdir` creates a missing directory; `podman run --workdir` refuses it.
 - Killing the local `docker exec` client leaves its command running in the container.
-- A `docker exec` process leads a session of its own, so its process group is the command's.
+- A `docker exec` process leads a session of its own, so its process group is the command's. Under crun 1.14.1
+  (Podman 4.9.3, Ubuntu 24.04's packages) it doesn't: its process group reads as 0 and it can't be signalled as one.
 - `docker exec` waits until every copy of the command's output is closed; `podman exec` returns at exit.
 - Docker reports a missing `exec --workdir` on stdout.
 - A missing container's errors contain `no such container`, in any case.
@@ -34,6 +35,7 @@ from pathlib import Path
 from typing import Literal
 
 import anyio
+import anyio.to_thread
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -48,7 +50,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._display import desktop_size
-from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
+from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
 from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
@@ -110,7 +112,29 @@ stopped={_PID_DIR}/$1.stopped
 : > "$stopped"
 read -r pid 2> /dev/null < "$pidfile" || exit 0
 [ -n "$pid" ] || exit 0
-kill -KILL "-$pid" "$pid" 2> /dev/null
+if kill -0 "-$pid" 2> /dev/null; then
+    kill -KILL "-$pid" "$pid" 2> /dev/null
+else
+    read -r line 2> /dev/null < "/proc/$pid/stat"
+    set -- ${{line##*) }}
+    group=$3
+    tree=" $pid "
+    grew=1
+    while [ -n "$grew" ]; do
+        grew=
+        for stat in /proc/[0-9]*/stat; do
+            read -r line 2> /dev/null < "$stat" || continue
+            set -- ${{line##*) }}
+            proc=${{stat#/proc/}}
+            proc=${{proc%/stat}}
+            case "$tree" in
+                *" $proc "*) ;;
+                *" $2 "*) [ "$3" != "$group" ] || {{ tree="$tree$proc "; grew=1; }} ;;
+            esac
+        done
+    done
+    kill -KILL $tree 2> /dev/null
+fi
 rm -f "$pidfile" "$stopped"
 exit 0"""
 """Stop the command recorded under the tag `$1`, and its process group.
@@ -122,8 +146,13 @@ of the two comes second sees the other's file. A marker for a command that alrea
 Everything before the `rm` is a shell builtin, so the stop still works when the command has used up the
 container's process limit and nothing can fork. It kills at once: the command is already past its timeout.
 
-A `docker exec` process leads a session of its own in both runc and crun, so its group is the command's; a
+A `docker exec` process leads a session of its own in runc and current crun, so its group is the command's; a
 command that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
+Where the exec has no group of its own (crun 1.14.1), the stop kills the process and those of its descendants that
+share its group number, found by parent ID in `/proc`, so a command in a session of its own keeps running there too.
+A descendant whose parent already exited has lost that link, and one forked after the scan isn't seen; both keep
+running.
+If the process's own `/proc` entry can't be read, its group is unknown and only the process itself is killed.
 Groups are signalled as `kill -SIGNAL -PGID`, without `--`, which BusyBox's `kill` rejects, as does dash's after `-0`.
 """
 
@@ -202,7 +231,7 @@ def resolve_executable(executable: str) -> str:
 
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
     """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
-    executable = resolve_executable(executable)
+    executable = await anyio.to_thread.run_sync(resolve_executable, executable)
     runner = _runner()
     if await _owned_state(runner, executable, name, WorkspaceError) == 'missing':
         return
@@ -327,8 +356,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             image = _DESKTOP_IMAGE  # built just before its container is first created
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
-        if ref is not None and ref.provider != PROVIDER:
-            raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+        if ref is not None:
+            check_provider(ref, PROVIDER)
         if image is not None and (not image or image.startswith('-')):
             raise ValueError(f'image must be an image reference, got {image!r}')
         if working_dir is not None and not posixpath.isabs(working_dir):
