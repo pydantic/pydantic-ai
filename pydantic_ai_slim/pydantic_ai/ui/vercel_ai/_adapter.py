@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable, Sequence
-from dataclasses import KW_ONLY, InitVar, dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import KW_ONLY, InitVar, dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
@@ -46,6 +46,7 @@ from ...messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
     UploadedFile,
     UploadedFileProviderName,
@@ -401,7 +402,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         ]
 
     @classmethod
-    def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
+    def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:
         """Transform Vercel AI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
 
@@ -409,450 +410,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             checkpoint = builder.checkpoint()
             enqueued: list[ModelMessage] = []
 
-            if msg.role == 'system':
-                for part in msg.parts:
-                    if isinstance(part, TextUIPart):
-                        # A system part only reloads as harness retry feedback when it carries the
-                        # marker this adapter dumped it with; a client-authored system message has
-                        # no such payload and stays a plain `SystemPromptPart`, so it can never gain
-                        # harness provenance. See `retry_feedback_from_payload`.
-                        feedback = retry_feedback_from_payload(
-                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
-                        )
-                        builder.add(feedback if feedback is not None else SystemPromptPart(content=part.text))
-                    else:  # pragma: no cover
-                        raise ValueError(f'Unsupported system message part type: {type(part)}')
-            elif msg.role == 'user':
-                user_prompt_content: list[UserContent] = []
-
-                def flush_user_prompt(content: list[UserContent] = user_prompt_content) -> None:
-                    """Close off the user content accumulated so far, ahead of whatever follows it.
-
-                    `content` defaults to this message's list rather than closing over the name,
-                    which the next message rebinds; callers pass nothing.
-                    """
-                    if not content:
-                        return
-                    builder.add(_user_prompt_part([*content]))
-                    content.clear()
-
-                for part in msg.parts:
-                    if (
-                        isinstance(part, TextUIPart | FileUIPart)
-                        and user_prompt_content
-                        and load_provider_metadata(part.provider_metadata).get(_USER_PROMPT_START_KEY)
-                    ):
-                        # `dump_messages` marks where each of a request's later prompts begins.
-                        flush_user_prompt()
-
-                    if isinstance(part, TextUIPart):
-                        # A user part reloads as harness retry feedback only when it carries the
-                        # marker this adapter dumped it with; text a person wrote has no such payload
-                        # and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        feedback = retry_feedback_from_payload(provider_meta.get('retry_feedback'))
-                        structured = provider_meta.get('structured_content')
-                        if feedback is not None:
-                            flush_user_prompt()
-                            builder.add(feedback)
-                        else:
-                            user_prompt_content.append(
-                                part.text
-                                if structured is None
-                                else structured_content_from_payload(_parse_json(structured), part.text)
-                            )
-                    elif isinstance(part, FileUIPart):
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
-                        # already does — see https://github.com/pydantic/pydantic-ai/issues/5571 and
-                        # https://github.com/pydantic/pydantic-ai/issues/5772): it carries only the requester's own
-                        # request params and is dict-validated by the constructors below.
-                        vendor_metadata = provider_meta.get('vendor_metadata')
-                        force_download = provider_meta.get('force_download', False)
-                        try:
-                            file = BinaryContent.from_data_uri(part.url)
-                        except ValueError:
-                            # Check provider_metadata for UploadedFile data
-                            uploaded_file_id = provider_meta.get('file_id')
-                            uploaded_file_provider = provider_meta.get('provider_name')
-                            if uploaded_file_id and uploaded_file_provider:
-                                file = UploadedFile(
-                                    file_id=uploaded_file_id,
-                                    provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
-                                    media_type=part.media_type,
-                                    vendor_metadata=vendor_metadata,
-                                    identifier=provider_meta.get('identifier'),
-                                )
-                            else:
-                                if part.media_type:
-                                    url_type = _MEDIA_PREFIX_TO_URL_TYPE.get(
-                                        part.media_type.split('/', 1)[0], DocumentUrl
-                                    )
-                                else:
-                                    # A URL Pydantic AI could not read a media type out of, dumped with an
-                                    # empty one: recover the kind from the metadata written alongside it,
-                                    # rather than letting the empty media prefix make everything a document.
-                                    # `provider_metadata` is the client's to send, so normalize before the
-                                    # lookup, which falls back to a document on anything we didn't write.
-                                    url_type = _KIND_TO_URL_TYPE.get(str(provider_meta.get('kind')), DocumentUrl)
-                                file = url_type(
-                                    url=part.url,
-                                    media_type=part.media_type,
-                                    force_download=force_download,
-                                    vendor_metadata=vendor_metadata,
-                                )
-                        else:
-                            # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
-                            # Reconstruct through the constructor so a malformed client value is rejected
-                            # here (matching the URL constructor path) instead of being stored unvalidated
-                            # and crashing a provider model later. Re-narrow afterwards so an image
-                            # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
-                            # plain `BinaryContent`.
-                            if vendor_metadata is not None:
-                                file = BinaryContent.narrow_type(
-                                    BinaryContent(
-                                        data=file.data,
-                                        media_type=file.media_type,
-                                        identifier=file.identifier,
-                                        vendor_metadata=vendor_metadata,
-                                    )
-                                )
-                        user_prompt_content.append(file)
-                    elif isinstance(part, DataUIPart):
-                        if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
-                            builder.add(tool_availability_delta_from_payload(part.data))
-                        elif (
-                            part.type == CAPABILITY_LOAD_DELTA_DATA_TYPE
-                            and _is_str_dict(part.data)
-                            and (load_part := capability_load_delta_from_payload(part.data)) is not None
-                        ):
-                            builder.add(load_part)
-                        elif (
-                            part.type == COMPACTION_DATA_TYPE
-                            and _is_str_dict(part.data)
-                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
-                            and is_request_compaction_part(compaction_part)
-                        ):
-                            # A summary the application wrote: it keeps its place among the prompts around it.
-                            flush_user_prompt()
-                            builder.add(compaction_part)
-                        elif (
-                            part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
-                            and _is_str_dict(part.data)
-                            and (effort_part := model_settings_delta_from_payload(part.data)) is not None
-                        ):
-                            # After the prompt it was recorded behind, as in the server-side history.
-                            flush_user_prompt()
-                            builder.add(effort_part)
-                    else:  # pragma: no cover
-                        raise ValueError(f'Unsupported user message part type: {type(part)}')
-
-                flush_user_prompt()
-
-            elif msg.role == 'assistant':
-                # A `ModelResponse` with parallel tool calls is followed by one `ModelRequest` with all
-                # their returns, but a Vercel tool part carries a call and its output together. Hold the
-                # returns back until the step (one model response) ends, so the calls stay in one
-                # response. Streamed messages mark steps with `step-start` parts; without them (as
-                # `dump_messages` writes, one response per message) content after a completed tool
-                # call is taken to start the next step.
-                pending_returns: list[
-                    ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
-                ] = []
-                # Enqueued messages were delivered after the step's tool returns, so they wait with them.
-                # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
-                pending_enqueued: list[ModelMessage] = []
-                has_steps = any(isinstance(part, StepStartUIPart) for part in msg.parts)
-                for part in msg.parts:
-                    if pending_returns and (
-                        isinstance(part, StepStartUIPart)
-                        or (not has_steps and isinstance(part, TextUIPart | ReasoningUIPart | FileUIPart))
-                    ):
-                        for return_part in pending_returns:
-                            builder.add(return_part)
-                        builder._append_whole(pending_enqueued)  # pyright: ignore[reportPrivateUsage]
-                        pending_returns = []
-                        pending_enqueued = []
-
-                    if isinstance(part, TextUIPart):
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        builder.add(load_text_part(part.text, provider_meta))
-                        restore_canonical_system(
-                            builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
-                        )
-                    elif isinstance(part, ReasoningUIPart):
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        builder.add(
-                            ThinkingPart(
-                                content=part.text,
-                                id=provider_meta.get('id'),
-                                signature=None if part.state == 'streaming' else provider_meta.get('signature'),
-                                provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
-                            )
-                        )
-                        restore_canonical_system(
-                            builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
-                        )
-                    elif isinstance(part, FileUIPart):
-                        try:
-                            file = BinaryContent.from_data_uri(part.url)
-                        except ValueError as e:  # pragma: no cover
-                            # We don't yet handle non-data-URI file URLs returned by assistants, as no Pydantic AI models do this.
-                            raise ValueError(
-                                'Vercel AI integration can currently only handle assistant file parts with data URIs.'
-                            ) from e
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        vendor_metadata = provider_meta.get('vendor_metadata')
-                        # `vendor_metadata` is client-supplied and unconstrained; assignment on the
-                        # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
-                        # so ignore anything that isn't a dict rather than let it reach the provider.
-                        if _is_str_dict(vendor_metadata):
-                            file.vendor_metadata = vendor_metadata
-                        builder.add(
-                            FilePart(
-                                content=file,
-                                id=provider_meta.get('id'),
-                                provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
-                            )
-                        )
-                        restore_canonical_system(
-                            builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
-                        )
-                    elif isinstance(part, DataUIPart):
-                        if (
-                            part.type == COMPACTION_DATA_TYPE
-                            and _is_str_dict(part.data)
-                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
-                        ):
-                            builder.add(compaction_part)
-                            restore_canonical_system(
-                                builder, compaction_part.provider_name, part.data.get('canonical_system')
-                            )
-                        elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
-                            # The event stream emits the delta after the tool result that caused it, so
-                            # the AI SDK attaches it to the assistant message. Adding it here lands it on
-                            # the request carrying that tool return, matching the server-side history. It waits
-                            # with the step's held-back tool returns so it follows the return that caused it.
-                            pending_returns.append(tool_availability_delta_from_payload(part.data))
-                        elif (
-                            part.type == CAPABILITY_LOAD_DELTA_DATA_TYPE
-                            and _is_str_dict(part.data)
-                            and (load_part := capability_load_delta_from_payload(part.data)) is not None
-                        ):
-                            # Like a tool availability delta: it lands on the request carrying the return of the
-                            # tool call that loaded the capability, after the step's held-back tool returns.
-                            pending_returns.append(load_part)
-                        elif (
-                            part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
-                            and _is_str_dict(part.data)
-                            and (effort_part := model_settings_delta_from_payload(part.data)) is not None
-                        ):
-                            # Streamed at the start of the model request that records it, so the AI SDK
-                            # attaches it to the assistant message. It belongs at the end of that request, after
-                            # everything delivered into it: after the messages enqueued into the step if there are
-                            # any, otherwise after the step's held-back tool returns, or on the request already open.
-                            if pending_enqueued:
-                                pending_enqueued.append(ModelRequest(parts=[effort_part]))
-                            elif pending_returns:
-                                pending_returns.append(effort_part)
-                            else:
-                                builder.add(effort_part)
-                        elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
-                            # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
-                            loaded = cls.load_messages(_enqueued_ui_messages(part.data))
-                            if pending_returns:
-                                pending_enqueued.extend(loaded)
-                            else:
-                                builder._append_whole(loaded)  # pyright: ignore[reportPrivateUsage]
-                            enqueued.extend(loaded)
-                    elif isinstance(part, ToolUIPart | DynamicToolUIPart):
-                        if isinstance(part, DynamicToolUIPart):
-                            tool_name = part.tool_name
-                            builtin_tool = part.provider_executed
-                        else:
-                            tool_name = part.type.removeprefix('tool-')
-                            builtin_tool = part.provider_executed
-
-                        tool_call_id = part.tool_call_id
-
-                        args: str | dict[str, Any] | None = part.input
-
-                        if isinstance(args, str):
-                            try:
-                                parsed = json.loads(args)
-                                if _is_str_dict(parsed):
-                                    args = parsed
-                            except json.JSONDecodeError:
-                                pass
-                        elif isinstance(args, dict) or args is None:
-                            pass
-                        else:
-                            assert_never(args)
-
-                        provider_meta = load_provider_metadata(part.call_provider_metadata)
-                        part_id = provider_meta.get('id')
-                        provider_name = provider_meta.get('provider_name')
-                        provider_details = provider_meta.get('provider_details')
-                        raw_tool_kind = provider_meta.get('tool_kind')
-                        tool_kind = parse_tool_kind(raw_tool_kind) if isinstance(raw_tool_kind, str) else None
-
-                        if builtin_tool:
-                            # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
-                            # The call and return metadata are combined in the output part.
-                            # So we extract and return them to the respective parts
-                            call_meta = return_meta = {}
-                            has_tool_output = isinstance(
-                                part,
-                                (
-                                    ToolOutputAvailablePart,
-                                    ToolOutputErrorPart,
-                                    ToolOutputDeniedPart,
-                                    DynamicToolOutputAvailablePart,
-                                    DynamicToolOutputErrorPart,
-                                    DynamicToolOutputDeniedPart,
-                                ),
-                            )
-
-                            if has_tool_output:
-                                call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
-
-                            # `tool_kind` comes from client-supplied metadata, so each claim is validated
-                            # to a known `ToolPartKind` (else dropped) before being set on the base part;
-                            # the final `narrow_message_parts` pass then promotes it best-effort. A claim
-                            # whose data doesn't validate leaves a base part; only core's kinds are stripped.
-                            raw_call_tool_kind = call_meta.get('tool_kind')
-                            call_tool_kind = (
-                                parse_tool_kind(raw_call_tool_kind) if isinstance(raw_call_tool_kind, str) else None
-                            )
-                            raw_return_tool_kind = return_meta.get('tool_kind')
-                            return_tool_kind = (
-                                parse_tool_kind(raw_return_tool_kind) if isinstance(raw_return_tool_kind, str) else None
-                            )
-                            call_provider_name = call_meta.get('provider_name') or provider_name
-                            builder.add(
-                                NativeToolCallPart(
-                                    tool_name=tool_name,
-                                    tool_call_id=tool_call_id,
-                                    args=args,
-                                    id=call_meta.get('id') or part_id,
-                                    provider_name=call_provider_name,
-                                    provider_details=call_meta.get('provider_details') or provider_details,
-                                    tool_kind=call_tool_kind or tool_kind,
-                                )
-                            )
-                            restore_canonical_system(
-                                builder,
-                                call_provider_name,
-                                call_meta.get('canonical_system') or provider_meta.get('canonical_system'),
-                            )
-
-                            if has_tool_output:
-                                if isinstance(part, ToolOutputErrorPart | DynamicToolOutputErrorPart):
-                                    output: Any = part.error_text
-                                    outcome: Literal['success', 'failed', 'denied'] = 'failed'
-                                elif isinstance(part, ToolOutputDeniedPart | DynamicToolOutputDeniedPart):
-                                    output = _denial_reason(part)
-                                    outcome = 'denied'
-                                else:
-                                    raw_output = (
-                                        part.output
-                                        if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
-                                        else None
-                                    )
-                                    output = _validate_tool_output(raw_output)
-                                    outcome = 'success'
-                                builder.add(
-                                    NativeToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=output,
-                                        provider_name=return_meta.get('provider_name') or provider_name,
-                                        provider_details=return_meta.get('provider_details') or provider_details,
-                                        outcome=outcome,
-                                        # Kept on every outcome: a return that isn't a success is never
-                                        # promoted to its typed subclass, so the kind can't pass for success.
-                                        tool_kind=return_tool_kind or tool_kind,
-                                    )
-                                )
-                        else:
-                            builder.add(
-                                ToolCallPart(
-                                    tool_name=tool_name,
-                                    tool_call_id=tool_call_id,
-                                    args=args,
-                                    id=part_id,
-                                    provider_name=provider_name,
-                                    provider_details=provider_details,
-                                    tool_kind=tool_kind,
-                                )
-                            )
-                            restore_canonical_system(builder, provider_name, provider_meta.get('canonical_system'))
-
-                            if part.state == 'output-available':
-                                # A synthesized interrupted return dumps as neutral `output-available`
-                                # with an `'interrupted'` outcome claim in the metadata channel; restore
-                                # it so a round-trip doesn't upgrade the outcome to `'success'`. Every
-                                # return keeps the call's `tool_kind`: one that isn't a success is never
-                                # promoted to its typed subclass, so the kind can't pass for success.
-                                interrupted = provider_meta.get('outcome') == 'interrupted'
-                                pending_returns.append(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=_validate_tool_output(part.output),
-                                        outcome='interrupted' if interrupted else 'success',
-                                        tool_kind=tool_kind,
-                                    )
-                                )
-                            elif part.state == 'output-error':
-                                # `'failed'` and `'retried'` share `output-error`, so the outcome
-                                # claim in the metadata channel is what tells a retry apart from a
-                                # definitive failure; without it the return reloads as `'failed'`.
-                                retried = provider_meta.get('outcome') == 'retried'
-                                structured = provider_meta.get('content') if retried else None
-                                pending_returns.append(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        # `error_text` is the rendered string; a retry's validation errors
-                                        # ride the metadata channel as the list they are, so the
-                                        # provider is sent the same structure after a round-trip.
-                                        content=_validate_tool_output(structured)
-                                        if isinstance(structured, list)
-                                        else part.error_text,
-                                        outcome='retried' if retried else 'failed',
-                                        retry=parse_tool_retry(provider_meta.get('retry')) if retried else None,
-                                        tool_kind=tool_kind,
-                                    )
-                                )
-                            elif part.state == 'output-denied':
-                                pending_returns.append(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=_denial_reason(part),
-                                        outcome='denied',
-                                        tool_kind=tool_kind,
-                                    )
-                                )
-                    elif isinstance(part, DataUIPart):  # pragma: no cover
-                        # Contains custom data that shouldn't be sent to the model
-                        pass
-                    elif isinstance(part, SourceUrlUIPart | SourceDocumentUIPart):
-                        # Sources are listed for display; citations load from the text part's provider metadata.
-                        pass
-                    elif isinstance(part, StepStartUIPart):
-                        # Step boundaries are handled above, by flushing the held-back tool returns
-                        pass
-                    else:
-                        assert_never(part)
-                for return_part in pending_returns:
-                    builder.add(return_part)
-                builder._append_whole(pending_enqueued)  # pyright: ignore[reportPrivateUsage]
-            else:
-                assert_never(msg.role)
+            match msg.role:
+                case 'system':
+                    _load_system_message(builder, msg)
+                case 'user':
+                    _load_user_message(builder, msg)
+                case 'assistant':
+                    cls._load_assistant_message(builder, msg, enqueued)
+                case _:
+                    assert_never(msg.role)
 
             # Apply metadata and the id to the role-corresponding `ModelMessage`: assistant UIMessages
             # may also append a synthetic `ModelRequest` carrying tool-return parts, which we skip
@@ -865,6 +431,302 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
         return narrow_message_parts(builder.messages)
+
+    @classmethod
+    def _load_assistant_message(cls, builder: MessagesBuilder, msg: UIMessage, enqueued: list[ModelMessage]) -> None:
+        """Load an assistant `UIMessage` into `builder`, holding each step's tool returns back until the step ends."""
+        # A `ModelResponse` with parallel tool calls is followed by one `ModelRequest` with all
+        # their returns, but a Vercel tool part carries a call and its output together. Hold the
+        # returns back until the step (one model response) ends, so the calls stay in one
+        # response. Streamed messages mark steps with `step-start` parts; without them (as
+        # `dump_messages` writes, one response per message) content after a completed tool
+        # call is taken to start the next step.
+        context = _AssistantLoadContext(
+            builder=builder,
+            enqueued=enqueued,
+            has_steps=any(isinstance(part, StepStartUIPart) for part in msg.parts),
+        )
+        for part in msg.parts:
+            if context.pending_returns and (
+                isinstance(part, StepStartUIPart)
+                or (not context.has_steps and isinstance(part, TextUIPart | ReasoningUIPart | FileUIPart))
+            ):
+                _flush_step_returns(context)
+            cls._load_assistant_part(part, context)
+        _flush_step_returns(context)
+
+    @classmethod
+    def _load_assistant_part(cls, part: UIMessagePart, context: _AssistantLoadContext) -> None:
+        """Load one part of an assistant `UIMessage`."""
+        if isinstance(part, ToolUIPart | DynamicToolUIPart):
+            cls._load_tool_part(part, context)
+            return
+
+        match part:
+            case TextUIPart():
+                provider_meta = load_provider_metadata(part.provider_metadata)
+                context.builder.add(load_text_part(part.text, provider_meta))
+                restore_canonical_system(
+                    context.builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
+                )
+            case ReasoningUIPart():
+                provider_meta = load_provider_metadata(part.provider_metadata)
+                context.builder.add(
+                    ThinkingPart(
+                        content=part.text,
+                        id=provider_meta.get('id'),
+                        signature=None if part.state == 'streaming' else provider_meta.get('signature'),
+                        provider_name=provider_meta.get('provider_name'),
+                        provider_details=provider_meta.get('provider_details'),
+                    )
+                )
+                restore_canonical_system(
+                    context.builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
+                )
+            case FileUIPart():
+                try:
+                    file = BinaryContent.from_data_uri(part.url)
+                except ValueError as e:  # pragma: no cover
+                    # We don't yet handle non-data-URI file URLs returned by assistants, as no Pydantic AI models do this.
+                    raise ValueError(
+                        'Vercel AI integration can currently only handle assistant file parts with data URIs.'
+                    ) from e
+                provider_meta = load_provider_metadata(part.provider_metadata)
+                vendor_metadata = provider_meta.get('vendor_metadata')
+                # `vendor_metadata` is client-supplied and unconstrained; assignment on the
+                # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
+                # so ignore anything that isn't a dict rather than let it reach the provider.
+                if _is_str_dict(vendor_metadata):
+                    file.vendor_metadata = vendor_metadata
+                context.builder.add(
+                    FilePart(
+                        content=file,
+                        id=provider_meta.get('id'),
+                        provider_name=provider_meta.get('provider_name'),
+                        provider_details=provider_meta.get('provider_details'),
+                    )
+                )
+                restore_canonical_system(
+                    context.builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
+                )
+            case DataUIPart():
+                cls._load_assistant_data_part(part, context)
+            case SourceUrlUIPart() | SourceDocumentUIPart():
+                # Sources are listed for display; citations load from the text part's provider metadata.
+                pass
+            case StepStartUIPart():
+                # Step boundaries are handled in `_load_assistant_message`, by flushing the held-back tool returns
+                pass
+            case _:
+                assert_never(part)
+
+    @classmethod
+    def _load_assistant_data_part(cls, part: DataUIPart, context: _AssistantLoadContext) -> None:
+        """Load a data part of an assistant `UIMessage`.
+
+        A data part of any other type contains custom data that shouldn't be sent to the model.
+        """
+        if (
+            part.type == COMPACTION_DATA_TYPE
+            and _is_str_dict(part.data)
+            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+        ):
+            context.builder.add(compaction_part)
+            restore_canonical_system(context.builder, compaction_part.provider_name, part.data.get('canonical_system'))
+        elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
+            # The event stream emits the delta after the tool result that caused it, so
+            # the AI SDK attaches it to the assistant message. Adding it here lands it on
+            # the request carrying that tool return, matching the server-side history. It waits
+            # with the step's held-back tool returns so it follows the return that caused it.
+            context.pending_returns.append(tool_availability_delta_from_payload(part.data))
+        elif (
+            part.type == CAPABILITY_LOAD_DELTA_DATA_TYPE
+            and _is_str_dict(part.data)
+            and (load_part := capability_load_delta_from_payload(part.data)) is not None
+        ):
+            # Like a tool availability delta: it lands on the request carrying the return of the
+            # tool call that loaded the capability, after the step's held-back tool returns.
+            context.pending_returns.append(load_part)
+        elif (
+            part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
+            and _is_str_dict(part.data)
+            and (effort_part := model_settings_delta_from_payload(part.data)) is not None
+        ):
+            _place_model_settings_delta(context, effort_part)
+        elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
+            # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+            loaded = cls.load_messages(_enqueued_ui_messages(part.data))
+            if context.pending_returns:
+                context.pending_enqueued.extend(loaded)
+            else:
+                context.builder._append_whole(loaded)  # pyright: ignore[reportPrivateUsage]
+            context.enqueued.extend(loaded)
+
+    @classmethod
+    def _load_tool_part(cls, part: ToolUIPart | DynamicToolUIPart, context: _AssistantLoadContext) -> None:
+        """Load a tool part of an assistant `UIMessage` as its call and, once it has output, its return."""
+        tool_name = part.tool_name if isinstance(part, DynamicToolUIPart) else part.type.removeprefix('tool-')
+
+        args: str | dict[str, Any] | None = part.input
+
+        if isinstance(args, str):
+            try:
+                parsed = json.loads(args)
+                if _is_str_dict(parsed):
+                    args = parsed
+            except json.JSONDecodeError:
+                pass
+        elif isinstance(args, dict) or args is None:
+            pass
+        else:
+            assert_never(args)
+
+        if part.provider_executed:
+            cls._load_native_tool_part(part, tool_name, args, context.builder)
+            return
+
+        provider_meta = load_provider_metadata(part.call_provider_metadata)
+        provider_name = provider_meta.get('provider_name')
+        tool_kind = _claimed_tool_kind(provider_meta)
+        context.builder.add(
+            ToolCallPart(
+                tool_name=tool_name,
+                tool_call_id=part.tool_call_id,
+                args=args,
+                id=provider_meta.get('id'),
+                provider_name=provider_name,
+                provider_details=provider_meta.get('provider_details'),
+                tool_kind=tool_kind,
+            )
+        )
+        restore_canonical_system(context.builder, provider_name, provider_meta.get('canonical_system'))
+
+        if part.state == 'output-available':
+            # A synthesized interrupted return dumps as neutral `output-available`
+            # with an `'interrupted'` outcome claim in the metadata channel; restore
+            # it so a round-trip doesn't upgrade the outcome to `'success'`. Every
+            # return keeps the call's `tool_kind`: one that isn't a success is never
+            # promoted to its typed subclass, so the kind can't pass for success.
+            interrupted = provider_meta.get('outcome') == 'interrupted'
+            context.pending_returns.append(
+                ToolReturnPart(
+                    tool_name=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    content=_validate_tool_output(part.output),
+                    outcome='interrupted' if interrupted else 'success',
+                    tool_kind=tool_kind,
+                )
+            )
+        elif part.state == 'output-error':
+            # `'failed'` and `'retried'` share `output-error`, so the outcome
+            # claim in the metadata channel is what tells a retry apart from a
+            # definitive failure; without it the return reloads as `'failed'`.
+            retried = provider_meta.get('outcome') == 'retried'
+            structured = provider_meta.get('content') if retried else None
+            context.pending_returns.append(
+                ToolReturnPart(
+                    tool_name=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    # `error_text` is the rendered string; a retry's validation errors
+                    # ride the metadata channel as the list they are, so the
+                    # provider is sent the same structure after a round-trip.
+                    content=_validate_tool_output(structured) if isinstance(structured, list) else part.error_text,
+                    outcome='retried' if retried else 'failed',
+                    retry=parse_tool_retry(provider_meta.get('retry')) if retried else None,
+                    tool_kind=tool_kind,
+                )
+            )
+        elif part.state == 'output-denied':
+            context.pending_returns.append(
+                ToolReturnPart(
+                    tool_name=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    content=_denial_reason(part),
+                    outcome='denied',
+                    tool_kind=tool_kind,
+                )
+            )
+
+    @classmethod
+    def _load_native_tool_part(
+        cls,
+        part: ToolUIPart | DynamicToolUIPart,
+        tool_name: str,
+        args: str | dict[str, Any] | None,
+        builder: MessagesBuilder,
+    ) -> None:
+        """Load a provider-executed tool part as a `NativeToolCallPart` and, with output, its `NativeToolReturnPart`."""
+        # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
+        # The call and return metadata are combined in the output part.
+        # So we extract and return them to the respective parts
+        provider_meta = load_provider_metadata(part.call_provider_metadata)
+        provider_name = provider_meta.get('provider_name')
+        provider_details = provider_meta.get('provider_details')
+        tool_kind = _claimed_tool_kind(provider_meta)
+        call_meta = return_meta = {}
+        has_tool_output = isinstance(
+            part,
+            (
+                ToolOutputAvailablePart,
+                ToolOutputErrorPart,
+                ToolOutputDeniedPart,
+                DynamicToolOutputAvailablePart,
+                DynamicToolOutputErrorPart,
+                DynamicToolOutputDeniedPart,
+            ),
+        )
+
+        if has_tool_output:
+            call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
+
+        # `tool_kind` comes from client-supplied metadata, so each claim is validated
+        # to a known `ToolPartKind` (else dropped) before being set on the base part;
+        # the final `narrow_message_parts` pass then promotes it best-effort. A claim
+        # whose data doesn't validate leaves a base part; only core's kinds are stripped.
+        call_provider_name = call_meta.get('provider_name') or provider_name
+        builder.add(
+            NativeToolCallPart(
+                tool_name=tool_name,
+                tool_call_id=part.tool_call_id,
+                args=args,
+                id=call_meta.get('id') or provider_meta.get('id'),
+                provider_name=call_provider_name,
+                provider_details=call_meta.get('provider_details') or provider_details,
+                tool_kind=_claimed_tool_kind(call_meta) or tool_kind,
+            )
+        )
+        restore_canonical_system(
+            builder,
+            call_provider_name,
+            call_meta.get('canonical_system') or provider_meta.get('canonical_system'),
+        )
+
+        if has_tool_output:
+            if isinstance(part, ToolOutputErrorPart | DynamicToolOutputErrorPart):
+                output: Any = part.error_text
+                outcome: Literal['success', 'failed', 'denied'] = 'failed'
+            elif isinstance(part, ToolOutputDeniedPart | DynamicToolOutputDeniedPart):
+                output = _denial_reason(part)
+                outcome = 'denied'
+            else:
+                raw_output = (
+                    part.output if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart) else None
+                )
+                output = _validate_tool_output(raw_output)
+                outcome = 'success'
+            builder.add(
+                NativeToolReturnPart(
+                    tool_name=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    content=output,
+                    provider_name=return_meta.get('provider_name') or provider_name,
+                    provider_details=return_meta.get('provider_details') or provider_details,
+                    outcome=outcome,
+                    # Kept on every outcome: a return that isn't a success is never
+                    # promoted to its typed subclass, so the kind can't pass for success.
+                    tool_kind=_claimed_tool_kind(return_meta) or tool_kind,
+                )
+            )
 
     @staticmethod
     def _dump_builtin_tool_meta(
@@ -899,61 +761,39 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         prompt precedes system-voice retry feedback load back the same way, so it re-sends the same bytes.
         """
         segments: list[tuple[Literal['system', 'user'], list[UIMessagePart]]] = []
-
-        def add(role: Literal['system', 'user'], *ui_parts: UIMessagePart) -> None:
-            if segments and segments[-1][0] == role:
-                segments[-1][1].extend(ui_parts)
-            elif ui_parts:
-                # A part that dumps to nothing, like an empty user prompt, opens no segment of its own.
-                segments.append((role, list(ui_parts)))
-
         seen_user_prompt = False
 
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart):
-                # A request-scoped prompt is for the model's current request only; loaded back, it would
-                # come back as a lasting system prompt.
-                if part.scope != 'request':
-                    add('system', TextUIPart(text=part.content, state='done'))
-            elif isinstance(part, UserPromptPart):
-                add('user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
-                seen_user_prompt = True
-            elif isinstance(part, ToolReturnPart | InstructionDeltaPart | InstructionBaselinePart):
-                # Tool returns are merged into the tool call in the assistant message, and operator
-                # instruction state stays in trusted server-side history.
-                pass
-            elif isinstance(part, ModelSettingsDeltaPart):
-                add('user', DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)))
-            elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart):
-                add('user', _delta_data_part(part))
-            # TODO(v3): remove `RetryPromptPart`
-            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
-                translated = (
-                    _translate_legacy_retry_part(part)
-                    if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    else part
-                )
-                if isinstance(translated, ToolReturnPart):
-                    # Tool-related retries are handled when processing ToolCallPart in ModelResponse
+            match part:
+                case SystemPromptPart():
+                    # A request-scoped prompt is for the model's current request only; loaded back, it would
+                    # come back as a lasting system prompt.
+                    if part.scope != 'request':
+                        _add_segment(segments, 'system', TextUIPart(text=part.content, state='done'))
+                case UserPromptPart():
+                    _add_segment(segments, 'user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
+                    seen_user_prompt = True
+                case ToolReturnPart() | InstructionDeltaPart() | InstructionBaselinePart():
+                    # Tool returns are merged into the tool call in the assistant message, and operator
+                    # instruction state stays in trusted server-side history.
                     pass
-                else:
-                    # Harness feedback dumps in the voice the model is shown it in, so a transcript
-                    # can't read it as something a person wrote
-                    # (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself rides in
-                    # `provider_metadata` either way, so the reload reconstructs it instead of the
-                    # plain part the rendered text alone would produce.
-                    feedback_ui_part = TextUIPart(
-                        text=translated.model_response(),
-                        state='done',
-                        provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
+                case ModelSettingsDeltaPart():
+                    _add_segment(
+                        segments,
+                        'user',
+                        DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)),
                     )
-                    add('system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part)
-            elif isinstance(part, CompactionPart):
-                add('user', DataUIPart(type=COMPACTION_DATA_TYPE, data=compaction_payload(part)))
-            elif isinstance(part, SpeechPart):  # pragma: no cover
-                pass  # Realtime audio parts are not rendered in the UI
-            else:
-                assert_never(part)
+                case ToolAvailabilityDeltaPart() | CapabilityLoadDeltaPart():
+                    _add_segment(segments, 'user', _delta_data_part(part))
+                # TODO(v3): remove `RetryPromptPart`
+                case RetryPromptPart() | RetryFeedbackPart():  # pyright: ignore[reportDeprecated]
+                    _add_retry_feedback(segments, part)
+                case CompactionPart():
+                    _add_segment(segments, 'user', DataUIPart(type=COMPACTION_DATA_TYPE, data=compaction_payload(part)))
+                case SpeechPart():  # pragma: no cover
+                    pass  # Realtime audio parts are not rendered in the UI
+                case _:
+                    assert_never(part)
 
         return segments
 
@@ -975,166 +815,177 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         }
 
         for part in msg.parts:
-            if isinstance(part, NativeToolReturnPart):
-                continue
-            elif isinstance(part, TextPart):
-                # Combine consecutive text parts
-                if ui_parts and isinstance(ui_parts[-1], TextUIPart):
-                    ui_parts[-1].text += part.content
-                    text_runs[len(ui_parts) - 1].append(part)
-                else:
-                    text_runs[len(ui_parts)] = [part]
-                    ui_parts.append(TextUIPart(text=part.content, state='done'))
-            elif isinstance(part, ThinkingPart):
-                provider_metadata = dump_provider_metadata(
-                    id=part.id,
-                    signature=part.signature,
-                    provider_name=part.provider_name,
-                    provider_details=part.provider_details,
-                    canonical_system=part_canonical_system(msg, part.provider_name),
-                )
-                ui_parts.append(ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
-            elif isinstance(part, FilePart):
-                ui_parts.append(
-                    FileUIPart(
-                        url=part.content.data_uri,
-                        media_type=part.content.media_type,
-                        provider_metadata=dump_provider_metadata(
-                            id=part.id,
-                            provider_name=part.provider_name,
-                            provider_details=part.provider_details,
-                            canonical_system=part_canonical_system(msg, part.provider_name),
-                            vendor_metadata=part.content.vendor_metadata,
-                        ),
-                    )
-                )
-            elif isinstance(part, NativeToolCallPart):
-                tool_name = f'tool-{part.tool_name}'
-                if builtin_return := local_builtin_returns.get(part.tool_call_id):
-                    # Builtin tool calls are represented by two parts in pydantic_ai:
-                    #   1. NativeToolCallPart (the tool request) -> part
-                    #   2. NativeToolReturnPart (the tool's output) -> builtin_return
-                    # The Vercel AI SDK only has a single ToolOutputPart (ToolOutputAvailablePart or ToolOutputErrorPart).
-                    # So, we need to combine the metadata so that when we later convert back from Vercel AI to pydantic_ai,
-                    # we can properly reconstruct both the call and return parts with their respective metadata.
-                    # Note: This extra metadata handling is only needed for built-in tools, since normal tool returns
-                    # (ToolReturnPart) do not include provider metadata.
-
-                    call_meta = dump_provider_metadata(
-                        wrapper_key=None,
+            match part:
+                case NativeToolReturnPart():
+                    continue
+                case TextPart():
+                    # Combine consecutive text parts
+                    if ui_parts and isinstance(ui_parts[-1], TextUIPart):
+                        ui_parts[-1].text += part.content
+                        text_runs[len(ui_parts) - 1].append(part)
+                    else:
+                        text_runs[len(ui_parts)] = [part]
+                        ui_parts.append(TextUIPart(text=part.content, state='done'))
+                case ThinkingPart():
+                    provider_metadata = dump_provider_metadata(
                         id=part.id,
+                        signature=part.signature,
                         provider_name=part.provider_name,
                         provider_details=part.provider_details,
                         canonical_system=part_canonical_system(msg, part.provider_name),
-                        tool_kind=part.tool_kind,
                     )
-                    return_meta = dump_provider_metadata(
-                        wrapper_key=None,
-                        provider_name=builtin_return.provider_name,
-                        provider_details=builtin_return.provider_details,
-                        tool_kind=builtin_return.tool_kind,
+                    ui_parts.append(
+                        ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata)
                     )
-                    combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
-
-                    if builtin_return.outcome == 'denied':
-                        ui_parts.append(
-                            ToolOutputDeniedPart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                provider_executed=True,
-                                call_provider_metadata=combined_provider_meta,
-                                approval=ToolApprovalResponded(
-                                    id=str(uuid.uuid4()),
-                                    approved=False,
-                                    reason=builtin_return.model_response_str(wrap_if_error=False),
-                                ),
-                            )
+                case FilePart():
+                    ui_parts.append(
+                        FileUIPart(
+                            url=part.content.data_uri,
+                            media_type=part.content.media_type,
+                            provider_metadata=dump_provider_metadata(
+                                id=part.id,
+                                provider_name=part.provider_name,
+                                provider_details=part.provider_details,
+                                canonical_system=part_canonical_system(msg, part.provider_name),
+                                vendor_metadata=part.content.vendor_metadata,
+                            ),
                         )
-                    elif (
-                        builtin_return.outcome in ERROR_OUTCOMES
-                        or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
-                    ):
-                        response_obj = builtin_return.model_response_object(wrap_if_error=False)
-                        error_text = response_obj.get(
-                            'error_text', builtin_return.model_response_str(wrap_if_error=False)
-                        )
-                        ui_parts.append(
-                            ToolOutputErrorPart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                error_text=error_text,
-                                provider_executed=True,
-                                call_provider_metadata=combined_provider_meta,
-                            )
-                        )
-                    else:
-                        # `'success'` and `'interrupted'` both render as neutral tool output; only
-                        # the error outcomes are errors, so `'interrupted'` is never surfaced as one.
-                        ui_parts.append(
-                            ToolOutputAvailablePart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                output=tool_return_output(builtin_return),
-                                provider_executed=True,
-                                call_provider_metadata=combined_provider_meta,
-                            )
-                        )
-                else:
-                    call_provider_metadata = dump_provider_metadata(
-                        id=part.id,
-                        provider_name=part.provider_name,
-                        provider_details=part.provider_details,
-                        canonical_system=part_canonical_system(msg, part.provider_name),
-                        tool_kind=part.tool_kind,
                     )
-                    # No result found → the tool call is deferred (awaiting approval or external result).
-                    # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
-                    # On v5, fall back to `input-available` since approval states are v6-only.
-                    # `approval.id` is not used for matching (tool_call_id is the match key),
-                    # so we use tool_call_id for a stable, deterministic value in dump output.
-                    if sdk_version >= 6:
-                        ui_parts.append(
-                            ToolApprovalRequestedPart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                provider_executed=True,
-                                call_provider_metadata=call_provider_metadata,
-                                approval=ToolApprovalRequested(id=part.tool_call_id),
-                            )
+                case NativeToolCallPart():
+                    ui_parts.append(
+                        cls._dump_native_tool_call_part(
+                            part,
+                            local_builtin_returns.get(part.tool_call_id),
+                            sdk_version,
+                            part_canonical_system(msg, part.provider_name),
                         )
-                    else:
-                        ui_parts.append(
-                            ToolInputAvailablePart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                provider_executed=True,
-                                call_provider_metadata=call_provider_metadata,
-                            )
+                    )
+                case ToolCallPart():
+                    ui_parts.extend(
+                        cls._dump_tool_call_part(
+                            part, tool_results, sdk_version, part_canonical_system(msg, part.provider_name)
                         )
-            elif isinstance(part, ToolCallPart):
-                ui_parts.extend(
-                    cls._dump_tool_call_part(
-                        part, tool_results, sdk_version, part_canonical_system(msg, part.provider_name)
                     )
-                )
-            elif isinstance(part, CompactionPart):
-                ui_parts.append(
-                    DataUIPart(
-                        type=COMPACTION_DATA_TYPE,
-                        data=compaction_payload(part, canonical_system=part_canonical_system(msg, part.provider_name)),
+                case CompactionPart():
+                    ui_parts.append(
+                        DataUIPart(
+                            type=COMPACTION_DATA_TYPE,
+                            data=compaction_payload(
+                                part, canonical_system=part_canonical_system(msg, part.provider_name)
+                            ),
+                        )
                     )
-                )
-            elif isinstance(part, SpeechPart):  # pragma: no cover
-                pass  # Realtime audio parts are not rendered in the UI
-            else:
-                assert_never(part)
+                case SpeechPart():  # pragma: no cover
+                    pass  # Realtime audio parts are not rendered in the UI
+                case _:
+                    assert_never(part)
 
         return _with_text_citations(ui_parts, text_runs, msg)
+
+    @classmethod
+    def _dump_native_tool_call_part(
+        cls,
+        part: NativeToolCallPart,
+        builtin_return: NativeToolReturnPart | None,
+        sdk_version: Literal[5, 6, 7],
+        canonical_system: str | None,
+    ) -> UIMessagePart:
+        """Convert a NativeToolCallPart (with its return from the same response, if any) into a UIMessagePart."""
+        tool_name = f'tool-{part.tool_name}'
+        if builtin_return:
+            # Builtin tool calls are represented by two parts in pydantic_ai:
+            #   1. NativeToolCallPart (the tool request) -> part
+            #   2. NativeToolReturnPart (the tool's output) -> builtin_return
+            # The Vercel AI SDK only has a single ToolOutputPart (ToolOutputAvailablePart or ToolOutputErrorPart).
+            # So, we need to combine the metadata so that when we later convert back from Vercel AI to pydantic_ai,
+            # we can properly reconstruct both the call and return parts with their respective metadata.
+            # Note: This extra metadata handling is only needed for built-in tools, since normal tool returns
+            # (ToolReturnPart) do not include provider metadata.
+
+            call_meta = dump_provider_metadata(
+                wrapper_key=None,
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                canonical_system=canonical_system,
+                tool_kind=part.tool_kind,
+            )
+            return_meta = dump_provider_metadata(
+                wrapper_key=None,
+                provider_name=builtin_return.provider_name,
+                provider_details=builtin_return.provider_details,
+                tool_kind=builtin_return.tool_kind,
+            )
+            combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
+
+            if builtin_return.outcome == 'denied':
+                return ToolOutputDeniedPart(
+                    type=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    input=part.args_as_dict(),
+                    provider_executed=True,
+                    call_provider_metadata=combined_provider_meta,
+                    approval=ToolApprovalResponded(
+                        id=str(uuid.uuid4()),
+                        approved=False,
+                        reason=builtin_return.model_response_str(wrap_if_error=False),
+                    ),
+                )
+            elif (
+                builtin_return.outcome in ERROR_OUTCOMES
+                or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
+            ):
+                response_obj = builtin_return.model_response_object(wrap_if_error=False)
+                error_text = response_obj.get('error_text', builtin_return.model_response_str(wrap_if_error=False))
+                return ToolOutputErrorPart(
+                    type=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    input=part.args_as_dict(),
+                    error_text=error_text,
+                    provider_executed=True,
+                    call_provider_metadata=combined_provider_meta,
+                )
+            else:
+                # `'success'` and `'interrupted'` both render as neutral tool output; only
+                # the error outcomes are errors, so `'interrupted'` is never surfaced as one.
+                return ToolOutputAvailablePart(
+                    type=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    input=part.args_as_dict(),
+                    output=tool_return_output(builtin_return),
+                    provider_executed=True,
+                    call_provider_metadata=combined_provider_meta,
+                )
+        else:
+            call_provider_metadata = dump_provider_metadata(
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                canonical_system=canonical_system,
+                tool_kind=part.tool_kind,
+            )
+            # No result found → the tool call is deferred (awaiting approval or external result).
+            # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
+            # On v5, fall back to `input-available` since approval states are v6-only.
+            # `approval.id` is not used for matching (tool_call_id is the match key),
+            # so we use tool_call_id for a stable, deterministic value in dump output.
+            if sdk_version >= 6:
+                return ToolApprovalRequestedPart(
+                    type=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    input=part.args_as_dict(),
+                    provider_executed=True,
+                    call_provider_metadata=call_provider_metadata,
+                    approval=ToolApprovalRequested(id=part.tool_call_id),
+                )
+            else:
+                return ToolInputAvailablePart(
+                    type=tool_name,
+                    tool_call_id=part.tool_call_id,
+                    input=part.args_as_dict(),
+                    provider_executed=True,
+                    call_provider_metadata=call_provider_metadata,
+                )
 
     @staticmethod
     def _dump_tool_call_part(
@@ -1318,63 +1169,60 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
-        tool_results: dict[str, ToolReturnPart] = {}
-
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        tool_results[part.tool_call_id] = part
-                    # TODO(v3): remove `RetryPromptPart`
-                    elif isinstance(part, RetryPromptPart) and isinstance(  # pyright: ignore[reportDeprecated]
-                        translated := _translate_legacy_retry_part(part), ToolReturnPart
-                    ):
-                        tool_results[part.tool_call_id] = translated
-
+        tool_results = _collect_tool_results(messages)
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
-        message_index = 0
 
         for msg in messages:
-            if isinstance(msg, ModelRequest):
-                segments = cls._dump_request_message(msg)
-                # Metadata goes on one UIMessage of a split request, so reload applies it once to the
-                # merged ModelRequest: the last user one, which a frontend that drops system messages
-                # still keeps, or the last one when there is no user message.
-                request_metadata = dump_message_metadata(msg)
-                user_positions = [position for position, (role, _) in enumerate(segments) if role == 'user']
-                metadata_position = user_positions[-1] if user_positions else len(segments) - 1
-                for position, (role, ui_parts) in enumerate(segments):
-                    if generate_message_id is None and position < len(segments) - 1:
-                        # `load_messages` kept the id of the last UIMessage merged into the request, so it
-                        # goes back on the last one dumped from it. The others need ids of their own.
-                        message_id = _generate_fresh_message_id(msg, role, message_index)
-                    else:
-                        message_id = id_generator(msg, role, message_index)
-                    ui_message = UIMessage(id=message_id, role=role, parts=ui_parts)
-                    if request_metadata and position == metadata_position:
-                        ui_message.metadata = request_metadata
-                    result.append(ui_message)
-                    message_index += 1
-
-            elif isinstance(  # pragma: no branch
-                msg, ModelResponse
-            ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
-                if ui_parts:  # pragma: no branch
-                    result.append(
-                        UIMessage(
-                            id=id_generator(msg, 'assistant', message_index),
-                            role='assistant',
-                            metadata=dump_message_metadata(msg),
-                            parts=ui_parts,
+            match msg:
+                case ModelRequest():
+                    result.extend(cls._dump_request_ui_messages(msg, len(result), generate_message_id, id_generator))
+                case ModelResponse():
+                    ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
+                    if ui_parts:  # pragma: no branch
+                        result.append(
+                            UIMessage(
+                                id=id_generator(msg, 'assistant', len(result)),
+                                role='assistant',
+                                metadata=dump_message_metadata(msg),
+                                parts=ui_parts,
+                            )
                         )
-                    )
-                    message_index += 1
-            else:
-                assert_never(msg)
+                case _:
+                    assert_never(msg)
 
         return result
+
+    @classmethod
+    def _dump_request_ui_messages(
+        cls,
+        msg: ModelRequest,
+        message_index: int,
+        generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
+        | None,
+        id_generator: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str],
+    ) -> list[UIMessage]:
+        """Convert a ModelRequest into its UIMessages, the first of them at `message_index`."""
+        segments = cls._dump_request_message(msg)
+        # Metadata goes on one UIMessage of a split request, so reload applies it once to the
+        # merged ModelRequest: the last user one, which a frontend that drops system messages
+        # still keeps, or the last one when there is no user message.
+        request_metadata = dump_message_metadata(msg)
+        user_positions = [position for position, (role, _) in enumerate(segments) if role == 'user']
+        metadata_position = user_positions[-1] if user_positions else len(segments) - 1
+        ui_messages: list[UIMessage] = []
+        for position, (role, ui_parts) in enumerate(segments):
+            if generate_message_id is None and position < len(segments) - 1:
+                # `load_messages` kept the id of the last UIMessage merged into the request, so it
+                # goes back on the last one dumped from it. The others need ids of their own.
+                message_id = _generate_fresh_message_id(msg, role, message_index + position)
+            else:
+                message_id = id_generator(msg, role, message_index + position)
+            ui_message = UIMessage(id=message_id, role=role, parts=ui_parts)
+            if request_metadata and position == metadata_position:
+                ui_message.metadata = request_metadata
+            ui_messages.append(ui_message)
+        return ui_messages
 
 
 def _with_text_citations(
@@ -1398,6 +1246,64 @@ def _with_text_citations(
     return result
 
 
+def _collect_tool_results(messages: Sequence[ModelMessage]) -> dict[str, ToolReturnPart]:
+    """The tool returns in the requests of `messages` by tool call ID, for `dump_messages` to merge into their calls."""
+    tool_results: dict[str, ToolReturnPart] = {}
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_results[part.tool_call_id] = part
+                # TODO(v3): remove `RetryPromptPart`
+                elif isinstance(part, RetryPromptPart) and isinstance(  # pyright: ignore[reportDeprecated]
+                    translated := _translate_legacy_retry_part(part), ToolReturnPart
+                ):
+                    tool_results[part.tool_call_id] = translated
+    return tool_results
+
+
+def _add_segment(
+    segments: list[tuple[Literal['system', 'user'], list[UIMessagePart]]],
+    role: Literal['system', 'user'],
+    *ui_parts: UIMessagePart,
+) -> None:
+    """Add `ui_parts` to the last of a request's UI message segments when it has `role`, else to a new one."""
+    if segments and segments[-1][0] == role:
+        segments[-1][1].extend(ui_parts)
+    elif ui_parts:
+        # A part that dumps to nothing, like an empty user prompt, opens no segment of its own.
+        segments.append((role, list(ui_parts)))
+
+
+def _add_retry_feedback(
+    segments: list[tuple[Literal['system', 'user'], list[UIMessagePart]]],
+    part: RetryPromptPart | RetryFeedbackPart,  # pyright: ignore[reportDeprecated]
+) -> None:
+    """Add the UI text part retry feedback in a request dumps to, unless it belongs to a tool call."""
+    translated = (
+        _translate_legacy_retry_part(part)
+        if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        else part
+    )
+    if isinstance(translated, ToolReturnPart):
+        # Tool-related retries are handled when processing ToolCallPart in ModelResponse
+        pass
+    else:
+        # Harness feedback dumps in the voice the model is shown it in, so a transcript
+        # can't read it as something a person wrote
+        # (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself rides in
+        # `provider_metadata` either way, so the reload reconstructs it instead of the
+        # plain part the rendered text alone would produce.
+        feedback_ui_part = TextUIPart(
+            text=translated.model_response(),
+            state='done',
+            provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
+        )
+        _add_segment(
+            segments, 'system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part
+        )
+
+
 def _convert_user_prompt_part(
     part: UserPromptPart, *, starts_new_prompt: bool = False
 ) -> list[TextUIPart | FileUIPart]:
@@ -1412,69 +1318,70 @@ def _convert_user_prompt_part(
         ui_parts.append(TextUIPart(text=part.content, state='done'))
     else:
         for item in part.content:
-            if isinstance(item, str):
-                ui_parts.append(TextUIPart(text=item, state='done'))
-            elif isinstance(item, StructuredContent):
-                # A text part the frontend shows like any user text, with the value in its metadata. The payload
-                # is a JSON string, which the AI SDK passes through untouched: as a JavaScript object, a value like
-                # `949.0` would come back as `949`.
-                ui_parts.append(
-                    TextUIPart(
-                        text=item.content,
-                        state='done',
-                        provider_metadata=dump_provider_metadata(
-                            structured_content=json.dumps(structured_content_payload(item))
-                        ),
+            match item:
+                case str():
+                    ui_parts.append(TextUIPart(text=item, state='done'))
+                case StructuredContent():
+                    # A text part the frontend shows like any user text, with the value in its metadata. The payload
+                    # is a JSON string, which the AI SDK passes through untouched: as a JavaScript object, a value like
+                    # `949.0` would come back as `949`.
+                    ui_parts.append(
+                        TextUIPart(
+                            text=item.content,
+                            state='done',
+                            provider_metadata=dump_provider_metadata(
+                                structured_content=json.dumps(structured_content_payload(item))
+                            ),
+                        )
                     )
-                )
-            elif isinstance(item, TextContent):
-                ui_parts.append(TextUIPart(text=item.content, state='done'))
-            elif isinstance(item, BinaryContent):
-                ui_parts.append(
-                    FileUIPart(
-                        url=item.data_uri,
-                        media_type=item.media_type,
-                        # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
-                        # Google `video_metadata`); see `BinaryContent.vendor_metadata`.
-                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                case TextContent():
+                    ui_parts.append(TextUIPart(text=item.content, state='done'))
+                case BinaryContent():
+                    ui_parts.append(
+                        FileUIPart(
+                            url=item.data_uri,
+                            media_type=item.media_type,
+                            # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
+                            # Google `video_metadata`); see `BinaryContent.vendor_metadata`.
+                            provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                        )
                     )
-                )
-            elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
-                try:
-                    media_type = item.media_type
-                except ValueError:
-                    media_type = ''
-                ui_parts.append(
-                    FileUIPart(
-                        url=item.url,
-                        media_type=media_type,
-                        # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
-                        # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
-                        # `kind` only for a URL we could not read a media type out of: the media type
-                        # is what the kind is normally recovered from, and `''` recovers nothing.
-                        provider_metadata=dump_provider_metadata(
-                            force_download=item.force_download or None,
-                            vendor_metadata=item.vendor_metadata,
-                            kind=None if media_type else item.kind,
-                        ),
+                case ImageUrl() | AudioUrl() | VideoUrl() | DocumentUrl():
+                    try:
+                        media_type = item.media_type
+                    except ValueError:
+                        media_type = ''
+                    ui_parts.append(
+                        FileUIPart(
+                            url=item.url,
+                            media_type=media_type,
+                            # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
+                            # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
+                            # `kind` only for a URL we could not read a media type out of: the media type
+                            # is what the kind is normally recovered from, and `''` recovers nothing.
+                            provider_metadata=dump_provider_metadata(
+                                force_download=item.force_download or None,
+                                vendor_metadata=item.vendor_metadata,
+                                kind=None if media_type else item.kind,
+                            ),
+                        )
                     )
-                )
-            elif isinstance(item, UploadedFile):
-                # Store uploaded file info in provider_metadata for round-trip support
-                provider_metadata = dump_provider_metadata(
-                    file_id=item.file_id,
-                    provider_name=item.provider_name,
-                    vendor_metadata=item.vendor_metadata,
-                    identifier=item._identifier,  # pyright: ignore[reportPrivateUsage]
-                )
-                ui_parts.append(
-                    FileUIPart(url=item.file_id, media_type=item.media_type, provider_metadata=provider_metadata)
-                )
-            elif isinstance(item, CachePoint):
-                # CachePoint is metadata for prompt caching, skip for UI conversion
-                pass
-            else:
-                assert_never(item)
+                case UploadedFile():
+                    # Store uploaded file info in provider_metadata for round-trip support
+                    provider_metadata = dump_provider_metadata(
+                        file_id=item.file_id,
+                        provider_name=item.provider_name,
+                        vendor_metadata=item.vendor_metadata,
+                        identifier=item._identifier,  # pyright: ignore[reportPrivateUsage]
+                    )
+                    ui_parts.append(
+                        FileUIPart(url=item.file_id, media_type=item.media_type, provider_metadata=provider_metadata)
+                    )
+                case CachePoint():
+                    # CachePoint is metadata for prompt caching, skip for UI conversion
+                    pass
+                case _:
+                    assert_never(item)
 
     if starts_new_prompt and ui_parts:
         first = ui_parts[0]
@@ -1492,6 +1399,203 @@ def _user_prompt_part(content: list[UserContent]) -> UserPromptPart:
     if len(content) == 1 and isinstance(content[0], str):
         return UserPromptPart(content=content[0])
     return UserPromptPart(content=content)
+
+
+def _load_system_message(builder: MessagesBuilder, msg: UIMessage) -> None:
+    """Load a system `UIMessage` into `builder`."""
+    for part in msg.parts:
+        if isinstance(part, TextUIPart):
+            # A system part only reloads as harness retry feedback when it carries the
+            # marker this adapter dumped it with; a client-authored system message has
+            # no such payload and stays a plain `SystemPromptPart`, so it can never gain
+            # harness provenance. See `retry_feedback_from_payload`.
+            feedback = retry_feedback_from_payload(load_provider_metadata(part.provider_metadata).get('retry_feedback'))
+            builder.add(feedback if feedback is not None else SystemPromptPart(content=part.text))
+        else:  # pragma: no cover
+            raise ValueError(f'Unsupported system message part type: {type(part)}')
+
+
+def _load_user_message(builder: MessagesBuilder, msg: UIMessage) -> None:
+    """Load a user `UIMessage` into `builder`, one `UserPromptPart` per prompt, with the records between them."""
+    user_prompt_content: list[UserContent] = []
+
+    for part in msg.parts:
+        if (
+            isinstance(part, TextUIPart | FileUIPart)
+            and user_prompt_content
+            and load_provider_metadata(part.provider_metadata).get(_USER_PROMPT_START_KEY)
+        ):
+            # `dump_messages` marks where each of a request's later prompts begins.
+            _flush_user_prompt(builder, user_prompt_content)
+
+        match part:
+            case TextUIPart():
+                # A user part reloads as harness retry feedback only when it carries the
+                # marker this adapter dumped it with; text a person wrote has no such payload
+                # and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
+                provider_meta = load_provider_metadata(part.provider_metadata)
+                feedback = retry_feedback_from_payload(provider_meta.get('retry_feedback'))
+                structured = provider_meta.get('structured_content')
+                if feedback is not None:
+                    _flush_user_prompt(builder, user_prompt_content)
+                    builder.add(feedback)
+                else:
+                    user_prompt_content.append(
+                        part.text
+                        if structured is None
+                        else structured_content_from_payload(_parse_json(structured), part.text)
+                    )
+            case FileUIPart():
+                user_prompt_content.append(_load_user_file(part))
+            case DataUIPart():
+                _load_user_data_part(builder, part, user_prompt_content)
+            case _:  # pragma: no cover
+                raise ValueError(f'Unsupported user message part type: {type(part)}')
+
+    _flush_user_prompt(builder, user_prompt_content)
+
+
+def _flush_user_prompt(builder: MessagesBuilder, content: list[UserContent]) -> None:
+    """Close off the user content accumulated so far, ahead of whatever follows it."""
+    if not content:
+        return
+    builder.add(_user_prompt_part([*content]))
+    content.clear()
+
+
+def _load_user_file(part: FileUIPart) -> MultiModalContent:
+    """The file a user `FileUIPart` holds: inline data, an uploaded file, or a URL."""
+    provider_meta = load_provider_metadata(part.provider_metadata)
+    # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
+    # already does — see https://github.com/pydantic/pydantic-ai/issues/5571 and
+    # https://github.com/pydantic/pydantic-ai/issues/5772): it carries only the requester's own
+    # request params and is dict-validated by the constructors below.
+    vendor_metadata = provider_meta.get('vendor_metadata')
+    force_download = provider_meta.get('force_download', False)
+    try:
+        file = BinaryContent.from_data_uri(part.url)
+    except ValueError:
+        # Check provider_metadata for UploadedFile data
+        uploaded_file_id = provider_meta.get('file_id')
+        uploaded_file_provider = provider_meta.get('provider_name')
+        if uploaded_file_id and uploaded_file_provider:
+            file = UploadedFile(
+                file_id=uploaded_file_id,
+                provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
+                media_type=part.media_type,
+                vendor_metadata=vendor_metadata,
+                identifier=provider_meta.get('identifier'),
+            )
+        else:
+            if part.media_type:
+                url_type = _MEDIA_PREFIX_TO_URL_TYPE.get(part.media_type.split('/', 1)[0], DocumentUrl)
+            else:
+                # A URL Pydantic AI could not read a media type out of, dumped with an
+                # empty one: recover the kind from the metadata written alongside it,
+                # rather than letting the empty media prefix make everything a document.
+                # `provider_metadata` is the client's to send, so normalize before the
+                # lookup, which falls back to a document on anything we didn't write.
+                url_type = _KIND_TO_URL_TYPE.get(str(provider_meta.get('kind')), DocumentUrl)
+            file = url_type(
+                url=part.url,
+                media_type=part.media_type,
+                force_download=force_download,
+                vendor_metadata=vendor_metadata,
+            )
+    else:
+        # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
+        # Reconstruct through the constructor so a malformed client value is rejected
+        # here (matching the URL constructor path) instead of being stored unvalidated
+        # and crashing a provider model later. Re-narrow afterwards so an image
+        # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
+        # plain `BinaryContent`.
+        if vendor_metadata is not None:
+            file = BinaryContent.narrow_type(
+                BinaryContent(
+                    data=file.data,
+                    media_type=file.media_type,
+                    identifier=file.identifier,
+                    vendor_metadata=vendor_metadata,
+                )
+            )
+    return file
+
+
+def _load_user_data_part(builder: MessagesBuilder, part: DataUIPart, content: list[UserContent]) -> None:
+    """Load a data part of a user `UIMessage`, closing off the user content before a record that follows it."""
+    if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
+        builder.add(tool_availability_delta_from_payload(part.data))
+    elif (
+        part.type == CAPABILITY_LOAD_DELTA_DATA_TYPE
+        and _is_str_dict(part.data)
+        and (load_part := capability_load_delta_from_payload(part.data)) is not None
+    ):
+        builder.add(load_part)
+    elif (
+        part.type == COMPACTION_DATA_TYPE
+        and _is_str_dict(part.data)
+        and (compaction_part := compaction_part_from_payload(part.data)) is not None
+        and is_request_compaction_part(compaction_part)
+    ):
+        # A summary the application wrote: it keeps its place among the prompts around it.
+        _flush_user_prompt(builder, content)
+        builder.add(compaction_part)
+    elif (
+        part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
+        and _is_str_dict(part.data)
+        and (effort_part := model_settings_delta_from_payload(part.data)) is not None
+    ):
+        # After the prompt it was recorded behind, as in the server-side history.
+        _flush_user_prompt(builder, content)
+        builder.add(effort_part)
+
+
+@dataclass
+class _AssistantLoadContext:
+    """What `VercelAIAdapter._load_assistant_message` carries from one part of an assistant `UIMessage` to the next."""
+
+    builder: MessagesBuilder
+    enqueued: list[ModelMessage]
+    has_steps: bool
+    pending_returns: list[
+        ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
+    ] = field(
+        default_factory=list[
+            ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
+        ]
+    )
+    # Enqueued messages were delivered after the step's tool returns, so they wait with them.
+    pending_enqueued: list[ModelMessage] = field(default_factory=list[ModelMessage])
+
+
+def _flush_step_returns(context: _AssistantLoadContext) -> None:
+    """Add the step's held-back tool returns, then the messages enqueued into the step."""
+    for return_part in context.pending_returns:
+        context.builder.add(return_part)
+    # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
+    context.builder._append_whole(context.pending_enqueued)  # pyright: ignore[reportPrivateUsage]
+    context.pending_returns = []
+    context.pending_enqueued = []
+
+
+def _place_model_settings_delta(context: _AssistantLoadContext, part: ModelSettingsDeltaPart) -> None:
+    """Add a model settings delta from an assistant `UIMessage` to the request that records it."""
+    # Streamed at the start of the model request that records it, so the AI SDK
+    # attaches it to the assistant message. It belongs at the end of that request, after
+    # everything delivered into it: after the messages enqueued into the step if there are
+    # any, otherwise after the step's held-back tool returns, or on the request already open.
+    if context.pending_enqueued:
+        context.pending_enqueued.append(ModelRequest(parts=[part]))
+    elif context.pending_returns:
+        context.pending_returns.append(part)
+    else:
+        context.builder.add(part)
+
+
+def _claimed_tool_kind(metadata: Mapping[str, object]) -> ToolPartKind | None:
+    """The `tool_kind` client-echoed metadata claims, if it's the id of a defined kind."""
+    raw_tool_kind = metadata.get('tool_kind')
+    return parse_tool_kind(raw_tool_kind) if isinstance(raw_tool_kind, str) else None
 
 
 def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
