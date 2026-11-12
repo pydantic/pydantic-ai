@@ -61,7 +61,7 @@ _DECODERS: dict[str, _Decoder] = {
 
 
 def _create_schema(connection: sqlite3.Connection) -> _Decoder:
-    """Create the tables, adding the `memory_files` columns that earlier releases' databases lack."""
+    """Create the tables, migrate earlier releases' `memory_files` columns, and return the database encoding decoder."""
     connection.execute('BEGIN IMMEDIATE')
     connection.execute(_SQLITE_MEMORY_SCHEMA)
     columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
@@ -173,6 +173,10 @@ class SqliteMemoryStore:
         assert row is not None
         return int(row[0])
 
+    def _decode_prefix(self, blob: bytes, max_chars: int) -> tuple[str, bool]:
+        content = self._decode(blob, 'strict', False)[0]
+        return content[:max_chars], len(content) > max_chars
+
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
         validate_store_path(path)
         if max_chars <= 0:
@@ -188,12 +192,12 @@ class SqliteMemoryStore:
             ).fetchone()
             if row is None:
                 return None
-            content = self._decode(row[0] or b'', 'strict', False)[0]
+            content, truncated = self._decode_prefix(row[0], max_chars)
             return MemoryFile(
-                content=content[:max_chars],
+                content=content,
                 version=str(row[1]),
                 operation_id=str(row[2]) if row[2] is not None else None,
-                truncated=len(content) > max_chars,
+                truncated=truncated,
                 metadata=decode_metadata(row[3]),
             )
 
@@ -355,11 +359,7 @@ class SqliteMemoryStore:
                 'ORDER BY path LIMIT ?',
                 (max_file_chars, prefix, _prefix_end(prefix), prefix, '/', max_files + 1),
             ).fetchall()
-            files: list[tuple[str, str, bool]] = []
-            for row in rows:
-                content = self._decode(row[1] or b'', 'strict', False)[0]
-                files.append((str(row[0]), content[:max_file_chars], len(content) > max_file_chars))
-            return files
+            return [(str(row[0]), *self._decode_prefix(row[1], max_file_chars)) for row in rows]
 
         rows = await anyio.to_thread.run_sync(self._run, op)
         result = await lexical_search(
