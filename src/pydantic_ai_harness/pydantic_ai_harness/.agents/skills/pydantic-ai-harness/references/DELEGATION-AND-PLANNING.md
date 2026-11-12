@@ -366,7 +366,9 @@ Gotchas:
   `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
   `max_uses`. A parent `count_tokens_before_request=True` is kept on an advisor model that implements
-  `count_tokens` and dropped (limits checked after the response) on one that does not.
+  `count_tokens` and dropped (limits checked after the response) on one that does not, unless a
+  request was counted in the shared `usage` since the consultation started, in which case the error
+  propagates.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
 - Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
