@@ -9,6 +9,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
     HandleDeferredToolCalls,
+    RequestInput,
     WrapperCapability,
 )
 from pydantic_ai.exceptions import UserError
@@ -52,7 +53,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         """After every handler that may ask the user."""
-        return CapabilityOrdering(position='innermost', wrapped_by=[HandleDeferredToolCalls])
+        return CapabilityOrdering(position='innermost', wrapped_by=[HandleDeferredToolCalls, RequestInput])
 
     async def handle_deferred_tool_calls(
         self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests

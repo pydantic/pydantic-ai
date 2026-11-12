@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import RequestInput
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
@@ -52,6 +53,22 @@ async def test_deny_unanswered_answers_approval_required_tool_in_run(message: st
     assert result.output == 'done'
     assert ran == []
     assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [('danger', expected)]
+
+
+async def test_request_input_listed_after_still_asks_first():
+    """`DenyUnanswered` runs after `RequestInput` whatever the list order, so a present person still answers."""
+    ran: list[int] = []
+    asked: list[str] = []
+
+    def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+        asked.extend(call.tool_call_id for call in requests.approvals)
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = _approval_agent(ran, deny=False)
+    result = await agent.run('do it', capabilities=[DenyUnanswered(), RequestInput(ask)])
+    assert result.output == 'done'
+    assert asked == ['c1']
+    assert ran == [1]
 
 
 @pytest.mark.parametrize(
