@@ -156,7 +156,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   then its events are sent to you.
 - The waits between checks of a background response or a [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution) batch are
   pgtask sleeps: the task is suspended until a wait is over, so no worker holds it while a batch is
-  processed, and the run pgtask wakes it for passes the waits it already did.
+  processed. When pgtask wakes the task, its run passes the waits it already did straight away.
 
 ## Running tools at the same time
 

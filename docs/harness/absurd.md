@@ -129,7 +129,7 @@ These are not checkpointed and run again on replay:
   final response is replayed to the caller, one event per part.
 - The waits between checks of a background response or a [`BatchModelRequests`](../batch.md#durable-execution) batch are
   Absurd sleeps: the task is suspended until a wait is over, so no worker holds it while a batch is
-  processed, and the run Absurd wakes it for passes the waits it already did.
+  processed. When Absurd wakes the task, its run passes the waits it already did straight away.
 
 ## Parallel execution
 

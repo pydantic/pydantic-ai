@@ -825,12 +825,12 @@ class TestDurableSleep:
     async def test_wait_suspends_the_task_and_recovery_does_not_wait_again(
         self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The wait between polls of a background job is an Absurd sleep, which suspends the task and keeps the job.
+        """Each wait between polls of a background job is an Absurd sleep, which suspends the task and keeps the job.
 
-        Once Absurd's clock has passed the wake time, the woken run replays the request from its checkpoint, passes the
-        recorded sleep straight away, and continues the same job.
+        Once Absurd's clock has passed the wake time, the woken run replays the requests from their checkpoints, passes
+        the recorded sleeps straight away, and continues the same job, until it's ready.
         """
-        model = BackgroundJobModel(delay=60)
+        model = BackgroundJobModel(delay=60, checks=2)
         agent = Agent(model, name='a', capabilities=[AbsurdDurability()])
 
         async with running_task_context(absurd) as ctx:
@@ -842,8 +842,27 @@ class TestDurableSleep:
         later = datetime.now(UTC) + timedelta(hours=1)
         monkeypatch.setattr(absurd_sdk, '_get_current_time', lambda: later)
         async with wake_sleeping_task(absurd, ctx.task_id, later):
+            with pytest.raises(SuspendTask):
+                await agent.run('go')
+        assert list(await checkpoints(absurd, ctx.task_id)) == [
+            'a__model.request',
+            'a__sleep',
+            'a__model.request#2',
+            'a__sleep#2',
+        ]
+        assert (model.requests, model.cancelled) == (2, [])
+
+        latest = later + timedelta(hours=1)
+        monkeypatch.setattr(absurd_sdk, '_get_current_time', lambda: latest)
+        async with wake_sleeping_task(absurd, ctx.task_id, latest):
             result = await agent.run('go')
 
         assert result.output == 'ready'
-        assert (model.requests, model.cancelled) == (2, [])
-        assert list(await checkpoints(absurd, ctx.task_id)) == ['a__model.request', 'a__sleep', 'a__model.request#2']
+        assert (model.requests, model.cancelled) == (3, [])
+        assert list(await checkpoints(absurd, ctx.task_id)) == [
+            'a__model.request',
+            'a__sleep',
+            'a__model.request#2',
+            'a__sleep#2',
+            'a__model.request#3',
+        ]
