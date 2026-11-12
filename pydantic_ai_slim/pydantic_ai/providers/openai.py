@@ -143,8 +143,8 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
-                # Set here rather than in `openai_model_profile` because the native `computer` tool is unverified on
-                # the OpenAI-compatible endpoints that share it; there the `computer` tool is a function tool.
+                # Set here, not in `openai_model_profile`, because the native `computer` tool is unverified on the
+                # OpenAI-compatible endpoints that share that profile.
                 # https://developers.openai.com/api/docs/guides/tools-computer-use
                 openai_supports_computer_tool=_is_computer_use_model(model_name),
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs

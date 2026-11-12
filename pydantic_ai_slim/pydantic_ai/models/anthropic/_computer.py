@@ -58,11 +58,9 @@ _CALL_ARGS = TypeAdapter(_CallArgs)
 def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | None:
     """The calls a `computer` call came from, or `None` to send it back as a plain call.
 
-    A history can come back from storage or a UI, so what it kept is validated: one count per call, each at least 1,
-    adding up to the call's actions, as the result's `performed` counts actions.
-    The part's class isn't: a call whose actions don't validate, such as one Claude asked for with an option the
-    `computer` tool lacks, is a plain `ToolCallPart` once the history has been through JSON, and still goes back as
-    the calls it came from.
+    A history may come from storage or a UI, so what it kept is validated: one count per call, each at least 1,
+    adding up to the call's actions. The part's class isn't checked: a call whose actions don't validate, such as one
+    with an option the `computer` tool lacks, is a plain `ToolCallPart` after JSON, and still goes back as its calls.
     """
     if part.provider_name != provider_name:
         return None
@@ -119,13 +117,13 @@ class NativeComputer:
         incomplete: Collection[str] = (),
         split: Mapping[str, Sequence[str]] | None = None,
     ) -> ComputerCallPart:
-        """Calls of the computer use tool as one `computer` call, keeping them to send back as they were.
+        """Calls of the computer use tool as one `computer` call, keeping them to send back unchanged.
 
-        A call in `incomplete`, by ID, didn't arrive whole, such as one cut off at `max_tokens`: none of what it
-        asked for runs. `split` names, by call ID, the other tools Claude called just before a call: run as one
-        batch, the call would run before them, so the batch is refused and Claude asked again. A call whose input
-        isn't an object, or whose name isn't text, is incomplete too: the SDK doesn't validate responses, nothing in it
-        maps, and Anthropic takes only an object and a name back.
+        Nothing runs for a call in `incomplete` (by ID), which didn't arrive whole, such as one cut off at `max_tokens`.
+        `split` names, by call ID, the other tools Claude called just before a call: run as one batch, the call would
+        run before them, so the batch is refused and Claude asked again. A call whose input isn't an object, or whose
+        name isn't text, counts as incomplete, since the SDK doesn't validate responses and Anthropic takes only an
+        object and a name back.
         """
         split = split or {}
         malformed = [block['id'] for block in blocks if not _well_formed(block)]
@@ -298,8 +296,8 @@ def _modifiers(text: str | None) -> list[str]:
 def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
     """One computer use call as `computer` tool actions.
 
-    A member or field that doesn't map fails validation, so the model retries; only the names of what didn't map are
-    kept, so the call never runs with part of what the model asked for.
+    A member or field that doesn't map fails validation, naming only what didn't map, so the model retries and the
+    call never runs in part.
     """
     kind = _COMPUTER_MEMBER_TYPES.get(name, name)
     schema = _MEMBERS.get(name)
