@@ -660,10 +660,12 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
     )
 
 
-async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requests: None) -> None:
+# Input that isn't an object has nothing to map either.
+@pytest.mark.parametrize('streamed', ['{"text": "unfinished', 'null', '[]', '"hello"'])
+async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requests: None, streamed: str) -> None:
     events = _stream(_tool_use('toolu_1', 'type', {'text': 'hello'}))
     (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
-    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"text": "unfinished')
+    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json=streamed)
     model = AnthropicModel(
         'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
     )
