@@ -75,7 +75,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._typeguards import is_mapping
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
@@ -110,7 +110,7 @@ _TIME_LIMIT_MESSAGE = (
 # fails there rather than silently losing its summary, and a Monty reword fails it rather than
 # quietly disabling recognition.
 _SANDBOX_LIMIT_MARKERS = {
-    'max_duration_secs': 'time limit exceeded',
+    'max_duration_seconds': 'time limit exceeded',
     'max_memory': 'memory limit exceeded',
     'max_suspensions': 'suspension limit ',
 }
@@ -225,7 +225,7 @@ def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
 
 
 def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
-    """Whether this runtime error is Monty stopping the snippet at `max_duration_secs`.
+    """Whether this runtime error is Monty stopping the snippet at `max_duration_seconds`.
 
     Stricter than `_exhausted_sandbox_limit` because it gates a session reset, and a wrong reset
     discards REPL state the session could still use.
@@ -242,7 +242,7 @@ def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
     Callers must read `False` as "not known to be a timeout". A miss keeps the session and the
     ordinary runtime-error message.
     """
-    return not error.traceback() and _exhausted_sandbox_limit(error) == 'max_duration_secs'
+    return not error.traceback() and _exhausted_sandbox_limit(error) == 'max_duration_seconds'
 
 
 def _elided(count: int, shown: int, unit: str) -> str:
@@ -331,11 +331,13 @@ def _describe_started_calls(calls: dict[str, ToolCallPart], returns: dict[str, T
 class CodeModeResourceLimits(TypedDict, total=False):
     """Caps on the sandbox code executed by `run_code`."""
 
-    max_duration_secs: float
+    max_duration_seconds: float
     """Sandbox execution time allowed to each `run_code` snippet; time awaiting tools does not count.
 
     Sleeping is not execution time, so each snippet may also sleep for up to this long in total.
     """
+    max_duration_secs: float
+    """Deprecated: renamed to `max_duration_seconds`."""
     max_memory: int
     max_suspensions: int
     """Cumulative host-interaction budget per session, not a per-snippet tool-call count.
@@ -345,19 +347,22 @@ class CodeModeResourceLimits(TypedDict, total=False):
     """
 
 
+# Without the deprecated key, which `__post_init__` renames.
+_RESOURCE_LIMIT_KEYS = frozenset(CodeModeResourceLimits.__annotations__) - {'max_duration_secs'}
+
+
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
     if limits == 'unlimited':
         return {}
     overrides: CodeModeResourceLimits = {} if limits is None else limits
-    unknown = set(overrides) - set(CodeModeResourceLimits.__annotations__)
+    unknown = set(overrides) - _RESOURCE_LIMIT_KEYS
     if unknown:
         raise UserError(
-            f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
-            f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
+            f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(_RESOURCE_LIMIT_KEYS)}.'
         )
     # Read as `object` so values from untyped code are checked rather than trusted.
-    max_duration_secs: object = overrides.get('max_duration_secs', 30)
+    max_duration_seconds: object = overrides.get('max_duration_seconds', 30)
     max_memory: object = overrides.get('max_memory', 256 * 1024 * 1024)
     max_suspensions: object = overrides.get('max_suspensions', 1000)
     # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
@@ -365,16 +370,17 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     if not (type(max_suspensions) is int and 1 <= max_suspensions < 2**64):
         raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
     if not (
-        max_duration_secs is None
+        max_duration_seconds is None
         or (
-            (type(max_duration_secs) is int or isinstance(max_duration_secs, float)) and 0 < max_duration_secs < 2.0**64
+            (type(max_duration_seconds) is int or isinstance(max_duration_seconds, float))
+            and 0 < max_duration_seconds < 2.0**64
         )
     ):
-        raise UserError('`max_duration_secs` must be a positive number of seconds below 2**64')
+        raise UserError('`max_duration_seconds` must be a positive number of seconds below 2**64')
     if not (max_memory is None or (type(max_memory) is int and 0 < max_memory < 2**64)):
         raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
     return {
-        'max_feed_duration_secs': max_duration_secs,
+        'max_feed_duration_secs': max_duration_seconds,
         'max_memory': max_memory,
         'max_suspensions': max_suspensions,
     }
@@ -730,7 +736,7 @@ class RunCodeExecution:
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
 
-    def build_tool_return(self, result: Any) -> ToolReturn[Any]:
+    def make_tool_return(self, result: Any) -> ToolReturn[Any]:
         """Build the single public result for the logical `run_code` call."""
         output = self.capture.joined
         if not output:
@@ -848,7 +854,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = field(default=None, kw_only=True)
     """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_seconds` is per
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
@@ -925,6 +931,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
         self.monty_sandbox_url = None
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeModeToolset')
 
     @property
     def id(self) -> str | None:
@@ -980,14 +987,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self._run_state = None
         try:
             if self.speculation is not None:
-                await self.speculation.close()
+                await self.speculation.aclose()
             return await self.wrapped.__aexit__(*args)
         finally:
             try:
                 if repl is not None:
                     await repl.save(run_state)
             finally:
-                await run_state.close()
+                await run_state.aclose()
 
     @classmethod
     def from_run_context(cls, ctx: RunContext[AgentDepsT]) -> Self | None:
@@ -1186,12 +1193,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         tool call id. What speculation bought goes on the return's history-only metadata, where
         traces and UIs can read it without spending the model's tokens on it every turn.
         """
-        tool_return = execution.build_tool_return(result)
+        tool_return = execution.make_tool_return(result)
         if self.speculation is not None:
             summary = await self.speculation.evict_part(ctx, execution.parent_tool_call_id)
             if summary is not None:
                 metadata: dict[str, Any] | None = tool_return.metadata
-                assert metadata is not None, '`build_tool_return` always attaches metadata'
+                assert metadata is not None, '`make_tool_return` always attaches metadata'
                 metadata['speculation'] = summary
         return tool_return
 
@@ -1289,7 +1296,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 portal=run_state.portal,
                 # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
                 # check is dropped there for replay, but sleeps are charged what they request.
-                max_sleep_secs=configured.get('max_feed_duration_secs'),
+                max_sleep_seconds=configured.get('max_feed_duration_secs'),
                 os_handler=os_handler,
             ).run(
                 partial(
@@ -1302,11 +1309,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 )
             )
             run_state.has_executed_feed = True
-        except BaseException as e:
-            retry = await self._feed_failure_retry(e, run_state, execution, fresh_repl=fresh_repl)
+        except BaseException as exc:
+            retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
                 raise
-            raise retry from e
+            raise retry from exc
 
         _raise_usage_limit_exceeded(execution)
         result = completed.output

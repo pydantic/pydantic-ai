@@ -41,10 +41,10 @@ def test_unsuccessful_outcomes_use_their_own_colour(outcome: Literal['failed', '
 
 
 def test_start_row_is_styled_like_a_tool_call() -> None:
-    from pydantic_ai_harness.subagents import DelegationStartEvent
+    from pydantic_ai_harness.subagents import DelegationStartedEvent
     from pydantic_clai2.runtime.tasks import task_row
 
-    event = DelegationStartEvent(
+    event = DelegationStartedEvent(
         agent_name='self', task='count\nthe files', truncated=False, inherits_tools=True, model=None
     )
     event.task_id = 'abcdef0123'
