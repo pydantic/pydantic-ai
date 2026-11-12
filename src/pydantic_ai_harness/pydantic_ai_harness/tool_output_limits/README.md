@@ -374,7 +374,7 @@ replay.
 
 - Raw `bytes` returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
   on binary fall through to `then`.
-- A return value holding files (`BinaryContent` or a file URL, alone or in a list) keeps every
+- A return value holding files (`BinaryContent`, a file URL, or an `UploadedFile`, alone or in a list) keeps every
   file as it is; only the items beside them are measured and reduced.
 - Structured / nested returns spill (or summarize) by preference -- truncating JSON produces
   invalid JSON. `Spill` includes a one-line shape sketch of the top level.
