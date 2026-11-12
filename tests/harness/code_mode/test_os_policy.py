@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,7 +28,7 @@ POLICY_CLOCK = 'read the clock configured for this sandbox'
 CLOCK_UNAVAILABLE = '`time.time()` are unavailable here'
 
 
-def paris_clock(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
+def paris_clock(*, name: OsFunction, args: tuple[object, ...], kwargs: dict[str, object], **_: object) -> object:
     """An `os_access` clock answering in Paris wall time, the natural handler from the issue."""
     if name == 'datetime.now':
         return PARIS_NOON.replace(tzinfo=None)
@@ -42,7 +41,7 @@ def _wrapper(code_mode: CodeMode[None]) -> CodeModeToolset[None]:
     return wrapper
 
 
-async def _run(code_mode: CodeMode[None], code: str) -> Any:
+async def _run(code_mode: CodeMode[None], code: str) -> object:
     wrapper = _wrapper(code_mode)
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     async with wrapper:

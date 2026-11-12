@@ -516,43 +516,38 @@ The sandbox uses Monty, a subset of Python. Key restrictions:
 # configured. Three states, because `mount` and `os` enable different things:
 # a `mount` only exposes filesystem paths, while environment and clock calls
 # require an `os` handler.
+_SLEEP_SENTENCE = '`time.sleep` and `asyncio.sleep` really wait.'
+_POLICY_CLOCK_SENTENCE = f'`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` read the clock configured for this sandbox. {_SLEEP_SENTENCE}'
 _NO_OS_RESTRICTION = (
     '- **No filesystem, environment, or clock**: `pathlib.Path` I/O, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are unavailable here '
     '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but '
-    'their I/O operations are not supported in this configuration. `time.sleep` and `asyncio.sleep` really wait.'
+    f'their I/O operations are not supported in this configuration. {_SLEEP_SENTENCE}'
 )
 _MOUNT_ONLY_NOTE = (
     '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
     'point(s) are routed to the host. `os.getenv`/`os.environ`, `datetime.datetime.now()`, '
-    '`datetime.date.today()`, and `time.time()` remain unavailable. `time.sleep` and `asyncio.sleep` really wait.'
+    f'`datetime.date.today()`, and `time.time()` remain unavailable. {_SLEEP_SENTENCE}'
 )
 _OS_ENABLED_NOTE = (
     '- **Configured OS access**: `pathlib.Path` operations, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are routed to the OS '
-    'handler configured for this agent (availability depends on that configuration). '
-    '`time.sleep` and `asyncio.sleep` really wait.'
+    f'handler configured for this agent (availability depends on that configuration). {_SLEEP_SENTENCE}'
 )
 # The variants used when `os_policy` gives the sandbox a clock of its own: the notes above without
 # their "clock unavailable" or "clock routed to the handler" claim, plus the clock sentence.
-_POLICY_CLOCK_SENTENCE = (
-    '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` read the clock configured for this sandbox.'
-)
 _NO_OS_WITH_CLOCK_NOTE = (
     '- **No filesystem or environment**: `pathlib.Path` I/O and `os.getenv`/`os.environ` are unavailable here '
     '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but their I/O '
-    f'operations are not supported in this configuration. {_POLICY_CLOCK_SENTENCE} '
-    '`time.sleep` and `asyncio.sleep` really wait.'
+    f'operations are not supported in this configuration. {_POLICY_CLOCK_SENTENCE}'
 )
 _MOUNT_ONLY_WITH_CLOCK_NOTE = (
     '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
-    f'point(s) are routed to the host. `os.getenv`/`os.environ` remain unavailable. {_POLICY_CLOCK_SENTENCE} '
-    '`time.sleep` and `asyncio.sleep` really wait.'
+    f'point(s) are routed to the host. `os.getenv`/`os.environ` remain unavailable. {_POLICY_CLOCK_SENTENCE}'
 )
 _OS_ENABLED_WITH_CLOCK_NOTE = (
     '- **Configured OS access**: `pathlib.Path` operations and `os.getenv`/`os.environ` are routed to the OS '
-    f'handler configured for this agent (availability depends on that configuration). {_POLICY_CLOCK_SENTENCE} '
-    '`time.sleep` and `asyncio.sleep` really wait.'
+    f'handler configured for this agent (availability depends on that configuration). {_POLICY_CLOCK_SENTENCE}'
 )
 _MOUNT_LIFETIME_NOTE = (
     "- **Mount write lifetime**: writes through a `mode='overlay'` mount last only for the current "

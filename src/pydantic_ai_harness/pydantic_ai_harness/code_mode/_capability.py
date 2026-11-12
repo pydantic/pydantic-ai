@@ -82,13 +82,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Two parameters open it up:
+    variables, or clock. Three parameters open it up:
 
     - `mount` shares specific host directories: reach for it when the agent reads or
       writes real files.
     - `os_access` routes the sandbox's OS calls to a handler you provide: reach for it
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
+    - `os_policy` sets the sandbox's own clock and time zone (or sleep and random-seed
+      policies), merged over the defaults that route them to `os_access`.
 
     The built-in `OSAccess` has an isolated filesystem and environment but uses the
     host clock by default; custom OS handlers can expose other host resources.

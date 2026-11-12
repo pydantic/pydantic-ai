@@ -806,8 +806,8 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSni
 
 ## Filesystem and OS access
 
-Sandboxed code starts with no access to the host's files, environment, or clock. Two parameters add
-controlled filesystem, environment, or clock behavior.
+Sandboxed code starts with no access to the host's files, environment, or clock. Three parameters add
+controlled filesystem, environment, or clock behavior: `mount`, `os_access`, and `os_policy`.
 
 **`mount` -- share host directories.** Reach for this when the agent works with real files: analyzing
 a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a

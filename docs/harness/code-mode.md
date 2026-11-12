@@ -785,9 +785,9 @@ A representative run wires `CodeMode` up against an MCP server and a web search 
 
 ## Filesystem and OS access
 
-Sandboxed code starts with no access to the host's files, environment, or clock. Two parameters add controlled filesystem, environment, or clock behavior.
+Sandboxed code starts with no access to the host's files, environment, or clock. Three parameters add controlled filesystem, environment, or clock behavior: `mount`, `os_access`, and `os_policy`.
 
-Both parameters are fixed when the capability is built, so construct `CodeMode` per request to scope the configured access to that request.
+These parameters are fixed when the capability is built, so construct `CodeMode` per request to scope the configured access to that request.
 
 ### `mount` -- share host directories
 
