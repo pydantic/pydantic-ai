@@ -8,6 +8,7 @@ import io
 import json
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -497,34 +498,36 @@ class TestWorkspaceMount:
         assert mount([coder, guardrail]) == expected
 
     @pytest.mark.parametrize(
-        ('gate', 'expected'),
+        ('check', 'expected'),
         [
-            (hooks_before_execute(['write_file']), 'read-only'),
-            (hooks_before_execute(['run_code']), 'read-only'),
-            # Registered hook functions aren't public, so any `Hooks` may hold one that checks a write.
-            (Hooks[None](), 'read-only'),
-            (judge(), 'read-only'),
             (judge(['edit_file']), 'read-only'),
-            (judge({'kind': 'write'}), 'read-only'),
-            (judge(selects), 'read-only'),
+            (judge(['run_code']), 'read-only'),
             (judge(['grep']), 'read-write'),
+            (judge(['read_file']), None),
+            (judge(), None),
+            (judge({'kind': 'write'}), None),
+            (judge(selects), None),
+            (hooks_before_execute(['write_file']), None),
+            # Registered hook functions aren't public, so any `Hooks` may hold one that checks `read_file`.
+            (Hooks[None](), None),
         ],
         ids=[
-            'hooks_writes',
-            'hooks_run_code',
-            'hooks',
-            'judge_all',
             'judge_writes',
+            'judge_run_code',
+            'judge_other',
+            'judge_reads',
+            'judge_all',
             'judge_metadata',
             'judge_function',
-            'judge_other',
+            'hooks_writes',
+            'hooks',
         ],
     )
-    def test_write_gates_mount_read_only(self, gate: AbstractCapability[None], expected: str) -> None:
-        """A `Hooks` or `ToolCallJudge` that may stop a write keeps `pathlib` from making it unchecked."""
+    def test_judges_and_hooks_limit_the_mount(self, check: AbstractCapability[None], expected: str | None) -> None:
+        """A `ToolCallJudge` or `Hooks` limits the mount as a `ToolGuardrail` does, top-level or nested."""
         coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
-        assert mount([coder, gate]) == expected
-        assert mount([CombinedCapability[None]([coder, gate])]) == expected
+        assert mount([coder, check]) == expected
+        assert mount([CombinedCapability[None]([coder, check])]) == expected
 
     @pytest.mark.parametrize(
         ('agent', 'expected'),
@@ -656,6 +659,42 @@ class TestWorkspaceMount:
         mounted = 'read-only' if mode == 'read-only' else 'read-write'
         assert all(f'mounted {mounted}' in (text or '') for text in instructions)
         assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
+
+    @pytest.mark.parametrize(('mode', 'seen'), [('read-only', 'original PermissionError'), ('auto', 'original')])
+    async def test_one_permissions_passed_directly_limits_the_mount(
+        self, tmp_path: Path, mode: PermissionMode, seen: str
+    ) -> None:
+        """`WorkspaceCodeMode` and `SpeculativeExecution` still take a single `Permissions`, as they did."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object](mode)
+        sandbox = [
+            replace(capability, permissions=permissions)
+            if isinstance(capability, WorkspaceCodeMode | SpeculativeExecution)
+            else capability
+            for capability in speculative_capabilities(SpeculationCounters(), [file_system])
+        ]
+        await Agent(streamed(respond), capabilities=[file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]).run(
+            'go'
+        )
+        assert returned == [seen]
+        mounted = 'read-only' if mode == 'read-only' else 'read-write'
+        assert all(f'mounted {mounted}' in (text or '') for text in instructions)
 
     @pytest.mark.parametrize('session_mode', [None, 'auto'])
     async def test_agents_own_read_only_permissions_mount_read_only(

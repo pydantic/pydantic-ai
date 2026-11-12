@@ -380,9 +380,9 @@ installed source. For example, before_model_request returns its
 ModelRequestContext; it is not a None-returning host observer. Do not add CLAI
 moments for core behaviour. Raising before_tool_execute fails the run; consult
 core's documented SkipToolExecution when only one tool execution should be skipped.
-Any bound Hooks makes code mode mount the workspace read-only, since its checked
-tools can't be read before the run; an observer that needs pathlib writes in
-run_code should be its own AbstractCapability subclass instead.
+Any bound Hooks leaves code mode's workspace unmounted, since its checked tools
+can't be read before the run; an observer that should keep pathlib file access
+in run_code should be its own AbstractCapability subclass instead.
 
 For typed capability events use hooks.on.event(EventClass) with a handler taking
 RunContext and the event, or core's @on_event(EventClass) on a capability method.
