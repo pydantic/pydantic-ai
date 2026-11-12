@@ -218,6 +218,41 @@ async def test_ending_with_output_gives_the_model_a_turn_once_work_queues_a_resu
     assert emitted.phases == ['started', 'draining', 'drained', 'draining', 'settled', 'drained']
 
 
+async def test_work_settling_without_queuing_doesnt_end_the_wait(emitted: _Emitted):
+    """Ending with output, the run keeps waiting when work settles without queuing anything while other draining work runs."""
+    seen: list[list[str]] = []
+    handles: dict[str, InFlightWork[Any]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(_user_texts(messages))
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart(f'done {len(seen)}')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        silent = ctx.in_flight.register(kind='test', name='silent', id='silent', on_end='drain')
+
+        async def work() -> None:
+            await emitted.until('draining')
+            ctx.in_flight.settle(silent)
+            # Let the run check again after `silent` settled, before this work queues its result.
+            await asyncio.sleep(0)
+            ctx.enqueue('result')
+
+        handles['work'] = ctx.in_flight.start(work, kind='test', name='work', id='work')
+        return 'started'
+
+    result = await agent.run('go')
+
+    assert result.output == 'done 3'
+    assert seen == [['go'], ['go'], ['go', 'result']]
+    assert handles['work'].state == 'succeeded'
+    assert emitted.phases == ['started', 'started', 'draining', 'settled', 'settled', 'drained']
+
+
 async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted: _Emitted):
     """A pause waits for every piece of `'drain'` work, records what it queued after the paused step, and stands."""
     model_calls = 0
