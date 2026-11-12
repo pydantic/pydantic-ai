@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ...computer_fakes import FAKE_DISPLAY_SIZE, FakeComputer
@@ -679,6 +679,39 @@ async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requ
     # The tool refuses the call instead of typing part of it.
     (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
     assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
+
+
+@pytest.mark.parametrize('received', [None, [], 'hello'])
+async def test_a_member_whose_input_is_not_an_object_runs_nothing(allow_model_requests: None, received: Any) -> None:
+    block = _tool_use('toolu_1', 'type', {'text': 'hello'})
+    block.input = received  # as the SDK hands over whatever the API sent
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(_turn(block)))
+    )
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+
+    response = await model.request([ModelRequest.user_text_prompt('Go.')], None, params)
+
+    (call,) = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
+
+
+@pytest.mark.parametrize('settings', [None, {'tool_choice': ['computer']}], ids=['auto', 'forcing-the-function'])
+async def test_a_function_tool_named_computer_beside_a_computer_tool_of_another_name_is_refused(
+    allow_model_requests: None, settings: ModelSettings | None
+) -> None:
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    function = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'})
+    desktop = ToolDefinition(name='desktop', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(
+        function_tools=[function, desktop], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
+
+    # Both would be named `computer` on the wire, and a call named `computer` would run on the desktop.
+    with pytest.raises(UserError, match='cannot be sent beside a function tool named `computer`'):
+        await model.request([ModelRequest.user_text_prompt('Go.')], settings, params)
+    assert get_mock_chat_completion_kwargs(client) == []
 
 
 async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves_out_the_computer(
