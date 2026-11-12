@@ -198,7 +198,7 @@ Reserve `print()` for supplementary logging: printed text is surfaced separately
 
 When a nested tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
 
-A nested tool that raises [`ToolFailed`](../tools-advanced.md#tool-failed) the snippet does not catch ends `run_code` with a failed tool result instead of a retry, as when the model calls that tool directly. The result is the tool's message, after any printed output and followed by a summary of the other nested calls when the snippet made any, and does not spend `run_code`'s retries. A nested `ModelRetry` the snippet does not catch is still a retry.
+A nested tool that raises [`ToolFailed`](../tools-advanced.md#tool-failed) the snippet does not catch ends `run_code` with a failed tool result instead of a retry, as when the model calls that tool directly. The result is the tool's message, after any printed output and followed by a summary of the other nested calls when the snippet made any, and does not spend `run_code`'s retries. The `ToolFailed` that `run_code` raises has the tool's own exception as its `__cause__`, so a hook around `run_code` can still read a subclass and its attributes. A nested `ModelRetry` the snippet does not catch is still a retry.
 
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
