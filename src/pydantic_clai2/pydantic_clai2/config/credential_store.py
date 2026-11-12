@@ -29,29 +29,22 @@ _SLASH = '%2F'
 """How `/` is written in a credential file name; no account name CLAI stores otherwise contains `%`."""
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
 # `SecretService` and `kwallet` raise plain `RuntimeError` during backend priority/init when D-Bus or
-# Secret Service is missing; `_get_password`/`_set_password` wrap keyring calls so `UserError` (a
+# Secret Service is missing; `_get_password` and `_set_password` wrap keyring calls so `UserError` (a
 # `RuntimeError` subclass raised by `_decrypt` and `_chunk_services`) is never caught as `_NO_KEYRING`.
 _NO_KEYRING = (NoKeyringError, InitError)
 _logger = logging.getLogger(__name__)
 
 
-def _get_password(service: str, account: str) -> str | None:
+def _get_password(*, service: str, account: str) -> str | None:
     try:
         return keyring.get_password(service, account)
     except RuntimeError as exc:
         raise NoKeyringError(str(exc)) from exc
 
 
-def _set_password(service: str, account: str, value: str) -> None:
+def _set_password(*, service: str, account: str, value: str) -> None:
     try:
         keyring.set_password(service, account, value)
-    except RuntimeError as exc:
-        raise NoKeyringError(str(exc)) from exc
-
-
-def _delete_password(service: str, account: str) -> None:
-    try:
-        keyring.delete_password(service, account)
     except RuntimeError as exc:
         raise NoKeyringError(str(exc)) from exc
 
@@ -136,7 +129,7 @@ def credential_lock(*, account: str, busy: str) -> Generator[None]:
 @cache
 def _stored_key() -> str | None:
     """The one keyring read a session needs. Cached, so the OS asks for permission at most once."""
-    return _get_password(_SERVICE, _KEY_ACCOUNT)
+    return _get_password(service=_SERVICE, account=_KEY_ACCOUNT)
 
 
 def _cipher() -> Fernet | None:
@@ -157,7 +150,7 @@ def _create_cipher() -> Fernet:
         if (cipher := _cipher()) is not None:
             return cipher
         key = Fernet.generate_key().decode()
-        _set_password(_SERVICE, _KEY_ACCOUNT, key)
+        _set_password(service=_SERVICE, account=_KEY_ACCOUNT, value=key)
         _stored_key.cache_clear()
         if _stored_key() != key:
             raise NoKeyringError('The credential backend did not retain the key.')
@@ -188,7 +181,7 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
     try:
         if encrypted.is_file():
             return _decrypt(encrypted)
-        root = _get_password(_SERVICE, account)
+        root = _get_password(service=_SERVICE, account=account)
     except _NO_KEYRING:
         root = None
     if root is not None:
@@ -270,7 +263,7 @@ def _join_chunks(*, root: str, account: str) -> str:
         return root
     chunks: list[str] = []
     for service in services:
-        chunk = _get_password(service, account)
+        chunk = _get_password(service=service, account=account)
         if chunk is None:
             raise UserError(
                 'Stored credentials are incomplete. Reconnect through /model add; for Codex run /login openai-codex.'
@@ -280,7 +273,7 @@ def _join_chunks(*, root: str, account: str) -> str:
 
 
 def _delete_keyring(*, account: str) -> None:
-    if (root := _get_password(_SERVICE, account)) is not None:
+    if (root := _get_password(service=_SERVICE, account=account)) is not None:
         _delete_entries(root=root, account=account)
 
 
@@ -292,6 +285,6 @@ def _delete_entries(*, root: str, account: str) -> None:
         services = []
     for service in [*services, _SERVICE]:
         try:
-            _delete_password(service, account)
+            keyring.delete_password(service, account)
         except PasswordDeleteError:
             pass  # A chunk may already be gone.

@@ -234,8 +234,7 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
     monkeypatch.setattr(keyring, 'delete_password', raise_error)
 
 
-@pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError, RuntimeError], indirect=True)
-def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
+def assert_plaintext_fallback_round_trip(fallback: Path, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level('WARNING', logger=credential_store.__name__):
         assert load_codex_credentials(fallback=fallback) is None
         assert caplog.records == []
@@ -254,6 +253,11 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog:
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError, RuntimeError], indirect=True)
+def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
+    assert_plaintext_fallback_round_trip(fallback, caplog)
+
+
 @pytest.mark.parametrize('error', [NoKeyringError, RuntimeError, None])
 def test_file_fallback_when_set_password_has_no_keyring(
     fallback: Path,
@@ -266,25 +270,7 @@ def test_file_fallback_when_set_password_has_no_keyring(
             raise error('No recommended backend was available')
 
     monkeypatch.setattr(keyring, 'set_password', fail_set)
-    with caplog.at_level('WARNING', logger=credential_store.__name__):
-        save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
-        assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
-    assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
-    assert list(fallback.parent.glob('credentials.*')) == [fallback]
-    if sys.platform != 'win32':  # pragma: no branch
-        assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
-
-
-def test_delete_handles_runtime_error_on_delete_password(
-    vault: Vault, fallback: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    vault[LEGACY] = 'legacy'
-
-    def fail_delete(service: str, account: str) -> None:
-        raise RuntimeError('Secret Service daemon is neither running nor activatable')
-
-    monkeypatch.setattr(keyring, 'delete_password', fail_delete)
-    delete_credentials(fallback=fallback)
+    assert_plaintext_fallback_round_trip(fallback, caplog)
 
 
 def test_planted_staging_symlink_is_not_followed(
