@@ -65,13 +65,13 @@ def test_code_fence_that_ends_the_answer_is_unwrapped(tmp_path: Path, text: str)
     'text',
     [
         f'```json\n{_RESULT}\n```\nLet me know if you need more.',
+        f'{_RESULT}\nLet me know if you need more.',
         f'```json\n```json\n{_RESULT}\n```\n```',
-        f'```json\n{_RESULT}',
         f'```json {_RESULT} ```',
     ],
 )
 def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
-    """Text after the fence, nested or unterminated fences stay invalid."""
+    """Text after the fence or the object, and nested fences, stay invalid."""
     with pytest.raises(ValidationError):
         review_result(_stream(tmp_path, text))
 
@@ -88,10 +88,17 @@ _FINDINGS = json.dumps(
 )
 
 
-@pytest.mark.parametrize('separator', ['\n\n', ' '])
-def test_prose_before_bare_json_is_dropped(tmp_path: Path, separator: str) -> None:
+@pytest.mark.parametrize(
+    'text',
+    [
+        pytest.param(f'{_PROSE}\n\n{_FINDINGS}', id='paragraph-before'),
+        pytest.param(f'{_PROSE} {_FINDINGS}', id='same-line'),
+        pytest.param(f'```json\n{_FINDINGS}', id='unterminated-fence'),
+    ],
+)
+def test_prose_before_bare_json_is_dropped(tmp_path: Path, text: str) -> None:
     """Accept a bare JSON object that ends the answer after prose."""
-    result = review_result(_stream(tmp_path, _PROSE + separator + _FINDINGS))
+    result = review_result(_stream(tmp_path, text))
     assert result.verdict == 'REQUEST_CHANGES'
 
 

@@ -263,8 +263,9 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. The job validates the model's answer
   against its schema. When a Markdown code fence ends the answer, the job validates only that fenced
-  block, so prose before the fence passes; text after it still fails. The check's `max_steps` and
-  `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
+  block. Otherwise it validates the answer from its first `{`, so prose before a bare JSON object
+  passes unless the prose holds a `{`. Text after the fence or the object still fails. The check's
+  `max_steps` and `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
   with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
@@ -309,9 +310,9 @@ credential included.
   the Claude prompt, through the `category-prompt` YAML anchor, plus `TOOL_GUIDANCE` from
   `.github/scripts/category_classify_opencode.py`, which names each prefetched file. Edit the classification rules
   in the Claude step's prompt only.
-- The answer must be one JSON object whose only field is an allowed `category`. When a Markdown code fence ends the
-  answer, the job validates only that fenced block, as `PR Review Checks` does. Any other answer fails the job, and
-  no label is applied. `category-apply` applies the category from whichever job set it.
+- The answer must be one JSON object whose only field is an allowed `category`. The job drops prose before that
+  object, and a Markdown code fence that ends the answer, as `PR Review Checks` does. Any other answer fails the job,
+  and no label is applied. `category-apply` applies the category from whichever job set it.
 
 # OpenCode falls back from OpenCode Go to the GLM Coding Plan
 
