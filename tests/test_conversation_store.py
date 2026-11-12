@@ -867,8 +867,8 @@ async def test_a_serialized_window_of_output_tool_turns_appends_to_the_whole_con
     assert record is not None
     assert record.branches == []
     # The save reads stored messages back only until, cleaned the same way, they're as many as the
-    # run was sent, not the whole history.
-    assert reads == [4, 5]
+    # run was sent: the one entry before the 4 it compared, not the whole history.
+    assert reads == [4, 1]
 
 
 def _look_up_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -912,7 +912,62 @@ async def test_a_serialized_window_starting_inside_a_tool_call_turn_appends_to_t
     assert record.branches == []
     # The last 8 entries clean to 6 messages and the last 10 to 9, so the history the run was sent
     # starts in between, at the last 9.
-    assert reads == [8, 10]
+    assert reads == [8, 2]
+
+
+async def test_an_edited_serialized_window_of_requests_that_merge_reads_back_in_doubling_steps() -> None:
+    """Requests in a row clean to one, so each entry read back adds no message: the save reads twice as many each time, then branches as before."""
+    store = _HistoryReadsStore()
+    requests: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(f'request {i}')]) for i in range(16)]
+    await store.save(Conversation(messages=requests, conversation_id='c'))
+    window = await store.load('c', limit=2)
+    assert window is not None
+    revived = _round_trip(window)
+    revived.messages[1] = ModelRequest(parts=[UserPromptPart('edited')])
+    store.limits.clear()
+
+    await store.save(revived)
+    reads = list(store.limits)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*requests[:-1], revived.messages[1]]
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
+    assert reads == [2, 1, 2, 4, 8]
+
+
+class _NoEarlierHistoryStore(InMemoryConversationStore):
+    """Once `head_id` is set, returns no entries for a history that ends anywhere else, which `read_history`'s contract rules out."""
+
+    head_id: str | None = None
+
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        if self.head_id is not None and head_id != self.head_id:
+            return []
+        return await super().read_history(head_id, limit=limit)
+
+
+async def test_a_store_that_reads_no_earlier_history_branches_as_without_reading_back() -> None:
+    store = _NoEarlierHistoryStore()
+    stored = await _stored_output_tool_turns(store)
+    window = await store.load('c', limit=5)
+    assert window is not None
+    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
+    record = await store.read_record('c')
+    assert record is not None
+    store.head_id = record.head_id
+
+    await store.save(_round_trip(result.conversation))
+
+    store.head_id = None
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages[:-4], *result.all_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
 
 
 async def test_a_serialized_window_whose_conversation_is_deleted_while_more_of_it_is_read_conflicts() -> None:
