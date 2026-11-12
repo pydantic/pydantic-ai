@@ -68,9 +68,10 @@ def build_orchestrator(
 
     The sub-agents get `tools`, by default a `noop` tool.
     """
-    summarize_agent: Agent[None, str] = Agent(
+    summarize_agent = Agent(
         summarize,
         name='summarize',
+        deps_type=type(None),
         description='Summarize a text.',
         tools=list(tools) if tools is not None else [Tool[None](noop)],
         capabilities=[durability()] if durable_sub_agents else [],
