@@ -18,13 +18,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2 import warm_imports
-from pydantic_clai2.__main__ import quiet_stderr_fallback
 from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
     Commands,
 )
-from pydantic_clai2.config import PluginSettings, Settings, credential_store
+from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -228,7 +227,6 @@ async def chat(
     served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
-        quiet_stderr_fallback(credential_store.__name__, enabled=console.is_terminal),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
         async with agent:

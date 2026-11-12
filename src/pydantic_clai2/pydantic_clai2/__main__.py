@@ -17,14 +17,14 @@ TELEMETRY_LOGGERS = ('logfire', 'opentelemetry')
 
 
 @contextmanager
-def quiet_stderr_fallback(*logger_names: str, enabled: bool = True) -> Generator[None]:
-    """Suppress `logging.lastResort` stderr output for `logger_names` without blocking configured handlers.
+def quiet_telemetry_logs() -> Generator[None]:
+    """Keep telemetry SDK log records off stderr, where they would tear through the live display.
 
     Without a handler anywhere on a record's path, `logging` falls back to printing it on stderr. A `NullHandler`
     on these loggers stops only that fallback: handlers a plugin or host configures still receive every record.
     """
     handler = logging.NullHandler()
-    loggers = [logging.getLogger(name) for name in logger_names] if enabled else []
+    loggers = [logging.getLogger(name) for name in TELEMETRY_LOGGERS]
     for logger in loggers:
         logger.addHandler(handler)
     try:
@@ -32,13 +32,6 @@ def quiet_stderr_fallback(*logger_names: str, enabled: bool = True) -> Generator
     finally:
         for logger in loggers:
             logger.removeHandler(handler)
-
-
-@contextmanager
-def quiet_telemetry_logs() -> Generator[None]:
-    """Keep telemetry SDK log records off stderr, where they would tear through the live display."""
-    with quiet_stderr_fallback(*TELEMETRY_LOGGERS):
-        yield
 
 
 def main() -> None:
