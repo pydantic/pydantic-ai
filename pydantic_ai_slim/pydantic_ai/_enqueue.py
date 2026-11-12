@@ -7,7 +7,7 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
@@ -245,7 +245,7 @@ class PendingMessageQueue(list[PendingMessage]):
             listener()
 
     @contextmanager
-    def notifying(self, listener: Callable[[], object]) -> Iterator[None]:
+    def notifying(self, listener: Callable[[], object]) -> Generator[None]:
         """Call `listener` after each message appended while the block runs, on the thread that appended it."""
         with self._lock:
             self._append_listeners.append(listener)
