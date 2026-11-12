@@ -380,6 +380,38 @@ async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitte
     assert emitted.phases == ['started', 'started', 'started', 'started', 'draining']
 
 
+async def test_a_failing_cancel_callback_doesnt_keep_other_work_running():
+    """The run still cancels and waits for all its work when a registered work's `cancel` callback raises, then raises its error."""
+    handles: dict[str, InFlightWork[Any]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    def fail_to_cancel() -> None:
+        raise RuntimeError('process already gone')
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        # Registered first, so the run cancels it before the started work.
+        handles['job'] = ctx.in_flight.register(
+            kind='test', name='job', id='job', on_end='cancel', cancel=fail_to_cancel
+        )
+        handles['task'] = ctx.in_flight.start(
+            asyncio.Event().wait, kind='test', name='task', id='task', on_end='cancel'
+        )
+        return 'started'
+
+    with no_leaked_tasks(), pytest.raises(RuntimeError, match='process already gone'):
+        await agent.run('go')
+
+    assert handles['job'].state == 'cancelled'
+    assert handles['task'].state == 'cancelled'
+
+
 async def test_work_failing_at_a_step_boundary_ends_the_run():
     """An error raised by started work ends the run at the next step boundary, as a failing tool would."""
     model_called = asyncio.Event()

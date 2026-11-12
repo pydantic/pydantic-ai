@@ -181,16 +181,18 @@ class InFlightWork(Generic[T]):
 
         Work run by [`start()`][pydantic_ai.in_flight.InFlightRegistry.start] has its task cancelled, and
         settles once the task has stopped. Registered work has the `cancel` callback it was registered with
-        called, and settles as cancelled right away.
+        called, and settles as cancelled right away, even if the callback raises.
         """
         if self._state != 'running':
             return
         if self._task is not None:
             self._task.cancel()
             return
-        if self._cancel is not None:
-            self._cancel()
-        self._finish('cancelled')
+        try:
+            if self._cancel is not None:
+                self._cancel()
+        finally:
+            self._finish('cancelled')
 
     def _finish(
         self, state: InFlightWorkState, *, value: _utils.Option[T] = None, error: BaseException | None = None
@@ -509,9 +511,16 @@ class InFlightRegistry:
         ending = [work for work in self._live.values() if work.on_end != 'detach']
         if not ending:
             return
+        # A failing `cancel` callback mustn't keep the rest of the work running: it's raised once all of it stopped.
+        errors: list[Exception] = []
         for work in ending:
-            work.cancel()
+            try:
+                work.cancel()
+            except Exception as error:
+                errors.append(error)
         # Teardown may already be under cancellation, which must not cut the wait for the work to stop.
         with anyio.CancelScope(shield=True):
             for work in ending:
                 await work.wait()
+        if errors:
+            raise errors[0]
