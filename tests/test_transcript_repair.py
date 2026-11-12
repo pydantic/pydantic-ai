@@ -574,6 +574,48 @@ async def test_resuming_a_mixed_deferred_pause_pauses_again():
     assert get_data_runs == 1
 
 
+async def test_resuming_a_mixed_deferred_pause_from_run_stream_pauses_again():
+    """`run_stream()` records its pause like `run()` does, so a plain resume of its history pauses again (#7537).
+
+    `run_stream()` writes its own request with the results of the calls it ran, so it marks that request too.
+    """
+    received: list[list[ModelMessage]] = []
+    get_data_runs = 0
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        received.append(messages)
+        if len(messages) == 1:
+            yield {0: DeltaToolCall('get_data', '{}', tool_call_id='call_data')}
+            yield {1: DeltaToolCall('create_file', '{"path": "x"}', tool_call_id='call_file')}
+        else:  # pragma: no cover
+            yield 'All done.'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        nonlocal get_data_runs
+        get_data_runs += 1
+        return 'data'
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:  # pragma: no cover
+        return 'created'
+
+    async with agent.run_stream('Do it.') as result:
+        output = await result.get_output()
+    assert isinstance(output, DeferredToolRequests)
+    message_history = result.all_messages()
+    assert message_history[-1].metadata == PAUSE_RECORD
+    assert get_data_runs == 1
+
+    resumed = await agent.run(message_history=message_history)
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call_file']
+    assert len(received) == 1
+    assert get_data_runs == 1
+
+
 async def test_resuming_a_mixed_deferred_pause_runs_a_call_that_no_longer_defers():
     """A waiting call that doesn't defer when it runs again sends its result, after the earlier ones, to the model."""
     received: list[list[ModelMessage]] = []
