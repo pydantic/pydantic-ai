@@ -211,7 +211,7 @@ To customize how a model string is built — a custom provider, or per-user cred
 
 ### Capabilities at Runtime
 
-Attach capabilities that contribute executing toolsets or durable operations when the agent is constructed, so `DBOSDurability.for_agent()` can register their steps before the application starts. A per-run capability that only adds hooks, instructions or settings is allowed; one that contributes an executing toolset or `@durable_operation` methods, or chooses the model (`resolve_model_id` or `get_model`), still raises a `UserError`. This exemption applies to per-run capabilities, not raw `agent.run(toolsets=...)`, whose existing restrictions are unchanged. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+Attach capabilities that contribute executing toolsets or durable operations when the agent is constructed, so `DBOSDurability.for_agent()` can register their steps before the application starts. A per-run capability that only adds hooks, instructions or settings is allowed; one that contributes an executing toolset or `@durable_operation` methods, or chooses or wraps the model (`resolve_model_id`, `get_model` or `get_wrapper_model`), still raises a `UserError`. This exemption applies to per-run capabilities, not raw `agent.run(toolsets=...)`, whose existing restrictions are unchanged. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
 
 ### Streaming
 

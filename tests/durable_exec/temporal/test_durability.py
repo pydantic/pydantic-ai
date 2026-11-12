@@ -2962,6 +2962,12 @@ class _PerRunModelSupplier(AbstractCapability[None]):
         return TestModel()
 
 
+@dataclass
+class _PerRunModelWrapper(AbstractCapability[None]):
+    def get_wrapper_model(self, model: Model) -> Model | None:  # pragma: no cover
+        return None
+
+
 @pytest.mark.parametrize(
     ('capability', 'allowed'),
     [
@@ -2970,6 +2976,7 @@ class _PerRunModelSupplier(AbstractCapability[None]):
         pytest.param(_PerRunDurableOperation(), False, id='durable-operation'),
         pytest.param(_PerRunModelResolver(), False, id='resolve-model-id'),
         pytest.param(_PerRunModelSupplier(), False, id='supplies-model'),
+        pytest.param(_PerRunModelWrapper(), False, id='wraps-model'),
     ],
 )
 async def test_per_run_capability_needing_registration_rejected_inside_workflow(

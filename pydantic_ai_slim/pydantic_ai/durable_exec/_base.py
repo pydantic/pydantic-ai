@@ -862,8 +862,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> None:
         """Reject per-run capabilities that need registering when the agent is built.
 
-        That's any capability contributing an executing toolset or `@durable_operation` methods, or choosing the
-        model through `resolve_model_id` or `get_model`.
+        That's any capability contributing an executing toolset or `@durable_operation` methods, or choosing or
+        wrapping the model through `resolve_model_id`, `get_model` or `get_wrapper_model`.
         """
         if not self.in_durable_context or not isinstance(
             self.get_durable_operation_backend(), RegisteredOperationBackend
@@ -885,13 +885,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def needs_registration(capability: AbstractCapability[AgentDepsT]) -> bool:
             # Durable operations are only registered for capabilities bound at construction, and only the
-            # model ID crosses into the model request unit, so a per-run capability that chooses the
+            # model ID crosses into the model request unit, so a per-run capability that chooses or wraps the
             # model there would be bypassed.
             return (
                 contributes_executing_toolset(capability)
                 or any(collect_capability_operations(leaf) for leaf in leaf_capabilities(capability))
                 or capability.has_resolve_model_id
-                or any(leaf._can_supply_model for leaf in leaf_capabilities(capability))
+                or any(
+                    leaf._can_supply_model or type(leaf).get_wrapper_model is not AbstractCapability.get_wrapper_model
+                    for leaf in leaf_capabilities(capability)
+                )
             )
 
         unsafe_capabilities = [
