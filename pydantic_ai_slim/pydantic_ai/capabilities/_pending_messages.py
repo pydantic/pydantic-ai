@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import deliver_asap_messages, resumes_suspended_response, run_queue, stamped_messages
+from pydantic_ai._agent_graph import ModelRequestNode, mark_deferred_pause
+from pydantic_ai._enqueue import (
+    PendingMessage,
+    deliver_asap_messages,
+    resumes_suspended_response,
+    run_queue,
+    stamped_messages,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
@@ -72,6 +78,24 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         return deliver_asap_messages(ctx, request_context)
 
 
+def _record_at_pause(ctx: RunContext[Any], recorded: list[PendingMessage]) -> None:
+    """Append what was queued to the history of a run pausing for deferred tools, marked as part of the pause.
+
+    Resuming the history then pauses again rather than sending the recorded content to the model.
+    """
+    for pending in recorded:
+        pending_messages = stamped_messages(
+            pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
+        )
+        for message in pending_messages:
+            assert isinstance(message, ModelRequest)  # `drain_at_pause` leaves a queued response queued.
+            mark_deferred_pause(message)
+        ctx.messages.extend(pending_messages)
+        ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+            EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
+        )
+
+
 def drain_pending_messages_at_end(
     ctx: RunContext[Any],
     result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
@@ -101,24 +125,16 @@ def drain_pending_messages_at_end(
 
     # A pause hands control back to the caller and must stand: turning it into another model turn would
     # skip an approval or abandon a provider job. At a deferred-tool pause, queued requests are recorded
-    # after the paused history with a run ID, which marks them as part of the pause, so resuming it without
-    # `deferred_tool_results` pauses again rather than closing the paused calls. A queued `ModelResponse`
-    # would read as the paused response, and an interrupted request would close the paused calls, so then
-    # the messages stay queued, as they do at a `PendingModelResponse` pause, whose history must end on the
-    # pending response.
+    # after the paused history, marked as part of the pause, so resuming it without `deferred_tool_results`
+    # pauses again rather than closing the paused calls. A queued `ModelResponse` would read as the paused
+    # response, and an interrupted request would close the paused calls, so then the messages stay queued,
+    # as they do at a `PendingModelResponse` pause, whose history must end on the pending response.
     # Either way the queue is closed, so `enqueue` raises once the run has ended.
     if isinstance(result.data.output, PendingModelResponse):
         run_queue(ctx).close()
         return result
     if isinstance(result.data.output, DeferredToolRequests):
-        for pending in run_queue(ctx).drain_at_pause() or ():
-            pending_messages = stamped_messages(
-                pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
-            )
-            ctx.messages.extend(pending_messages)
-            ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
-            )
+        _record_at_pause(ctx, run_queue(ctx).drain_at_pause() or [])
         return result
 
     # Pi-mono parity: drain `'asap'` first so anything that arrived during the

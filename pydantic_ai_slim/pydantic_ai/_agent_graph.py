@@ -120,8 +120,10 @@ from ._unsupported_settings import suppress_warnings as suppress_unsupported_set
 from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
+    _DEFERRED_PAUSE_KEY,  # pyright: ignore[reportPrivateUsage]
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _is_deferred_pause_record,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
@@ -150,6 +152,7 @@ from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOut
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     NativeToolFunc,
@@ -1220,17 +1223,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     def _history_to_run(
         self, stored: list[_messages.ModelMessage]
     ) -> tuple[list[_messages.ModelMessage], tuple[_ToolCallKey, ...] | None]:
-        """The history to run on, and the calls answered at the deferred pause it resumes, if it resumes one.
+        """The cleaned history to run on, and the calls answered at the deferred pause it resumes, if it resumes one.
 
-        A run given neither a new prompt nor results resumes a pause its history ends on. That history is kept as
-        stored: cleaning would merge the requests the pause wrote, losing the run ID that marks them as part of it.
-        The model request that eventually follows cleans the copy it sends. Any other history is cleaned.
+        Only a run given neither a new prompt nor results resumes a pause its history ends on.
         """
+        messages = _clean_message_history(stored)
         if self.user_prompt is None and self.deferred_tool_results is None:
-            answered = _answered_at_pause(stored)
-            if answered is not None:
-                return list(stored), answered
-        return _clean_message_history(stored), None
+            return messages, _answered_at_pause(messages)
+        return messages, None
 
     async def _adopt_resumed_response(
         self,
@@ -1387,14 +1387,11 @@ _ToolCallKey: TypeAlias = tuple[str, str]
 def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_ToolCallKey, ...] | None:
     """The calls answered after the last response, when the history ends at a pause for deferred tool calls.
 
-    That's when every request after the last response was written by an agent run, so carries a `run_id`, and
-    is complete, and some call of the response is still unanswered. A run that ends there made no model request
-    after writing them, so it paused: they hold the results of the step's other calls and content queued at the
-    pause, by that run or by a later one that paused again. Returns `None` for any other history. A new message
-    from elsewhere, such as a UI adapter's, has no `run_id` (`sanitize_messages` clears one a client sends after
-    the last response), and an interrupted request is closed out by `_repair_interrupted_tail`.
-
-    Must be given the history as stored: cleaning merges these requests and drops their `run_id`.
+    That's when every request after the last response is one a run wrote when it paused, as its reserved
+    metadata records (see `_DEFERRED_PAUSE_KEY` in `messages.py`), and some call of the response is still
+    unanswered. Those requests hold the results of the step's other calls and content queued at the pause, by
+    that run or by a later one that paused again. Returns `None` for any other history: a new message, or a
+    request whose model call failed, continues the run.
     """
     index = _last_response_index(history)
     if index is None or index == len(history) - 1:
@@ -1402,9 +1399,7 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     response = history[index]
     assert isinstance(response, _messages.ModelResponse)
     requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
-    if response.state != 'complete' or not all(
-        request.run_id is not None and request.state == 'complete' for request in requests
-    ):
+    if response.state != 'complete' or not all(_is_deferred_pause_record(request) for request in requests):
         return None
     call_ids = {call.tool_call_id for call in response.tool_calls}
     answered = [
@@ -1416,6 +1411,16 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     if not Counter((call.tool_name, call.tool_call_id) for call in response.tool_calls) - Counter(answered):
         return None
     return tuple(answered)
+
+
+def mark_deferred_pause(request: _messages.ModelRequest) -> None:
+    """Record that `request` was written at a pause for deferred tool calls. See `_DEFERRED_PAUSE_KEY`."""
+    metadata = request.metadata or {}
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    request.metadata = {
+        **metadata,
+        _PYDANTIC_AI_METADATA_KEY: {**(namespace if is_str_dict(namespace) else {}), _DEFERRED_PAUSE_KEY: True},
+    }
 
 
 def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
@@ -4385,14 +4390,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(
-                _messages.ModelRequest(
-                    parts=tool_responses,
-                    run_id=ctx.state.run_id,
-                    conversation_id=ctx.state.conversation_id,
-                    timestamp=now_utc(),
-                )
+            request = _messages.ModelRequest(
+                parts=tool_responses,
+                run_id=ctx.state.run_id,
+                conversation_id=ctx.state.conversation_id,
+                timestamp=now_utc(),
             )
+            if isinstance(final_result.output, DeferredToolRequests):
+                # The step's other calls are answered and the rest wait: resuming this history runs only those.
+                mark_deferred_pause(request)
+            messages.append(request)
 
         return End(final_result)
 

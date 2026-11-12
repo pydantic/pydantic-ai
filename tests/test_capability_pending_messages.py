@@ -2240,6 +2240,7 @@ async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_
             timestamp=IsDatetime(),
             run_id=IsStr(),
             conversation_id=IsStr(),
+            metadata={'__pydantic_ai__': {'deferred_pause': True}},
         )
     )
 
@@ -2367,7 +2368,7 @@ async def test_enqueue_at_pending_model_response_pause_keeps_the_pause(priority:
 
 @pytest.mark.parametrize('source', ['own', 'other_run'])
 async def test_content_recorded_at_a_deferred_pause_keeps_the_pause_on_a_plain_resume(source: str):
-    """Content recorded at a pause carries a run ID, its own or one a producer set, so a plain resume pauses again."""
+    """Content recorded at a pause is marked as part of it, whichever run ID it carries, so a plain resume pauses again."""
     call_count = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2390,6 +2391,7 @@ async def test_content_recorded_at_a_deferred_pause_keeps_the_pause_on_a_plain_r
     recorded = paused.all_messages()[-1]
     assert isinstance(recorded, ModelRequest)
     assert recorded.run_id == (paused.run_id if source == 'own' else 'source-run')
+    assert recorded.metadata == {'__pydantic_ai__': {'deferred_pause': True}}
 
     resumed = await agent.run(message_history=paused.all_messages())
     assert isinstance(resumed.output, DeferredToolRequests)
