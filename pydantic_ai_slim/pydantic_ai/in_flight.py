@@ -225,23 +225,28 @@ async def _call(fn: Callable[[], Awaitable[T]]) -> T:
     return await fn()
 
 
-def _check_on_loop(method: str) -> asyncio.AbstractEventLoop:
-    """The running event loop, which the registry's bookkeeping isn't safe to touch from outside of."""
+def _check_on_loop(method: str, agent_loop: asyncio.AbstractEventLoop | None) -> asyncio.AbstractEventLoop:
+    """`agent_loop`, the loop running the agent, if it's running this call: the registry isn't safe to touch from elsewhere."""
     try:
-        return asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        pass
-    try:
-        anyio.get_current_task()
-    except RuntimeError:
-        raise UserError(
-            f'`ctx.in_flight.{method}()` must be called from the event loop running the agent, such as from an async '
-            'tool or a capability hook.'
-        ) from None
-    # Running on another async backend, which the registry's tasks and events don't support.
+        try:
+            anyio.get_current_task()
+        except RuntimeError:
+            pass
+        else:
+            # Running on another async backend, which the registry's tasks and events don't support.
+            raise UserError(
+                f'`ctx.in_flight.{method}()` requires the asyncio event loop and is not supported under other async '
+                'backends, such as Trio.'
+            ) from None
+    else:
+        if loop is agent_loop:
+            return loop
+    # A thread without an event loop, or another event loop, like one a sync tool started in its worker thread.
     raise UserError(
-        f'`ctx.in_flight.{method}()` requires the asyncio event loop and is not supported under other async backends, '
-        'such as Trio.'
+        f'`ctx.in_flight.{method}()` must be called from the event loop running the agent, such as from an async '
+        'tool or a capability hook.'
     )
 
 
@@ -268,6 +273,11 @@ class InFlightRegistry:
     def __init__(self, event_stream_buffer: list[AgentStreamEvent]) -> None:
         """Created by the run; don't create one yourself."""
         self._event_stream_buffer = event_stream_buffer
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            # Not on asyncio, which runs need, so every call raises.
+            self._loop = None
         self._live: dict[str, InFlightWork[Any]] = {}
         self._started: set[InFlightWork[Any]] = set()
         self._failures: list[BaseException] = []
@@ -320,7 +330,7 @@ class InFlightRegistry:
                 'it starts. Run work that should outlive the run yourself, and `register()` it.'
             )
         self._check_can_add(id, 'start')
-        task = _check_on_loop('start').create_task(_call(fn), name=f'in_flight {kind} {id}')
+        task = _check_on_loop('start', self._loop).create_task(_call(fn), name=f'in_flight {kind} {id}')
         work = InFlightWork[T](
             id=id,
             kind=kind,
@@ -378,7 +388,7 @@ class InFlightRegistry:
                 loop running the agent.
         """
         self._check_can_add(id, 'register')
-        _check_on_loop('register')
+        _check_on_loop('register', self._loop)
         work = InFlightWork[None](
             id=id,
             kind=kind,
@@ -406,7 +416,7 @@ class InFlightRegistry:
                 isn't called from the event loop running the agent. From another thread, schedule the call on that
                 loop, for example with `loop.call_soon_threadsafe()`.
         """
-        _check_on_loop('settle')
+        _check_on_loop('settle', self._loop)
         if work in self._started:
             raise UserError(
                 f'In-flight work {work.id!r} was started with `start()`, so it settles when its coroutine finishes.'
@@ -425,7 +435,7 @@ class InFlightRegistry:
         Raises:
             UserError: If this isn't called from the event loop running the agent, which changes the live work.
         """
-        _check_on_loop('live')
+        _check_on_loop('live', self._loop)
         return tuple(work for work in self._live.values() if kind is None or work.kind == kind)
 
     async def wait_idle(self, *, kind: str | None = None) -> None:
@@ -440,7 +450,7 @@ class InFlightRegistry:
         Raises:
             UserError: If this isn't called from the event loop running the agent.
         """
-        _check_on_loop('wait_idle')
+        _check_on_loop('wait_idle', self._loop)
         while any(work.on_end != 'detach' for work in self.live(kind=kind)):
             await self._changed.wait()
 

@@ -570,6 +570,13 @@ async def test_registered_work_handles_and_waiting_for_idle():
             await anyio.to_thread.run_sync(registry.settle, untracked)
         with pytest.raises(UserError, match=r'`ctx\.in_flight\.live\(\)` must be called from the event loop'):
             await anyio.to_thread.run_sync(registry.live)
+
+        async def register_on_another_loop() -> None:
+            registry.register(kind='other', name='foreign', id='foreign')
+
+        # An event loop a sync tool might start in its worker thread isn't the one running the agent.
+        with pytest.raises(UserError, match=r'`ctx\.in_flight\.register\(\)` must be called from the event loop'):
+            await anyio.to_thread.run_sync(asyncio.run, register_on_another_loop())
         untracked.cancel()
         # Settling work that has already settled does nothing.
         registry.settle(untracked)
