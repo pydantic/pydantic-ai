@@ -3871,8 +3871,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
+            # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
-            return [result(block, True, text) for block in blocks]
+            return [result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
         # Each member may have become several actions, such as a key sequence.
         counts = replay['computer_action_counts']
         ends = list(itertools.accumulate(counts))
