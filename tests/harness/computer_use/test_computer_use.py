@@ -12,6 +12,7 @@ from typing import Any, cast
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -68,7 +69,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayAction
+from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, ComputerUseActionLimits, DisplayAction
 from pydantic_ai_harness.computer_use._capability import (
     _changed,  # pyright: ignore[reportPrivateUsage]
     _model_limit,  # pyright: ignore[reportPrivateUsage]
@@ -772,10 +773,9 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(UserError, match=message):
             await agent.run('Go.')
 
-    @pytest.mark.parametrize('seconds', [-1, 31])
-    def test_settle_seconds_is_checked(self, seconds: float) -> None:
-        with pytest.raises(UserError, match='`settle_seconds` must be from 0 to 30'):
-            ComputerUse(settle_seconds=seconds)
+    def test_settle_seconds_is_checked(self) -> None:
+        with pytest.raises(UserError, match='`settle_seconds` must not be negative'):
+            ComputerUse(settle_seconds=-1)
 
     async def test_on_a_read_only_workspace_the_model_can_look_but_not_act(self) -> None:
         provider = ScreenProvider()
@@ -1209,6 +1209,88 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert tool_return.outcome == 'failed'
         assert tool_return.content == message
         assert provider.actions == []
+
+    async def test_actions_have_no_amount_limits_by_default(self) -> None:
+        provider = ScreenProvider()
+        actions = [{'type': 'type', 'text': 'a' * 10_000}, {'type': 'keypress', 'keys': ['a'], 'repeat': 1_000}]
+        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.outcome == 'success'
+        assert len(provider.actions) == 2
+
+    @pytest.mark.parametrize(
+        'limits, action, message',
+        [
+            pytest.param(
+                ComputerUseActionLimits(max_wait_seconds=5),
+                {'type': 'wait', 'seconds': 7.5},
+                'Action 2 (wait) asks for 7.5 seconds, more than the 5 this agent allows (`max_wait_seconds`), so no '
+                'action ran.',
+                id='wait',
+            ),
+            pytest.param(
+                ComputerUseActionLimits(max_hold_seconds=1),
+                {'type': 'hold_key', 'keys': ['shift'], 'seconds': 2},
+                'Action 2 (hold_key) asks for 2 seconds, more than the 1 this agent allows (`max_hold_seconds`), so no '
+                'action ran.',
+                id='hold',
+            ),
+            pytest.param(
+                ComputerUseActionLimits(max_typed_chars=1_000),
+                {'type': 'type', 'text': 'a' * 1_001},
+                'Action 2 (type) asks for 1,001 characters, more than the 1,000 this agent allows (`max_typed_chars`), '
+                'so no action ran.',
+                id='type',
+            ),
+            pytest.param(
+                ComputerUseActionLimits(max_key_repeat=10),
+                {'type': 'keypress', 'keys': ['a'], 'repeat': 11},
+                'Action 2 (keypress) asks for 11 repeats, more than the 10 this agent allows (`max_key_repeat`), so no '
+                'action ran.',
+                id='repeat',
+            ),
+            pytest.param(
+                ComputerUseActionLimits(max_scroll_amount=5),
+                {'type': 'scroll', 'direction': 'down', 'amount': 6},
+                'Action 2 (scroll) asks for 6 scroll clicks, more than the 5 this agent allows (`max_scroll_amount`), '
+                'so no action ran.',
+                id='scroll',
+            ),
+            pytest.param(
+                ComputerUseActionLimits(max_drag_points=2),
+                {'type': 'drag', 'path': [{'x': 1, 'y': 1}, {'x': 2, 'y': 2}, {'x': 3, 'y': 3}]},
+                'Action 2 (drag) asks for 3 points, more than the 2 this agent allows (`max_drag_points`), so no action '
+                'ran.',
+                id='drag',
+            ),
+        ],
+    )
+    async def test_a_call_over_an_action_limit_is_refused_before_anything_runs(
+        self, limits: ComputerUseActionLimits, action: dict[str, Any], message: str
+    ) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'move', 'x': 5, 'y': 5}, action]),
+            capabilities=[provider.capability(), ComputerUse(action_limits=limits)],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.outcome == 'failed'
+        assert tool_return.content == message
+        assert provider.actions == []
+
+    def test_action_limits_load_from_an_agent_spec(self) -> None:
+        spec = {'model': 'test', 'capabilities': [{'ComputerUse': {'action_limits': {'max_wait_seconds': 60}}}]}
+        agent = Agent.from_spec(spec, custom_capability_types=[ComputerUse])
+        [computer_use] = [c for c in agent.root_capability.capabilities if isinstance(c, ComputerUse)]
+        assert computer_use.action_limits == ComputerUseActionLimits(max_wait_seconds=60)
+
+    def test_action_limits_refuse_unknown_names_and_values_that_are_not_positive(self) -> None:
+        with pytest.raises(ValidationError, match='max_wait'):
+            ComputerUseActionLimits(**{'max_wait': 60})
+        with pytest.raises(ValidationError, match='greater than 0'):
+            ComputerUseActionLimits(max_typed_chars=0)
 
     async def test_a_button_pressed_by_a_call_that_fails_is_released(self) -> None:
         provider = ScreenProvider()
