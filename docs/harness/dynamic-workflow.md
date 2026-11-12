@@ -214,7 +214,7 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments, including
-  `return_exceptions=True`. It runs sub-agents concurrently, except in a
+  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except in a
   [DBOS workflow](#running-under-other-durable-engines), where they run one at a time. Other task
   creation and wait APIs are unavailable.
 
