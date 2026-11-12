@@ -323,7 +323,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                 if creating:
                     raise WorkspaceError(
                         f'Could not create working_dir {self._working_dir!r} in Kubernetes sandbox '
-                        f'{session.ref.id!r}: the sandbox user cannot create or enter it.'
+                        f'{session.ref.id!r}: it could not be created or entered.'
                     )
                 raise WorkspaceError(
                     f'working_dir {self._working_dir!r} does not exist in Kubernetes sandbox {session.ref.id!r}. '

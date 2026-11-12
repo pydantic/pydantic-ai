@@ -258,6 +258,7 @@ async def test_a_new_claim_creates_its_working_dir(cluster: FakeCluster) -> None
 
 
 async def test_a_working_dir_a_new_claim_cannot_create(cluster: FakeCluster) -> None:
+    """A `working_dir` a new claim cannot create fails before the command runs, naming the directory."""
     backend = KubernetesSandboxBackend(warm_pool='pool', working_dir='/dev/null/project')
     with pytest.raises(WorkspaceError, match="Could not create working_dir '/dev/null/project'"):
         await backend.run(['true'])
