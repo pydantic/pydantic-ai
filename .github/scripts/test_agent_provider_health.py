@@ -1314,6 +1314,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         workflow, task_key, trigger_event, 1, health.Failure('plan_limit', 429, None)
     )
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('exhausted', '2026-10-01T17:00:00Z'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     # The host record reads the same metadata from the engine's terminal session record.
     agent_session = tmp_path / 'agent-session.jsonl'
     terminal = {'status': 'failure', 'metadata': {'provider_health': result_event['provider_health']}}
