@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine, or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
+`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -16,7 +16,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
-| Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
+| A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -435,10 +435,10 @@ Python up to 3.14.
 - Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
 
-### DockerSandbox
+### DockerContainer
 
-`DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
-(backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
+`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+(backend `DockerContainerBackend`) runs commands and file operations in a local container through the
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
@@ -446,7 +446,7 @@ Python up to 3.14.
   capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
-  so it comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
+  so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
   Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
 - Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
   adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`:

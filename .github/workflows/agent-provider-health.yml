@@ -210,12 +210,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scheduled recovery only; workflow_run receives no Z.AI key.
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scheduled recovery only; workflow_run receives no Z.AI key.
         run: python3 .github/scripts/agent_provider_health.py monitor --repository "$GITHUB_REPOSITORY"
       - name: Verify requested incident recovery
         if: github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- requested recovery only; workflow_run receives no Z.AI key.
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }} # zizmor: ignore[secrets-outside-env] -- requested recovery only; workflow_run receives no Z.AI key.
           ISSUE_NUMBER: ${{ inputs.recover_issue }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor

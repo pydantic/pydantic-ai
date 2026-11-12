@@ -483,6 +483,18 @@ SCENARIOS: dict[str, Scenario] = {
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
     ),
+    # Each run ends with a review round, which takes a turn of its own.
+    'RefineOutput': Scenario(
+        turns=(
+            Turn(calls=(('look_up', {'topic': 'weather'}),)),
+            Turn(calls=(('look_up', {'topic': 'news'}),)),
+            Turn(text='Here is the weather and the news.'),
+            Turn(text='Here is the weather and the news, checked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='Here is more, checked.'),
+        )
+    ),
     'RepoContext': Scenario(
         state_calls=(
             ('edit_file', {'path': 'AGENTS.md', 'old_text': 'short', 'new_text': 'very short'}),

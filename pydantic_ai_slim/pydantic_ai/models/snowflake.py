@@ -10,7 +10,7 @@ from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _utils
-from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
+from ..messages import FinishReason, ModelResponse, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -240,6 +240,11 @@ class SnowflakeModel(OpenAIChatModel):
             return [from_reasoning_detail(detail, self.system) for detail in reasoning_details]
         else:
             return super()._process_thinking(message)
+
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        native = self.accepts_stateless_artifacts(message, part) and into_reasoning_detail(part)
+        return not native and super()._carries_thinking_in_user_turn(message, part)
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # pyright: ignore[reportPrivateUsage]

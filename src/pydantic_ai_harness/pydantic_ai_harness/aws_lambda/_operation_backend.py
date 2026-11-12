@@ -41,6 +41,8 @@ _STEP_CONFIG_VALUE_ADAPTERS = {
 class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
     def __init__(self, base: Mapping[str, Any] | None) -> None:
         base_config = _parse_step_config(base)
+        self.base_step_config = base_config
+        """The `StepConfig` every step gets unless a tool's metadata overrides it."""
 
         def resolve_tool(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
