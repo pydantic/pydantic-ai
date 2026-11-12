@@ -40,7 +40,7 @@ try:
         _map_api_error,  # pyright: ignore[reportPrivateUsage]
         _request_http_options,  # pyright: ignore[reportPrivateUsage]
     )
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google Decisions model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
