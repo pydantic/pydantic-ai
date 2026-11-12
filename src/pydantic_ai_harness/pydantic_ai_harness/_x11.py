@@ -294,7 +294,7 @@ def desktop_display(
     backend: SupportsCommands,
     size: tuple[int, int] | None,
     where: Callable[[], str],
-) -> ManagedDisplay | None:
+) -> LazyDisplay | None:
     """A sandbox's display on a plain Xvfb at `size`, or `None` when it has no desktop.
 
     For a sandbox with no desktop image of its own, which `start_x_server` provisions on first use.
