@@ -1340,6 +1340,29 @@ AAAAAAAAAAAAAAAAAAAA
         assert [path for path in expected if any(path in note for note in notes)] == expected
         assert len(notes) == len(expected)
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_link_into_an_excluded_directory_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'libs' / 'AGENTS.md', 'LIBS BODY')
+        _write(tmp_path / 'node_modules' / 'dep' / 'AGENTS.md', 'DEP BODY')
+        _write(tmp_path / 'node_modules' / 'dep' / 'index.js', 'x')
+        (tmp_path / 'libs' / 'dep').symlink_to(tmp_path / 'node_modules' / 'dep', target_is_directory=True)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"libs/dep/index.js"}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=tmp_path), RepoContext(autoload_instructions=False)],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        # The read itself is allowed; only the dependency's instruction file is held back.
+        assert 'x' in str(result.all_messages())
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="libs/AGENTS.md">\nLIBS BODY\n</context-file>']
+        )
+
     async def test_a_working_directory_inside_an_excluded_name_is_not_excluded(self, tmp_path: Path) -> None:
         working_dir = tmp_path / 'node_modules' / 'pkg'
         _write(working_dir / 'sub' / 'AGENTS.md', 'SUB BODY')

@@ -128,19 +128,7 @@ with `'pointer'`, and 39% with nested traversal off. Pass
 caps the characters of file bodies `'contents'` inlines per conversation,
 counting every inlined note still in the history the model sees, so earlier
 runs count and a compaction frees room: a file that would go past it is
-surfaced as a pointer instead, and `None` removes the cap.
-
-`nested_exclude` skips directories whose instruction files are written for
-someone else: by default `node_modules`, `.venv`, `venv` and `site-packages`,
-where package managers install dependencies. Without it, reading a file in an
-installed package would surface that package's `AGENTS.md`, and as the deeper
-file it would take precedence over the project's. Each entry is an `fnmatch`
-pattern matched against every directory name below the working directory, so
-everything beneath a match is skipped too, while the directories above it are
-still surfaced. `vendor/` and `third_party/` aren't in the default because
-projects often commit and own them; add them if yours doesn't.
-
-The note reaches
+surfaced as a pointer instead, and `None` removes the cap. The note reaches
 message history before the next model request. A directory counts as surfaced while its note
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
@@ -148,10 +136,23 @@ surfaces it again. The working directory's files are not surfaced again when
 the walk-up already loaded them. Every part of a note carries
 `{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
 in its `metadata`, which is how `RepoContext` and compaction recognize it.
+
 Same-directory instruction symlinks are named after their targets, and load
 only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
+
+`nested_exclude` skips directories whose instruction files are written for
+someone else: by default `node_modules`, `.venv`, `venv` and `site-packages`,
+where package managers install dependencies. Without it, reading a file in an
+installed package would surface that package's `AGENTS.md`, and as the deeper
+file it would take precedence over the project's. Each entry is an `fnmatch`
+pattern matched against every directory name below the working directory, both
+as written and after resolving symlinks, so a link such as
+`libs/dep -> node_modules/dep` is skipped too. Everything beneath a match is
+skipped, while the directories above it are still surfaced. `vendor/` and
+`third_party/` aren't in the default because projects often commit and own
+them; add them if yours doesn't.
 
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the
