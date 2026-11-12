@@ -786,9 +786,11 @@ def _escaped_tool_failed(
 
     Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
     tool directly does. Monty passes an error a nested call raised back as a plain `Exception` with
-    the same message, so the latest nested error with that message decides. A snippet that caught
-    a `ToolFailed` and then raised a plain `Exception` with exactly the same text is read as that
-    failure, which tells the model the same thing.
+    the same message and nothing else, so the latest nested error with that message decides. Only a
+    snippet that handles a `ToolFailed` and another error with exactly the same text can be misread:
+    raising its own `Exception` with that text after catching the `ToolFailed` reads as the failure,
+    and re-raising a saved `ToolFailed` after a later nested error with that text reads as a retry.
+    A message Monty does not carry unchanged, such as one with a lone surrogate, falls back to a retry.
     """
     if type(error.exception()) is not Exception:
         return None
