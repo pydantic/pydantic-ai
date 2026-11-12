@@ -389,7 +389,8 @@ class ConversationStore(ABC):
         while (missing := _cleaned_shortfall(stored, unchecked, sent)) is not None:
             if missing < 0 or first.parent_id is None:
                 return False
-            # Read at least as many as are missing, and twice as many as last time, as merged requests add none.
+            # A request that merges into the next one adds no message, so an entry read back can add none:
+            # read at least as many as are missing, and twice as many as last time.
             step = max(missing, 2 * step, 1)
             earlier = await self._history_of(record, up_to=first.parent_id, limit=step)
             if earlier is None:
