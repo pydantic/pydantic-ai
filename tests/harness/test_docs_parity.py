@@ -163,7 +163,7 @@ _CAPABILITY_PAGE_META = {
     'memory.md': ('memory', 'Memory'),
     'pixeltable.md': ('pixeltable', 'Pixeltable'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
-    'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
+    'docker-container.md': ('docker_container', 'Docker Container'),
     'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
@@ -173,7 +173,7 @@ _CAPABILITY_PAGE_META = {
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
-    'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
+    'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
@@ -182,6 +182,7 @@ _CAPABILITY_PAGE_META = {
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
     'youdotcom.md': ('youdotcom', 'You.com'),
+    'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
@@ -198,6 +199,7 @@ _CAPABILITY_PAGE_META = {
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
+    'refine-output.md': ('refine_output', 'Refine Output'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'github.md': ('github', 'GitHub'),
@@ -394,6 +396,13 @@ def test_capability_readme_links_source(package: Path) -> None:
         f'{package.relative_to(_ROOT) / "README.md"} must link its own source module '
         f'(a Markdown link containing `{expected}`), so parity tooling can find the implementation.'
     )
+
+
+@pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
+def test_capability_readme_names_models_not_aliases(package: Path) -> None:
+    """GitHub and PyPI render READMEs as-is, so the docs site's `{{ provider:size }}` model aliases stay literal there."""
+    readme = (package / 'README.md').read_text(encoding='utf-8')
+    assert not re.findall(r'\{\{\s*[\w-]+:[\w.-]+\s*\}\}', readme)
 
 
 # The Coder blown-out example is repeated on four markdown surfaces (plus, parameterized,

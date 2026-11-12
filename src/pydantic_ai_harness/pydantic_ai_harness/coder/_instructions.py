@@ -32,7 +32,8 @@ _REPO_FILES = "Instruction files ({names}) for the project, if any, are already 
 """Only when the bundled `RepoContext` autoloads instruction files."""
 
 _NESTED_REPO_FILES = (
-    "A subdirectory's instruction files are added to your context the first time you read or list something in it."
+    "A subdirectory's instruction files are added to your context "
+    'the first time you read, list, write or edit something in it.'
 )
 """Only when that `RepoContext` inlines nested files (`nested_traversal` and `nested_inject='contents'`)."""
 

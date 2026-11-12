@@ -263,7 +263,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",
-    "coverage[toml]>=7.10.7",
+    "coverage[toml]>=7.17.0",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "pydocket>=0.20.2",
@@ -314,6 +314,9 @@ dev = [
     # interleavings of client operations and provider events, shrunk to a minimal failing trace. Also draws
     # the message histories of the property tests in `tests/test_history_properties.py`.
     "hypothesis>=6.153.2",
+    # Serves the gRPC stream `pydantic_monty.AsyncMontyRemote` dials in `tests/harness/code_mode/grpc_relay.py`.
+    # Pure Python, so unlike `grpcio` it installs on every supported Python without a source build.
+    "grpclib>=0.4.7",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -335,6 +338,12 @@ lint = [
 ]
 clai2-browser = [
     "playwright>=1.45",
+]
+# The real span exporter behind the gh-aw engine's `PAI_OTEL_EXPORT_PATH`, which
+# `tests/harness/gh_aw/test_logfire_isolation.py` runs. It brings `opentelemetry-sdk`, so it stays out
+# of `dev`: the `pydantic-evals` CI cell covers `pydantic_evals.otel`'s fallback for installs without the SDK.
+gh-aw-tracing = [
+    "opentelemetry-exporter-otlp-json-file>=0.64b0",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
@@ -377,8 +386,6 @@ include = [
     ".github/scripts/test_review_lifecycle.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
-    ".github/scripts/semantic_owner_router.py",
-    ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/community_demand.py",
     ".github/scripts/test_community_demand.py",
     ".github/scripts/triage_telemetry.py",
@@ -393,10 +400,18 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_pr_guard.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
     ".github/scripts/test_clai2_web_bundle.py",
+    ".github/scripts/douwebot_usage_limit.py",
+    ".github/scripts/test_douwebot_usage_limit.py",
+    ".github/scripts/douwebot_opencode_run.py",
+    ".github/scripts/douwebot_opencode_result.py",
+    ".github/scripts/test_douwebot_opencode_run.py",
+    ".github/scripts/test_douwebot_opencode_result.py",
+    ".github/scripts/category_classify_opencode.py",
 ]
 
 [tool.ruff.lint]
@@ -477,7 +492,6 @@ quote-style = "single"
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
-".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
 ".github/scripts/test_triage_telemetry.py" = ["D"]
 ".github/scripts/test_feature_digest.py" = ["D"]
@@ -485,11 +499,15 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_pr_guard.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 ".github/scripts/test_latest_versions_canary_report.py" = ["D"]
 ".github/scripts/test_clai2_web_bundle.py" = ["D"]
+".github/scripts/test_douwebot_usage_limit.py" = ["D"]
+".github/scripts/test_douwebot_opencode_run.py" = ["D"]
+".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
@@ -625,6 +643,8 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # TODO(v3): Require `dbos>=3.4.0` and drop `SnapshotStepReservation`, the fallback for
+    # `DBOS.reserve_step` in `pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py`.
     # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
     # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
     # TODO(v3): Require `dbos>=2.31.0` and drop this filter.
@@ -650,7 +670,8 @@ filterwarnings = [
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
-    "ignore:Found propagated trace context:RuntimeWarning",
+    # logfire < 5.5 says 'Found propagated trace context', 5.5+ says 'Found propagated context'.
+    "ignore:Found propagated (trace )?context:RuntimeWarning",
     # `starlette.testclient` still references the `anyio.abc.BlockingPortal` alias that anyio 4.15.0
     # deprecated, so the warning fires at import time and fails collection of every test module that
     # imports it. There is nothing to bump to: starlette's `master` still uses the alias.

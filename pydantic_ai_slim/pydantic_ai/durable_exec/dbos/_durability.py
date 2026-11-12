@@ -4,7 +4,7 @@ from collections import deque
 from collections.abc import Mapping
 from contextlib import nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
@@ -17,6 +17,7 @@ from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
@@ -30,20 +31,22 @@ from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, Toolse
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import CallToolResult, DurableFunctionToolset, wrap_tool_call_result
+from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, matches_tool_selector
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._agent import DBOSParallelExecutionMode
-from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
+from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig, SnapshotStepReservation
 from ._operation_names import DBOSOperationNamer
 from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
+    from dbos import StepReservation
     from dbos._context import DBOSContext
 
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
@@ -145,7 +148,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
-                A run with a workspace always runs its tool calls sequentially.
+                A run with a workspace runs its tool calls sequentially, except that tools
+                that run in a child workflow run in parallel.
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
@@ -159,7 +163,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
-        self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
+        self._event_step_reservations: dict[
+            tuple[str | None, str | None], dict[int, deque[StepReservation | SnapshotStepReservation | None]]
+        ] = {}
         self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
         self._child_workflow_metadata_capability = False
         self._init_legacy_context_vars()
@@ -191,7 +197,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 tool=self._mcp_step_config,
             ),
         )
-        self._event_step_contexts = {}
+        self._event_step_reservations = {}
         self._bound_model_operations = self._bind_model_operations(
             self._operation_backend, model_id=None, model_name='default'
         )
@@ -382,6 +388,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         deps: Any,
     ) -> CallToolResult:
         ctx = DurableRunContext.restore(serialized_ctx, deps=deps, agent=self._agent, engine_spec=self.engine_spec)
+        if ctx.workspace.attached:
+            # Workspace calls are steps of the child workflow, so parallel tools replay their own results.
+            ctx.workspace = DurableWorkspace(ctx.workspace, durability=self, ctx=ctx)
         # The tool was prepared in the parent, against the full run context.
         tool = toolset.tool_for_tool_def(tool_def, ctx=ctx, original_name=original_name)
         # A recovered child doesn't run inside the parent's run, so nested runs inherit its deadline from `ctx`.
@@ -399,16 +408,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         return True
 
     def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
+        reservations = self._event_step_reservations.get((DBOS.workflow_id, ctx.run_id))
         if reservations is not None:
             # Reserve in buffer order, before immediate listeners can yield or emit another event.
-            step_ctx = None
+            reservation = None
             if ctx.tool_call_id is not None and self.in_durable_context:
-                # TODO: Replace the private reservation API: https://github.com/dbos-inc/dbos-transact-py/issues/915
-                from dbos._context import snapshot_step_context
-
-                step_ctx = snapshot_step_context()
-            reservations.setdefault(id(event), deque()).append(step_ctx)
+                reservation = DBOS.reserve_step() if hasattr(DBOS, 'reserve_step') else SnapshotStepReservation()
+            reservations.setdefault(id(event), deque()).append(reservation)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
@@ -420,19 +426,59 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))
             return
-        reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
+        reservations = self._event_step_reservations.get((DBOS.workflow_id, ctx.run_id))
         if reservations is not None and (pending := reservations.get(id(event))):
-            step_ctx = pending.popleft()
+            reservation = pending.popleft()
             if not pending:
                 del reservations[id(event)]
-            if step_ctx is not None:
+            if reservation is not None:
                 event_operation = self._bound_event_operation
                 assert isinstance(event_operation, DBOSBoundOperation)
-                await event_operation.call_reserved(step_ctx, EventStreamHandlerParams(event, run_context=ctx))
+                await event_operation.call_reserved(reservation, EventStreamHandlerParams(event, run_context=ctx))
                 return
         await super()._dispatch_event_stream_event(ctx, event)
 
     # --- Capability hooks ---
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """With a workspace and child-workflow tools, run each tool outside a child workflow alone.
+
+        DBOS numbers steps as they start, so steps from concurrent tools could replay into the wrong call.
+        """
+        if not (self._child_workflow_toolsets and self.in_durable_context and ctx.workspace.attached):
+            return tool_defs
+        assert ctx.root_capability is not None
+        set_metadata: list[SetToolMetadata[AgentDepsT]] = []
+
+        def collect(capability: AbstractCapability[AgentDepsT]) -> None:
+            if isinstance(capability, SetToolMetadata):
+                set_metadata.append(capability)
+
+        # The run's capability tree, whose `SetToolMetadata` wrappers routing sees.
+        ctx.root_capability.apply(collect)
+        return [
+            tool_def
+            if await self._runs_in_child_workflow(ctx, tool_def, set_metadata)
+            else replace(tool_def, sequential=True)
+            for tool_def in tool_defs
+        ]
+
+    async def prepare_output_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return await self.prepare_tools(ctx, tool_defs)
+
+    async def _runs_in_child_workflow(
+        self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition, set_metadata: list[SetToolMetadata[AgentDepsT]]
+    ) -> bool:
+        if tool_def.toolset_id not in self._child_workflow_toolsets:
+            return False
+        # `SetToolMetadata` wraps the toolset outside this hook, so merge its metadata as routing will see it.
+        metadata = tool_def.metadata or {}
+        for capability in reversed(set_metadata):
+            if await matches_tool_selector(capability.tools, ctx, replace(tool_def, metadata=metadata)):
+                metadata = {**metadata, **capability.metadata}
+        return selects_child_workflow(metadata, 'dbos')
 
     async def wrap_run(
         self,
@@ -445,22 +491,23 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         if agent is None:  # pragma: no cover
             return await handler()
         # DBOS numbers steps as they start; parallel tools making several workspace steps each could
-        # replay recorded results into the wrong calls on recovery.
+        # replay recorded results into the wrong calls on recovery. With child-workflow tools,
+        # `prepare_tools` runs every other tool alone instead.
         mode = self._parallel_execution_mode
-        if self.in_durable_context and ctx.workspace.attached:
+        if self.in_durable_context and ctx.workspace.attached and not self._child_workflow_toolsets:
             mode = 'sequential'
         key = (DBOS.workflow_id, ctx.run_id)
         reserve_events = (
             self.in_durable_context and self._event_stream_handler is not None and not self._in_legacy_workflow.get()
         )
         if reserve_events:
-            self._event_step_contexts[key] = {}
+            self._event_step_reservations[key] = {}
         try:
             with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
-                return await handler()
+                return await super().wrap_run(ctx, handler=handler)
         finally:
             if reserve_events:
-                self._event_step_contexts.pop(key)
+                self._event_step_reservations.pop(key)
 
 
 _child_workflow_config_adapter = TypeAdapter(ChildWorkflowConfig)

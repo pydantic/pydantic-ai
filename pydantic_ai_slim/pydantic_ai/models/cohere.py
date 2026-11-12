@@ -106,11 +106,12 @@ except ImportError as _import_error:
 import httpx
 
 LatestCohereModelNames = Literal[
-    'c4ai-aya-expanse-32b',
-    'c4ai-aya-expanse-8b',
-    'command-nightly',
-    'command-r-08-2024',
+    'command-a-plus-05-2026',
+    'command-a-reasoning-08-2025',
+    'command-a-vision-07-2025',
+    'command-a-03-2025',
     'command-r-plus-08-2024',
+    'command-r-08-2024',
     'command-r7b-12-2024',
 ]
 """Latest Cohere models."""
@@ -439,53 +440,20 @@ class CohereModel(Model[AsyncClientV2]):
             provider_response_id=response.id,
         )
 
-    def _map_messages(  # noqa: C901
+    def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         cohere_messages: list[ChatMessageV2] = []
         for message in messages:
-            if isinstance(message, ModelRequest):
-                cohere_messages.extend(self._map_user_message(message))
-            elif isinstance(message, ModelResponse):
-                texts: list[str] = []
-                thinking: list[str] = []
-                tool_calls: list[ToolCallV2] = []
-                for item in message.parts:
-                    if isinstance(item, TextPart):
-                        texts.append(item.content)
-                    elif isinstance(item, ThinkingPart):
-                        thinking.append(item.content)
-                    elif isinstance(item, ToolCallPart):
-                        tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(
-                        item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
-                    ):  # pragma: no cover
-                        pass
-                    elif isinstance(item, SpeechPart):  # pragma: no cover
-                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                        raise _unconverted_speech_part_error()
-                    else:
-                        assert_never(item)
-
-                if not texts and not thinking and not tool_calls:
-                    # Cohere rejects an assistant message with neither content nor tool calls
-                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
-                    # the OpenAI and Anthropic adapters.
-                    continue
-                message_param = AssistantChatMessageV2(role='assistant')
-                if texts or thinking:
-                    contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
-                    if thinking:
-                        contents.append(ThinkingAssistantMessageV2ContentOneItem(thinking='\n\n'.join(thinking)))
-                    if texts:  # pragma: no branch
-                        contents.append(TextAssistantMessageV2ContentOneItem(text='\n\n'.join(texts)))
-                    message_param.content = contents
-                if tool_calls:
-                    message_param.tool_calls = tool_calls
-                cohere_messages.append(message_param)
-            else:
-                assert_never(message)
+            match message:
+                case ModelRequest():
+                    cohere_messages.extend(self._map_user_message(message))
+                case ModelResponse():
+                    if (message_param := self._map_model_response(message)) is not None:
+                        cohere_messages.append(message_param)
+                case _:
+                    assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(cohere_messages) if not isinstance(m, SystemChatMessageV2)),
@@ -494,6 +462,43 @@ class CohereModel(Model[AsyncClientV2]):
             instruction_messages = [SystemChatMessageV2(role='system', content=p.content) for p in instruction_parts]
             cohere_messages[system_prompt_count:system_prompt_count] = instruction_messages
         return cohere_messages
+
+    def _map_model_response(self, message: ModelResponse) -> AssistantChatMessageV2 | None:
+        texts: list[str] = []
+        thinking: list[str] = []
+        tool_calls: list[ToolCallV2] = []
+        for item in message.parts:
+            match item:
+                case TextPart():
+                    texts.append(item.content)
+                case ThinkingPart():
+                    thinking.append(item.content)
+                case ToolCallPart():
+                    tool_calls.append(self._map_tool_call(item))
+                case NativeToolCallPart() | NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
+                    pass
+                case SpeechPart():  # pragma: no cover
+                    # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                    raise _unconverted_speech_part_error()
+                case _:
+                    assert_never(item)
+
+        if not texts and not thinking and not tool_calls:
+            # Cohere rejects an assistant message with neither content nor tool calls
+            # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+            # the OpenAI and Anthropic adapters.
+            return None
+        message_param = AssistantChatMessageV2(role='assistant')
+        if texts or thinking:
+            contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
+            if thinking:
+                contents.append(ThinkingAssistantMessageV2ContentOneItem(thinking='\n\n'.join(thinking)))
+            if texts:  # pragma: no branch
+                contents.append(TextAssistantMessageV2ContentOneItem(text='\n\n'.join(texts)))
+            message_param.content = contents
+        if tool_calls:
+            message_param.tool_calls = tool_calls
+        return message_param
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
@@ -523,18 +528,7 @@ class CohereModel(Model[AsyncClientV2]):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    yield UserChatMessageV2(role='user', content=part.content)
-                else:
-                    cohere_content: list[CohereContent] = []
-                    for c in part.content:
-                        if isinstance(c, str | TextContent):
-                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
-                        elif isinstance(c, CachePoint):
-                            continue
-                        else:
-                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
-                    yield UserChatMessageV2(role='user', content=cohere_content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 if part.files:
                     raise NotImplementedError('Files are not supported in Cohere tool returns')
@@ -552,6 +546,20 @@ class CohereModel(Model[AsyncClientV2]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
+
+    @staticmethod
+    def _map_user_prompt(part: UserPromptPart) -> UserChatMessageV2:
+        if isinstance(part.content, str):
+            return UserChatMessageV2(role='user', content=part.content)
+        cohere_content: list[CohereContent] = []
+        for c in part.content:
+            if isinstance(c, str | TextContent):
+                cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
+            elif isinstance(c, CachePoint):
+                continue
+            else:
+                raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+        return UserChatMessageV2(role='user', content=cohere_content)
 
 
 def _map_finish_reason(raw: ChatFinishReason) -> tuple[FinishReason | None, dict[str, str]]:

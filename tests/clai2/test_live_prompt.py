@@ -43,12 +43,21 @@ async def editor(
     toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
+    key_wait_limit: float = 5,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+    """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
+    """
     output = output if output is not None else io.StringIO()
     console = Console(file=output, force_terminal=True, width=80, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(key_wait_limit),
+    ):
         live = LivePrompt(
             console=console,
             commands=commands,
@@ -281,6 +290,61 @@ async def test_image_paste_and_failure_notice(monkeypatch: pytest.MonkeyPatch) -
         assert 'clipboard unavailable' in live.images.notice
         live.feed('paste', 'plain\r\ntext')
         assert live.buffer.text.endswith('plain\ntext')
+
+
+@pytest.mark.parametrize('replacement', ['none', 'error', 'success', 'unrelated'])
+async def test_paste_error_expires_without_input_or_state_loss(
+    monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    clock = FrameClock()
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, clock=clock) as (live, _, _):
+        image = BinaryContent(data=b'png', media_type='image/png')
+        marker = live.images.attach([image])
+        live.submit(marker + 'queued caption')
+        live.buffer.replace(marker + 'draft caption')
+        original = live.buffer.display()
+
+        def fail() -> list[BinaryContent]:
+            raise ValueError('No image in the clipboard')
+
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', fail)
+        live.feed('ctrl-v')
+        assert 'No image in the clipboard' in terminal.lines()[-1]
+        assert 'Linux' not in live.images.notice
+        clock.now = 29.999
+        live.tick()
+        assert 'Image paste failed' in terminal.lines()[-1]
+        assert live.tick() == pytest.approx(0.001), 'the next wake cannot pass the deadline'
+        if replacement == 'error':
+            live.feed('ctrl-v')
+        elif replacement == 'success':
+            monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', lambda: [image])
+            live.feed('alt-v')
+        elif replacement == 'unrelated':
+            live.images.notice = 'An unrelated image notice'
+        clock.now = 30
+        live.tick()
+        if replacement == 'none':
+            assert live.images.notice == ''
+            assert terminal.lines()[-1].strip() == 'ready | queued: 1'
+        elif replacement == 'error':
+            assert 'Image paste failed' in live.images.notice
+            clock.now = 59.999
+            live.tick()
+            assert live.images.notice == ''
+        elif replacement == 'success':
+            assert live.images.notice.startswith('Image attached')
+        else:
+            assert live.images.notice == 'An unrelated image notice'
+        if replacement != 'success':
+            assert live.buffer.display() == original
+        assert live.queued_messages == (marker + 'queued caption',)
+        assert live.images.resolve(marker) == ('', [image])
+        live.notice = 'A separate editor notice'
+        clock.now = 100
+        live.tick()
+        assert live.notice == 'A separate editor notice'
 
 
 async def test_queue_labels_and_small_terminal() -> None:

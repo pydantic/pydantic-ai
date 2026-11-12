@@ -165,10 +165,14 @@ def _render_sections(
             lines.append('... [notebook exceeds `max_memory_size`; bounded prefix shown] ...')
         sections.append(f'### {MAIN_FILENAME}\n\n' + '\n'.join(lines))
     if subfiles or omitted_files or files_truncated:
-        listing = [f'- {name}' for name in subfiles]
-        if files_truncated:
-            listing.append('- ... [more files omitted; use search_memory to find relevant memory]')
-        elif omitted_files:
-            listing.append(f'- ... [{omitted_files} more files; use search_memory to find relevant memory]')
-        sections.append('### Other memory files\n\n' + '\n'.join(listing))
+        sections.append(_render_file_listing(subfiles, omitted_files, files_truncated))
     return '\n\n'.join(sections)
+
+
+def _render_file_listing(subfiles: list[str], omitted_files: int, files_truncated: bool) -> str:
+    listing = [f'- {name}' for name in subfiles]
+    if files_truncated:
+        listing.append('- ... [more files omitted; use search_memory to find relevant memory]')
+    elif omitted_files:
+        listing.append(f'- ... [{omitted_files} more files; use search_memory to find relevant memory]')
+    return '### Other memory files\n\n' + '\n'.join(listing)
