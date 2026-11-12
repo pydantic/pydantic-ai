@@ -79,8 +79,7 @@ class WorkspaceOutputLimitError(WorkspaceError):
 class WorkspaceUnavailableError(WorkspaceError):
     """This backend can't reach its environment: it is gone, paused, stopped, or not permitted.
 
-    Retrying the same call can't succeed. Whether the environment can be resumed by its ref is the business of
-    whoever manages its lifecycle.
+    Retrying the same call can't succeed. Resuming the environment by its ref is up to whoever manages its lifecycle.
     """
 
 
