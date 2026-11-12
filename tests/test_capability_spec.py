@@ -1325,6 +1325,11 @@ def test_model_json_schema_with_capabilities():
                         'timeout': {'anyOf': [{'type': 'integer'}, {'type': 'number'}], 'title': 'Timeout'},
                         'request_timeout': {'title': 'Request Timeout', 'type': 'number'},
                         'first_event_timeout': {'title': 'First Event Timeout', 'type': 'number'},
+                        'framing_announcement': {
+                            'enum': ['always', 'when_needed', 'never'],
+                            'title': 'Framing Announcement',
+                            'type': 'string',
+                        },
                         'max_retries': {'title': 'Max Retries', 'type': 'integer'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
@@ -2096,6 +2101,7 @@ def test_model_json_schema_with_capabilities():
                                         'ModelNotFoundError',
                                         'ModelRequestTimeout',
                                         'ContentFilterError',
+                                        'OutputTokenLimitExceeded',
                                     ],
                                     'type': 'string',
                                 },
@@ -2117,6 +2123,7 @@ def test_model_json_schema_with_capabilities():
                                             'ModelNotFoundError',
                                             'ModelRequestTimeout',
                                             'ContentFilterError',
+                                            'OutputTokenLimitExceeded',
                                         ],
                                         'type': 'string',
                                     },

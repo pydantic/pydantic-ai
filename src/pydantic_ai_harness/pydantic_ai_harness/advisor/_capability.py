@@ -277,8 +277,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 usage=ctx.usage,
                 usage_limits=ctx.usage_limits,
             )
-        except UnexpectedModelBehavior as e:
-            return RetryRequest(str(e))
+        except UnexpectedModelBehavior as exc:
+            return RetryRequest(str(exc))
         return _Advice(result.output)
 
     @classmethod

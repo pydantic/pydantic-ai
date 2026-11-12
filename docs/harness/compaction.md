@@ -157,7 +157,7 @@ A strategy knows when to act but says nothing about how close the run is to the 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     '{{ anthropic:medium }}',
@@ -167,12 +167,12 @@ agent = Agent(
     ],
 )
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
 
-Each reading carries `used_tokens`, `window_tokens`, `fraction`, and `resolved` -- `False` when the window is the fallback rather than the model's real one, so a gauge can show that the percentage is a guess. Migration: `on_usage` remains supported but is deprecated. Move its callback body to a `ContextUsageEvent` subscription. Order matters: register the monitor *after* a compaction capability to observe the corrected current history after same-cycle compaction, or before it to see what triggered the compaction.
+Each reading carries `used_tokens`, `window_tokens`, `fraction`, and `resolved` -- `False` when the window is the fallback rather than the model's real one, so a gauge can show that the percentage is a guess. Migration: `on_usage` remains supported but is deprecated. Move its callback body to a `ContextUsageMeasuredEvent` subscription. Order matters: register the monitor *after* a compaction capability to observe the corrected current history after same-cycle compaction, or before it to see what triggered the compaction.
 
 `used_tokens` follows the accounting above: provider usage anchors include instructions, tool
 definitions, and `FilePart` payloads from the anchored request. The suffix after the anchor, or a
@@ -241,6 +241,8 @@ agent = Agent(
 ```
 
 A tier inside `TieredCompaction` is driven directly by the orchestrator, which re-measures after each tier and stops once under `target_tokens`. A tier's own `max_*` trigger is therefore irrelevant when it runs inside `TieredCompaction` -- set it to anything valid (for example `ClearToolResults(max_tokens=1)`). Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the `CompactionStrategy` protocol) can be a tier, so you can plug in your own.
+
+Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds the whole current turn, the first user message under `preserve_first_user_message`, and pinned parts. Those set a lower bound on how far the chain can shrink the history, and a `target_tokens` below it can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets `compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the history, no span is emitted; the warning still reports the estimate and target. Pass `preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
 
 ## `FallbackCompaction`: recover when a strategy fails
 
@@ -641,6 +643,9 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
 | `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
+| `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
+| `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
@@ -706,7 +711,7 @@ A tool found through [tool search](../tools-advanced.md#tool-search) stays disco
 
 ## Keeping user messages (`keep_user_messages`)
 
-User turns are the highest signal-per-token content in a conversation, and losing them is the main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves the newest user turns from the summarized prefix alongside the summary. In message-count mode, they consume the existing `keep_messages` tail budget, so at most that many retained user messages and tail messages survive together, except that one tail slot is reserved for the request being answered when retained user turns would otherwise consume it; compaction therefore does not grow retained copies on each cycle. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which do not reduce the retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget, and the newest tail message still survives. Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker when it overruns. The character budget applies per part and is shared across the text items of a multi-part prompt; images, audio, and cache points pass through untouched. A retained copy is recognized by a marker on its text items, never by request metadata, which isn't trusted as a provenance marker, so a turn marked only there is summarized and bounded like any other. Copies kept by releases before 2.60 carry only that request-level marker, as does a copy whose text items already had metadata that isn't a dict, so the next compaction after upgrading summarizes them once more and keeps them again. Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the user's intent. The recent suffix compaction leaves unsummarized is kept as is, harness content included. This supersedes `preserve_first_user_message`, which keeps only the first turn.
+User turns are the highest signal-per-token content in a conversation, and losing them is the main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves the newest user turns from the summarized prefix alongside the summary. In message-count mode, they consume the existing `keep_messages` tail budget, so at most that many retained user messages and tail messages survive together, except that one tail slot is reserved for the request being answered when retained user turns would otherwise consume it; compaction therefore does not grow retained copies on each cycle. The tail messages the retained turns leave no room for are summarized with the rest of the prefix, and the retained turns are the newest user turns of everything summarized. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which do not reduce the retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget, and the newest tail message still survives. Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker when it overruns. The character budget applies per part and is shared across the text items of a multi-part prompt; images, audio, and cache points pass through untouched. A retained copy is recognized by a marker on its text items, never by request metadata, which isn't trusted as a provenance marker, so a turn marked only there is summarized and bounded like any other. Copies kept by releases before 2.60 carry only that request-level marker, as does a copy whose text items already had metadata that isn't a dict, so the next compaction after upgrading summarizes them once more and keeps them again. Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the user's intent. The recent suffix compaction leaves unsummarized is kept as is, harness content included. This supersedes `preserve_first_user_message`, which keeps only the first turn.
 
 ```python
 from pydantic_ai_harness import SummarizingCompaction
