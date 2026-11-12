@@ -519,6 +519,22 @@ async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model
     assert call.args_as_dict() == {'actions': [{'type': 'click', 'unsupported_fields': ['duration_ms']}]}
 
 
+async def test_an_action_that_is_not_an_object_runs_nothing(allow_model_requests: None) -> None:
+    response = _computer_call({'type': 'screenshot'})
+    item = response.output[0]
+    assert isinstance(item, resp.ResponseComputerToolCall)
+    item.actions = [None]  # pyright: ignore[reportAttributeAccessIssue]  # the SDK doesn't validate a response
+    client = MockOpenAIResponses.create_mock([response, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    provider, computer = InMemoryProvider(), FakeComputer()
+    result = await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
+
+    assert result.output == 'done'
+    assert computer.actions == []
+    call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
+    assert call.args_as_dict() == {'actions': [{'type': None, 'unsupported_fields': []}]}
+
+
 async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_requests: None) -> None:
     async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
         raise ToolFailed('Taking the screenshot failed: scrot: not found')
