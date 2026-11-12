@@ -2979,6 +2979,32 @@ async def test_dbos_durability_model_error_retry_after_caps_at_dbos_maximum_back
     assert waits == [3600.0]
 
 
+async def test_dbos_durability_model_error_retry_after_outside_workflow_code_fails_as_before(dbos: DBOS) -> None:
+    """Outside workflow code, with no workflow or in a nested run inside a step, nothing can wait durably, so a model
+    error that asks for a wait fails the run as before, and no `DBOS.sleep` is recorded."""
+    model, _ = _retry_after_model(*[_rate_limited(0.01)] * 2)
+    agent = Agent(
+        model,
+        name='durability_retry_after_outside',
+        capabilities=[DBOSDurability(model_step_config=StepConfig(retries_allowed=True, max_attempts=3))],
+    )
+    with pytest.raises(ModelRateLimitError):
+        await agent.run('go')
+
+    @DBOS.step()
+    async def nested_run() -> str:
+        return (await agent.run('go')).output
+
+    @DBOS.workflow()
+    async def run_in_step() -> str:
+        return await nested_run()
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid), pytest.raises(ModelRateLimitError):
+        await run_in_step()
+    assert 'DBOS.sleep' not in [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+
+
 def test_dbos_retry_after_uses_dbos_step_defaults() -> None:
     """The step defaults the `retry_after` wait is worked out with are DBOS's own."""
     assert (
