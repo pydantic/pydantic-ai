@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager, suppress
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -930,13 +930,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """
         try:
             yield self
-        finally:
-            # A stream that is running is still being stepped by its consumer, as when `run_stream_sync()` times out
-            # mid-pull, and `aclose()` would refuse it; that consumer finishes it. Every other stream is closed, as the
-            # run it reads from is ending.
-            streams = [stream for stream in self._open_streams if not getattr(stream, 'ag_running', False)]
-            self._open_streams = []
-            await _utils.aclose_all(streams)
+        except BaseException:
+            # The block is already leaving with an error. A stream failing to close doesn't replace it, as the run
+            # closing its own model stream doesn't either.
+            with suppress(Exception):
+                await self._close_open_streams()
+            raise
+        await self._close_open_streams()
+
+    async def _close_open_streams(self) -> None:
+        # A stream that is running is still being stepped by its consumer, as when `run_stream_sync()` times out
+        # mid-pull, and `aclose()` would refuse it; that consumer finishes it. Every other stream is closed, as the run
+        # it reads from is ending.
+        streams = [stream for stream in self._open_streams if not getattr(stream, 'ag_running', False)]
+        self._open_streams = []
+        await _utils.aclose_all(streams)
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""

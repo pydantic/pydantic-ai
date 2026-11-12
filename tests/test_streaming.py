@@ -6413,6 +6413,47 @@ async def test_breaking_out_of_a_run_stream_leaves_no_cleanup_running(method: st
         assert cleaned_up
 
 
+class _CleanupError(Exception):
+    pass
+
+
+def _model_whose_cleanup_fails() -> FunctionModel:
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+            yield 'never'  # pragma: no cover
+        finally:
+            raise _CleanupError
+
+    return FunctionModel(stream_function=stream_function)
+
+
+@pytest.mark.parametrize('debounce_by', [None, 0.1])
+@pytest.mark.parametrize('method', ['stream_text', 'stream_output', 'stream_response'])
+async def test_run_stream_raises_an_error_from_closing_a_stream_broken_out_of(method: str, debounce_by: float | None):
+    """A stream that fails as `run_stream()` closes it on a normal exit raises from the `async with`."""
+    agent = Agent(_model_whose_cleanup_fails())
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(_CleanupError):
+        async with agent.run_stream('hello') as result:
+            async for _ in getattr(result, method)(debounce_by=debounce_by):  # pragma: no branch
+                break
+
+
+@pytest.mark.parametrize('debounce_by', [None, 0.1])
+@pytest.mark.parametrize('method', ['stream_text', 'stream_output', 'stream_response'])
+async def test_run_stream_keeps_the_error_leaving_its_block_over_a_stream_failing_to_close(
+    method: str, debounce_by: float | None
+):
+    """An error already leaving the `async with` is the one raised, even when a stream fails as it is closed."""
+    agent = Agent(_model_whose_cleanup_fails())
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(ValueError, match='leaving the block'):
+        async with agent.run_stream('hello') as result:
+            async for _ in getattr(result, method)(debounce_by=debounce_by):  # pragma: no branch
+                break
+            raise ValueError('leaving the block')
+
+
 async def test_run_stream_does_not_keep_finished_streams():
     """A stream iterated to its end is released before the run ends, so a long `run_stream()` block doesn't keep
     every stream it made."""
