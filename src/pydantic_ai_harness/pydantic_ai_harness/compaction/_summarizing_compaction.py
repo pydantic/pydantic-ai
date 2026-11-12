@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
 from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -336,7 +336,7 @@ def _neutralize_transcript_tags(content: str) -> str:
     """Escape the transcript's own tags and every framing tag core writes in *content*.
 
     Content then can't open or close a message, the transcript, or the previous summary, and a
-    `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
+    `<system>`, `<pyai:context>` or `<pyai:tool_result>` tag in it stays inside its element.
     """
     # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
     # the transcript's tags as framing tags there.
@@ -846,7 +846,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
-            extra, preserved = self._retain_user_turns(to_summarize, preserved)
+            to_summarize, extra, preserved = self._retain_user_turns(split, to_summarize, preserved)
         elif (
             self.preserve_first_user_message
             and (first_user_message := _first_user_message(split)) is not None
@@ -896,9 +896,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         return result
 
     def _retain_user_turns(
-        self, to_summarize: list[ModelMessage], preserved: list[ModelMessage]
-    ) -> tuple[list[ModelMessage], list[ModelMessage]]:
-        """The user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
+        self, split: list[ModelMessage], to_summarize: list[ModelMessage], preserved: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], list[ModelMessage], list[ModelMessage]]:
+        """The prefix to summarize, the user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
         extra = self._kept_user_messages(to_summarize)
         extra = extra[-self.keep_messages :] if self.keep_messages else []
         if self.keep_tokens == 0:
@@ -915,9 +915,15 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             preserved = preserved[find_safe_cutoff(preserved, 1) :]
         elif self.keep_tokens is None:
             retained_tail_slots = max(1, self.keep_messages - len(extra))
-            if len(preserved) > retained_tail_slots:
-                preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
-        return extra, preserved
+            displaced = find_safe_cutoff(preserved, retained_tail_slots)
+            if displaced:
+                # The copies took tail slots, so the messages they displaced go to the summary too, and the
+                # copies are re-picked as the newest user turns of that larger prefix, as many as before.
+                preserved = preserved[displaced:]
+                to_summarize = split[: len(split) - len(preserved)]
+                newest = self._kept_user_messages(to_summarize)
+                extra = newest[len(newest) - len(extra) :]
+        return to_summarize, extra, preserved
 
     def _kept_user_messages(self, to_summarize: list[ModelMessage]) -> list[ModelMessage]:
         """Rebuild each summarized user turn as a preserved, size-bounded user message."""
@@ -1147,11 +1153,12 @@ async def write_summary(
         capabilities=list(summarizer.summarization_capabilities),
         retries=summarizer.retries,
     )
-    result = await agent.run(
-        prompt,
-        conversation_id=ctx.conversation_id,
-        usage=ctx.usage,
-        usage_limits=reserved_usage_limits(ctx.usage_limits),
-        event_stream_handler=summarizer.event_stream_handler,
-    )
+    with second_model_prompt():
+        result = await agent.run(
+            prompt,
+            conversation_id=ctx.conversation_id,
+            usage=ctx.usage,
+            usage_limits=reserved_usage_limits(ctx.usage_limits),
+            event_stream_handler=summarizer.event_stream_handler,
+        )
     return result.output

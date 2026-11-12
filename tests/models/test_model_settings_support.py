@@ -169,13 +169,14 @@ HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
-"""Fields Pydantic AI enforces or applies itself for every model, so no model sends them or declares that it ignores them."""
+"""Fields Pydantic AI applies itself for every model, so no model sends them or declares that it ignores them."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {
-    'max_tokens': (1234567,),
+    # Below the maximum output of every probed model, which a larger `max_tokens` is lowered to.
+    'max_tokens': (12345,),
     'temperature': (0.123456,),
     'top_p': (0.234567,),
     'top_k': (4242,),
