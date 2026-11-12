@@ -16,6 +16,7 @@ from __future__ import annotations as _annotations
 
 import bisect
 import dataclasses
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from copy import deepcopy
@@ -145,25 +146,8 @@ def _left(branches: list[str], tip: str) -> list[str]:
     return [*(entry for entry in branches if entry != tip), tip]
 
 
-def _cleans_to(stored: list[_messages.ModelMessage], sent: list[_messages.ModelMessage], starts: int) -> bool:
-    """Whether a history that starts at one of the first `starts` of `stored`, the last stored messages, cleans to `sent`.
-
-    A history that starts earlier never cleans to fewer messages, so a binary search finds the
-    earliest of those starts whose history cleans to at most as many as `sent`, and only the
-    histories from there that clean to exactly as many are compared.
-    """
-    first = bisect.bisect_left(
-        range(starts),
-        -len(sent),
-        key=lambda start: -len(_messages.repair_messages(stored[start:], repair_last_response=False)),
-    )
-    for start in range(first, starts):
-        cleaned = _messages.repair_messages(stored[start:], repair_last_response=False)
-        if len(cleaned) < len(sent):
-            return False
-        if cleaned == sent:
-            return True
-    return False
+def _part_count(messages: Sequence[_messages.ModelMessage]) -> int:
+    return sum(len(message.parts) for message in messages)
 
 
 class ConversationStore(ABC):
@@ -384,21 +368,16 @@ class ConversationStore(ABC):
         """Whether `sent` is the last stored messages as a run cleans the history it's sent, say merging adjacent requests.
 
         `history` is the last `len(sent)` stored entries, as the save already read them. A history
-        that starts earlier never cleans to fewer messages, so the entries before them are read, each
-        once, only until the stored ones clean to more messages than `sent`, not the whole history.
-        Cleaning can also add a message, like a result for a tool call nothing answered, so the
-        history `sent` came from can be shorter than `sent`.
+        that starts earlier never cleans to fewer messages or parts, so the entries before them are
+        read only until the stored ones clean to as many parts as `sent`, or to more messages, not the
+        whole history. Cleaning can also add a message, like a result for a tool call nothing
+        answered, so the history `sent` came from can be shorter than `sent`.
         """
+        parts = _part_count(sent)
         stored = [entry.message for entry in history]
-        first, step, unchecked = history[0], 0, len(stored)
-        while True:
-            # Only a history that cleans to at least as many messages as `sent` can clean to it, and
-            # each start is checked once: the ones before `unchecked` were read since the last check.
-            cleaned = _messages.repair_messages(stored, repair_last_response=False)
-            if cleaned == sent or (len(cleaned) >= len(sent) and _cleans_to(stored, sent, unchecked)):
-                return True
-            if len(cleaned) > len(sent) or first.parent_id is None:
-                return False
+        first, step, read = history[0], 0, len(stored)
+        cleaned = _messages.repair_messages(stored, repair_last_response=False)
+        while _part_count(cleaned) < parts and len(cleaned) <= len(sent) and first.parent_id is not None:
             # A request that merges into the next one adds no message, so an entry read back can add none:
             # read at least as many as are missing, and twice as many as last time.
             step = max(len(sent) - len(cleaned), 2 * step, 1)
@@ -408,8 +387,32 @@ class ConversationStore(ABC):
             if not earlier:
                 # A `read_history` that returns nothing for an entry it has can't be read further back.
                 return False
-            first, unchecked = earlier[0], len(earlier)
+            first, read = earlier[0], len(earlier)
             stored = [*(entry.message for entry in earlier), *stored]
+            cleaned = _messages.repair_messages(stored, repair_last_response=False)
+        if _part_count(cleaned) < parts:
+            return False
+        if cleaned == sent:
+            return True
+
+        @functools.cache
+        def cleaned_from(start: int) -> list[_messages.ModelMessage]:
+            return _messages.repair_messages(stored[start:], repair_last_response=False)
+
+        def cleans_to_fewer_parts(start: int) -> bool:
+            return _part_count(cleaned_from(start)) < parts
+
+        # Starting a history one entry earlier adds a part for each entry cleaning keeps a part of, so
+        # only the latest start that cleans to as many parts as `sent` is compared: those before it
+        # differ only by messages cleaning keeps no part of, like a request of tool results whose calls
+        # came before it. It's among the entries read last, and usually near the first, as a stored
+        # history edited before it was sent cleans to about as many parts, so the search doubles its
+        # distance from the first before it bisects.
+        bound = 1
+        while bound < read and not cleans_to_fewer_parts(bound):
+            bound *= 2
+        latest = bisect.bisect_left(range(min(bound, read)), True, lo=bound // 2 + 1, key=cleans_to_fewer_parts)
+        return latest > 1 and cleaned_from(latest - 1) == sent
 
     async def branch(
         self,

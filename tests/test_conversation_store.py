@@ -925,27 +925,55 @@ async def test_a_serialized_window_starting_inside_a_tool_call_turn_appends_to_t
     assert reads == [8, 2]
 
 
-async def test_an_edited_serialized_window_of_requests_that_merge_reads_back_in_doubling_steps() -> None:
-    """Requests in a row clean to one, so each entry read back adds no message: the save reads twice as many each time, then branches as before."""
+@pytest.mark.parametrize(('edited', 'reads', 'cleanings'), [(False, [1, 1, 2, 4, 8], 10), (True, [1], 1)])
+async def test_a_serialized_window_of_requests_that_merge_is_read_back_only_until_it_cleans_to_as_many_parts(
+    edited: bool, reads: list[int], cleanings: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requests in a row clean to one, so each entry read back adds a part but no message: the save reads twice as many each time until they clean to as many parts as the run was sent, however long the row."""
     store = _HistoryReadsStore()
-    requests: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(f'request {i}')]) for i in range(16)]
+    requests: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(f'request {i}')]) for i in range(2000)]
     await store.save(Conversation(messages=requests, conversation_id='c'))
-    window = await store.load('c', limit=2)
+    window = await store.load('c', limit=10)
+    assert window is not None
+    sent = repair_messages(window.messages, repair_last_response=False)
+    if edited:
+        sent = [ModelRequest(parts=[UserPromptPart('edited')])]
+    turn = ModelRequest(parts=[UserPromptPart('new')])
+    serialized = Conversation(
+        messages=[*sent, turn], conversation_id='c', revision=window.revision, new_message_index=len(sent)
+    )
+    repair = Mock(wraps=_messages.repair_messages)
+    monkeypatch.setattr(_messages, 'repair_messages', repair)
+    store.limits.clear()
+
+    await store.save(serialized)
+
+    assert store.limits == reads
+    assert repair.call_count == cleanings
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == edited
+
+
+async def test_a_serialized_window_edited_to_hold_more_parts_is_read_back_only_until_it_cleans_to_more_messages() -> (
+    None
+):
+    store = _HistoryReadsStore()
+    agent = Agent(TestModel())
+    second = await agent.run('two', conversation=(await agent.run('one')).conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
     assert window is not None
     revived = _round_trip(window)
-    revived.messages[1] = ModelRequest(parts=[UserPromptPart('edited')])
+    revived.messages[0] = ModelRequest(parts=[UserPromptPart('two'), UserPromptPart('and'), UserPromptPart('more')])
     store.limits.clear()
 
     await store.save(revived)
-    reads = list(store.limits)
 
-    reloaded = await store.load('c')
+    assert store.limits == [2, 1]
+    reloaded = await store.load(window.conversation_id)
     assert reloaded is not None
-    assert reloaded.messages == [*requests[:-1], revived.messages[1]]
-    record = await store.read_record('c')
-    assert record is not None
-    assert len(record.branches) == 1
-    assert reads == [2, 1, 2, 4, 8]
+    assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
 
 
 class _NoEarlierHistoryStore(InMemoryConversationStore):
@@ -1021,7 +1049,7 @@ def _output_tool_turns(turns: int) -> list[ModelMessage]:
     return messages
 
 
-@pytest.mark.parametrize(('edited', 'cleanings'), [(False, 3), (True, 12)])
+@pytest.mark.parametrize(('edited', 'cleanings'), [(False, 3), (True, 5)])
 async def test_a_long_serialized_conversation_is_compared_cleaning_few_of_the_histories_it_could_have_been_sent(
     edited: bool, cleanings: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
