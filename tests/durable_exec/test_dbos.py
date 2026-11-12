@@ -2953,9 +2953,9 @@ async def test_dbos_durability_model_error_retry_after_continues_the_backoff(
 def test_dbos_retry_after_uses_dbos_step_defaults() -> None:
     """The step defaults the `retry_after` wait is worked out with are DBOS's own."""
     assert (
-        DEFAULT_STEP_OPTIONS['interval_seconds'],
-        DEFAULT_STEP_OPTIONS['backoff_rate'],
-        DEFAULT_STEP_OPTIONS['max_attempts'],
+        DEFAULT_STEP_OPTIONS.get('interval_seconds'),
+        DEFAULT_STEP_OPTIONS.get('backoff_rate'),
+        DEFAULT_STEP_OPTIONS.get('max_attempts'),
     ) == (_DBOS_DEFAULT_INTERVAL_SECONDS, _DBOS_DEFAULT_BACKOFF_RATE, _DBOS_DEFAULT_MAX_ATTEMPTS)
 
 
