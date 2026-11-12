@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from dataclasses import KW_ONLY, dataclass
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, TypeAlias, overload
+from typing import TYPE_CHECKING, Protocol, overload
 
 from pydantic import JsonValue, TypeAdapter
 from typing_extensions import TypeIs
@@ -27,17 +27,21 @@ _RESULTS_ADAPTER = TypeAdapter(DeferredToolResults)
 
 _DEFAULT_WAIT_NAME = 'deferred_tool_calls'
 
-_Handler: TypeAlias = Callable[
-    [RunContext[AgentDepsT], DeferredToolRequests],
-    DeferredToolResults | None | Awaitable[DeferredToolResults | None],
-]
-"""A handler that answers in place, or declines with `None`."""
 
-_TokenHandler: TypeAlias = Callable[
-    [RunContext[AgentDepsT], DeferredToolRequests, str],
-    DeferredToolResults | None | Awaitable[DeferredToolResults | None],
-]
-"""A handler that answers in place, or hands the resume token on and returns `None` to wait for the answer."""
+class _Handler(Protocol[AgentDepsT]):
+    """A handler that answers in place, or declines with `None`."""
+
+    def __call__(
+        self, ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, /
+    ) -> DeferredToolResults | None | Awaitable[DeferredToolResults | None]: ...
+
+
+class _TokenHandler(Protocol[AgentDepsT]):
+    """A handler that answers in place, or hands the resume token on and returns `None` to wait for the answer."""
+
+    def __call__(
+        self, ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str, /
+    ) -> DeferredToolResults | None | Awaitable[DeferredToolResults | None]: ...
 
 
 @dataclass
