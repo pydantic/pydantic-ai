@@ -428,8 +428,55 @@ jobs:
       # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
       # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
       # policy check does not hide type errors.
+      #
+      # A pull request checks with pyright-rs first: a Rust port of pyright's command-line check
+      # that prints pyright's output and exit code for the same command line and configuration, in
+      # about a fifth of the time (https://github.com/dsfaccini/pyright-rs). The release is pinned
+      # by tag and checksum, and used only when it ports the pyright version `uv.lock` installs, so a
+      # pyright bump is never checked by an older port. When the install or the pyright-rs check
+      # fails, pyright checks, and its result counts, so a pull request never fails on a pyright-rs
+      # mistake. A merge group and a push to `main` check with pyright alone, which catches a wrong
+      # pass before it reaches `main`.
+      - name: Install pyright-rs
+        id: pyright-rs
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        continue-on-error: true
+        env:
+          PYRIGHT_RS_RELEASE: v1.1.414-1
+          PYRIGHT_RS_SHA256: 8eacc246abfabff2bfc1d2735b756050047471b1468cb29a7ddcf42c56ae3cdc
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+          UV_NO_SYNC: "1"
+        run: |
+          name="pyright-rs-$PYRIGHT_RS_RELEASE-x86_64-unknown-linux-gnu"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/dsfaccini/pyright-rs/releases/download/$PYRIGHT_RS_RELEASE/$name.tar.gz"
+          echo "$PYRIGHT_RS_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          ported=$("$RUNNER_TEMP/$name/pyright-rs" --version)
+          locked=$(uv run pyright --version)
+          if [ "$ported" != "$locked" ]; then
+            echo "::notice title=pyright-rs::pyright-rs ports $ported but uv.lock installs $locked, so pyright checks this run."
+            exit 0
+          fi
+          echo "path=$RUNNER_TEMP/$name/pyright-rs" >> "$GITHUB_OUTPUT"
+
+      - name: Type-check with pyright-rs
+        id: pyright-rs-check
+        if: ${{ !cancelled() && steps.pyright-rs.outputs.path != '' }}
+        continue-on-error: true
+        env:
+          PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
+          # pyright-rs ran the check in 35.0 s on a GitHub runner where pyright took 175.4 s
+          # (https://github.com/dsfaccini/pyright-rs/actions/runs/43305070216). A run 1.5x that
+          # fails 50, and a failure only hands the check to pyright and its own budget below, so a
+          # slowdown fails the pull request only when pyright shows it too.
+          PYRIGHT_TIME_BUDGET: "50"
+          UV_NO_SYNC: "1"
+        run: make typecheck-changed
+
       - name: Type-check with Pyright
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' && steps.pyright-rs-check.outcome != 'success' }}
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
@@ -470,6 +517,8 @@ jobs:
           # of 231 s. 370 is about 1.1x the `main` maximum. Passing `main` runs now reach the 328 s of
           # #8077's fastest regressed run, so the budget no longer fails that absolute range; #8077 took
           # the median from 88.5 s to at least 3.7x that, and a run 1.5x today's median fails 370.
+          # A pull request reaches this step only when pyright-rs did not run or did not pass. The
+          # budget times this step alone, so a pyright-rs run before it never counts against it.
           PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed

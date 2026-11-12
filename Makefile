@@ -44,13 +44,17 @@ lint: ## Lint the code
 # See docs/contributing.md for when the workers pay for themselves.
 PYRIGHT_THREADS ?=
 
+# The command that runs pyright. CI's `pull_request` runs set it to pyright-rs, a port of pyright's
+# command-line check; see the `Type-check with Pyright` step in .github/workflows/ci.yml.
+PYRIGHT ?= uv run pyright
+
 .PHONY: typecheck-pyright
 typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.11 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 $(PYRIGHT) $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 	@# Pyright skips everything under a dot directory, so `.github/scripts` is a project of its own
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright -p .github/scripts $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 $(PYRIGHT) -p .github/scripts $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-changed
 typecheck-changed: ## Run static type checking on the files reached by changes since it last passed
