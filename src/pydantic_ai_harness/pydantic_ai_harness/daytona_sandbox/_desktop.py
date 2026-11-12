@@ -213,9 +213,11 @@ class DaytonaDesktop:
         """Scroll `amount` wheel clicks, `_SCROLLED_PER_REQUEST` at a time."""
         for start in range(0, amount, _SCROLLED_PER_REQUEST):
             clicks = min(_SCROLLED_PER_REQUEST, amount - start)
-            await self._computer_use.mouse.scroll(
+            # The one call that reports a failure in its result rather than raising.
+            if not await self._computer_use.mouse.scroll(
                 x, y, direction, clicks, modifiers=modifiers, request_timeout=_REQUEST_TIMEOUT
-            )
+            ):
+                raise WorkspaceError("Daytona's desktop did not scroll.")
 
     async def _type(self, text: str) -> None:
         """Type `text`, `_TYPED_PER_REQUEST` characters at a time."""
