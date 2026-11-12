@@ -1,37 +1,34 @@
-# Docker Sandbox
+---
+title: Docker Container
+description: "Run a Pydantic AI agent's commands and file edits in a local Docker or Podman container, created on first use."
+---
+
+# Docker Container
 
 Run your agent's commands and file edits in a local [Docker](https://www.docker.com/) or Podman container, created on first use, away from your machine's files and processes.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/docker_sandbox/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/docker_container/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DockerSandbox's get_workspace hook gives the run a Docker container on your machine as ctx.workspace, and each command and file operation runs in it through docker exec; output comes back to the tool. The first use creates the container with docker run and the ai.pydantic.workspace=true label, its WorkspaceRef holds the container name, a later run reattaches with it, and destroy(ref) removes it. A project directory mounted with docker_args is the only part of your files the commands can change. A container shares your kernel, a weaker boundary than a VM.](https://pydantic.dev/docs/ai/img/harness/docker-sandbox.svg)
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DockerContainer's get_workspace hook gives the run a Docker container on your machine as ctx.workspace, and each command and file operation runs in it through docker exec; output comes back to the tool. The first use creates the container with docker run and the ai.pydantic.workspace=true label, its WorkspaceRef holds the container name, a later run reattaches with it, and destroy(ref) removes it. A project directory mounted with docker_args is the only part of your files the commands can change. A container shares your kernel, a weaker boundary than a VM.](../img/harness/docker-container.svg)
 
 ## Install
 
-uv:
-
 ```bash
-uv add "pydantic-ai-harness[coder,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 ```
 
-pip:
-
-```bash
-pip install "pydantic-ai-harness[coder,anthropic]"
-```
-
-No extra is needed for Docker itself: the capability runs the `docker` CLI already on your machine, so there is no SDK to install. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+No extra is needed for Docker itself: the capability runs the `docker` CLI already on your machine, so there is no SDK to install. The `coder` extra is there because the examples use `Coder`; the container itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerContainer(image='python:3.13-slim'), Coder()])
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ```
 
@@ -46,9 +43,9 @@ A new container is on Docker's default bridge network, which reaches the interne
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerContainer(image='python:3.13-slim'), Coder()])
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 
 followup = agent.run_sync('Now make it print the first 100.', message_history=result.all_messages())
@@ -58,15 +55,15 @@ The follow-up run finds the container in the message history and works in it, so
 
 ## Choose the tools
 
-For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) and [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) instead of `Coder`, or write your own tool:
+For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) instead of `Coder`, or write your own tool:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerContainer(image='python:3.13-slim'), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -76,7 +73,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
+See [Workspaces](../workspace.md) for more.
 
 ## Work on a project directory
 
@@ -85,10 +82,10 @@ A new container starts empty. To let the agent work on a directory on your machi
 ```python {names="defined"}
 from pathlib import Path
 
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 
 project = Path('.').resolve()
-sandbox = DockerSandbox(
+container = DockerContainer(
     image='python:3.13-slim',
     docker_args=['--volume', f'{project}:/workspace', '--memory', '2g', '--cpus', '2'],
     allow_internet_access=False,
@@ -116,9 +113,9 @@ To come back to the container without the message history, store the run's works
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerContainer(image='python:3.13-slim'), Coder()])
 
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -128,7 +125,7 @@ later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 
 The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching starts a stopped container on first use, so it comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command.
 
-A ref is trusted input: whoever passes one runs commands in that container. `DockerSandbox` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach the other containers the Docker daemon serves. The label isn't proof of origin, though: any `DockerSandbox` on this machine, or anyone who can run `docker`, can create a container with it, so only pass refs your application stored itself.
+A ref is trusted input: whoever passes one runs commands in that container. `DockerContainer` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach the other containers the Docker daemon serves. The label isn't proof of origin, though: any `DockerContainer` on this machine, or anyone who can run `docker`, can create a container with it, so only pass refs your application stored itself.
 
 ## Prepare a container before the run
 
@@ -140,13 +137,13 @@ import asyncio
 from pydantic_ai import Agent
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
+from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerContainer(image='python:3.13-slim'), Coder()])
 
 
 async def main() -> None:
-    backend = DockerSandboxBackend(image='python:3.13-slim')
+    backend = DockerContainerBackend(image='python:3.13-slim')
     try:
         workspace = Workspace(backend)
         await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
@@ -158,14 +155,14 @@ async def main() -> None:
     finally:
         ref = backend.ref  # set once the container is being created
         if ref is not None:
-            await DockerSandbox().destroy(ref)
+            await DockerContainer().destroy(ref)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` removes the container even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `DockerSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own.
+The `finally` removes the container even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `DockerContainer`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own.
 
 ## Clean up
 
@@ -173,18 +170,18 @@ A run never removes its container. Remove it, with its anonymous volumes, with t
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 
 
 async def remove_container(ref: WorkspaceRef) -> None:
-    await DockerSandbox().destroy(ref)
+    await DockerContainer().destroy(ref)
 ```
 
-Removing a container that is already gone returns quietly. `DockerSandbox()` without an `image` attaches to and removes containers by ref, and leaves a run without a ref to the agent's other workspace capabilities.
+Removing a container that is already gone returns quietly. `DockerContainer()` without an `image` attaches to and removes containers by ref, and leaves a run without a ref to the agent's other workspace capabilities.
 
-Nothing removes a container for you, and there is no idle or lifetime limit. `docker ps --all --filter label=ai.pydantic.workspace=true` finds the containers `DockerSandbox` created, including any left behind without a stored ref.
+Nothing removes a container for you, and there is no idle or lifetime limit. `docker ps --all --filter label=ai.pydantic.workspace=true` finds the containers `DockerContainer` created, including any left behind without a stored ref.
 
-`backend.ref` is set when the first operation starts creating the container, and goes back to `None` if creating it fails before a container exists. If the create is cancelled, Docker may still finish creating the container after `destroy` has found nothing to remove; the label filter above finds it. A failed run returns no result, so there is no ref to store. Remove the container in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up), or create the backend yourself as in [Prepare a container before the run](#prepare-a-container-before-the-run).
+`backend.ref` is set when the first operation starts creating the container, and goes back to `None` if creating it fails before a container exists. If the create is cancelled, Docker may still finish creating the container after `destroy` has found nothing to remove; the label filter above finds it. A failed run returns no result, so there is no ref to store. Remove the container in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up), or create the backend yourself as in [Prepare a container before the run](#prepare-a-container-before-the-run).
 
 ## How commands run
 
@@ -192,7 +189,7 @@ The container doesn't run the image's own entrypoint or command, so a service th
 
 A container that can't be created or started, or that stops mid-command, raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is one `docker` also uses for its own errors.
 
-On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running. With crun 1.14.1 (Podman 4.9.3 on Ubuntu 24.04), a process whose parent has already exited keeps running too.
+On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](shell.md) background job, keeps running. With crun 1.14.1 (Podman 4.9.3 on Ubuntu 24.04), a process whose parent has already exited keeps running too.
 
 With Docker, a command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits: redirect it, as in `server > server.log 2>&1 &`. With Podman, it returns when the command itself exits.
 
@@ -200,7 +197,7 @@ Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` onc
 
 ## Security model
 
-A container shares your machine's kernel, so it is a weaker boundary than a VM such as [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/), [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) or [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/). Inside, commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
+A container shares your machine's kernel, so it is a weaker boundary than a VM such as [Smol Sandbox](smol-sandbox.md), [E2B](e2b-sandbox.md) or [Modal](modal-sandbox.md). Inside, commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
 
 - Don't mount the Docker socket or directories holding secrets. A writable mount also lets commands change files your machine runs later, such as a virtualenv, the `docker` CLI inside one, or git hooks. Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it.
 - A missing `working_dir` is created as the container's user, so with `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own. With `--read-only`, mount a writable working directory.
@@ -208,6 +205,12 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 - While a command runs, its `env` values are visible in process listings (`ps`) on your machine.
 - Docker adds the proxy settings in your `~/.docker/config.json` to every new container as environment variables.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
+
+## Renamed from `DockerSandbox`
+
+This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. That name implied a security sandbox, which a container sharing your kernel isn't; see [Security model](#security-model). The old names still import from `pydantic_ai_harness.docker_sandbox`, with a `HarnessDeprecationWarning`, until a future release removes them. After that, the `DockerSandbox` name is kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product, which would be a different capability with a VM boundary. The two names follow Docker's own split: a container shares your kernel, and a Sandbox is a microVM with its own. Migrate to `DockerContainer` now, so your agent keeps running in a plain container.
+
+Specs saved before the rename use the `DockerSandbox` block name. To keep loading them, pass the deprecated `DockerSandbox` class in `custom_capability_types`, alongside or instead of `DockerContainer`: its class name is the block name. To migrate a spec, rename its `DockerSandbox` block to `DockerContainer`; the options are unchanged.
 
 ## Configuration
 
@@ -222,14 +225,14 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 
 ## Platforms
 
-The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#platforms). On Windows, `DockerSandboxBackend` raises `NotImplementedError` when it is constructed, so a run with `DockerSandbox` does too.
+The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](../workspace.md#platforms). On Windows, `DockerContainerBackend` raises `NotImplementedError` when it is constructed, so a run with `DockerContainer` does too.
 
 ## Telemetry
 
-`DockerSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the container on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (its name). Each command or file operation a tool makes runs inside that tool call's span.
+`DockerContainer` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the container on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (its name). Each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 
-::: pydantic_ai_harness.docker_sandbox.DockerSandbox
+::: pydantic_ai_harness.docker_container.DockerContainer
 
-::: pydantic_ai_harness.docker_sandbox.DockerSandboxBackend
+::: pydantic_ai_harness.docker_container.DockerContainerBackend
