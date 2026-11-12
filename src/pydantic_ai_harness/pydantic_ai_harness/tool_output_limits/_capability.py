@@ -354,8 +354,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         bands = self._per_tool.get(call.tool_name, self._bands)
         if media := _media_parts(return_value):
-            # Images and files reach the model as they are, like those in `content`;
-            # this only warns when the text beside them is over a band.
+            # Images and files are sent as they are; this only warns if the text beside them is over a band.
             await self._reduce_content(ctx, call, bands, media)
             value_size = 0
             value_text = value_handle = None

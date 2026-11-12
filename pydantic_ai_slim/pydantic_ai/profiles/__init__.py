@@ -154,20 +154,20 @@ class ModelProfile(TypedDict, total=False):
     computer_use_coordinate_grid: int
     """The size of the grid the model points on instead of pixels. Default: unset, meaning pixels.
 
-    With `1000`, the agent tells the model in the `computer` tool's description that positions are from 0 to 999
-    across the screenshot, and records that grid on its calls as
-    [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid], for the
-    capability running the tool to scale them to pixels. Gemini 3 profiles set it: Gemini points on that grid.
+    With `1000`, the agent tells the model in the `computer` tool's description that positions run from 0 to 999,
+    and records the grid on its calls as
+    [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] so the tool can
+    scale them to pixels. Gemini 3 profiles set it.
     """
 
     computer_use_screenshot_max_side: int
     """The longest side, in pixels, of a screenshot the model takes. Default: unset, meaning no limit.
 
     The agent records it on the model's `computer` calls as
-    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side]. A
-    computer-use capability, such as Pydantic AI Harness's `ComputerUse`, refuses a screen larger than this and
-    `computer_use_screenshot_max_pixels`. Claude profiles set both: Claude refuses a larger image, or, on its earlier
-    computer use tools, is sent it scaled down and answers in the smaller image's pixels.
+    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], and a
+    computer use capability such as Pydantic AI Harness's `ComputerUse` refuses a larger screen. Claude profiles set
+    it and `computer_use_screenshot_max_pixels`, since Claude refuses a larger image, or with its older computer use
+    tools gets it scaled down and answers in the smaller image's pixels.
     """
 
     computer_use_screenshot_max_pixels: int

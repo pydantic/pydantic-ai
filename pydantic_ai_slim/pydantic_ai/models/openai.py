@@ -3038,9 +3038,9 @@ def _continuation_digest(history: _Hasher, parts: Sequence[ModelResponsePart]) -
 def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
 
-    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass and labels a
-    `computer` call with the grid and screenshot limits of the model that made it. None of that is sent, so
-    leaving it in would make a response compared later never match.
+    The digest is taken in `request()`. The graph then promotes the call to its typed subclass and labels a
+    `computer` call with its model's grid and screenshot limits. None of that is sent, so leaving it in would stop a
+    later response from matching.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
     details = {key: value for key, value in (part.provider_details or {}).items() if key not in _LABEL_KEYS}
