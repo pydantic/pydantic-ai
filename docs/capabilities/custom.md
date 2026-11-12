@@ -1165,7 +1165,7 @@ async def start_research(ctx: RunContext, topic: str) -> str:
     async def run() -> None:
         ctx.enqueue(await research(topic))
 
-    ctx.in_flight.start(run, kind='research', name=f'research {topic}', id=f'research:{topic}')
+    ctx.in_flight.start(run, kind='research', name=f'research {topic}', id=f'research:{ctx.tool_call_id}')
     return 'Research started. The findings will arrive in a later message.'
 
 
@@ -1179,19 +1179,19 @@ agent = Agent(TestModel(), capabilities=[BackgroundResearch()])
 
 [`start()`][pydantic_ai.in_flight.InFlightRegistry.start] runs the coroutine as a task the run owns. Work that something else runs, like a process, goes in with [`register()`][pydantic_ai.in_flight.InFlightRegistry.register] instead, and you call [`settle()`][pydantic_ai.in_flight.InFlightRegistry.settle] when it has finished. Either way, give the work an `id` that is unique among the run's live work and the same each time the run is replayed, such as the ID of the tool call that started it.
 
-Its `on_end` decides what happens when the run ends:
+Its `on_end` decides what happens when the run ends, and follows from where the work lives:
 
-- `'drain'` (the default): the run waits for the work. When the model ends the run with output, the run waits until some draining work has finished, and then the model gets another turn on what that work queued. When the run pauses with [`DeferredToolRequests`](../deferred-tools.md) or a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits), it waits for all draining work, and its queued results are recorded after the paused step, so a resumed run sees them. The pause still stands.
-- `'cancel'`: the run cancels the work when it ends.
-- `'detach'`: the run lists the work while it lives, but never waits for it or cancels it. Only registered work can be detached, since the run owns the work it starts.
+- `'drain'`, the default for `start()`: for work whose result belongs to this run. The run waits for it. When the model ends the run with output, the run waits until some draining work has finished, and then the model gets another turn on what that work queued. When the run pauses with [`DeferredToolRequests`](../deferred-tools.md) or a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits), it waits for all draining work, so its results are queued before the run ends; [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run) says what happens to content queued at a pause.
+- `'cancel'`: for best-effort work that is worthless once the run is over. The run cancels it when it ends.
+- `'detach'`, the default for `register()`: for work that lives in a resource that outlives the run, like a shell job, a process in a workspace that is kept, or a task an application-owned object runs. The run lists it while it lives, but never waits for it or cancels it. Only registered work can be detached, since the run owns the work it starts. Pass `on_end='drain'` or `'cancel'` to `register()` for work that something else runs on the run's behalf.
 
 [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] hands its final output to the caller as it streams it, so it doesn't wait for draining work at that point: the work is cancelled when the run ends.
 
-A run that ends with an error, is [cancelled](../agent.md#cancelling-a-run), [times out](../timeouts.md#bounding-a-whole-run) or hits a [usage limit](../agent.md#usage-limits) cancels all work except `'detach'` work. Nothing else bounds how long the run waits: bound slow work with its own timeout, and the whole wait with the run's `timeout=`. An error raised by work you started ends the run at the next step, as a failing tool would, so catch the errors the model should hear about and enqueue them instead.
+A run that ends with an error, is [cancelled](../agent.md#cancelling-a-run), [times out](../timeouts.md#bounding-a-whole-run) or hits a [usage limit](../agent.md#usage-limits) cancels all work except `'detach'` work. Nothing else bounds how long the run waits: bound slow work with its own timeout, and the whole wait with the run's `timeout=`. An error raised by work you started ends the run once the step that's running when it fails has finished, or while the run waits for the work, so catch the errors the model should hear about and enqueue them instead. The run's node error hooks don't see it, and an error raised after the run's last step is not raised at all.
 
 [`live()`][pydantic_ai.in_flight.InFlightRegistry.live] lists the work that is still running, and [`wait_idle()`][pydantic_ai.in_flight.InFlightRegistry.wait_idle] waits for it, for example in a [deferred tool call handler](#deferred-tool-calls). Each [`InFlightWork`][pydantic_ai.in_flight.InFlightWork] handle also has `wait()`, `result()` and `cancel()`. The run emits an [`InFlightWorkEvent`][pydantic_ai.in_flight.InFlightWorkEvent] when work starts or settles, and when it starts and stops waiting for it, with the number of live pieces, so a UI can show that the agent is still working. Each wait is also an `in_flight drain` span.
 
-Each run has its own registry, which a run started from inside it doesn't share. `ctx.in_flight` raises a `UserError` inside a durable execution engine's activity, step or task, where work it started would be lost on replay.
+Each run has its own registry, which a run started from inside it doesn't share. Call `ctx.in_flight` from the event loop running the agent, such as from an async tool or a hook; from another thread, schedule a call to `settle()` on that loop. It raises a `UserError` inside a durable execution engine's activity, step or task, where work it started would be lost on replay.
 
 ## Durable capability operations {#durable-capability-operations}
 

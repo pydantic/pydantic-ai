@@ -43,13 +43,14 @@ T = TypeVar('T', default=Any)
 InFlightOnEnd: TypeAlias = Literal['drain', 'cancel', 'detach']
 """What happens to live work when the run ends.
 
-- `'drain'`: the run waits for it. When the run ends with output, it waits until some draining work has
-    finished, so the model gets another turn on what it queued. When the run pauses with
-    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] or a
-    [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse], it waits for all of it.
-- `'cancel'`: the run cancels it when it ends.
-- `'detach'`: the run lists it while it lives, but never waits for it or cancels it, for work built to
-    outlive the run.
+- `'drain'`: for work whose result belongs to this run. The run waits for it: when the run ends with output,
+    until some draining work has finished, so the model gets another turn on what it queued; when the run
+    pauses with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] or a
+    [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse], until all of it has.
+- `'cancel'`: for best-effort work that is worthless once the run is over. The run cancels it when it ends.
+- `'detach'`: for work that lives in a resource that outlives the run, like a shell job, a process in a
+    workspace that is kept, or a task an application-owned object runs. The run lists it while it lives, but
+    never waits for it or cancels it.
 
 A run that ends with an error, is cancelled or times out cancels all work except `'detach'` work.
 """
@@ -210,6 +211,17 @@ async def _call(fn: Callable[[], Awaitable[T]]) -> T:
     return await fn()
 
 
+def _check_on_loop(method: str) -> asyncio.AbstractEventLoop:
+    """The running event loop, which the registry's bookkeeping isn't safe to touch from outside of."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        raise UserError(
+            f'`ctx.in_flight.{method}()` must be called from the event loop running the agent, such as from an async '
+            'tool or a capability hook.'
+        ) from None
+
+
 def _snapshot(work: InFlightWork[Any]) -> InFlightWorkSnapshot:
     return InFlightWorkSnapshot(
         id=work.id, kind=work.kind, name=work.name, on_end=work.on_end, durable=work.durable, state=work.state
@@ -223,7 +235,8 @@ class InFlightRegistry:
 
     - [`start()`][pydantic_ai.in_flight.InFlightRegistry.start] runs a coroutine as a task the run owns.
     - [`register()`][pydantic_ai.in_flight.InFlightRegistry.register] tracks work something else runs, like a
-        process, until you [`settle()`][pydantic_ai.in_flight.InFlightRegistry.settle] it.
+        process, until you [`settle()`][pydantic_ai.in_flight.InFlightRegistry.settle] it. By default the run
+        only lists that work, since it usually outlives the run.
 
     Each run has its own registry, which a run started from inside it doesn't share. Call its methods from the
     event loop running the agent, such as from an async tool or a capability hook.
@@ -252,8 +265,10 @@ class InFlightRegistry:
         """Run `fn()` as a task the run owns, and track it.
 
         `fn` delivers its own results, usually by calling [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue].
-        An error `fn` raises ends the run at the next step boundary, as a failing tool would, so catch the
-        errors the model should hear about and enqueue them instead.
+        An error `fn` raises ends the run once the step that's running when it fails has finished, or while the
+        run waits for the work to end, so catch the errors the model should hear about and enqueue them instead.
+        The run's node error hooks don't see the error, and an error raised after the run's last step is not
+        raised at all.
 
         Args:
             fn: The work to run, called with no arguments.
@@ -263,7 +278,7 @@ class InFlightRegistry:
                 tool call that starts the work, so the same work gets the same ID when a run is replayed.
             on_end: What happens to the work when the run ends: `'drain'` waits for it, `'cancel'` cancels it.
                 Work that should outlive the run isn't the run's to own: run it yourself and
-                [`register()`][pydantic_ai.in_flight.InFlightRegistry.register] it with `on_end='detach'`.
+                [`register()`][pydantic_ai.in_flight.InFlightRegistry.register] it, which detaches it by default.
             durable: Whether a durable execution engine records the work's result on its own, as an activity,
                 step or task.
 
@@ -280,14 +295,7 @@ class InFlightRegistry:
                 'it starts. Run work that should outlive the run yourself, and `register()` it.'
             )
         self._check_can_add(id, 'start')
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            raise UserError(
-                '`ctx.in_flight.start()` must be called from the event loop running the agent, such as from an async '
-                'tool or a capability hook.'
-            ) from None
-        task = loop.create_task(_call(fn), name=f'in_flight {kind} {id}')
+        task = _check_on_loop('start').create_task(_call(fn), name=f'in_flight {kind} {id}')
         work = InFlightWork[T](
             id=id,
             kind=kind,
@@ -308,7 +316,7 @@ class InFlightRegistry:
         kind: str,
         name: str,
         id: str,
-        on_end: InFlightOnEnd = 'drain',
+        on_end: InFlightOnEnd = 'detach',
         durable: bool = False,
         cancel: Callable[[], None] | None = None,
     ) -> InFlightWork[None]:
@@ -318,12 +326,16 @@ class InFlightRegistry:
         its own results, as with [`start()`][pydantic_ai.in_flight.InFlightRegistry.start], but an error it
         settles with doesn't end the run.
 
+        Work that something else owns usually lives in a resource that outlives the run, so by default the run
+        only lists it. Pass `on_end='drain'` when its result belongs to this run, or `on_end='cancel'` when it's
+        worthless once the run is over.
+
         Args:
             kind: The kind of work, such as `'shell_job'`, to tell different producers' work apart.
             name: A name for the work, for display.
             id: The work's ID, unique among the run's live work. Make it deterministic, such as the ID of the
                 tool call that starts the work.
-            on_end: What happens to the work when the run ends. See
+            on_end: What happens to the work when the run ends: by default nothing, as it's `'detach'`. See
                 [`InFlightOnEnd`][pydantic_ai.in_flight.InFlightOnEnd].
             durable: Whether a durable execution engine records the work's result on its own, as an activity,
                 step or task.
@@ -335,9 +347,11 @@ class InFlightRegistry:
             A handle on the work.
 
         Raises:
-            UserError: If the run has ended or live work already has this `id`.
+            UserError: If the run has ended, live work already has this `id`, or this isn't called from the event
+                loop running the agent.
         """
         self._check_can_add(id, 'register')
+        _check_on_loop('register')
         work = InFlightWork[None](
             id=id,
             kind=kind,
@@ -361,8 +375,11 @@ class InFlightRegistry:
             error: The error the work failed with, if it failed.
 
         Raises:
-            UserError: If `work` was started with `start()`, which settles it when its coroutine finishes.
+            UserError: If `work` was started with `start()`, which settles it when its coroutine finishes, or this
+                isn't called from the event loop running the agent. From another thread, schedule the call on that
+                loop, for example with `loop.call_soon_threadsafe()`.
         """
+        _check_on_loop('settle')
         if work in self._started:
             raise UserError(
                 f'In-flight work {work.id!r} was started with `start()`, so it settles when its coroutine finishes.'

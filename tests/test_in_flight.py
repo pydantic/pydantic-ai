@@ -10,6 +10,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import TypeAdapter
 
@@ -37,6 +38,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RunUsage
+
+from .conftest import no_leaked_tasks
 
 READINESS_WAIT_TIMEOUT = 10
 
@@ -258,10 +261,11 @@ async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitte
             cancel_the_run, kind='test', name='cancel', id='cancel', on_end='cancel'
         )
         handles['job'] = ctx.in_flight.register(
-            kind='test', name='job', id='job', cancel=lambda: cancelled.append('job')
+            kind='test', name='job', id='job', on_end='drain', cancel=lambda: cancelled.append('job')
         )
+        # Registered work lives elsewhere, so it's detached unless it says otherwise.
         handles['server'] = ctx.in_flight.register(
-            kind='test', name='server', id='server', on_end='detach', cancel=lambda: cancelled.append('server')
+            kind='test', name='server', id='server', cancel=lambda: cancelled.append('server')
         )
         return 'started'
 
@@ -357,8 +361,9 @@ async def test_registered_work_handles_and_waiting_for_idle():
     @agent.tool
     async def use_registry(ctx: RunContext[None]) -> str:
         registry = ctx.in_flight
-        job = registry.register(kind='job', name='job', id='job')
-        handles['server'] = registry.register(kind='job', name='server', id='server', on_end='detach')
+        job = registry.register(kind='job', name='job', id='job', on_end='drain')
+        handles['server'] = registry.register(kind='job', name='server', id='server')
+        assert handles['server'].on_end == 'detach'
 
         async def finish_job() -> int:
             registry.settle(job)
@@ -381,6 +386,8 @@ async def test_registered_work_handles_and_waiting_for_idle():
             await failing.result()
 
         untracked = registry.register(kind='other', name='untracked', id='untracked')
+        with pytest.raises(UserError, match=r'`ctx\.in_flight\.settle\(\)` must be called from the event loop'):
+            await anyio.to_thread.run_sync(registry.settle, untracked)
         untracked.cancel()
         # Settling work that has already settled does nothing.
         registry.settle(untracked)
@@ -416,18 +423,24 @@ async def test_registered_work_handles_and_waiting_for_idle():
     assert handles['server'].state == 'running'
 
 
-async def test_starting_work_off_the_event_loop_raises():
+@pytest.mark.parametrize('method', ['start', 'register'])
+async def test_adding_work_off_the_event_loop_raises(method: str):
+    """A sync tool runs in a worker thread, where the registry's bookkeeping isn't safe to touch."""
+
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart(tool_name='start_in_thread', args={})])
+        return ModelResponse(parts=[ToolCallPart(tool_name='add_in_thread', args={})])
 
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    def start_in_thread(ctx: RunContext[None]) -> str:
-        ctx.in_flight.start(lambda: asyncio.sleep(0), kind='test', name='work', id='work')
-        return 'started'
+    def add_in_thread(ctx: RunContext[None]) -> str:
+        if method == 'start':
+            ctx.in_flight.start(lambda: asyncio.sleep(0), kind='test', name='work', id='work')
+        else:
+            ctx.in_flight.register(kind='test', name='work', id='work')
+        return 'added'
 
-    with pytest.raises(UserError, match='must be called from the event loop running the agent'):
+    with pytest.raises(UserError, match=rf'`ctx\.in_flight\.{method}\(\)` must be called from the event loop'):
         await agent.run('go')
 
 
@@ -450,9 +463,42 @@ async def test_concurrent_runs_track_their_own_work():
         live[ctx.deps] = [work.id for work in ctx.in_flight.live()]
         return 'started'
 
-    await asyncio.gather(agent.run('go', deps='one'), agent.run('go', deps='two'))
+    # Each run cancels and waits for the work it started before it returns.
+    with no_leaked_tasks():
+        await asyncio.gather(agent.run('go', deps='one'), agent.run('go', deps='two'))
 
     assert live == {'one': ['one'], 'two': ['two']}
+
+
+async def test_events_reach_the_event_stream():
+    """Work starting during a step is reported in that step's event stream."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    async def start(ctx: RunContext[None]) -> str:
+        ctx.in_flight.start(asyncio.Event().wait, kind='test', name='work', id='work', on_end='cancel')
+        return 'started'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream if isinstance(event, InFlightWorkEvent)]
+
+    assert events == [
+        InFlightWorkEvent(
+            phase='started',
+            work=(
+                InFlightWorkSnapshot(
+                    id='work', kind='test', name='work', on_end='cancel', durable=False, state='running'
+                ),
+            ),
+            live=1,
+        )
+    ]
 
 
 def test_in_flight_needs_a_run_outside_durable_units():
