@@ -14,6 +14,7 @@ from itertools import accumulate
 from textwrap import wrap
 from typing import Literal
 
+import anyio
 from termflow.live import (
     KeyEvent,
     KeyState,
@@ -485,7 +486,8 @@ async def open_tasks(tasks: Tasks, *, run: Callable[[LiveApp], object] = _run) -
         return asyncio.run_coroutine_threadsafe(perform(tasks, action, task_id, text), loop).result()
 
     async def read_history(task_id: str) -> list[ModelMessage]:
-        return tasks.history(task_id)
+        # A settled task's history is read from its saved file.
+        return await anyio.to_thread.run_sync(tasks.history, task_id)
 
     def history(task_id: str) -> list[ModelMessage]:
         return asyncio.run_coroutine_threadsafe(read_history(task_id), loop).result()

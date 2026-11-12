@@ -720,7 +720,8 @@ class DelegationTasks:
     def history(self, task_id: str) -> list[ModelMessage]:
         """Independent replay history; callers cannot mutate the saved child through it.
 
-        A settled task's history is read from its saved file, since the owner doesn't keep it in memory.
+        A settled task's history is read from its saved file, since the owner doesn't keep it in memory,
+        so async code should call this in a worker thread, as `anyio.to_thread.run_sync(owner.history, task_id)`.
         """
         record = self.records[task_id]
         if (path := self._saved_history(record)) is not None:
