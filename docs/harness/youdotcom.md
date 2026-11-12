@@ -15,6 +15,8 @@ single lookup cannot settle.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](../img/harness/youdotcom.svg)
+
 ## The problem
 
 Some search tools return only a title and a snippet, so the agent has to fetch
@@ -57,7 +59,7 @@ Use `YouSearch` on its own if you only need search and page reads.
 
 | Tool | Capability | Purpose |
 |---|---|---|
-| `web_search` | `YouSearch` | Search the web and return the top `num_results` pages, each with title, URL, and its most relevant excerpts. |
+| `web_search` | `YouSearch` | Search the web and return the top `max_results` pages, each with title, URL, and its most relevant excerpts. |
 | `get_page` | `YouSearch` | Retrieve the markdown of one specific URL -- a promising `web_search` hit, or a URL the user provided. |
 | `answer` | `YouResearch` | Get a synthesized answer with citations, grounded in live web results, in one call. |
 | `research` | `YouResearch` | Run multi-step research that reads across many sources and returns a thorough, cited answer. |
@@ -72,8 +74,9 @@ full markdown instead.
 characters, keeping the **head** (a page's lead carries the substance); when a
 page exceeds the cap the output ends with a
 `[... page text truncated at N characters]` marker. The number of results is
-limited the same way: `num_results` is sent to You.com, and applied again to
+limited the same way: `max_results` is sent to You.com, and applied again to
 the response that comes back.
+`num_results` is the deprecated name of `max_results` and still works, with a warning.
 
 A `web_search` query that matches nothing is a valid answer, not an error: the
 tool returns `No results found for {query!r}.`. Other failures reach the model
@@ -148,7 +151,7 @@ Every field of `YouSearch` with its default:
 from pydantic_ai_harness import YouSearch
 
 YouSearch(
-    num_results=10,              # results per web_search call (1 to 20)
+    max_results=10,              # results per web_search call (1 to 20)
     extraction_mode='highlights',  # 'highlights' excerpts, or 'full_page' markdown
     max_text_chars=10_000,       # get_page / full-page text cap, in characters
     include_domains=[],          # only return results from these domains (allowlist)
@@ -283,7 +286,7 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   from pydantic_ai.capabilities import WebSearch
   from pydantic_ai_harness.youdotcom import YouSearch
 
-  WebSearch(local=YouSearch(num_results=10).web_search_tool())
+  WebSearch(local=YouSearch(max_results=10).web_search_tool())
   ```
 
 Otherwise, give an agent one web search capability: core `WebSearch`, harness
@@ -309,7 +312,7 @@ config file instead of Python:
 model: {{ anthropic:medium }}
 capabilities:
   - YouSearch:
-      num_results: 5
+      max_results: 5
       freshness: month
   - YouResearch:
       research_effort: deep
@@ -322,13 +325,13 @@ from pydantic_ai_harness import YouResearch, YouSearch
 agent = Agent.from_file('agent.yaml', custom_capability_types=[YouSearch, YouResearch])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate the
-capabilities. The `client` field is not spec-serializable; spec-loaded
+The `client` field is not spec-serializable; spec-loaded
 instances always build the default client from `YDC_API_KEY`. In specs,
 `output_schema` takes the JSON-schema dict form.
 
 ## Further reading
 
+- [You.com is now a Pydantic AI capability](https://pydantic.dev/articles/youdotcom-pydantic-ai-harness) (Pydantic)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)
 - [You.com API documentation](https://documentation.you.com)

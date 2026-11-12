@@ -1,8 +1,10 @@
 """SQLite preferences with short transactions and explicit schema ownership."""
 
+import hashlib
 import os
 import sqlite3
-from collections.abc import Generator, Iterable
+import stat
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +59,31 @@ class StoredAccount:
     """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
 
 
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
+"""`O_NONBLOCK` so opening a FIFO a repository ships returns at once instead of waiting for a writer."""
+
+
+def read_regular_file(path: Path) -> bytes:
+    """The bytes of the regular file at `path`, through symlinks; an `OSError` for anything else."""
+    with os.fdopen(os.open(path, _OPEN_FLAGS), 'rb') as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise OSError(f'{path} is not a regular file')
+        return file.read()
+
+
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file CLAI can read."""
+    try:
+        return hashlib.sha256(read_regular_file(path)).hexdigest()
+    except OSError:
+        return ''
+
+
+def setting_json(value: JsonValue) -> str:
+    """A setting value as the JSON text the store keeps, so two values compare by their exact JSON."""
+    return _JSON.dump_json(value).decode()
+
+
 def config_dir() -> Path:
     """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
     return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
@@ -86,11 +113,26 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)'
             )
             connection.execute('CREATE TABLE IF NOT EXISTS models (name TEXT PRIMARY KEY)')
+            # Older builds never read cleanup preferences, so this table needs no schema version bump.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS kept_worktrees (path TEXT PRIMARY KEY, checkout TEXT NOT NULL)'
+            )
             # Requirement tags sit beside `plugins`, never inside a declaration: older builds validate
             # declarations strictly and never look at this table. It needs no schema version bump,
             # which those builds would refuse.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS plugin_requirements (id TEXT PRIMARY KEY, requirements_json TEXT NOT NULL)'
+            )
+            # The contents `/plugins enable` approved for each project file, by absolute path, sit beside
+            # `plugins` for the same reason: builds that do not check contents never read them.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS approved_files (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL)'
+            )
+            # The project-file values `/project approve` approved, by the absolute folder holding `.clai` and
+            # `/set` key, sit beside the rest for the same reason: builds that do not ask never read them.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS approved_project_settings (root TEXT NOT NULL, key TEXT NOT NULL, '
+                'value_json TEXT NOT NULL, PRIMARY KEY (root, key))'
             )
             # Fallback chains are their own table for the same reason: builds without chains never read it.
             connection.execute(
@@ -125,6 +167,33 @@ class SettingsStore:
     def load(self) -> Settings:
         """Resolve persisted overrides against built-in defaults."""
         return resolve_settings(self.overrides())
+
+    def kept_worktree(self, path: Path) -> str | None:
+        """The checkout identity whose exit cleanup was declined permanently, if saved."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT checkout FROM kept_worktrees WHERE path = ?', (str(path),)).fetchone()
+        return row[0] if row else None
+
+    def keep_worktree(self, path: Path, *, checkout: str) -> None:
+        """Suppress exit cleanup for this checkout, replacing any earlier checkout at the same path."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO kept_worktrees VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET checkout = excluded.checkout',
+                (str(path), checkout),
+            )
+
+    def worktree_remove_commands(self) -> dict[str, list[str]]:
+        """Read only cleanup configuration on exit; `ValueError` if it is invalid or cannot be read."""
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    'SELECT value_json FROM settings WHERE key = ?', ('worktrees.remove_commands',)
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ValueError(str(exc)) from exc
+        if row is None:
+            return {}
+        return resolve_settings({'worktrees.remove_commands': _JSON.validate_json(row[0])}).worktree_remove_commands
 
     def set(self, key: str, value: JsonValue) -> None:
         """Validate before committing a single override."""
@@ -375,6 +444,46 @@ class SettingsStore:
         with self._connect() as connection:
             connection.execute('DELETE FROM plugins WHERE id IN (?, ?)', (current_id, stored_id))
             connection.execute('DELETE FROM plugin_requirements WHERE id IN (?, ?)', (current_id, stored_id))
+
+    def approved_sha256(self, path: Path) -> str | None:
+        """The SHA-256 of the file at `path` as `/plugins enable` last approved it, or `None` if it never did."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT sha256 FROM approved_files WHERE path = ?', (str(path),)).fetchone()
+        return row[0] if row else None
+
+    def approve_files(self, digests: Mapping[Path, str]) -> None:
+        """Remember each file's SHA-256 as approved now, by its absolute path."""
+        with self._connect() as connection:
+            connection.executemany(
+                'INSERT INTO approved_files VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET sha256 = excluded.sha256',
+                [(str(path), digest) for path, digest in digests.items()],
+            )
+
+    def approved_project_settings(self, root: Path) -> dict[str, str]:
+        """The project-file values `/project approve` approved for `root`, as `setting_json` text by `/set` key."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                'SELECT key, value_json FROM approved_project_settings WHERE root = ? ORDER BY key',
+                (str(root.resolve()),),
+            ).fetchall()
+        return dict(rows)
+
+    def approve_project_settings(self, root: Path, values: Mapping[str, JsonValue]) -> None:
+        """Approve each project-file value for `root`, replacing a value approved before."""
+        with self._connect() as connection:
+            connection.executemany(
+                'INSERT INTO approved_project_settings VALUES (?, ?, ?) '
+                'ON CONFLICT(root, key) DO UPDATE SET value_json = excluded.value_json',
+                [(str(root.resolve()), key, setting_json(value)) for key, value in values.items()],
+            )
+
+    def revoke_project_settings(self, root: Path, keys: Iterable[str]) -> None:
+        """Forget the approvals of `keys` for `root`."""
+        with self._connect() as connection:
+            connection.executemany(
+                'DELETE FROM approved_project_settings WHERE root = ? AND key = ?',
+                [(str(root.resolve()), key) for key in keys],
+            )
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:
         """Saved overrides for one model; empty when none."""

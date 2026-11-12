@@ -19,7 +19,6 @@ from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capabi
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.subagents import SubAgents
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.commands import Commands, plugins_command
 from pydantic_clai2.config import PluginSettings, features
 from pydantic_clai2.config.features import check_feature_name
@@ -36,8 +35,9 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.loader import PluginLoader
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu
 
 CODER = 'pydantic_ai_harness.coder:Coder'
@@ -495,7 +495,7 @@ async def test_settings_built_capability_with_nested_hooks_stays_unguarded(tmp_p
     await run_unguarded(tmp_path, guarded)
 
 
-def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | None) -> _Shell[None, str]:
+def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | None) -> SessionRuntime[None, str]:
     store = SettingsStore(tmp_path / 'settings.db')
     store.plugins_dir.mkdir(exist_ok=True)
     path = store.plugins_dir / 'bare_coder.py'
@@ -529,9 +529,9 @@ def delegates(capabilities: Sequence[AgentCapability[None]]) -> bool:
     return any(isinstance(leaf, SubAgents) for leaf in leaves)
 
 
-def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
+async def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
     shell = coder_shell(tmp_path, io.StringIO(), sub_agents_tags=None)
-    assert shell.fork_session(None, []).on_setup_error == shell.capability_failed
+    assert (await shell.fork_session(None, [])).on_setup_error == shell.capability_failed
 
 
 async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path) -> None:

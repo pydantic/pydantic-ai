@@ -10,12 +10,14 @@ or incomplete JSON. Use this capability on its own or through [Coder](coder.md),
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![RepairToolArguments runs in the before_tool_validate hook, after the model makes a tool call and before Pydantic AI validates its arguments. Malformed JSON such as {'path': 'a.py', 'limit': 10, with single quotes, a trailing comma and a missing brace is repaired by json-repair into valid JSON, which then goes through normal schema validation. Valid arguments pass through unchanged.](../img/harness/repair-tool-arguments.svg)
+
 ## Usage
 
-Install `pydantic-ai-harness`; no extra is required for repair. This example uses a local test model.
+Install the `repair-tool-arguments` extra, which includes `json-repair`; without it, importing `RepairToolArguments` raises an `ImportError` naming the extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. This example uses a local test model.
 
 ```bash
-pip/uv-add pydantic-ai-harness
+pip/uv-add "pydantic-ai-harness[repair-tool-arguments]"
 ```
 
 ```python
@@ -44,6 +46,14 @@ or `RecursionError`, the original arguments go through normal validation.
 Repair is heuristic: malformed input can be ambiguous, and inferred strings may differ from the model's
 intent. The capability does not supply a schema to the repair library or bypass tool validation,
 approval, or execution checks. It has no configuration options.
+
+## Message history
+
+A repair is written back to the tool call in the message history, so the requests that follow replay
+the arguments that ran instead of the malformed JSON a provider may reject. The model's original
+arguments are kept in the call's `provider_details['original_args']`. The call's provider item ID
+moves to `provider_details['original_id']`: OpenAI Responses replays its own stored copy of a call
+that keeps that ID, so the repaired arguments would otherwise never reach the model.
 
 ## Telemetry
 

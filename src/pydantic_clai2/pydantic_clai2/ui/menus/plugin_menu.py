@@ -12,12 +12,12 @@ from termflow.tui.terminal import terminal_size
 
 from pydantic_clai2.plugins import DepsT
 from pydantic_clai2.plugins.describe import describe
-from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginError, PluginLoader
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginError, SessionPlugins
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
 _HINT = 'Enter/Space on/off - c configure - r reload - d remove - Esc close'
@@ -58,7 +58,7 @@ class Redrawable(Protocol):
 class PluginMenu(Generic[DepsT]):
     """Rows, details, and key actions; `build()` wires them into a termflow menu."""
 
-    def __init__(self, loader: PluginLoader[DepsT], *, apply: Apply) -> None:
+    def __init__(self, loader: SessionPlugins[DepsT], *, apply: Apply) -> None:
         """`apply` runs a loader coroutine to completion from the menu's thread."""
         self._loader = loader
         self._apply = apply
@@ -231,7 +231,7 @@ class PluginMenu(Generic[DepsT]):
 
 
 async def open_plugins_menu(
-    loader: PluginLoader[DepsT], *, run: Callable[[PluginMenu[DepsT]], MenuResult] | None = None
+    loader: SessionPlugins[DepsT], *, run: Callable[[PluginMenu[DepsT]], MenuResult] | None = None
 ) -> str:
     """Show the menu in a thread; key actions hop back to the event loop to apply.
 

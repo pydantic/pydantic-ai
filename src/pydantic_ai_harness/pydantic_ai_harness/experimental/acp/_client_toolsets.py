@@ -17,8 +17,7 @@ to the local capability.
 """
 
 # A read-only ACP client gets editor-native reads with writes delegated to the local `FileSystem`
-# capability; otherwise these toolsets are self-contained. A future shared I/O-backend seam is
-# expected to subsume them.
+# capability; otherwise these toolsets are self-contained.
 
 from __future__ import annotations
 

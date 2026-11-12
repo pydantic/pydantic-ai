@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    SystemPromptPart,
+    TextContent,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
@@ -22,10 +29,8 @@ WarningKind = Literal['iterations', 'context_window', 'total_tokens']
 """Categories of limits that can trigger warnings."""
 
 _WARNING_ORDER: tuple[WarningKind, ...] = ('iterations', 'context_window', 'total_tokens')
-_MARKER = '[WarnNearLimits]'
-"""Model-visible heading of each warning. Never used to recognize one: user text can contain it."""
 _WARNING_METADATA = 'pydantic-ai-harness.warn-near-limits.v1'
-"""Model-invisible metadata identifying a warning content item."""
+"""Metadata on the user-prompt warnings older versions sent, which is how they're recognized and stripped."""
 
 
 @dataclass(frozen=True)
@@ -37,15 +42,15 @@ class _Warning:
 
 @dataclass
 class WarnNearLimits(AbstractCapability[AgentDepsT]):
-    """Injects a warning message when the agent approaches configured limits.
+    """Warns the model when the run approaches configured limits.
 
-    The warning is appended as a trailing `ModelRequest` with a
-    `UserPromptPart` so that the model treats it as a distinct user turn
-    (models tend to pay more attention to user messages than system messages).
+    Each warning is enqueued as a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope]
+    system prompt: the model sees it for the request it's part of only, and it stays in the
+    message history, so the cached prefix and the model's earlier reasoning stay valid.
 
-    Previous warnings injected by this capability are stripped before deciding
-    whether to inject a new one. They are recognized by metadata on their content, never
-    by their text, so a user prompt that quotes a warning is left alone.
+    Older versions sent the warning as a user prompt marked with metadata instead. Those are
+    stripped from the request when a history still holds them; a user prompt that quotes a
+    warning is left alone, since they're recognized by that metadata, never by their text.
 
     Example:
         ```python
@@ -134,17 +139,20 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
                 'or max_total_tokens must be set.'
             )
 
-        if self.warn_on is None:
-            self._active_kinds = tuple(k for k in _WARNING_ORDER if configured[k])
-        else:
-            if not self.warn_on:
-                raise ValueError('warn_on must not be empty.')
-            for kind in self.warn_on:
-                if not configured[kind]:
-                    raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
-            self._active_kinds = tuple(dict.fromkeys(self.warn_on))
+        self._active_kinds = self._resolve_active_kinds(configured)
 
     # -- internal helpers --
+
+    def _resolve_active_kinds(self, configured: dict[WarningKind, bool]) -> tuple[WarningKind, ...]:
+        """The kinds to warn about: each `warn_on` kind once, which must be *configured*, else every configured kind."""
+        if self.warn_on is None:
+            return tuple(k for k in _WARNING_ORDER if configured[k])
+        if not self.warn_on:
+            raise ValueError('warn_on must not be empty.')
+        for kind in self.warn_on:
+            if not configured[kind]:
+                raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
+        return tuple(dict.fromkeys(self.warn_on))
 
     @staticmethod
     def _is_warning_part(part: ModelRequestPart) -> bool:
@@ -156,24 +164,24 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
 
     def _strip_old_warnings(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         cleaned: list[ModelMessage] = []
-        for msg in messages:
-            if not isinstance(msg, ModelRequest):
-                cleaned.append(msg)
+        for message in messages:
+            if not isinstance(message, ModelRequest):
+                cleaned.append(message)
                 continue
             # An already-empty request has no warnings to strip; keep it. pydantic-ai's
             # empty-response retry appends a `ModelRequest` with no parts, and dropping it
             # would leave history ending on a `ModelResponse`, which fails the next
             # request's "must end with a ModelRequest" precondition.
-            if not msg.parts:
-                cleaned.append(msg)
+            if not message.parts:
+                cleaned.append(message)
                 continue
-            parts = [p for p in msg.parts if not self._is_warning_part(p)]
+            parts = [p for p in message.parts if not self._is_warning_part(p)]
             if not parts:
                 continue
-            if len(parts) == len(msg.parts):
-                cleaned.append(msg)
+            if len(parts) == len(message.parts):
+                cleaned.append(message)
             else:
-                cleaned.append(ModelRequest(parts=parts))
+                cleaned.append(replace(message, parts=parts))
         return cleaned
 
     def _build_iteration_warning(self, ctx: RunContext[AgentDepsT]) -> _Warning | None:
@@ -220,7 +228,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
             if severity == 'URGENT'
             else 'Complete the current task immediately and avoid unnecessary tool calls.'
         )
-        lines = [_MARKER, f'{severity}: Configured run limits are approaching.']
+        lines = [f'{severity}: Configured run limits are approaching.']
         lines.extend(f'- {w.details}' for w in warnings)
         lines.append(guidance)
         return '\n'.join(lines)
@@ -230,8 +238,18 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Strip old warnings, then inject a new one if thresholds are exceeded."""
+        """Strip user-prompt warnings older versions sent, then enqueue a warning if a threshold is crossed.
+
+        Enqueued from `before_model_request`, the warning goes into this request and into the run's
+        history, as a `ModelRequest` of its own that's sent merged into the request it follows.
+        """
         messages = self._strip_old_warnings(list(request_context.messages))
+        request_context.messages = messages
+        # A provider-resume turn (`_prepare_resume_request`) ends in a suspended `ModelResponse` and
+        # continues the paused request, so the core holds anything enqueued for the next request. That
+        # request gets a warning of its own, so warning here would only send two.
+        if not messages or not isinstance(messages[-1], ModelRequest):
+            return request_context
 
         active: list[_Warning] = []
 
@@ -262,14 +280,8 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         if w is not None:
             active.append(w)
 
-        if not active:
-            request_context.messages = messages
-            return request_context
-
-        order = {k: i for i, k in enumerate(_WARNING_ORDER)}
-        active.sort(key=lambda w: order[w.kind])
-        warning_text = self._format_warning(active)
-        messages.append(ModelRequest(parts=[UserPromptPart([TextContent(warning_text, metadata=_WARNING_METADATA)])]))
-
-        request_context.messages = messages
+        if active:
+            order = {k: i for i, k in enumerate(_WARNING_ORDER)}
+            active.sort(key=lambda w: order[w.kind])
+            ctx.enqueue(SystemPromptPart(self._format_warning(active), scope='request'))
         return request_context

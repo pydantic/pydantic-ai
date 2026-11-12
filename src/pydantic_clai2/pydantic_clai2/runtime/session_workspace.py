@@ -1,22 +1,23 @@
-"""`clai2 --web`'s working directory: each session runs in its own, moved to between turns.
+"""`clai2 --web`'s session directories: each live session works in its own, moved to between turns.
 
-The terminal shell stays in the directory it started in. `clai2 --web` has no terminal and holds one
-live session at a time, so it changes the process's working directory to that session's, then loads
-the plugins again there: the coding tools, `repo_context`, skills, MCP project files, and a plugin's
-relative paths all read it, as they read the checkout `--worktree` changes into before startup.
+The terminal shell stays in the directory it started in. Under `clai2 --web`, a session that moves
+records its new directory as its workspace, then loads its plugins again there: the coding tools,
+`repo_context`, skills, and MCP project files read it through `PluginHost.workspace`. The process's
+working directory stays where CLAI started, as other live sessions work in other directories.
 """
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from anyio import to_thread
 
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
-from pydantic_clai2.plugins.loader import PluginLoader
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.plugins.loader import SessionPlugins
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -41,12 +42,10 @@ class SessionWorkspace:
 
     session: Session[None, str]
     context: CommandContext
-    loader: PluginLoader[None]
+    loader: SessionPlugins[None]
     status: Status
     settings: Callable[[ProjectSettings], Settings]
     """The settings CLAI starts with beside a project file: saved ones, then the project's, then launch flags."""
-    keep: str
-    """The plugin serving the browser, which stays loaded: loading it again would end the page."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
 
@@ -68,17 +67,16 @@ class SessionWorkspace:
         Raises `ValueError` for a path that is not a directory or a project file that does not load,
         and `RuntimeError` while something runs; either way nothing changes.
         """
-        directory = workspace_directory(path)
+        directory = await to_thread.run_sync(workspace_directory, path)
         if str(directory) == self.session.workspace:
             return
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
-        project = load_project_settings(directory)
+        project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
         settings = self.settings(project)
-        os.chdir(directory)
         self.session.workspace = self.status.workspace = str(directory)
         self.context.use_project(project, settings)
-        await self.loader.restart(project=project.plugins, keep=self.keep)
+        await self.loader.restart(project=project.plugins)
 
     async def command(self, args: list[str]) -> str:
         """`/workspace DIRECTORY` starts a new session in DIRECTORY; bare, it names this session's."""

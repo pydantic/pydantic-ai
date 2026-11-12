@@ -11,19 +11,17 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](../img/harness/pydantic-ai-docs.svg)
+
 ## The problem
 
 An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs the current docs for those APIs. Preloading the docs into the system prompt spends context the agent rarely needs in full, and pins a snapshot that drifts from `main`.
 
-## The solution
-
-`PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it in full, with its model aliases resolved. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
+## Usage
 
 The available topics are `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, and `agent`.
 
-## Usage
-
-Construct an `Agent` with `PydanticAIDocs()` in its `capabilities`. Point `local_docs_path` at a Pydantic AI docs checkout inside the run workspace, or omit it to always fetch from the remote source. Relative paths use the workspace working directory:
+Construct an `Agent` with `PydanticAIDocs()` in its `capabilities`. Point `local_docs_path` at a Pydantic AI docs checkout inside the run workspace, or omit it to always fetch from the remote source:
 
 ```python
 from pathlib import Path
@@ -41,7 +39,7 @@ result = agent.run_sync('Read the toolsets docs, then explain how to build a Fun
 print(result.output)
 ```
 
-A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, every call goes to the remote source and no workspace is needed.
+A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, no workspace is needed.
 
 The capability also adds a short static instruction telling the model that the `read_pyai_docs` tool exists and to read the relevant topic before authoring or modifying a Pydantic AI capability, hook, tool, or toolset, rather than relying on memory. The instruction is cache-stable, so it does not invalidate the prompt-cache prefix between turns.
 
@@ -57,7 +55,7 @@ Docs pages name models through aliases, which the docs site replaces with curren
 
 The capability never runs git. Keep the local checkout current yourself; the remote path always reads `main`, so it is the fresh fallback.
 
-`local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable. `~` is not expanded -- use an absolute workspace path or a path relative to its working directory. With neither path set, every call goes straight to the remote source.
+`local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable. `~` is not expanded -- use an absolute workspace path or a path relative to its working directory.
 
 ## Configuration
 
@@ -67,6 +65,17 @@ The capability never runs git. Keep the local checkout current yourself; the rem
 | `cache` | `True` | Memoize each returned doc for one agent run, so repeated reads within that run do not repeat workspace or network I/O. |
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set `cache=False` to re-read or re-fetch on every call within a run.
+
+## Two of them
+
+`PydanticAIDocs` declares the default `id` `'pydantic_ai_docs'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PydanticAIDocs`s on one agent that
+share it are one docs source stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `read_pyai_docs`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Agent spec (YAML/JSON)
 
@@ -87,8 +96,6 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[PydanticAIDocs])
 result = agent.run_sync('...')
 print(result.output)
 ```
-
-Pass `custom_capability_types` so the spec loader knows how to instantiate `PydanticAIDocs`.
 
 Specs saved before the rename from `PyaiDocs` use the old block name. To keep loading
 them, pass the deprecated `PyaiDocs` class (imported from `pydantic_ai_harness.docs`,

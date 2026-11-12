@@ -12,23 +12,28 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from uuid import UUID
 
+import anyio
 import pytest
+from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
+from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext, ToolFailed
 from pydantic_ai._agent_graph import GraphAgentState
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ValidatedToolArgs
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
+    DocumentUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -37,6 +42,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -54,6 +60,8 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
+from tests.conftest import IsStr, legacy_retry_prompt_part
+from tests.harness.step_persistence._histories import lookup_twice
 
 
 def build_run_context(
@@ -135,10 +143,13 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
-    def test_retry_prompt_resolves_a_tool_call(self) -> None:
+    def test_retried_tool_return_resolves_a_tool_call(self) -> None:
+        """A retry that answers a call travels as that call's return, so it settles the pairing."""
         messages: list[ModelMessage] = [
             ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
-            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='add', tool_call_id='c1')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='try again', tool_call_id='c1', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is True
 
@@ -174,12 +185,29 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
-    def test_orphan_retry_prompt_is_invalid(self) -> None:
-        """`RetryPromptPart` with no matching open call is also rejected."""
+    def test_orphan_retried_tool_return_is_invalid(self) -> None:
+        """A retried return with no matching open call is rejected like any other orphan."""
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='retry', tool_call_id='ghost', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is False
+
+    @pytest.mark.parametrize(
+        ('call_id', 'tool_name', 'expected'),
+        [('c1', 'add', True), ('ghost', 'add', False), ('c1', None, False)],
+    )
+    def test_legacy_retry_prompt_part_pairs_like_a_retried_return(
+        self, call_id: str, tool_name: str | None, expected: bool
+    ) -> None:
+        """A caller-passed history can still hold the deprecated part: a tool-bound one settles its
+        call, and a tool-less one answers no call."""
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[legacy_retry_prompt_part('try again', tool_name=tool_name, tool_call_id=call_id)]),
+        ]
+        assert is_provider_valid(messages) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +361,16 @@ class TestInMemoryStepStore:
 # ---------------------------------------------------------------------------
 
 
+def _without_file_records(node: Any) -> Any:
+    """`node` as an earlier version saved it, before tool results recorded their files."""
+    if isinstance(node, dict):
+        mapping = cast(dict[str, Any], node)
+        return {key: _without_file_records(value) for key, value in mapping.items() if key != 'content_file_digests'}
+    if isinstance(node, list):
+        return [_without_file_records(item) for item in cast(list[Any], node)]
+    return node
+
+
 class TestFileStepStore:
     async def test_keyed_writes_are_idempotent_after_snapshot_pruning(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path, max_snapshots_per_run=1)
@@ -475,6 +513,25 @@ class TestFileStepStore:
         assert snap.parent_run_id == 'p1'
         assert snap.agent_name == 'a'
         assert len(snap.messages) == 2
+
+    async def test_snapshot_saved_before_file_records_keeps_its_tool_files(self, tmp_path: Path) -> None:
+        files = [UploadedFile('file-1', 'openai'), DocumentUrl('s3://bucket/report.pdf')]
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='read it')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='read', tool_call_id='c')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='read', content=files, tool_call_id='c')]),
+        ]
+        store = FileStepStore(tmp_path / 'runs')
+        await store.save_snapshot(ContinuableSnapshot(run_id='run', step_index=0, messages=messages, state='complete'))
+        for path in (tmp_path / 'runs' / 'run' / 'snapshots').glob('*.json'):
+            path.write_text(json.dumps(_without_file_records(json.loads(path.read_text()))))
+
+        snapshot = await store.latest_snapshot(run_id='run')
+
+        assert snapshot is not None
+        tool_return = snapshot.messages[-1].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == files
 
     async def test_latest_snapshot_picks_most_recent_seq(self, tmp_path: Path) -> None:
         """Latest is by physical write order (filename seq), not by `step_index`."""
@@ -1126,6 +1183,224 @@ class TestStepPersistenceCapability:
 # ---------------------------------------------------------------------------
 
 
+async def tool_call_ledger(store: StepStore, tool_call_id: str) -> tuple[list[str], tuple[str, str | None], list[str]]:
+    """Run `r1`'s unresolved call ids, the call's `(status, effect_summary)`, and the kinds of its events."""
+    unresolved = [effect.tool_call_id for effect in await store.list_unresolved_tool_effects(run_id='r1')]
+    effect = await store.get_tool_effect(run_id='r1', tool_call_id=tool_call_id)
+    assert effect is not None
+    events = [event.kind for event in await store.list_events(run_id='r1') if event.tool_call_id == tool_call_id]
+    return unresolved, (effect.status, effect.effect_summary), events
+
+
+class TestToolCallEndingInRetryOrFailure:
+    """Core re-raises a retry or a failure past `on_tool_execute_error` and `after_tool_execute`.
+
+    The run carries on, so the call's effect must not stay `started`.
+    """
+
+    @pytest.mark.parametrize(
+        ('error', 'recorded'),
+        [
+            (ModelRetry('try another query'), "ToolRetryError('try another query')"),
+            (ToolFailed('upstream rejected the query'), "ToolFailedError('upstream rejected the query')"),
+        ],
+        ids=['model_retry', 'tool_failed'],
+    )
+    async def test_tool_raising_retry_or_failure_is_recorded_failed(self, error: Exception, recorded: str) -> None:
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(
+            FunctionModel(lookup_twice), capabilities=[StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            if q == 'x':
+                raise error
+            return 'found'
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await store.list_unresolved_tool_effects(run_id='r1') == []
+        effect = await store.get_tool_effect(run_id='r1', tool_call_id='call-1')
+        assert effect is not None
+        assert (effect.status, effect.effect_summary) == ('failed', recorded)
+        assert effect.ended_at is not None
+        events = await store.list_events(run_id='r1')
+        assert [(e.kind, e.tool_call_id, e.error) for e in events if e.tool_call_id is not None] == [
+            ('tool_call_started', 'call-1', None),
+            ('tool_call_failed', 'call-1', recorded),
+            ('tool_call_started', 'call-2', None),
+            ('tool_call_completed', 'call-2', None),
+        ]
+
+    @pytest.mark.parametrize(
+        ('error', 'recorded'),
+        [
+            (ModelRetry('pick another query'), "ModelRetry('pick another query')"),
+            (ToolFailed('query refused'), "ToolFailed('query refused')"),
+        ],
+        ids=['model_retry', 'tool_failed'],
+    )
+    async def test_retry_or_failure_from_a_later_capabilitys_before_hook_is_recorded_failed(
+        self, error: Exception, recorded: str
+    ) -> None:
+        """`StepPersistence` already wrote `started` when the hook of a capability after it refuses the call."""
+        store = InMemoryStepStore()
+        hooks: Hooks[object] = Hooks()
+
+        @hooks.on.before_tool_execute
+        async def refuse_first(
+            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            if call.tool_call_id == 'call-1':
+                raise error
+            return args
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(lookup_twice), capabilities=[StepPersistence(store=store, run_id='r1'), hooks]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            return 'found'
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await tool_call_ledger(store, 'call-1') == (
+            [],
+            ('failed', recorded),
+            ['tool_call_started', 'tool_call_failed'],
+        )
+
+    async def test_validation_error_from_a_later_capabilitys_after_hook_is_recorded_failed(self) -> None:
+        """A later capability's after hook runs before this one's, so its rejection skips `after_tool_execute` here."""
+        store = InMemoryStepStore()
+        hooks: Hooks[object] = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def require_int(
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: object,
+        ) -> object:
+            if call.tool_call_id == 'call-1':
+                TypeAdapter(int).validate_python(result)
+            return result
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(lookup_twice), capabilities=[StepPersistence(store=store, run_id='r1'), hooks]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            return 'found'
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await tool_call_ledger(store, 'call-1') == (
+            [],
+            ('failed', IsStr(regex=r'(?s)1 validation error for int\n.*\[type=int_parsing.*')),
+            ['tool_call_started', 'tool_call_failed'],
+        )
+
+    async def test_retry_after_the_effect_completed_leaves_it_completed(self) -> None:
+        """An earlier capability's after hook runs after this one's, so the call already reads `completed`."""
+        store = InMemoryStepStore()
+        hooks: Hooks[object] = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def reject_first(
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: object,
+        ) -> object:
+            if call.tool_call_id == 'call-1':
+                raise ModelRetry('result rejected')
+            return result
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(lookup_twice), capabilities=[hooks, StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            return 'found'
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await tool_call_ledger(store, 'call-1') == (
+            [],
+            ('completed', None),
+            ['tool_call_started', 'tool_call_completed'],
+        )
+
+    async def test_retry_from_a_later_error_hook_does_not_record_the_failure_twice(self) -> None:
+        """This capability's error hook runs first and records the tool's error; the retry that replaces it is not re-recorded."""
+        store = InMemoryStepStore()
+        hooks: Hooks[object] = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def retry_instead(
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            error: Exception,
+        ) -> NoReturn:
+            raise ModelRetry('try again') from error
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(lookup_twice), capabilities=[hooks, StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            if q == 'x':
+                raise ValueError('kaboom')
+            return 'found'
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await tool_call_ledger(store, 'call-1') == (
+            [],
+            ('failed', "ValueError('kaboom')"),
+            ['tool_call_started', 'tool_call_failed'],
+        )
+
+    async def test_code_mode_sandbox_call_raising_retry_is_recorded_failed(self) -> None:
+        """`CodeMode` asks core for raw errors, so the sandbox call's `ModelRetry` arrives unwrapped."""
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                code = "try:\n    await lookup(q='x')\nexcept Exception as e:\n    r = str(e)\nr"
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}, tool_call_id='rc-1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model), capabilities=[StepPersistence(store=store, run_id='r1'), CodeMode()]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            raise ModelRetry('try another query')
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await tool_call_ledger(store, 'rc-1__1') == (
+            [],
+            ('failed', "ModelRetry('try another query')"),
+            ['tool_call_started', 'tool_call_failed'],
+        )
+
+
 class TestCrashMidToolCallContract:
     """The signature acceptance test from the PR comment.
 
@@ -1408,6 +1683,76 @@ class TestOnRunErrorSnapshot:
         assert await store.latest_snapshot(run_id='r1') is None
         assert [e.kind for e in await store.list_events(run_id='r1')] == ['run_failed']
 
+    async def test_failure_writes_survive_anyio_cancel(self, tmp_path: Path) -> None:
+        """An `anyio` scope cancelling the run does not cut the error-path writes short.
+
+        `FileStepStore` writes through `anyio.to_thread.run_sync`, which checkpoints
+        before it runs, so an unshielded save under the cancelled scope is lost.
+        """
+        store = FileStepStore(tmp_path)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='work-1')])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model), capabilities=[StepPersistence(store=store)])
+
+        with anyio.CancelScope() as scope:
+
+            @agent.tool_plain
+            async def work() -> str:
+                scope.cancel()
+                await anyio.sleep_forever()
+                raise AssertionError('unreachable')  # pragma: no cover
+
+            await agent.run('go')
+
+        assert scope.cancelled_caught
+        rid = await first_run_id(store)
+        failed = (await store.list_events(run_id=rid))[-1]
+        assert failed.kind == 'run_failed'
+        assert failed.error is not None and failed.error.startswith('CancelledError')
+        snap = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert snap is not None
+        assert snap.state == 'interrupted'
+
+    async def test_failure_writes_survive_cancel_during_error_path(self, tmp_path: Path) -> None:
+        """A scope cancelled while a non-cancellation failure is being saved does not cut the writes short.
+
+        A `run_error` hook that runs before `StepPersistence`'s cancels the scope,
+        standing in for a deadline that fires mid-save, so `on_run_error` writes
+        the tool's `ValueError` under a cancelled scope.
+        """
+        store = FileStepStore(tmp_path)
+        hooks: Hooks[object] = Hooks()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='work-1')])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model), capabilities=[StepPersistence(store=store), hooks])
+
+        @agent.tool_plain
+        def work() -> str:
+            raise ValueError('tool failed')
+
+        with anyio.CancelScope() as scope:
+
+            @hooks.on.run_error
+            async def cancel_scope(ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[Any]:
+                scope.cancel()
+                raise error
+
+            with pytest.raises(ValueError, match='tool failed'):
+                await agent.run('go')
+
+        assert scope.cancel_called
+        rid = await first_run_id(store)
+        failed = (await store.list_events(run_id=rid))[-1]
+        assert failed.kind == 'run_failed'
+        assert failed.error == "ValueError('tool failed')"
+        snap = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert snap is not None
+        assert snap.state == 'interrupted'
+
 
 # ---------------------------------------------------------------------------
 # Hook-level branches awkward to reach through Agent
@@ -1536,25 +1881,27 @@ class TestCapabilityHookBranches:
 
 
 # ---------------------------------------------------------------------------
-# Round-2 review fixes (RetryPromptPart, list_runs ordering, effect metadata,
+# Round-2 review fixes (retry parts, list_runs ordering, effect metadata,
 # from_spec validation, annotate_tool_effect)
 # ---------------------------------------------------------------------------
 
 
-class TestNonToolRetryPrompt:
-    def test_non_tool_retry_prompt_is_valid(self) -> None:
-        """`RetryPromptPart(tool_name=None)` is an output-validation retry, not a tool result."""
+class TestRetryFeedback:
+    def test_retry_feedback_is_valid(self) -> None:
+        """`RetryFeedbackPart` answers no call, so it settles nothing and needs nothing open."""
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='hi')]),
             ModelResponse(parts=[TextPart(content='wrong shape')]),
-            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name=None)]),
+            ModelRequest(parts=[RetryFeedbackPart(content='try again', retry=RetryInfo(cause='validation_error'))]),
         ]
         assert is_provider_valid(messages) is True
 
-    def test_tool_retry_prompt_still_needs_open_call(self) -> None:
-        """`RetryPromptPart(tool_name=...)` still requires a matching open `ToolCallPart`."""
+    def test_a_retried_return_still_needs_an_open_call(self) -> None:
+        """The tool-bound half is a `ToolReturnPart`, which still requires a matching call."""
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='retry', tool_call_id='ghost', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is False
 

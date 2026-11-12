@@ -1,0 +1,93 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: >-
+              According to the document, what is the return window? Answer in one sentence
+              and cite the document.
+            type: text
+          - source:
+              data: The return window is thirty days from purchase.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        model: claude-sonnet-5-5
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=624
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7d067b3745c8ba7ddb0ac69e1db4e28a-65db348d81ec8de7-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011CgPKRJG1pUGyYYdeKCj96
+        type: message
+        role: assistant
+        content:
+        - citations:
+          - type: char_location
+            cited_text: The return window is thirty days from purchase.
+            document_index: 0
+            document_title: null
+            start_char_index: 0
+            end_char_index: 47
+          type: text
+          text: The return window is thirty days from purchase.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 907
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 34
+          output_tokens_details:
+            thinking_tokens: 0
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-25T17:04:30.323244+00:00

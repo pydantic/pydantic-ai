@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type MenuTarget } from '../api'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { SessionContext, type MenuTarget } from '../api'
 import type { MenuField, MenuInfo } from '../protocol'
 import { PlusIcon } from './icons'
 
@@ -44,15 +44,21 @@ export function McpSection({
   const [busy, setBusy] = useState<string | null>(null)
   const request = useRef(0)
 
+  // A command's menu acts on the shown session, so `/model` picks its model, not another session's.
+  const session = useContext(SessionContext)
+  // The session shown now: an action answered after a switch must not show the last session's servers.
+  const shown = useRef(session)
+  shown.current = session
+
   const load = useCallback(async () => {
     const id = ++request.current
     try {
-      const found = await api.menu(TARGET)
+      const found = await session.menu(TARGET)
       if (id === request.current) setMenu(found)
     } catch (error) {
       onError(message(error))
     }
-  }, [onError])
+  }, [session, onError])
 
   useEffect(() => {
     void load()
@@ -60,10 +66,13 @@ export function McpSection({
 
   const act = async (key: string) => {
     setBusy(key)
+    const owner = session
     try {
-      const result = await api.runAction(TARGET, key)
-      ++request.current
-      setMenu(result.menu)
+      const result = await owner.runAction(TARGET, key)
+      if (owner === shown.current) {
+        ++request.current
+        setMenu(result.menu)
+      }
       const text = result.messages.filter(Boolean).join('\n')
       if (text) onNotice(text)
     } catch (error) {

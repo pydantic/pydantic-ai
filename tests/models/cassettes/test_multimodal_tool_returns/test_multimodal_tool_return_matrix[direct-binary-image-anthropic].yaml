@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "368"
+      - "369"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               Use the get_file tool now to retrieve a image file, then describe what you
               received.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -49,10 +49,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=122
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-cf70b31252a0e2a4d24ca6cdbeb960a8-f3e341fc41bf3a8a-01
+      - 00-340aeddfcc5f88be6bfdb1d778aaad75-be66e0542dbfd82c-01
       transfer-encoding:
       - chunked
       vary:
@@ -61,39 +63,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3doJYxHi2znZSfiSqa","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPH4YDM5ZnpQjA9Cq4rn","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01UWPi41TTN3y346FXM9Wnya","name":"get_file","input":{},"caller":{"type":"direct"}}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll retrieve the file"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for you."}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01VT8snWXphLdiSEESJDUpYv","name":"get_file","input":{},"caller":{"type":"direct"}}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1      }
+        data: {"type":"content_block_stop","index":0    }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":45}  }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}         }
 
         event: message_stop
-        data: {"type":"message_stop"         }
+        data: {"type":"message_stop"  }
 
-  recorded_at: 2026-09-29T16:28:24.613157+00:00
+  recorded_at: 2026-10-25T16:33:34.980810+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -101,11 +91,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "132184"
+      - "132128"
       content-type:
       - application/json
       host:
@@ -113,7 +103,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -123,15 +113,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll retrieve the file for you.
-            type: text
-          - id: toolu_01VT8snWXphLdiSEESJDUpYv
+          - id: toolu_01UWPi41TTN3y346FXM9Wnya
             type: tool_use
             name: get_file
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01VT8snWXphLdiSEESJDUpYv
+          - tool_use_id: toolu_01UWPi41TTN3y346FXM9Wnya
             type: tool_result
             content:
             - source:
@@ -141,7 +129,7 @@ interactions:
                 type: base64
               type: image
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -163,10 +151,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=105
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ff61d956fd961138ee955209934bea7a-f7e93d67df5df9ef-01
+      - 00-97c92d43106e2a1fc0dc37a3d8990d23-49e9f07cc25e5b48-01
       transfer-encoding:
       - chunked
       vary:
@@ -175,282 +165,249 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3duS8znW8MWaAFLsSy","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1091,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPH4b6UCGiCLZf19i5ck","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":873,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":280,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I received"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"工"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an image of"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"具返回了"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a **"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"一张图片。图"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cross"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"片是一个"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"对"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"section of"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"半"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a k"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"切开"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iw"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"的"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"i fruit**"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"猕猴桃的"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". "}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"特写,背"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nHere"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"景是白"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s what I can"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"色或"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" see in the image:\n\n- **"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"浅色"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Subject"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"。\n\n- **"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: A kiwi fruit that"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"果"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"肉:"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" been sl"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** 鲜亮的"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iced in"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"绿色,"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" half horizont"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"颜色从"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ally\n- **Colors"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"外"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: Vib"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"缘向中心"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rant bright"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"逐渐变"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" green"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"浅。\n- **中心:"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flesh"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** 中"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with a"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"间"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" lighter"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"是一个奶白"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"色、略"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pale"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"呈椭圆形的果"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" green/"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"心"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cream colored"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"。"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" center"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **种"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Seeds"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"子:** 许"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: Small black"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"多细"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" seeds arranged"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"小的黑色种子围"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in a radi"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"绕果心排成一"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ating pattern around the center"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"圈。"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" creating"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"纹理:** 浅色"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a sunburst or"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"的细"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" st"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"纹从果心向"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"arburst effect\n- **Texture"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"外呈放"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: The"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"射状延"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flesh appears"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"伸,像"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ju"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"光"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"icy and slightly"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"线"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" gran"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"散"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ular,"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"开"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with visible"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"一"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" moisture"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"样。\n- **果皮"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Exterior"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** 边缘有"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: The brown"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"一"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fuz"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"圈薄薄的棕"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"zy skin is"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"色"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" visible"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"果皮,上"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" around"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"面有"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the edges of"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"细小的绒毛。"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the slice"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **拍摄:"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Background"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** 光"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: The k"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"线明"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iwi is"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"亮均"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" photograph"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"匀,画面清"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ed against a clean"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"晰,果"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" white background"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"肉看"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Presentation"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"起来多"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: The image is well"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"汁新"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-lit and appears"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"鲜。\n\n这是一"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to be a professional food"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"张构"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" photograph,"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"图简"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" showing"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"洁的"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the intr"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"水"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"icate natural"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"果照片,对称"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pattern"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"的"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"图"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fresh"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"案很"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" appearance of the fruit\n\nThe"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"显"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" image beau"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"tifully captures the distinctive"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" internal"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" structure of a kiwi,"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with its characteristic"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rad"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ial pattern of seeds creating an"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" almost"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" geometric"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" natural design"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"眼。"}               }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0          }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1091,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":222}               }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":873,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":280,"output_tokens_details":{"thinking_tokens":0}}              }
 
         event: message_stop
-        data: {"type":"message_stop"     }
+        data: {"type":"message_stop"           }
 
-  recorded_at: 2026-09-29T16:28:30.782257+00:00
+  recorded_at: 2026-10-25T16:33:38.694406+00:00

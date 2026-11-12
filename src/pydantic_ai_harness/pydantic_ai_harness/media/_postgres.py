@@ -19,10 +19,10 @@ from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
     PublicUrlResolver,
-    _coerce_metadata_mapping,  # pyright: ignore[reportPrivateUsage]
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
+    coerce_metadata_mapping,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 # Postgres truncates identifiers past 63 bytes, which would let two distinct
@@ -166,7 +166,7 @@ class PostgresMediaStore:
         return row is not None
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
@@ -178,4 +178,4 @@ class PostgresMediaStore:
         value = row[0]
         if not isinstance(value, str):
             raise ValueError(f'media row for {digest} has wrong types')
-        return _coerce_metadata_mapping(json.loads(value))
+        return coerce_metadata_mapping(json.loads(value))

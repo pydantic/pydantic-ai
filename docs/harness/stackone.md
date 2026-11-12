@@ -13,6 +13,8 @@ Salesforce, or Zendesk. Each instance is scoped to one linked account, which is 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the StackOne capability connects to StackOne's MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account's provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.](../img/harness/stackone.svg)
+
 ## Before you start
 
 Follow the [StackOne docs](https://docs.stackone.com) to:
@@ -103,8 +105,8 @@ from pydantic_ai_harness import StackOne
 StackOne(account_id='your-linked-account-id', defer_loading=True)
 ```
 
-Two capabilities on the *same* account share that id and are rejected at agent construction, which is what you want:
-one linked account is one connection. Pass an explicit `id=` if you need to override the derived one.
+Two capabilities on the *same* account share that id and are rejected at agent construction: one linked account is
+one connection. Pass an explicit `id=` if you need to override the derived one.
 
 ### Two accounts on one agent
 
@@ -117,8 +119,7 @@ UserError: StackOneToolset 'stackone-crm-account' defines a tool whose name conf
 existing tool from StackOneToolset: 'bamboohr_list_employees'
 ```
 
-Namespace them with [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/overview/), which is
-what it is for:
+Namespace them with [`PrefixTools`](../capabilities/prefix-tools.md):
 
 ```python
 from pydantic_ai import Agent
@@ -200,7 +201,7 @@ from pydantic_ai_harness import StackOne
 agent = Agent.from_file('agent.yaml', custom_capability_types=[StackOne])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate `StackOne`.
+## Connection customization
 
 Use the lower-level `StackOneToolset` directly when you need
 [`Agent(toolsets=[...])`](../toolsets.md) or other toolset wrappers.
@@ -210,6 +211,10 @@ Custom `base_url` and URL-valued `client` values must use HTTPS. The toolset add
 with the configured mode because rewriting would invalidate signed URLs. When using `search_execute` with a signed
 URL, include `tool-mode=search_execute` before signing. Prebuilt clients are used as-is; configure their HTTPS
 transport, auth, account selection, and tool mode yourself.
+
+## Further reading
+
+- [StackOne is now a Pydantic AI capability](https://pydantic.dev/articles/stackone-pydantic-ai-harness) (Pydantic)
 
 ## API reference
 

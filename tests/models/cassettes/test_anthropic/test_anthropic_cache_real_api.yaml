@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "5617"
+      - "5618"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -92,7 +92,7 @@ interactions:
               Python is and its main use cases. Please explain what Python is and its main use
               cases. Please explain what Python is and its main use cases.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         cache_control:
           type: ephemeral
           ttl: 5m
@@ -109,10 +109,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=102
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-4fdee70f35212872cee80062d7bef201-80a8f6fb01b52569-01
+      - 00-07a9b6f3cc015da567f8987393c2ef11-8305e46e49fbe4a2-01
       transfer-encoding:
       - chunked
       vary:
@@ -121,327 +123,552 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY88eXE1SR7wxmqNGr97","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":1111,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":1111,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPGArisNSYD3djJW768z","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":1515,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":1515,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"#"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"# What Is"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" What"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Python?"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is Python?\n\n**"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nPython is a high-level, general"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Python** is a high"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-purpose programming language created"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-level, interpreted programming language created by"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" by Guido van"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Guido van Rossum and"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Rossum and"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" first released in 1991. It"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" first"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s designed with"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" released in 1991. It"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an emphasis on code readability and simpl"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"icity, using"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" known for its cl"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" significant"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ean, readable syntax,"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" whitespace ("}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which uses ind"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"indentation) to define code blocks."}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"entation to define"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Key"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" code struct"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Characteristics:"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ure and re"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Easy"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ads close"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to learn"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to pl"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ain English. Python is interp"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" read"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"reted ("}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"code runs line"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" - Clean"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" by line without a separate compile"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" step), dynamically typed"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" English"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (you"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-like syntax\n- **Interpreted"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" don't decl"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** - Code"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"are variable types), and supports"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" runs"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" multiple program"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" directly"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ming sty"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" without compilation\n- **Dynamically"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"les, including proc"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" typed** - No need to declare variable"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"edural, object-oriented"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" types\n- **Multi"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and functional.\n\n##"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-paradigm** - Supports proced"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Key Charac"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ural, object-oriented, and functional"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"teristics\n\n- **Read"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" programming"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"able syntax:** Eas"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Extensive"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y to learn and write"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" standard library** - \""}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", which makes it pop"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Batteries included\" philosophy"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ular with beginners.\n-"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Main Use Cases:\n\n### "}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Extensive stand"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1. **Data"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ard library:** Often"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Science &"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" described"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Machine Learning**\n- Data"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as \"batteries included"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" analysis"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\""}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and visualization ("}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Hu"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Pandas"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ge ecosystem:**"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" H"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Matplotlib"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"undreds of thousands of"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" third"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Machine learning models"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-party packages are"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" available through"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"scikit-learn, TensorFlow"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PyPI ("}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"install"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PyTorch)\n- Statistical computing"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ed with"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 2. **Web Development**"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" `pip`).\n- **"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Backend"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Cross-platform:**"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" web applications"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Run"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (Django"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"s on Windows, macO"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", Flask,"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"S,"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" FastAPI)\n- RE"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Linux, and more"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"STful APIs and"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n- **Open source"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" microservices"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 3. **"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** Free to use,"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Automation & Scripting**\n-"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with a large and"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Task"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" active community.\n\n## Main"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" automation"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Use Cases\n\n**"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- System administration\n- File"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1. Data Science and"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" processing and"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Analytics**"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" manipulation"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nLibraries like Pandas"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 4. **Scientific Computing"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", NumPy, and"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**\n- Research"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Matplotlib make"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and academia"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" it"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Numerical computing (NumP"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" easy to cl"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y, SciPy)"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ean, analyze, and vis"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Sim"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ualize data.\n\n**2."}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ulations and modeling\n\n### 5."}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Machine Learning and A"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Software"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I**\nPython is"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Development**\n- Prot"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the dominant language in"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"otyping\n- Testing"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" this field,"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and quality"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with t"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" assurance\n- Desktop"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ools such as TensorFl"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" applications ("} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ow, PyTorch,"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Tkinter, PyQt)"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and scikit-learn."}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 6. **"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**3. Web Development"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Artificial"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**\nFrameworks like"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Intelligence**\n- Natural"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Django, Flask, and"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" language processing\n- Computer vision\n-"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" FastAPI are"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Deep"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" used to build webs"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" learning applications"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ites, APIs, and back"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 7. **Dev"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"end services.\n\n**4."}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Ops & Cloud**\n- Infrastructure"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Automation and Scripting**"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" automation"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nPython is wid"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- CI"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ely used to automate rep"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/CD pipelines\n- Cloud service"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"etitive tasks such"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" management"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as file management"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nPython"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", web"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s versat"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" scraping ("}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ility,"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Beautiful Soup,"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" large"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Scrapy), report"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" community"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" generation, and system administration."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and rich"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**5. Software Test"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ecosystem make it one"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ing**"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the most popular programming languages today"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nTools like pytest"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and Selenium help with autom"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ated test"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ing of"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" appl"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ications.\n\n**6."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Scientific and Academ"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ic Computing**\nResear"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"chers use S"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ciPy, S"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ymPy, and Jup"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"yter Noteboo"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks for sim"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ulations, calculations, and"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" sharing results.\n\n**7"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". DevOps and C"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"loud**"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nPython is common"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for infrastructure sc"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ripting, configuration management,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and working"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with cloud provider S"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DKs ("}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"AWS, Azure,"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Google Cloud)."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**8. Game"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Development and Prototyping"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**\nLibraries like"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Pygame allow for sim"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ple games and quick pr"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ototypes.\n\n**9."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Cybersecurity**"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nSecurity"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" professionals use it for penet"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ration testing t"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ools, network sc"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"anning, and analysis sc"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ripts.\n\n**"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"10. Education**\nIts"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" simplicity mak"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"es it a top choice for te"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"aching program"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ming fundamentals."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Strengths and Lim"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"itations\n\n**"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Strengths:**"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Fast development, read"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ability, vers"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"atility"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", str"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ong community support."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**Limitations:**"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Slower execution than"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" comp"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iled languages like C++"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or Rust, hig"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"her memory use"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and we"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"aker support"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for mobile app"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" development."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Sim"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ple Example\n\n```python\ndef"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" greet(name):\n    return"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" f\"Hello, {name"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"}!\"\n\nprint(greet"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"(\"World\"))\n```\n\nIf"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you'"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"d like, I can go"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" deeper on"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" any area, such as how to get"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" started learning Python or"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which lib"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"raries to use"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for a spec"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ific go"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"al."}}
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
+        data: {"type":"content_block_stop","index":0              }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":1111,"cache_read_input_tokens":0,"output_tokens":408} }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":1515,"cache_read_input_tokens":0,"output_tokens":956,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"          }
+        data: {"type":"message_stop" }
 
-  recorded_at: 2026-09-29T17:27:29.001059+00:00
+  recorded_at: 2026-10-25T16:21:59.775982+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -449,11 +676,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "7445"
+      - "8601"
       content-type:
       - application/json
       host:
@@ -461,7 +688,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -537,60 +764,72 @@ interactions:
         - role: assistant
           content:
           - text: |-
-              # What is Python?
+              # What Is Python?
 
-              **Python** is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It's designed with an emphasis on code readability and simplicity, using significant whitespace (indentation) to define code blocks.
+              Python is a high-level, general-purpose programming language created by Guido van Rossum and first released in 1991. It is known for its clean, readable syntax, which uses indentation to define code structure and reads close to plain English. Python is interpreted (code runs line by line without a separate compile step), dynamically typed (you don't declare variable types), and supports multiple programming styles, including procedural, object-oriented, and functional.
 
-              ## Key Characteristics:
-              - **Easy to learn and read** - Clean, English-like syntax
-              - **Interpreted** - Code runs directly without compilation
-              - **Dynamically typed** - No need to declare variable types
-              - **Multi-paradigm** - Supports procedural, object-oriented, and functional programming
-              - **Extensive standard library** - "Batteries included" philosophy
+              ## Key Characteristics
 
-              ## Main Use Cases:
+              - **Readable syntax:** Easy to learn and write, which makes it popular with beginners.
+              - **Extensive standard library:** Often described as "batteries included."
+              - **Huge ecosystem:** Hundreds of thousands of third-party packages are available through PyPI (installed with `pip`).
+              - **Cross-platform:** Runs on Windows, macOS, Linux, and more.
+              - **Open source:** Free to use, with a large and active community.
 
-              ### 1. **Data Science & Machine Learning**
-              - Data analysis and visualization (Pandas, Matplotlib)
-              - Machine learning models (scikit-learn, TensorFlow, PyTorch)
-              - Statistical computing
+              ## Main Use Cases
 
-              ### 2. **Web Development**
-              - Backend web applications (Django, Flask, FastAPI)
-              - RESTful APIs and microservices
+              **1. Data Science and Analytics**
+              Libraries like Pandas, NumPy, and Matplotlib make it easy to clean, analyze, and visualize data.
 
-              ### 3. **Automation & Scripting**
-              - Task automation
-              - System administration
-              - File processing and manipulation
+              **2. Machine Learning and AI**
+              Python is the dominant language in this field, with tools such as TensorFlow, PyTorch, and scikit-learn.
 
-              ### 4. **Scientific Computing**
-              - Research and academia
-              - Numerical computing (NumPy, SciPy)
-              - Simulations and modeling
+              **3. Web Development**
+              Frameworks like Django, Flask, and FastAPI are used to build websites, APIs, and backend services.
 
-              ### 5. **Software Development**
-              - Prototyping
-              - Testing and quality assurance
-              - Desktop applications (Tkinter, PyQt)
+              **4. Automation and Scripting**
+              Python is widely used to automate repetitive tasks such as file management, web scraping (Beautiful Soup, Scrapy), report generation, and system administration.
 
-              ### 6. **Artificial Intelligence**
-              - Natural language processing
-              - Computer vision
-              - Deep learning applications
+              **5. Software Testing**
+              Tools like pytest and Selenium help with automated testing of applications.
 
-              ### 7. **DevOps & Cloud**
-              - Infrastructure automation
-              - CI/CD pipelines
-              - Cloud service management
+              **6. Scientific and Academic Computing**
+              Researchers use SciPy, SymPy, and Jupyter Notebooks for simulations, calculations, and sharing results.
 
-              Python's versatility, large community, and rich ecosystem make it one of the most popular programming languages today.
+              **7. DevOps and Cloud**
+              Python is common for infrastructure scripting, configuration management, and working with cloud provider SDKs (AWS, Azure, Google Cloud).
+
+              **8. Game Development and Prototyping**
+              Libraries like Pygame allow for simple games and quick prototypes.
+
+              **9. Cybersecurity**
+              Security professionals use it for penetration testing tools, network scanning, and analysis scripts.
+
+              **10. Education**
+              Its simplicity makes it a top choice for teaching programming fundamentals.
+
+              ## Strengths and Limitations
+
+              **Strengths:** Fast development, readability, versatility, strong community support.
+
+              **Limitations:** Slower execution than compiled languages like C++ or Rust, higher memory use, and weaker support for mobile app development.
+
+              ## Simple Example
+
+              ```python
+              def greet(name):
+                  return f"Hello, {name}!"
+
+              print(greet("World"))
+              ```
+
+              If you'd like, I can go deeper on any area, such as how to get started learning Python or which libraries to use for a specific goal.
             type: text
         - role: user
           content:
           - text: Can you summarize that in one sentence?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         cache_control:
           type: ephemeral
           ttl: 5m
@@ -607,10 +846,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=98
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b08f8ae9ae78f64aa3d1849e4fbf1d83-28d461765d2c6c5d-01
+      - 00-221c6e78601bb2fd91c9ffc585c834b2-4b14aa645abfc37a-01
       transfer-encoding:
       - chunked
       vary:
@@ -619,48 +860,63 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY89B5kookNbqGp8B3kS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":420,"cache_read_input_tokens":1111,"cache_creation":{"ephemeral_5m_input_tokens":420,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPGBLpZWQfxLxP7wDpd6","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":971,"cache_read_input_tokens":1515,"cache_creation":{"ephemeral_5m_input_tokens":971,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Python"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Python is a read"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is a beg"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"able, vers"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"inner-friendly,"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"atile, open"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" versat"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-source programming language wid"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ile programming language widely"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ely used for data science, A"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" used for web development, data science,"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I, web development, automation,"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" machine"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and sc"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" learning, automation"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ripting th"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and scientific computing."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"anks to its sim"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ple"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" syntax and v"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ast library"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ecosystem."}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
+        data: {"type":"content_block_stop","index":0         }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":420,"cache_read_input_tokens":1111,"output_tokens":33}        }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":971,"cache_read_input_tokens":1515,"output_tokens":59,"output_tokens_details":{"thinking_tokens":0}}  }
 
         event: message_stop
-        data: {"type":"message_stop"       }
+        data: {"type":"message_stop"   }
 
-  recorded_at: 2026-09-29T17:27:30.535108+00:00
+  recorded_at: 2026-10-25T16:22:00.932936+00:00

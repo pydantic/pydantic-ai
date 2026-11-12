@@ -51,6 +51,7 @@ def test_cohere_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv('CO_BASE_URL', custom_base_url)
     provider = CohereProvider(api_key='api-key')
     assert provider.base_url == custom_base_url
+    assert CohereProvider(api_key='api-key', base_url='https://gateway.example').base_url == 'https://gateway.example'
 
 
 def test_cohere_provider_model_profile_sets_inline_flag():
@@ -61,3 +62,11 @@ def test_cohere_provider_model_profile_sets_inline_flag():
     reasoning_profile = CohereProvider.model_profile('command-reasoning')
     assert reasoning_profile.get('supports_inline_system_prompts', False) is True
     assert reasoning_profile.get('supports_thinking', False) is True
+
+
+def test_cohere_provider_model_profile_reasoning_model_can_disable_thinking():
+    """`CohereModel` turns reasoning off with `thinking={'type': 'disabled'}`, so the native route isn't always-on."""
+    profile = CohereProvider.model_profile('command-a-reasoning-08-2025')
+    assert profile.get('supports_thinking', False) is True
+    assert profile.get('thinking_always_enabled', False) is False
+    assert profile.get('thinking_enabled_by_default', False) is True

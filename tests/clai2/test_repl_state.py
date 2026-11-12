@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
@@ -18,7 +19,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -28,7 +28,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -36,9 +35,10 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime import repl_state
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.monty_cells import NOTE_CHARS, MontyCell
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -65,8 +65,8 @@ class Script:
             self.instructions.append(info.instructions or '')
             args: dict[str, object] = {'code': self.CODE[part.content], 'restart': part.content == 'restart'}
             return ModelResponse(parts=[ToolCallPart('run_code', args)])
-        assert isinstance(part, ToolReturnPart | RetryPromptPart)
-        self.results.append(f'retry: {part.content}' if isinstance(part, RetryPromptPart) else str(part.content))
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(f'retry: {part.content}' if part.outcome == 'retried' else str(part.content))
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -325,8 +325,8 @@ class TestReplStates:
         with caplog.at_level(logging.WARNING):
             await blocked.save(own, b'state')
             assert await unreadable.load(own) is None
-            unreadable.delete(SESSION_ID)
-            states.copy(source=SESSION_ID, target=FORK_ID)
+            await anyio.to_thread.run_sync(unreadable.delete, SESSION_ID)
+            await anyio.to_thread.run_sync(lambda: states.copy(source=SESSION_ID, target=FORK_ID))
 
         assert 'Could not save the REPL state' in caplog.text
         assert 'Could not read the saved REPL state' in caplog.text
@@ -398,7 +398,7 @@ class Asker:
             yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
 
-def monty_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> '_Shell[None, str]':
+def monty_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> 'SessionRuntime[None, str]':
     return create_shell(
         Agent(FunctionModel(asker.respond, stream_function=asker.stream)),
         deps=None,

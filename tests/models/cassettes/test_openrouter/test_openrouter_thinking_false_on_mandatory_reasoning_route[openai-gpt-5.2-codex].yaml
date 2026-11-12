@@ -1,0 +1,97 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "144"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: openai/gpt-5.2-codex
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: minimal
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1794001742-gf5m0Qy91tDYRuZgCVJJ
+        object: chat.completion
+        created: 1794001742
+        model: openai/gpt-5.2-codex
+        provider: Azure
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                gAAAAABq7ktPtweUIt8U3VAg-bvTIq1CC83o1cR17GXl35w8r2DFLnXOohTa0sN_ZZY6TqmZFj9I7hEMEGJYXNmofTcZpEA6441G5z3ddZFoeYM8dcctrEEY1uoDNlqMMpuGqIhOjRGVxUYvEjvHXeCSxQhCGgF-vsIMD6W_uIpOiIy21ms4Ft3jv-z6Wco__mB2P6uO8M71x4Qi0CaecV7hxCmqp0JHnSJC2vm_XJgu_dKd334QjLWBFqeBFh_xZnY6TnfrTHcKIBRQT-jjrGU8JWjb9NAhFTv-p1mJWmwphifMsn4jz544tznt2bs7OBBaPN3ohXCzHq0fbhcY51G5HHP02Y8ApsmL33KZ4URY5h2zfq6ruzJ5yC-eyI-G4xIa5CJ2Em830fTzURv_tGN8pAmHpc1odFuLjkSXEBkvwa7_FxYrGgYQG1jfpiv84RJxmiwdK7VTt58XWZV-thqEYs7Prd0RBvueiHcxDuapFZVKbMqqdI6vUXVswJSIdsDK2LvGcrkIPCUTvNo4ZJlSG0hvvZvBfdNd6ZtF0d5FRJ6_-GpbkpEJno3RPTjbW0o4ehpqM2UQ5rckStq9ESZaMZ-yvCply6o2KZYgDTtcqI5ZBMT4SiVypwpRy0w5gTHMky3MHlXdrnSxS6JO05lIPwQ59STJN2ZxII4YGXxw0PW2xEu2XNTCyuX98_qiQ_Uk8X8E8Y05obazsoxQevUkz3f_7Ha4UlO862gyvjjcMYwBIm-8Lfxa56mKrlEAc2m-fsKoqCHwzM1VANZq2VnAZEOqjZ18tvfC_wBLkgA4lc0AroXem-gffl7QuLA-v9MpoZoqvOx94Qcs6CvWIPCA-8fwL0TWdDKSPyjrjp_-grsrLNB88xbFPwBzhCTQ1B_9UtFKdyItsT1hApChrXwOIdHy4zlBQO4Cr4R8wa0xnyU4l9jFU8L8yC2bW68Z-d91fW1rXUaLo6Fp8F_SkpLMwKR8Bx6F5VWlWSSLbRkZvv8KiWCf478h-rnyh0l3ZCaODn2aTlcq4J87J5fClvDG6gktA3C-fshPmR_oUNUEChE3RzfHah7ian1X-f9cTTmBbozkvGKPqSXMy9gDuhUUv7HGs3kfwGqmin_L6DXSbKvU2yZPTT-2ARGnCzwFk-Bw7OIGAbPZwnpBztTcgFK2zuAUKYD5kPQLDmJIlcl7GYZlgLBcvi5fEKnvaZ1sw-ljgpfrqAu_isQaqErzxxvBin3YL2MnxF4BwXnQ05mHElAtDjHQouL41sK976gP_BtbyHF5YWHRtlNiuZtKan80sgTfYEzm1c1WjSKufYtFJ_Msx69SzDYTwh61NS0LQ9tjMFtXBarNx9Zuki7B9rXZ1yPjyJG_Qb7rofTd_FGcAL62zG2bflPNeL282UWjoTU1jTOey2zuJ72JzRYsSR6Iq5uygpfHWNKWkjZt72lzgsFoNSzOfViSNw9rm20OuDe24a2cUH6BBTbueQRd498tyemEbrl5Q1KrIUbtvUh1K7r14z_abnPmNKBkpMv3vZ0gHNOgQyJR.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LjItY29kZXgtMjAyNjAxMTR8YXp1cmUifQ
+              format: azure-openai-responses-v1
+              id: rs_08dda619bd5cb2b4016aee4b4f16d48190b7db0f3f27354c99
+              index: 0
+        usage:
+          prompt_tokens: 11
+          completion_tokens: 16
+          total_tokens: 27
+          cost: 0.00024325
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00024325
+            upstream_inference_prompt_cost: 0.00001925
+            upstream_inference_completions_cost: 0.000224
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-06T21:49:03.878613+00:00
