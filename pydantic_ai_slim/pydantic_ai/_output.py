@@ -12,7 +12,7 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator, to_json
+from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticSerializationError, SchemaValidator, to_json
 from typing_extensions import TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
@@ -1813,11 +1813,16 @@ class OutputSubmissionTarget:
 
         Raises:
             ValidationError: If a `'text'` target's arguments aren't a single string `response`.
+            ModelRetry: If the arguments hold a value that can't be encoded as JSON, which output tool
+                validation would reject too.
         """
         if self.route == 'text':
             return _TEXT_SUBMISSION_TA.validate_python(args)[_TEXT_SUBMISSION_KEY]
         data: dict[str, Any] = args if self.union_kind is None else {'result': {'kind': self.union_kind, 'data': args}}
-        return to_json(data).decode()
+        try:
+            return to_json(data).decode()
+        except PydanticSerializationError as e:
+            raise ModelRetry(f'The output could not be encoded as JSON: {e}') from e
 
 
 def output_tool_name(name: str, object_def: OutputObjectDefinition, *, suffix: bool, taken: Container[str]) -> str:
