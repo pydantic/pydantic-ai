@@ -1850,8 +1850,13 @@ class TestDurableSleep:
             ('batch__model.request', None),
         ]
 
-    def test_wait_inside_a_step_is_not_durable(self) -> None:
-        """A nested run in a checkpointed tool waits in the step: a Lambda wait can't be made while a step runs."""
+    @pytest.mark.parametrize('checkpointed', [True, False])
+    def test_nested_run_in_a_tool_waits_in_process(self, checkpointed: bool) -> None:
+        """A nested run in a tool waits in process: no Lambda wait, so the invocation isn't suspended.
+
+        A checkpointed tool runs in a step, during which no other durable operation can be made. A tool opted out of
+        checkpointing runs again on every invocation, and so would the nested run's requests if a wait suspended it.
+        """
 
         class Background(FunctionModel):
             def continuation_delay(self, response: ModelResponse) -> float | None:
@@ -1862,17 +1867,15 @@ class TestDurableSleep:
                 return ModelResponse(parts=[TextPart('ready')], provider_response_id='job')
             return ModelResponse(parts=[], provider_response_id='job', state='suspended')
 
-        async def tool() -> str:
-            return (await Agent(Background(background)).run('go')).output
+        agent = Agent(tool_then_text(), name='a', capabilities=[AWSLambdaDurability()])
 
-        agent = build_agent(tool)
+        @agent.tool_plain(metadata=None if checkpointed else {'aws_lambda': False})
+        async def act() -> str:
+            return (await Agent(Background(background)).run('go')).output
 
         output, contexts = _run_until_done(agent)
 
         assert output == 'done'
         assert len(contexts) == 1
-        assert contexts[0].step_names == [
-            'a__model.request',
-            'a__function_toolset__<agent>.call_tool:act',
-            'a__model.request',
-        ]
+        tool_steps = ['a__function_toolset__<agent>.call_tool:act'] if checkpointed else []
+        assert contexts[0].step_names == ['a__model.request', *tool_steps, 'a__model.request']

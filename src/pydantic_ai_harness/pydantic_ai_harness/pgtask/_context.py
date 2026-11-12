@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import re
 import weakref
 from collections import Counter
@@ -10,6 +11,10 @@ from typing import TypeVar
 from pgtask import Task, get_current_task
 
 ENGINE_NAME = 'pgtask'
+
+# pgtask suspends a sleeping task by raising this from `Task.sleep_for`, but neither exports it nor declares it in its
+# type stub, so it's looked up in the native module that defines it.
+TaskSuspended: type[Exception] = vars(importlib.import_module('pgtask._native'))['TaskSuspended']
 
 StepT = TypeVar('StepT')
 

@@ -21,7 +21,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._context import ENGINE_NAME, current_task_steps
+from ._context import ENGINE_NAME, TaskSuspended, current_task_steps
 from ._operation_backend import PGTaskCodec, PGTaskOperationBackend
 
 PGTaskParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
@@ -66,9 +66,7 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         # The first MCP step connects, so a replay whose MCP steps are all checkpointed never does.
         toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        # pgtask suspends a sleeping task with an error it doesn't export. Any other error from a sleep fails
-        # the attempt, which pgtask retries, so the run continues the job it waits on either way.
-        suspension_error_types=(Exception,),
+        suspension_error_types=(TaskSuspended,),
     )
     # pgtask has no non-retryable error type, so a serialization failure retries until `max_attempts` runs out.
 
