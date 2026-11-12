@@ -3462,6 +3462,51 @@ class RunStreamEventsDurableAgentWorkflow:
             return [type(event).__name__ async for event in stream]
 
 
+async def _structured_output_preamble_text_stream(
+    _messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'Preamble text.'
+    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"structured output"}', tool_call_id='call_1')}
+
+
+@dataclass
+class StructuredOutput:
+    response: str
+
+
+_structured_output_preamble_text_agent = Agent(
+    FunctionModel(stream_function=_structured_output_preamble_text_stream),
+    name='durability_structured_output_preamble_text',
+    output_type=StructuredOutput,
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class StructuredOutputPreambleTextWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        async with _structured_output_preamble_text_agent.run_stream('hello') as result:
+            output = await result.get_output()
+            return output.response
+
+
+async def test_durability_run_stream_structured_output_preamble_text_in_workflow(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StructuredOutputPreambleTextWorkflow],
+        plugins=[AgentPlugin(_structured_output_preamble_text_agent)],
+    ):
+        output = await client.execute_workflow(
+            StructuredOutputPreambleTextWorkflow.run,
+            id=str(uuid.uuid4()),
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'structured output'
+
+
 async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
     """`agent.run_stream_events()` works inside a workflow under the `TemporalDurability` capability.
 
