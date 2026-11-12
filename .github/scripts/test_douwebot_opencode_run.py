@@ -10,6 +10,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -98,7 +99,9 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
+    monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
     return github_output
 
 
@@ -194,6 +197,41 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert 'Use the `gh` CLI only when' not in call.input
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode\n'
     assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash on OpenCode Go.\n'
+    assert not [name for name in call.env if name.startswith('OTEL_')]
+
+
+def test_logfire_token_tags_each_runs_telemetry_with_its_plan(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With `LOGFIRE_TOKEN`, each run exports OpenCode's telemetry, tagged with its workflow run, plan and place."""
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    monkeypatch.setenv('LOGFIRE_URL', 'https://logfire-eu.pydantic.info/')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
+    monkeypatch.setenv('GITHUB_RUN_ID', '43168376242')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
+    monkeypatch.setenv('GITHUB_JOB', 'douwebot-opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    douwebot_opencode_run.main()
+    run = 'github.repository=pydantic/pydantic-ai,github.run_id=43168376242,github.run_attempt=2'
+    assert [{name: value for name, value in launch.env.items() if name.startswith('OTEL_')} for launch in invoked] == [
+        {
+            'OTEL_EXPORTER_OTLP_ENDPOINT': 'https://logfire-eu.pydantic.info',
+            'OTEL_EXPORTER_OTLP_HEADERS': 'Authorization=logfire-token',
+            'OTEL_RESOURCE_ATTRIBUTES': f'{run},github.job=douwebot-opencode,'
+            f'opencode_fallback.plan={quote(plan)},opencode_fallback.attempt={attempt}',
+        }
+        for attempt, plan in enumerate([OPENCODE_GO.plan, ZAI.plan], start=1)
+    ]
+
+
+@pytest.mark.parametrize(
+    ('job', 'step'), [('douwebot-opencode', 'opencode'), ('category-classify-opencode', 'classify')]
+)
+def test_fallback_steps_hand_opencode_the_logfire_token(job: str, step: str) -> None:
+    """Both `bots.yml` OpenCode fallbacks export OpenCode's telemetry, as `PR Review Checks` does."""
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    env = next(entry['env'] for entry in workflow['jobs'][job]['steps'] if entry.get('id') == step)
+    assert (env['LOGFIRE_TOKEN'], env['LOGFIRE_URL']) == ('${{ secrets.LOGFIRE_TOKEN }}', '${{ vars.LOGFIRE_URL }}')
 
 
 GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.go-limit, status 429.'
@@ -208,6 +246,13 @@ PLAN_REFUSED: list[dict[str, object]] = [
     REFUSED[0],
     {'type': 'error', 'error': {'type': 'provider.quota', 'message': 'Usage limit reached for 5 hour.', 'status': 429}},
 ]
+
+
+def zai_error(kind: str, code: object) -> dict[str, object]:
+    """The `error` OpenCode 2.2.5 writes for a Z.AI 429 whose response body carries `code`."""
+    message = 'Rate limit reached for requests'
+    body = json.dumps({'error': {'code': code, 'message': message}})
+    return {'type': kind, 'message': message, 'status': 429, 'response': {'body': body}}
 
 
 @pytest.mark.parametrize('kind', ['provider.go-limit', 'provider.quota'])
@@ -232,24 +277,66 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(
     )
 
 
-def test_coding_plan_quota_refusal_reruns_the_review_on_the_backup_account(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize('kind', ['provider.quota', 'provider.rate-limit'])
+@pytest.mark.parametrize(
+    ('run_number', 'first', 'second'),
+    [pytest.param('3188', ZAI, ZAI_BACKUP, id='even-run'), pytest.param('3189', ZAI_BACKUP, ZAI, id='odd-run')],
+)
+def test_coding_plan_refusal_reruns_the_review_on_the_other_account(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+    run_number: str,
+    first: Provider,
+    second: Provider,
 ) -> None:
-    """A primary Coding Plan whose quota refused the run hands it to the backup account's key."""
+    """A Coding Plan account whose quota or rate limit refused the run hands it to the other account's key."""
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
     refusal = subprocess.CalledProcessError(1, 'opencode')
-    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (PLAN_REFUSED, refusal), (FINISHED, None))
+    plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'status': 429}}]
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (plan_refused, refusal), (FINISHED, None))
     douwebot_opencode_run.main()
     assert [launch.input for launch in invoked] == [invoked[0].input] * 3
-    assert_runs_on(invoked[1], ZAI)
-    assert_runs_on(invoked[2], ZAI_BACKUP)
+    assert_runs_on(invoked[1], first)
+    assert_runs_on(invoked[2], second)
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
+    model = 'zai-coding-plan/glm-5.3-flash'
     assert capsys.readouterr().out == (
-        f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n'
-        f'{ZAI_LOG} failed with error type provider.quota, status 429.\n'
-        'zai-coding-plan/glm-5.3-flash refused the run before its first step; '
-        'retrying on zai-coding-plan/glm-5.3-flash on the backup Coding Plan.\n'
-        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the backup Coding Plan.\n'
+        f'{GO_LIMIT_LOG}\n'
+        f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {model} on {first.plan}.\n'
+        f'OpenCode run on {model} on {first.plan} failed with error type {kind}, status 429.\n'
+        f'{model} refused the run before its first step; retrying on {model} on {second.plan}.\n'
+        f'OpenCode run served by {model} on {second.plan}.\n'
     )
+
+
+@pytest.mark.parametrize(
+    ('run_number', 'matrix_index', 'first'),
+    [
+        ('3188', 0, ZAI),
+        ('3188', 1, ZAI_BACKUP),
+        ('3188', 2, ZAI),
+        ('3189', 0, ZAI_BACKUP),
+        ('3189', 1, ZAI),
+    ],
+)
+def test_run_number_and_matrix_place_alternate_the_first_account(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, run_number: str, matrix_index: int, first: Provider
+) -> None:
+    """Consecutive runs of a workflow, and consecutive checks of one matrix, start on alternate accounts."""
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
+    invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    _, provider = douwebot_opencode_run.run_with_fallback(
+        lambda command, env, stream: subprocess.run(
+            command, input='', text=True, cwd=review_env.parent, env=env, stdout=stream, check=True, timeout=None
+        ),
+        agent='reviewer',
+        output=review_env.parent / 'review.ndjson',
+        matrix_index=matrix_index,
+    )
+    assert provider == first
+    assert_runs_on(invoked[1], first)
 
 
 def test_go_refusal_skips_a_coding_plan_account_without_a_key(
@@ -263,11 +350,21 @@ def test_go_refusal_skips_a_coding_plan_account_without_a_key(
 
 
 @pytest.mark.parametrize(
-    ('backup_key', 'events', 'described'),
+    ('run_number', 'backup_key', 'events', 'described'),
     [
-        pytest.param(None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key'),
-        pytest.param('', PLAN_REFUSED, 'error type provider.quota, status 429', id='empty-backup-key'),
+        pytest.param('3188', None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key'),
+        # Without the backup account, an odd run starts on the primary, as an even one does.
+        pytest.param('3189', None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key-odd-run'),
         pytest.param(
+            '3188',
+            None,
+            [REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}],
+            'error type provider.rate-limit, status 429, code 1302',
+            id='no-backup-key-rate-limit',
+        ),
+        pytest.param('3188', '', PLAN_REFUSED, 'error type provider.quota, status 429', id='empty-backup-key'),
+        pytest.param(
+            '3188',
             'zai-backup-key',
             [*FINISHED, PLAN_REFUSED[1]],
             'error type provider.quota, status 429',
@@ -275,10 +372,11 @@ def test_go_refusal_skips_a_coding_plan_account_without_a_key(
         ),
         # Z.AI codes 1302 and 1305: OpenCode retried the 429 within the run before it failed.
         pytest.param(
+            '3188',
             'zai-backup-key',
-            [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
-            'error type provider.rate-limit, status 429',
-            id='rate-limit-or-overload',
+            [*FINISHED, {'type': 'error', 'error': zai_error('provider.rate-limit', '1305')}],
+            'error type provider.rate-limit, status 429, code 1305',
+            id='rate-limit-after-a-step',
         ),
     ],
 )
@@ -286,11 +384,16 @@ def test_coding_plan_failure_stays_on_the_primary_account(
     review_env: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    run_number: str,
     backup_key: str | None,
     events: list[dict[str, object]],
     described: str,
 ) -> None:
-    """Only a quota refusal before the first step reaches the backup, and only with its key; the job fails otherwise."""
+    """Only a quota or rate-limit refusal before the first step reaches the backup, and only with its key.
+
+    The job fails otherwise.
+    """
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
     if backup_key is None:
         monkeypatch.delenv('ZAI_BACKUP_API_KEY')
     else:
@@ -389,6 +492,15 @@ def test_go_failure_stays_on_go(
             'no error type, status 401',
             id='type-not-shaped-like-opencodes',
         ),
+        pytest.param(zai_error('unknown', 1305), 'error type unknown, status 429, code 1305', id='numeric-code'),
+        pytest.param(zai_error('unknown', '1302: sk-key'), 'error type unknown, status 429', id='code-not-all-digits'),
+        pytest.param(zai_error('unknown', '1302130213'), 'error type unknown, status 429', id='code-too-long'),
+        pytest.param(zai_error('unknown', True), 'error type unknown, status 429', id='code-not-a-number'),
+        pytest.param(
+            {'type': 'unknown', 'status': 429, 'response': {'body': 'code 1302'}},
+            'error type unknown, status 429',
+            id='body-not-json',
+        ),
     ],
 )
 def test_coding_plan_failure_names_its_error_type(
@@ -436,6 +548,7 @@ def classify_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return github_output
 

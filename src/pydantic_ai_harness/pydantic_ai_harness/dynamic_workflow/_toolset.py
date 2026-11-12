@@ -64,9 +64,8 @@ from pydantic_ai_harness._sub_agent_output import (
 from pydantic_ai_harness._warn import renamed_duration_limit
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import ParallelConfig
-
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
+    from pydantic_ai_harness.aws_lambda._operation_backend import AWSLambdaOperationConfig
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -230,6 +229,13 @@ def _lambda_bridge() -> StepBridge | None:
 
 
 @dataclass
+class _Branch:
+    run: Callable[[], Awaitable[Any]]
+    config: AWSLambdaOperationConfig
+    future: asyncio.Future[Any]
+
+
+@dataclass
 class _LambdaBranches:
     """Collects sub-agent runs and runs them as the branches of a Lambda `parallel` operation.
 
@@ -241,23 +247,21 @@ class _LambdaBranches:
 
     bridge: StepBridge
     name: str
-    _pending: list[tuple[Callable[[], Awaitable[Any]], ParallelConfig | None, asyncio.Future[Any]]] = field(
-        default_factory=list[tuple[Callable[[], Awaitable[Any]], 'ParallelConfig | None', 'asyncio.Future[Any]']]
-    )
+    _pending: list[_Branch] = field(default_factory=list[_Branch])
 
     def submit(
         self, agent: AbstractAgent[Any, object], operation: Callable[[], Awaitable[Any]]
     ) -> asyncio.Future[Any] | None:
         """Add the run to the batch if `agent` runs under `AWSLambdaDurability`, else return `None`."""
         # The bridge is only active in a durable handler, which imported this.
-        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, parallel_config
+        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, operation_config
 
         durability = BaseDurabilityCapability.from_agent(agent)
         if not isinstance(durability, AWSLambdaDurability) or not durability.in_durable_context:
             return None
-        future = asyncio.get_running_loop().create_future()
-        self._pending.append((operation, parallel_config(durability), future))
-        return future
+        branch = _Branch(operation, operation_config(durability), asyncio.get_running_loop().create_future())
+        self._pending.append(branch)
+        return branch.future
 
     async def flush(self) -> None:
         """Run the runs collected so far. `MontyExecutor` calls this before it resolves futures."""
@@ -265,24 +269,24 @@ class _LambdaBranches:
         await asyncio.sleep(0)
         pending, self._pending = self._pending, []
         # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
-        groups: dict[int, list[tuple[Callable[[], Awaitable[Any]], ParallelConfig | None, asyncio.Future[Any]]]] = {}
-        for entry in pending:
-            groups.setdefault(id(entry[1]), []).append(entry)
+        groups: dict[int, list[_Branch]] = {}
+        for branch in pending:
+            groups.setdefault(id(branch.config.serdes), []).append(branch)
         for group in groups.values():
             # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
-            results = await self.bridge.run_parallel(self.name, [operation for operation, _, _ in group], group[0][1])
-            for (_, _, future), result in zip(group, results):
-                if not future.done():  # pragma: no branch - only a cancelled dispatch is done early
-                    future.set_result(result)
+            results = await self.bridge.run_parallel(
+                self.name, [branch.run for branch in group], group[0].config.parallel_config
+            )
+            for branch, result in zip(group, results):
+                if not branch.future.done():  # pragma: no branch - only a cancelled dispatch is done early
+                    branch.future.set_result(result)
 
 
 def _runs_under_dbos(agent: AbstractAgent[Any, object]) -> bool:
-    """Whether the sub-agent runs under `DBOSDurability` in a DBOS workflow.
+    """Whether the agent runs under `DBOSDurability` in a workflow.
 
-    DBOS numbers a workflow's steps in the order they start, so the steps of concurrent sub-agents
-    would interleave by timing, and recovery could replay one sub-agent's results into another call.
-    The script then runs its sub-agent calls one at a time, as plain workflow code, so each call
-    keeps its own step checkpoints and DBOS still checks the roles its `@DBOS.step` tools require.
+    DBOS numbers steps in the order they start, so the steps of concurrent sub-agents would
+    interleave by timing, and recovery could replay one sub-agent's results into another call.
     """
     durability = BaseDurabilityCapability.from_agent(agent)
     # Only an agent with `DBOSDurability` attached has imported it, so other engines import nothing.
@@ -916,6 +920,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         in_temporal = in_temporal_workflow()
         bridge = _lambda_bridge()
         branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
+        sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
         limits = _resolve_resource_limits(self.resource_limits)
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
@@ -931,8 +936,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
-                global_sequential=any(_runs_under_dbos(entry.agent) for entry in self._by_name.values()),
-                flush=branches.flush if branches is not None else None,
+                # Exclusive: under `global_sequential`, calls start only after `flush`.
+                flush=branches.flush if branches is not None and not sequential else None,
+                global_sequential=sequential,
                 portal=monty.portal,
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
