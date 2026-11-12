@@ -74,7 +74,7 @@ The parts that matter:
 - Each sub-agent is an `async` function. You call it with `await`.
 - You pass the work as a single keyword argument, `task`. Always by keyword -- `reviewer(task="...")`, not `reviewer("...")`.
 - `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other (except
-  when they [run under `DBOSDurability` in a DBOS workflow](#running-under-other-durable-engines)).
+  in a DBOS workflow where a sub-agent [carries `DBOSDurability`](#running-under-other-durable-engines)).
 - The last expression's value becomes the result the model sees. The intermediate `reports` list never leaves the sandbox.
 
 Each call is a full `Agent.run`, with its own model loop, message history, tools, and typed output. Two things follow: calls are **isolated** (a sub-agent remembers nothing from an earlier call, so put everything it needs into `task`), and calls **cost tokens and take time** (which is why this capability gives you budgets, below).
@@ -215,9 +215,10 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments, including
-  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except when
-  sub-agents [run under `DBOSDurability` in a DBOS workflow](#running-under-other-durable-engines),
-  where they run one at a time. Other task creation and wait APIs are unavailable.
+  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except in a
+  DBOS workflow where a sub-agent [carries `DBOSDurability`](#running-under-other-durable-engines),
+  where sub-agent calls and sleeps run one at a time. Other task creation and wait APIs are
+  unavailable.
 
 Before a script runs it is statically type-checked against the sub-agent signatures. An ordinary, statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed argument costs one retry but no sub-agent budget or sandbox execution. Values typed as `Any` can reach runtime validation; they are still rejected before a sub-agent runs.
 
@@ -237,11 +238,12 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 `DBOSDurability` numbers a workflow's steps in the order they start, so the steps of concurrent
 sub-agents would interleave by timing and recovery could replay one sub-agent's results into another
-call. When a sub-agent carries it, the script runs its sub-agent calls one at a time inside a DBOS
-workflow, so an `asyncio.gather` over sub-agents takes the sum of their run times rather than the
-longest. Each call runs as ordinary workflow code, as it would outside `DynamicWorkflow`: the
-sub-agent's model requests, MCP tool calls, and tools decorated with `@DBOS.step` keep their own
-checkpoints, and DBOS checks the roles those `@DBOS.step` tools require. Recovery replays a call's
+call. When any sub-agent in the catalog carries it, every sub-agent call the script makes, and every
+`asyncio.sleep` it gathers, runs one at a time inside a DBOS workflow, including calls to sub-agents
+without `DBOSDurability`. An `asyncio.gather` over sub-agents then takes the sum of their run times
+rather than the longest. Each call runs as ordinary workflow code, as it would outside
+`DynamicWorkflow`: the sub-agent's model requests, MCP tool calls, and tools decorated with
+`@DBOS.step` keep their own checkpoints, and DBOS checks the roles those `@DBOS.step` tools require. Recovery replays a call's
 finished steps and runs on from there. Other function tools run as workflow code and run again on
 recovery, so put side effects in `@DBOS.step` tools. Recording each call as one DBOS step would let
 the calls overlap, but DBOS runs a step called from inside another step as a plain function call,
