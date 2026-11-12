@@ -24,7 +24,8 @@ else:
 
 
 DeepSeekModelName = Literal[
-    'deepseek-chat', 'deepseek-flash', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'
+    'deepseek-v4-pro',
+    'deepseek-flash',
 ]
 
 
@@ -87,6 +88,9 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 # Flash and V4's native efforts are `low`, `high` and `max`, and they map `xhigh` to `high`, so
                 # `max` is the only way to reach their deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_supports_max_reasoning_effort=is_flash_or_v4,
+                # DeepSeek's Chat Completions endpoint documents only `max_tokens` and silently ignores
+                # `max_completion_tokens`. See https://api-docs.deepseek.com/api/create-chat-completion.
+                openai_chat_supports_max_completion_tokens=False,
                 # `openai_supports_phase` is deliberately left at its `False` default even though
                 # DeepSeek labels its Responses API output with `phase`: the field is absent from
                 # DeepSeek's documented input items, and its API silently ignores what it doesn't

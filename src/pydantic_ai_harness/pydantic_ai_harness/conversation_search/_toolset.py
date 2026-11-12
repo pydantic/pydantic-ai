@@ -204,59 +204,64 @@ def _retry_text(content: list[ErrorDetails] | str) -> str:
 
 def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None) -> str | None:
     """Render one request part to a searchable line, or `None` for non-content parts."""
-    if isinstance(part, UserPromptPart):
-        return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, SystemPromptPart):
-        # Defensive for sources that do not filter compaction artifacts;
-        # `SnapshotHistorySource` already excludes them from the corpus.
-        if part.content.startswith(SUMMARY_PREFIX):
-            return '[Compaction summary]'
-        return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
-    if isinstance(part, InstructionDeltaPart):
-        return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
-    if isinstance(part, ToolReturnPart):
-        if part.outcome == 'retried':
-            # A retried call reads as a retry rather than a return: why a run changed course is what
-            # makes it worth recalling. `model_response_str` renders a validation failure's serialized
-            # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
-            # is a wire detail; `str(part.content)` would put a Python repr in the index.
-            retry = part.model_response_str(wrap_if_error=False)
-            return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
-        # `tool_return_text` names each file instead of spelling out its bytes.
-        return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, RetryFeedbackPart):
-        # The same feedback for a response that answered no particular call. No tool name: it is
-        # never bound to a call.
-        return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
-    # TODO(v3): remove RetryPromptPart
-    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # The part the two above replaced. A stored history loads as one of them, but code that
-        # builds one by hand and passes it as `message_history` still puts an instance here, and
-        # this reads the history before the model translates it.
-        return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, CompactionPart):
-        # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
-        if not part.content:
+    match part:
+        case UserPromptPart():
+            return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
+        case SystemPromptPart():
+            # Defensive for sources that do not filter compaction artifacts;
+            # `SnapshotHistorySource` already excludes them from the corpus.
+            if part.content.startswith(SUMMARY_PREFIX):
+                return '[Compaction summary]'
+            return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
+        case InstructionDeltaPart():
+            return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
+        case ToolReturnPart():
+            if part.outcome == 'retried':
+                # A retried call reads as a retry rather than a return: why a run changed course is what
+                # makes it worth recalling. `model_response_str` renders a validation failure's serialized
+                # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
+                # is a wire detail; `str(part.content)` would put a Python repr in the index.
+                retry = part.model_response_str(wrap_if_error=False)
+                return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
+            # `tool_return_text` names each file instead of spelling out its bytes.
+            return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
+        case RetryFeedbackPart():
+            # The same feedback for a response that answered no particular call. No tool name: it is
+            # never bound to a call.
+            return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            # The part the two above replaced. A stored history loads as one of them, but code that
+            # builds one by hand and passes it as `message_history` still puts an instance here, and
+            # this reads the history before the model translates it.
+            return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+        case CompactionPart():
+            # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
+            if not part.content:
+                return None
+            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
+        case SpeechPart():
+            # A realtime user turn: index the spoken transcript so speech is searchable, not the
+            # raw audio. `transcript` is optional, so an audio-only part contributes no text.
+            if not part.transcript:
+                return None
+            return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
+        # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
+        # fallback below stays a real runtime branch.
+        case (
+            ToolAvailabilityDeltaPart()
+            | CapabilityLoadDeltaPart()
+            | InstructionBaselinePart()
+            | ModelSettingsDeltaPart()
+        ):
             return None
-        return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
-    if isinstance(part, SpeechPart):
-        # A realtime user turn: index the spoken transcript so speech is searchable, not the
-        # raw audio. `transcript` is optional, so an audio-only part contributes no text.
-        if not part.transcript:
+        # Reachable only on a pydantic-ai release newer than this one: a part type newer than this code contributes
+        # nothing. `assert_never` under `TYPE_CHECKING` keeps the match exhaustive for pyright without crashing at
+        # runtime on a newer pydantic-ai.
+        case _:  # pragma: no cover
+            if TYPE_CHECKING:
+                assert_never(part)
             return None
-        return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
-    # fallthrough below stays a real runtime branch.
-    if isinstance(
-        part,
-        (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
-    ):
-        return None
-    # A part type newer than this code contributes nothing. `assert_never` under `TYPE_CHECKING`
-    # keeps the chain exhaustive for pyright without crashing at runtime on a newer pydantic-ai.
-    if TYPE_CHECKING:
-        assert_never(part)
-    return None  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
 
 
 def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> str:
@@ -320,6 +325,18 @@ def _adds_instruction_change(message: ModelMessage, earlier: ModelMessage) -> bo
     return isinstance(message, ModelRequest) and any(
         isinstance(part, InstructionDeltaPart) and part not in earlier.parts for part in message.parts
     )
+
+
+def _inherited_prefix(messages: list[ModelMessage], hashes: list[str], seen: dict[str, ModelMessage]) -> int:
+    """How many leading `messages` are in `seen` without an instruction change the copy there lacks."""
+    inherited = 0
+    while (
+        inherited < len(hashes)
+        and hashes[inherited] in seen
+        and not _adds_instruction_change(messages[inherited], seen[hashes[inherited]])
+    ):
+        inherited += 1
+    return inherited
 
 
 def _construction_stacklevel() -> int:
@@ -410,6 +427,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
+        return await self._search(ctx, query, run_id)
+
+    async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
         conversation_id: str | None = None
         if self._scope == 'conversation':
             # Fail closed. Filtering on `conversation_id is None` would match every
@@ -447,15 +467,18 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 'on a shared store).'
             )
 
+        return self._render_matches(query, sections, total_messages)
+
+    def _render_matches(self, query: str, sections: list[_RunSection], total_messages: int) -> str:
         # Rank on the untruncated rendering so terms past the display cutoff stay
         # findable, then show excerpts clipped around the query terms. Documents are
         # index-aligned across the flattened sections; context windows stay within one section.
         flat_index_lines: list[str] = []
         locations: list[tuple[int, int]] = []
-        for section_idx, section in enumerate(sections):
-            for line_idx, line in enumerate(section.index_lines):
+        for section_index, section in enumerate(sections):
+            for line_index, line in enumerate(section.index_lines):
                 flat_index_lines.append(line)
-                locations.append((section_idx, line_idx))
+                locations.append((section_index, line_index))
 
         ranked = _bm25_rank(query, flat_index_lines, self._params)
         if not ranked:
@@ -464,19 +487,19 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         terms = frozenset(_tokenize(query))
         results: list[str] = []
         shown: set[tuple[int, int]] = set()
-        for doc_idx, score in ranked:
+        for doc_index, score in ranked:
             if len(results) == self._max_matches:
                 break
-            section_idx, line_idx = locations[doc_idx]
-            if (section_idx, line_idx) in shown:
+            section_index, line_index = locations[doc_index]
+            if (section_index, line_index) in shown:
                 continue
-            section = sections[section_idx]
-            start = max(0, line_idx - self._context_lines)
-            end = min(len(section.messages), line_idx + self._context_lines + 1)
+            section = sections[section_index]
+            start = max(0, line_index - self._context_lines)
+            end = min(len(section.messages), line_index + self._context_lines + 1)
             # Record the whole emitted window so a neighbouring match whose context
             # overlaps this one is skipped instead of repeating the same lines.
-            shown.update((section_idx, idx) for idx in range(start, end))
-            excerpt = '\n'.join(section.display_line(idx, terms) for idx in range(start, end))
+            shown.update((section_index, index) for index in range(start, end))
+            excerpt = '\n'.join(section.display_line(index, terms) for index in range(start, end))
             results.append(f'[score: {score:.1f} | {section.label}]\n{excerpt}')
 
         header = f"Found {len(results)} match(es) for '{query}' in {total_messages} persisted messages:\n\n"
@@ -502,13 +525,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         for run in runs:
             messages = await self._source.run_history(run_id=run.run_id)
             hashes = [message_hash(message) for message in messages]
-            inherited = 0
-            while (
-                inherited < len(hashes)
-                and hashes[inherited] in seen
-                and not _adds_instruction_change(messages[inherited], seen[hashes[inherited]])
-            ):
-                inherited += 1
+            inherited = _inherited_prefix(messages, hashes, seen)
             seen.update(zip(hashes, messages))
             messages = messages[inherited:]
             if not messages:

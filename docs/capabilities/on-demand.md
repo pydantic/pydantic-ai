@@ -36,11 +36,11 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
-<context id="capability:deferred_capabilities">
+<pyai:context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
 
 The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
@@ -63,7 +63,7 @@ Loading activates the whole bundle, not just instructions: the capability's func
     The `load_capability` tool name is reserved whenever any on-demand capability is present. Capability `id` values must be stable — set one explicitly unless the capability derives a stable `id` itself, as [`MCP`][pydantic_ai.capabilities.MCP] does from its server URL. See [Resumable across runs](#resumable-across-runs).
 
 !!! note "Loaded instructions are system voice"
-    A loaded capability's instructions are stated in a mid-conversation system message, where the model supports one (Anthropic's `system` role on models that accept it, OpenAI's `system` message), and as `<system>`-tagged text in the same turn as the tool result everywhere else. Models treat that voice as yours, and hold to it against a user asking for an exception or a tool result claiming to replace it, where instructions in a tool result can lose. Like other [instruction changes](../agent.md#appending-instruction-changes), they stay in server-side history: a [UI adapter](../ui/overview.md) doesn't send them to the client, and when a client sends its history back, the next request states the capability's current instructions again, at the end of the conversation, and appends later changes after that.
+    A loaded capability's instructions are stated in a mid-conversation system message, where the model supports one (Anthropic's `system` role on models that accept it, OpenAI's `system` message), and as `<system>`-tagged text in the same turn as the tool result everywhere else. Models treat that voice as yours, and hold to it against a user asking for an exception or a tool result claiming to replace it, where instructions in a tool result can lose. Like other [instruction changes](../agent.md#appending-instruction-changes), they stay in server-side history: a [UI adapter](../ui/overview.md) doesn't send them to the client, and when a client sends its history back, the next request states the capability's current instructions again on the request holding the load (the `load_capability` result, or the record [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] leaves), where server-held history states them, and appends later changes after its latest message. Every request built from the same client history then carries them in the same place, so the cached prefix holds as long as the instructions don't change. Their text always comes from the capability: the client's history decides only which loads it holds. Only history that went through [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], as a UI adapter's does, gets a statement restored: server-held history, including history saved by an earlier version, is never rewritten, and text a load's instructions gain later is appended after the latest message. A client's history can't tell a load whose instructions were empty from one whose statement it dropped, so there the statement of a capability whose instructions were empty at the load moves onto the load's request once, when they first gain text.
 
     That makes a capability's `get_instructions` and `get_description` the operator's channel: never return content you don't control through them, such as files read from an untrusted workspace, since the model gives it your authority.
 
@@ -684,3 +684,78 @@ for request, tools in enumerate(tools_per_request, start=1):
 On request 1 the model sees only `load_capability`, with `release` in the catalog. Once it loads the skill, the skill's instructions follow the tool result and `stage_release` is in its tool list from request 2 on. Pass functions or [`Tool`][pydantic_ai.tools.Tool] instances via `tools=` the same way.
 
 This gates the skill's tools as a bundle. To let the model find individual tools in a large flat catalog by keyword instead, use [tool search](../tools-advanced.md#tool-search); a capability's tools are never searchable before it loads. If you load Agent Skills with the [Pydantic AI Harness `Skills` capability](../harness/skills.md), which delivers instructions only, define a skill that needs tools this way instead. Both share one catalog and the `load_capability` tool.
+
+## Loading runbooks from a database
+
+If your team keeps runbooks in a database rather than in files, make each runbook a deferred [`Capability`][pydantic_ai.capabilities.Capability] and read its body in an instructions function registered with [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions]. The function receives the [`RunContext`][pydantic_ai.tools.RunContext], so it can query the database connection you pass as `deps`.
+
+The example below builds the catalog from the `runbooks` table when the agent is created, so every run sends the same catalog and it stays in the cached prefix; a runbook added to the table appears once the agent is rebuilt. The body of a runbook is read only after the model loads it, and again on each later request of the run, so an edited runbook reaches the next run without a redeploy. An edit made after the model loaded the runbook is [appended](../agent.md#appending-instruction-changes) to the conversation as an update. Like any loaded capability's instructions, a runbook's body is stated in the system voice, so anyone who can write to the table can instruct the model with your authority: limit write access to people you would let edit your agent's instructions.
+
+An in-memory SQLite database stands in for yours, the instructions function prints each runbook it reads, and a [`FunctionModel`][pydantic_ai.models.function.FunctionModel] stands in for a real model that loads the `db-failover` runbook:
+
+```python {title="runbooks_from_database.py"}
+import sqlite3
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@dataclass
+class Deps:
+    db: sqlite3.Connection
+
+
+def runbook(runbook_id: str, description: str) -> Capability[Deps]:
+    capability = Capability[Deps](id=runbook_id, description=description, defer_loading=True)
+
+    @capability.instructions
+    def body(ctx: RunContext[Deps]) -> str | None:
+        print(f'Reading runbook {runbook_id!r}')
+        #> Reading runbook 'db-failover'
+        row = ctx.deps.db.execute('SELECT body FROM runbooks WHERE id = ?', (runbook_id,)).fetchone()
+        return row[0] if row else None  # a deleted runbook withdraws its instructions
+
+    return capability
+
+
+# A sync instructions function runs in a worker thread, so share the connection across threads.
+db = sqlite3.connect(':memory:', check_same_thread=False)
+db.execute('CREATE TABLE runbooks (id TEXT PRIMARY KEY, description TEXT, body TEXT)')
+db.executemany(
+    'INSERT INTO runbooks VALUES (?, ?, ?)',
+    [
+        (
+            'db-failover',
+            'Use when the primary database is down or unreachable.',
+            'Page the on-call DBA, then promote the replica with the lowest replication lag.',
+        ),
+        (
+            'cert-renewal',
+            'Use when a TLS certificate is about to expire.',
+            'Renew the certificate through the internal CA and roll the load balancers.',
+        ),
+    ],
+)
+runbooks = [
+    runbook(runbook_id, description)
+    for runbook_id, description in db.execute('SELECT id, description FROM runbooks')
+]
+
+
+def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'db-failover'})])
+    return ModelResponse(parts=[TextPart('Paging the on-call DBA.')])
+
+
+agent = Agent(FunctionModel(scripted_model), deps_type=Deps, capabilities=runbooks)
+result = agent.run_sync('The primary database is down.', deps=Deps(db))
+print(result.output)
+#> Paging the on-call DBA.
+db.close()
+```
+
+The first request sends only the catalog, so no runbook body is read. After the model loads `db-failover`, the second request reads that runbook's body and sends it to the model; `cert-renewal` is never read. With an async database driver, make the instructions function `async def` and `await` the query.

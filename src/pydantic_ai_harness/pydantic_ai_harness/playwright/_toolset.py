@@ -110,6 +110,7 @@ import warnings
 from collections import deque
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
+from functools import partial
 from time import monotonic
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
 from urllib.parse import urlparse
@@ -140,7 +141,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Sequence
+    from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -870,7 +871,7 @@ async def _auto_install_chromium() -> str | None:
     mocked test surface. On failure the merged stdout/stderr is returned so the
     launch path can surface why the install failed instead of the generic hint.
     """
-    proc = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         sys.executable,
         '-m',
         'playwright',
@@ -880,12 +881,12 @@ async def _auto_install_chromium() -> str | None:
         stderr=asyncio.subprocess.STDOUT,
     )
     try:
-        stdout, _ = await proc.communicate()
+        stdout, _ = await process.communicate()
     except asyncio.CancelledError:
-        proc.terminate()
-        await proc.wait()
+        process.terminate()
+        await process.wait()
         raise
-    if proc.returncode == 0:
+    if process.returncode == 0:
         return None
     return stdout.decode(errors='replace')
 
@@ -2404,22 +2405,28 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             while tasks:
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 tasks = list(pending)
-                # Every finished wait is read, including when an earlier one in the
-                # same batch already matched: an exception nobody retrieves surfaces
-                # later, out of context, as an unhandled task error.
-                matched = False
-                for task in done:
-                    error = task.exception()
-                    if error is None:
-                        matched = True
-                    else:
-                        failure = error
-                if matched:
+                if (batch_failure := self._finished_waits_failure(done, failure)) is None:
                     return
+                failure = batch_failure
         finally:
             for task in tasks:
                 task.cancel()
         raise failure
+
+    @staticmethod
+    def _finished_waits_failure(done: Iterable[asyncio.Task[object]], failure: BaseException) -> BaseException | None:
+        """`None` when one of the finished waits matched, else the last of their failures, or `failure` if none."""
+        # Every finished wait is read, including when an earlier one in the
+        # same batch already matched: an exception nobody retrieves surfaces
+        # later, out of context, as an unhandled task error.
+        matched = False
+        for task in done:
+            error = task.exception()
+            if error is None:
+                matched = True
+            else:
+                failure = error
+        return None if matched else failure
 
     async def snapshot(self, timeout_ms: int | None = None) -> str:
         """Return the page's accessibility tree with `aria-ref` handles for targeting.
@@ -2468,45 +2475,45 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             return await self._refuse(
                 'tabs', None, f'Error: unknown tabs action {action!r}; use list, select, close or new.'
             )
+        return await self._in_operation('tabs', None, partial(self._tabs_body, action, index))
 
-        async def _tabs(page: _Page, deadlines: _Deadlines) -> str:
-            session = self._session
-            if action == 'list':
-                return self._truncate_output(await self._describe_tabs(session.pages, page, deadlines))
-            if action == 'new':
-                if len(session.pages) >= _MAX_TABS:
-                    return self._error(f'Error: the tab limit of {_MAX_TABS} is reached. Close one first.')
-                # The three tab mutations drive Playwright calls that take no
-                # `timeout` of their own, so the operation's deadline is applied
-                # around them rather than left to the driver.
-                await self._await_with_timeout(session.open_tab(), deadlines.action)
-                return self._truncate_output(
-                    f'Opened blank tab {len(session.pages) - 1} and made it active. Load it with navigate.'
-                )
-            if page not in session.pages:
-                # A page can close itself, and the session moves the active pointer
-                # to whatever is left. Nothing was, so there is no tab to act on.
-                return self._error("Error: the active tab has closed. Open one with tabs('new').")
-            target = session.pages.index(page) if index is None else index
-            if not 0 <= target < len(session.pages):
-                return self._error(f'Error: no tab {target}. {len(session.pages)} open; list them with tabs.')
-            if action == 'close':
-                if len(session.pages) == 1:
-                    return self._error('Error: the last tab cannot be closed.')
-                closing = session.pages[target]
-                await self._await_with_timeout(session.close_tab(closing), deadlines.action)
-                # The session repoints only when the tab that closed was the active
-                # one; otherwise the operation keeps acting on the page it started on.
-                active = page if closing is not page else session.pages[-1]
-                return self._truncate_output(f'Closed tab {target}. Active tab is now {session.pages.index(active)}.')
-            selected = await self._await_with_timeout(session.activate(session.pages[target]), deadlines.action)
-            if (blocked := await self._enforce_navigation_policy(selected, 'tabs', deadlines.navigation)) is not None:
-                return blocked
-            text = await self._page_text(selected, deadlines.action)
-            url = _without_credentials(selected.url)
-            return self._truncate_output(f'Selected tab {target}. URL: {url}\n\n{text}')
-
-        return await self._in_operation('tabs', None, _tabs)
+    async def _tabs_body(self, action: str, index: int | None, page: _Page, deadlines: _Deadlines) -> str:
+        """The `tabs` operation, run by `_in_operation` with `page` the active tab."""
+        session = self._session
+        if action == 'list':
+            return self._truncate_output(await self._describe_tabs(session.pages, page, deadlines))
+        if action == 'new':
+            if len(session.pages) >= _MAX_TABS:
+                return self._error(f'Error: the tab limit of {_MAX_TABS} is reached. Close one first.')
+            # The three tab mutations drive Playwright calls that take no
+            # `timeout` of their own, so the operation's deadline is applied
+            # around them rather than left to the driver.
+            await self._await_with_timeout(session.open_tab(), deadlines.action)
+            return self._truncate_output(
+                f'Opened blank tab {len(session.pages) - 1} and made it active. Load it with navigate.'
+            )
+        if page not in session.pages:
+            # A page can close itself, and the session moves the active pointer
+            # to whatever is left. Nothing was, so there is no tab to act on.
+            return self._error("Error: the active tab has closed. Open one with tabs('new').")
+        target = session.pages.index(page) if index is None else index
+        if not 0 <= target < len(session.pages):
+            return self._error(f'Error: no tab {target}. {len(session.pages)} open; list them with tabs.')
+        if action == 'close':
+            if len(session.pages) == 1:
+                return self._error('Error: the last tab cannot be closed.')
+            closing = session.pages[target]
+            await self._await_with_timeout(session.close_tab(closing), deadlines.action)
+            # The session repoints only when the tab that closed was the active
+            # one; otherwise the operation keeps acting on the page it started on.
+            active = page if closing is not page else session.pages[-1]
+            return self._truncate_output(f'Closed tab {target}. Active tab is now {session.pages.index(active)}.')
+        selected = await self._await_with_timeout(session.activate(session.pages[target]), deadlines.action)
+        if (blocked := await self._enforce_navigation_policy(selected, 'tabs', deadlines.navigation)) is not None:
+            return blocked
+        text = await self._page_text(selected, deadlines.action)
+        url = _without_credentials(selected.url)
+        return self._truncate_output(f'Selected tab {target}. URL: {url}\n\n{text}')
 
     async def _describe_tabs(self, pages: list[_Page], active: _Page, deadlines: _Deadlines) -> str:
         """Render one line per open tab, marking the active one.

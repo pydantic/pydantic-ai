@@ -169,7 +169,8 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
 - `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
-  browser cannot survive replay); `TrajectoryJudge` raises at run start inside a durable workflow.
+  browser cannot survive replay); a `TrajectoryJudge` without an `id` raises at run start inside a durable
+  workflow.
 - `CodeMode` runs but skips its `speculate=` early tool launches. `BackgroundTools`, guardrails,
   `SpendLimits`, `Memory`, `Planning`, `SubAgents`, the sandboxes, and the hosted integrations build
   under Temporal.
@@ -278,6 +279,25 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
 opt out).
 
+Approvals: add core `RequestInput(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`)
+next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting
+a second run. A call that needs approval, an answer or external execution creates a Lambda callback and
+runs `ask(ctx, requests, callback_id)` once in a step (`{name}__external_event.deferred_tool_calls.ask`).
+If `ask` returns `DeferredToolResults`, the step records it and the run continues (the callback is left
+open, unused); if it returns `None`, the execution suspends. `AskUser` questions use the same mechanism
+(`{name}__external_event.ask_user_question`). The approver sends the
+JSON form of `DeferredToolResults` (`{"approvals": {"<tool_call_id>": true}}`, or
+`{"kind": "tool-denied", "message": ...}` / `{"kind": "tool-approved", "override_args": {...}}`) with
+`aws lambda send-durable-execution-callback-success --callback-id ... --cli-binary-format
+raw-in-base64-out --result '<json>'` (boto3 `send_durable_execution_callback_success`). On replay the
+model is not called again and `ask` does not rerun. A timeout or `send-durable-execution-callback-failure`
+denies every pending approval and fails every pending external call with a message, and the run
+continues; an invalid decision or a stale tool call ID raises `UserError`. Other deferred-call handlers
+(`HandleDeferredToolCalls`, `ApprovalReviewer`, `AskUser`) run first. An `ask` that returns `None` only
+delivers the question; the answer comes from your approval endpoint. Outside a durable handler (local development) the same agent
+waits in process and `pydantic_ai.external_events.resolve_external_event(token, decision)` resolves it;
+from inside a checkpointed tool, the wait raises `UserError`.
+
 Gotchas:
 
 - A run is durable only inside `durable_agent_handler` or `run_durable(lambda: agent.run(...),
@@ -294,11 +314,14 @@ Gotchas:
 - Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
   replay matches checkpoints by position, so concurrent runs can be served each other's results.
 - Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
-  `event_stream_handler`) breaks in-flight executions, and the mismatch is not detected. Deploy a new
-  published version.
+  `event_stream_handler`) breaks in-flight executions, and so does renaming the agent, a toolset `id`,
+  a tool, or the id a non-default model runs under (a `models=` key or the `model=` passed to
+  `agent.run`), which is part of that model's step names. SDK 2.0+ fails those executions with
+  `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
+  version.
 - Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
-- Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
+- Budget: 30,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
 ## AbsurdDurability
 
@@ -459,7 +482,10 @@ async def main():
 ```
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
-authored code executes in your process and would bypass a sandbox. Only use it where you would run the
+authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
+`ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
+a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
 model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
@@ -573,6 +599,12 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alone leaves existing
 locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
 caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
+
+For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
+Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
+Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
+See the engine README's observability section.
 
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
 outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to

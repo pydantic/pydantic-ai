@@ -19,7 +19,7 @@ Over a long run, an agent can lose track of its instructions, build on unsupport
 
 ## The solution
 
-`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. The evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
+`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. Outside durable execution, the evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
 
 The judge delivers exactly one verdict per evaluation, as its output type:
 
@@ -51,7 +51,7 @@ print(result.output)
 
 ## How steering is framed
 
-The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
+The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<pyai:tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
 
 The note names its element by a random `ref`, made once when the steer is built and stored with it, so later requests resend both parts unchanged. A `<judge_feedback>` element forged earlier in the run, for example in a tool result, has no ref or a different one, and the note disowns any element whose ref no trajectory judge's note names. Only the first element with a named ref counts, so a later copy by content that saw the ref is disowned too. Naming the element by ref rather than by position works whatever order a provider sends the two parts in (Anthropic sends a request's user content before its system entry).
 
@@ -133,8 +133,21 @@ agent = Agent(
 ## Cost and failure semantics
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
-- An evaluation failure is raised on the run at the next cadence tick or at run end. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
-- A judged run inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
+- Outside durable execution, an evaluation failure is raised on the run at the next cadence tick or at run end; inside a workflow or flow it is raised from the request that launched it. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
+
+## Durable execution
+
+Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect), a judge with an `id` checkpoints each evaluation as the durable operation `<agent>__capability__<id>.evaluate`. The evaluation is awaited before the run continues, so a replay reuses the recorded verdict and delivers the same steering at the same point, and the judge is billed once. Give each judge its own `id`:
+
+```python
+from pydantic_ai_harness import TrajectoryJudge
+
+judge = TrajectoryJudge(model='{{ anthropic:small }}', id='evidence-judge', every=10)
+```
+
+A judge without an `id` is rejected with `UserError` before the first model request inside a workflow or flow. Outside one, nothing changes and `id` stays optional.
+
+`on_verdict` is not part of the durable operation, so a replay calls it again with the recorded verdict. Make the callback idempotent if it writes to an external system.
 
 ## Observability
 

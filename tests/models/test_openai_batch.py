@@ -40,14 +40,19 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 from tests.batch_utils import UNRUN_MESSAGES
 from tests.conftest import try_import
+from tests.models.mock_openai import with_history_digests
 
 with try_import() as imports_successful:
     import httpx2
     from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.auth import WorkloadIdentity
 
-    from pydantic_ai.models import _openai_batch as openai_batch
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+        _batch as openai_batch,
+    )
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
@@ -278,11 +283,13 @@ async def test_batch_encode_continues_a_stored_response() -> None:
     model = _model()
     request = BatchRequest(
         custom_id='item',
-        messages=[
-            ModelRequest(parts=[UserPromptPart('Hello')]),
-            ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
-            ModelRequest(parts=[UserPromptPart('Again')]),
-        ],
+        messages=with_history_digests(
+            [
+                ModelRequest(parts=[UserPromptPart('Hello')]),
+                ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
+                ModelRequest(parts=[UserPromptPart('Again')]),
+            ]
+        ),
         model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
     body = json.loads((await model.batch_encode(request)).body)
@@ -398,7 +405,7 @@ async def test_batch_keeps_azure_ad_token_provider_support() -> None:
         provider=AzureProvider(openai_client=client),
         profile=OpenAIModelProfile(openai_supports_batch_api=True),
     )
-    assert openai_batch._batch_client(model) is client  # pyright: ignore[reportPrivateUsage]
+    assert openai_batch.batch_client(model) is client
     token.assert_not_called()
 
 
@@ -870,7 +877,7 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     """A batch whose model OpenAI doesn't know suggests a close known model, as a request on its own does."""
     api = _FakeBatchAPI(batch=_batch_json('validating'))
     model = OpenAIResponsesModel(
-        'gpt-4.1-nan',
+        'gpt-5.6-lun',
         provider=OpenAIProvider(
             openai_client=AsyncOpenAI(
                 api_key='k', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
@@ -879,12 +886,12 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     )
     request = _request()
     batch = await model.batch_create([await model.batch_encode(request)])
-    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-4.1-nan' is not supported.", 'line': 1}
+    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-5.6-lun' is not supported.", 'line': 1}
     api.batch = _batch_json('failed', errors={'object': 'list', 'data': [error]})
     [result] = await model.batch_results(await model.batch_status(batch))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, request)
-    assert exc_info.value.suggested_model_id == 'openai:gpt-4.1-nano'
+    assert exc_info.value.suggested_model_id == 'openai:gpt-5.6-luna'
 
 
 async def test_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
@@ -1000,7 +1007,7 @@ async def test_batch_forgets_the_oldest_uploaded_input_files(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a bounded number of uploads are remembered; a forgotten batch's input file is left for OpenAI to delete."""
-    monkeypatch.setattr('pydantic_ai.models._openai_batch._UPLOADED_INPUT_FILES_SIZE', 0)
+    monkeypatch.setattr('pydantic_ai.models.openai._batch._UPLOADED_INPUT_FILES_SIZE', 0)
     api = _FakeBatchAPI(batch=_batch_json('in_progress'))
     model = _fake_model(api)
     batch = await model.batch_create([await model.batch_encode(_request('ok'))])

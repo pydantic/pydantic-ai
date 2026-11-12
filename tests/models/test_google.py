@@ -68,7 +68,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -1616,6 +1616,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     citations=IsCitationList(),
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1626,6 +1627,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='text',
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=1,
@@ -1636,6 +1638,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -1673,6 +1676,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
         ]
     )
@@ -1964,6 +1968,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     tool_call_id=IsStr(),
                     provider_name='google',
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -1974,6 +1979,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1990,6 +1996,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -2015,6 +2022,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -2497,6 +2505,7 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
                     provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
+                canonical_system='google',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
@@ -2557,6 +2566,7 @@ The most important rule is to **stay alert and be predictable**. Always assume a
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -5038,6 +5048,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         tool_call_id=IsStr(),
                         provider_name='google',
                     ),
+                    canonical_system='google',
                 ),
                 PartEndEvent(
                     index=0,
@@ -5048,6 +5059,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     next_part_kind='text',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=1,
@@ -5081,6 +5093,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         citations=IsCitationList(),
                     ),
                     next_part_kind='builtin-tool-return',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=2,
@@ -5097,6 +5110,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     previous_part_kind='text',
+                    canonical_system='google',
                 ),
             ]
         )
@@ -6409,6 +6423,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -6419,6 +6434,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -6502,7 +6518,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
 
     assert system_instruction == {
         'role': 'user',
-        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+        'parts': [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'text': 'You are helpful.'},
+        ],
     }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
@@ -6628,6 +6647,66 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
     assert http_options.timeout == custom_timeout * 1000
+
+
+@pytest.mark.vcr()
+async def test_google_tool_return_with_ref_key_is_accepted(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """Gemini reads a `$ref` key in a function response as a reference to a named part and rejects the request
+    (`400 INVALID_ARGUMENT: The referenced name ... does not match to a display_name`), so such a return goes as text.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+
+    @agent.tool_plain
+    def get_layout() -> dict[str, Any]:
+        """Return the dashboard layout."""
+        return {'layout': [{'$ref': '#/defs/panel'}], 'title': 'x'}
+
+    result = await agent.run('Call get_layout and tell me the title in one word.')
+
+    assert result.output == snapshot('x')
+    function_response = cast(
+        dict[str, Any], cast(list[Any], request_capture.body(':generateContent', index=1)['contents'])[-1]
+    )['parts'][0]['functionResponse']
+    assert function_response['response'] == snapshot({'output': '{"layout":[{"$ref":"#/defs/panel"}],"title":"x"}'})
+
+
+@pytest.mark.parametrize(
+    'content, expected',
+    [
+        pytest.param(
+            {'$ref': '#/defs/panel', 'title': 'x'}, {'output': '{"$ref":"#/defs/panel","title":"x"}'}, id='top-level'
+        ),
+        pytest.param(
+            {'layout': [{'$ref': '#/defs/panel'}]}, {'output': '{"layout":[{"$ref":"#/defs/panel"}]}'}, id='nested'
+        ),
+        pytest.param([{'$ref': '#/defs/panel'}], {'output': '[{"$ref":"#/defs/panel"}]'}, id='list'),
+        pytest.param({'ref': 'x'}, {'ref': 'x'}, id='no-ref-unchanged'),
+    ],
+)
+async def test_google_tool_return_ref_key_mapping(google_provider: GoogleProvider, content: Any, expected: Any):
+    """Every `$ref` position becomes JSON text, and other returns stay objects.
+
+    A mapping test rather than one cassette per shape: cassette matching ignores the body, and the VCR test
+    above already shows Gemini accepting the text form.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_layout', content=content, tool_call_id='call_1')])
+    ]
+
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
+
+    assert contents == [
+        {
+            'role': 'user',
+            'parts': [{'function_response': {'name': 'get_layout', 'response': expected, 'id': 'call_1'}}],
+        }
+    ]
 
 
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
@@ -6827,9 +6906,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
+                    {'text': '<pyai:tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
