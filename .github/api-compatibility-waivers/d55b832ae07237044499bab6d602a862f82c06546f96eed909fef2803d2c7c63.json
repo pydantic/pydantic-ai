@@ -1,5 +1,0 @@
-{
-  "against": "v2.67.0",
-  "reason": "`ImageInput.notice` remains a writable string with an initial value of ''. It is now a property so only paste-error feedback can expire. The getter/setter preserve ordinary notice reads and assignments; Griffe reports the property as having no static attribute value.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13156"
-}

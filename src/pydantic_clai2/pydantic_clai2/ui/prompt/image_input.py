@@ -129,47 +129,46 @@ class ImageInput:
     def __init__(self) -> None:
         """Start with no clipboard access and no attachments."""
         self.pending: dict[str, BinaryContent] = {}
-        self._notice = ''
-        self._error_expires: float | None = None
+        self.notice = ''
+        self._error: tuple[str, float] | None = None
         self._error_clock: Callable[[], float] = time.monotonic
         self.retry_text = ''
-
-    @property
-    def notice(self) -> str:
-        """Paste feedback; only errors expire, leaving attachments untouched."""
-        self.expire_notice()
-        return self._notice
-
-    @notice.setter
-    def notice(self, value: str) -> None:
-        self._notice = value
-        self._error_expires = None
 
     def paste_failed(self, exc: Exception, *, clock: Callable[[], float] = time.monotonic) -> None:
         """Give each paste error its own thirty-second lifetime."""
         self.notice = f'Image paste failed: {exc}'
         self._error_clock = clock
-        self._error_expires = clock() + 30
+        self._error = (self.notice, clock() + 30)
 
     def expire_notice(self) -> bool:
         """Return whether an expired paste error was cleared, so a live editor can repaint."""
-        if self._error_expires is not None and self._error_clock() >= self._error_expires:
+        if self._error is None:
+            return False
+        message, deadline = self._error
+        if self.notice != message:
+            self._error = None
+        elif self._error_clock() >= deadline:
             self.notice = ''
+            self._error = None
             return True
         return False
 
     def notice_remaining(self) -> float:
         """Bound the existing repaint wait by the paste error's deadline."""
-        return max(0, self._error_expires - self._error_clock()) if self._error_expires is not None else float('inf')
+        if self._error is None or self.notice != self._error[0]:
+            return float('inf')
+        return max(0, self._error[1] - self._error_clock())
 
     def resume_notice(self, app: Application[str]) -> None:
         """Re-arm the remaining error lifetime when a line prompt starts again."""
-        remaining = self.notice_remaining()
-        if remaining == float('inf'):
+        self.expire_notice()
+        if self._error is None:
             return
+        remaining = self.notice_remaining()
 
         async def expire_feedback() -> None:
             await anyio.sleep(remaining)
+            self.expire_notice()
             app.invalidate()
 
         app.create_background_task(expire_feedback())

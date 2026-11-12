@@ -136,7 +136,7 @@ _NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an imag
         (
             'wayland',
             ['apt-get'],
-            'ubuntu',
+            {'ID': 'ubuntu'},
             None,
             _CLIPBOARD_BACKEND_ERROR
             + 'Install `wl-clipboard` with `sudo apt-get install wl-clipboard`. '
@@ -145,7 +145,7 @@ _NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an imag
         (
             'x11',
             ['apt-get'],
-            'debian',
+            {'ID': 'debian'},
             None,
             _CLIPBOARD_BACKEND_ERROR
             + 'Install `xclip` with `sudo apt-get install xclip`. '
@@ -154,7 +154,7 @@ _NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an imag
         (
             'x11',
             ['dnf'],
-            'fedora',
+            {'ID': 'fedora'},
             None,
             _CLIPBOARD_BACKEND_ERROR
             + 'Install `xclip` with `sudo dnf install xclip`. '
@@ -163,14 +163,14 @@ _NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an imag
         (
             'x11',
             ['pacman'],
-            'arch',
+            {'ID': 'arch'},
             None,
             _CLIPBOARD_BACKEND_ERROR + 'Install `xclip` with `sudo pacman -S xclip`. ' + _CLIPBOARD_TRANSPORT_GUIDANCE,
         ),
         (
             'wayland',
             ['apk'],
-            'alpine',
+            {'ID': 'alpine'},
             None,
             _CLIPBOARD_BACKEND_ERROR
             + 'Install `wl-clipboard` with `sudo apk add wl-clipboard`. '
@@ -179,7 +179,7 @@ _NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an imag
         (
             'x11',
             ['apt-get'],
-            'unknown',
+            {'ID': 'unknown'},
             None,
             _CLIPBOARD_BACKEND_ERROR
             + "Install `xclip` using your distribution's package manager. "
@@ -188,33 +188,51 @@ _NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an imag
         (
             'x11',
             [],
-            'ubuntu',
+            {'ID': 'ubuntu'},
             None,
             _CLIPBOARD_BACKEND_ERROR
             + "Install `xclip` using your distribution's package manager. "
             + _CLIPBOARD_TRANSPORT_GUIDANCE,
         ),
-        ('headless', [], 'ubuntu', None, _CLIPBOARD_BACKEND_ERROR + _CLIPBOARD_TRANSPORT_GUIDANCE),
+        (
+            'x11',
+            ['apt-get'],
+            {'ID': 'custom', 'ID_LIKE': 'debian'},
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + 'Install `xclip` with `sudo apt-get install xclip`. '
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'x11',
+            ['apt-get'],
+            OSError('No os-release'),
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + "Install `xclip` using your distribution's package manager. "
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        ('headless', [], {'ID': 'ubuntu'}, None, _CLIPBOARD_BACKEND_ERROR + _CLIPBOARD_TRANSPORT_GUIDANCE),
         (
             'headless',
             ['xclip'],
-            'ubuntu',
+            {'ID': 'ubuntu'},
             b"Error: Can't open display: (null)",
             "xclip error: Error: Can't open display: (null). " + _CLIPBOARD_TRANSPORT_GUIDANCE,
         ),
         (
             'wayland',
             ['wl-paste'],
-            'ubuntu',
+            {'ID': 'ubuntu'},
             b'Failed to connect to a Wayland server',
             'wl-paste error: Failed to connect to a Wayland server. ' + _CLIPBOARD_TRANSPORT_GUIDANCE,
         ),
-        ('x11', ['xclip'], 'ubuntu', b'target image/png not available', _NO_CLIPBOARD_IMAGE),
-        ('x11', ['xclip'], 'ubuntu', b'No selection', _NO_CLIPBOARD_IMAGE),
+        ('x11', ['xclip'], {'ID': 'ubuntu'}, b'target image/png not available', _NO_CLIPBOARD_IMAGE),
+        ('x11', ['xclip'], {'ID': 'ubuntu'}, b'No selection', _NO_CLIPBOARD_IMAGE),
         (
             'x11',
             ['xclip'],
-            'ubuntu',
+            {'ID': 'ubuntu'},
             b'',
             IsStr(regex=r'^cannot identify image file <_io\.BytesIO object at 0x[0-9a-fA-F]+>$'),
         ),
@@ -224,7 +242,7 @@ async def test_clipboard_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
     display: str,
     binaries: list[str],
-    distribution: str,
+    distribution: dict[str, str] | OSError,
     stderr: bytes | None,
     expected: str,
 ) -> None:
@@ -238,8 +256,13 @@ async def test_clipboard_diagnostics(
     def which(name: str) -> str | None:
         return f'/bin/{name}' if name in binaries else None
 
+    def release() -> dict[str, str]:
+        if isinstance(distribution, OSError):
+            raise distribution
+        return distribution
+
     monkeypatch.setattr(image_input.shutil, 'which', which)
-    monkeypatch.setattr(image_input.platform, 'freedesktop_os_release', lambda: {'ID': distribution})
+    monkeypatch.setattr(image_input.platform, 'freedesktop_os_release', release)
 
     def run(args: list[str], *, capture_output: bool) -> subprocess.CompletedProcess[bytes]:
         assert args[0] in binaries and capture_output
@@ -283,58 +306,26 @@ def test_native_clipboard_errors_get_no_linux_advice(system: str, monkeypatch: p
         clipboard_images()
 
 
-def test_notice_read_write_contract() -> None:
-    """The notice remains a readable, writable string with an empty default."""
-    images = ImageInput()
-    assert images.notice == ''
-    images.notice = 'Custom notice: ✓\nMore details'
-    assert images.notice == 'Custom notice: ✓\nMore details'
-    images.notice = ''
-    assert images.notice == ''
-
-    now = 0.0
-    images.paste_failed(ValueError('clipboard unavailable'), clock=lambda: now)
-    images.notice = 'Ordinary notice'
-    now = 31
-    assert images.notice == 'Ordinary notice'
-
-
-@pytest.mark.parametrize('replacement', ['', 'Image attached', 'Another notice'])
-def test_paste_feedback_lifetime(replacement: str) -> None:
+@pytest.mark.parametrize('replacement', [None, '', 'Image attached', 'Another notice'])
+@pytest.mark.parametrize('error', ['first error', 'new error'])
+def test_paste_feedback_lifetime(replacement: str | None, error: str) -> None:
     now = 0.0
     images = ImageInput()
     images.paste_failed(ValueError('first error'), clock=lambda: now)
     now = 29.999
     assert images.notice == 'Image paste failed: first error'
-    images.paste_failed(ValueError('new error'), clock=lambda: now)
+    assert not images.expire_notice()
+    images.paste_failed(ValueError(error), clock=lambda: now)
     now = 30
-    assert images.notice == 'Image paste failed: new error'
-    if replacement:
+    assert not images.expire_notice()
+    assert images.notice == f'Image paste failed: {error}'
+    if replacement is not None:
         images.notice = replacement
+        assert images.notice_remaining() == float('inf')
     now = 59.999
-    assert images.notice == replacement
-
-
-@pytest.mark.parametrize('release_error', [False, True])
-def test_missing_backend_without_distro_command(monkeypatch: pytest.MonkeyPatch, release_error: bool) -> None:
-    monkeypatch.setattr(image_input.sys, 'platform', 'linux')
-    monkeypatch.setenv('DISPLAY', ':test')
-    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
-
-    def release() -> dict[str, str]:
-        if release_error:
-            raise OSError('No os-release')
-        return {'ID': 'custom', 'ID_LIKE': 'debian'}
-
-    def which(name: str) -> str | None:
-        return '/bin/apt-get' if name == 'apt-get' else None
-
-    monkeypatch.setattr(image_input.platform, 'freedesktop_os_release', release)
-    monkeypatch.setattr(image_input.shutil, 'which', which)
-    with pytest.raises(NotImplementedError) as raised:
-        clipboard_images()
-    assert ('sudo apt-get install xclip' in str(raised.value)) is not release_error
-    assert 'xclip' in str(raised.value)
+    assert images.expire_notice() is (replacement is None)
+    assert images.notice == (replacement or '')
+    assert images.notice_remaining() == float('inf')
 
 
 def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -438,7 +429,56 @@ async def test_shell_image_and_text_turns(image_path: Path, tmp_path: Path, term
     assert observed == [['describe', read_image(image_path)], 'text only']
 
 
-async def test_line_prompt_error_timer_survives_prompt_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('replacement', ['none', 'error', 'success', 'unrelated'])
+async def test_line_prompt_stale_timer_preserves_replacement(monkeypatch: pytest.MonkeyPatch, replacement: str) -> None:
+    now = 0.0
+    images = ImageInput()
+    images.paste_failed(ValueError('same error'), clock=lambda: now)
+    app = Application[str](output=DummyOutput())
+    started, release, invalidated = (anyio.Event() for _ in range(3))
+    seen: list[str] = []
+
+    async def sleep(delay: float) -> None:
+        assert delay == 30
+        started.set()
+        await release.wait()
+
+    def invalidate() -> None:
+        seen.append(images.notice)
+        invalidated.set()
+
+    monkeypatch.setattr(image_input.anyio, 'sleep', sleep)
+    monkeypatch.setattr(app, 'invalidate', invalidate)
+    with no_leaked_tasks(), anyio.fail_after(10):
+        try:
+            images.resume_notice(app)
+            await started.wait()
+            now = 29.999
+            if replacement == 'error':
+                images.paste_failed(ValueError('same error'), clock=lambda: now)
+            elif replacement == 'success':
+                images.notice = image_input.ATTACHED
+            elif replacement == 'unrelated':
+                images.notice = 'Unrelated notice'
+            now = 30
+            release.set()
+            await invalidated.wait()
+            expected: dict[str, str] = {
+                'none': '',
+                'error': 'Image paste failed: same error',
+                'success': image_input.ATTACHED,
+                'unrelated': 'Unrelated notice',
+            }
+            assert seen == [expected[replacement]]
+            assert images.notice_remaining() == (pytest.approx(29.999) if replacement == 'error' else float('inf'))
+        finally:
+            await app.cancel_and_wait_for_background_tasks()
+
+
+@pytest.mark.parametrize('restart', [20, 30, 31])
+async def test_line_prompt_error_timer_survives_prompt_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restart: int
+) -> None:
     now = 0.0
     delays: list[float] = []
     first_started, second_started, release, invalidated = (anyio.Event() for _ in range(4))
@@ -459,7 +499,8 @@ async def test_line_prompt_error_timer_survives_prompt_restart(tmp_path: Path, m
         await release.wait()
 
     def redraw(self: Application[str]) -> None:
-        if now == 30:
+        if now == 30 and second_started.is_set():
+            assert images_seen[0].notice == '', 'expiry must precede invalidation, not depend on a notice read'
             invalidated.set()
         invalidate(self)
 
@@ -481,16 +522,19 @@ async def test_line_prompt_error_timer_survives_prompt_restart(tmp_path: Path, m
             nonlocal now
             pipe.send_text('\x16')
             await first_started.wait()
-            now = 20
+            now = restart
             pipe.send_text('\x03')
-            await second_started.wait()
-            assert delays == [30, 10]
-            assert images_seen[0].notice.startswith('Image paste failed')
-            now = 30
-            release.set()
-            await invalidated.wait()
-            assert images_seen[0].notice == ''
-            pipe.send_text('/exit\n')
+            if restart < 30:
+                await second_started.wait()
+                assert delays == [30, 10]
+                assert images_seen[0].notice.startswith('Image paste failed')
+                now = 30
+                release.set()
+                await invalidated.wait()
+                assert images_seen[0].notice == ''
+                pipe.send_text('/exit\n')
+            else:
+                pipe.send_text('/exit\n')
 
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(interact)
@@ -500,6 +544,9 @@ async def test_line_prompt_error_timer_survives_prompt_restart(tmp_path: Path, m
                 console=Console(file=io.StringIO(), force_terminal=False),
                 store=SettingsStore(tmp_path / 'config.db'),
             )
+        assert images_seen[0].notice == ''
+        if restart >= 30:
+            assert delays == [30]
 
 
 async def test_images_persist_and_resume(image_path: Path, tmp_path: Path) -> None:
