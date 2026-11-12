@@ -341,10 +341,13 @@ async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> Mou
 
 
 def _permitted(
-    mode: _MountMode | None, permissions: Sequence[Permissions[AgentDepsT]], ctx: RunContext[AgentDepsT]
+    mode: _MountMode | None,
+    permissions: Permissions[AgentDepsT] | Sequence[Permissions[AgentDepsT]] | None,
+    ctx: RunContext[AgentDepsT],
 ) -> _MountMode | None:
     """`mode`, read-only while any of `permissions` is in `read-only` mode, whose file writes ask first."""
-    if mode == 'read-write' and any(permission.mode_for(ctx) == 'read-only' for permission in permissions):
+    bound = (permissions,) if isinstance(permissions, Permissions) else permissions or ()
+    if mode == 'read-write' and any(permission.mode_for(ctx) == 'read-only' for permission in bound):
         return 'read-only'
     return mode
 
@@ -354,7 +357,7 @@ class _MountWorkspace(WrapperToolset[AgentDepsT]):
     """Give `CodeMode`'s toolset this run's `_workspace_mount`, once the run's workspace is known."""
 
     mode: _MountMode | None = None
-    permissions: Sequence[Permissions[AgentDepsT]] = ()
+    permissions: Permissions[AgentDepsT] | Sequence[Permissions[AgentDepsT]] | None = None
     """The run's `Permissions`: in `read-only` mode `pathlib` must not write what the file tools would ask about."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
@@ -373,8 +376,8 @@ class WorkspaceCodeMode(CodeMode[AgentDepsT]):
     """
 
     mount_mode: _MountMode | None = None
-    permissions: Sequence[Permissions[AgentDepsT]] = ()
-    """The run's `Permissions`, any of which in `read-only` mode mounts the directory read-only for that run."""
+    permissions: Permissions[AgentDepsT] | Sequence[Permissions[AgentDepsT]] | None = None
+    """The run's `Permissions`, one or several; any of them in `read-only` mode mounts the directory read-only for that run."""
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """`CodeMode`'s toolset, mounted per run by `_MountWorkspace`."""
@@ -420,8 +423,8 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """Whether read-only calls launch early, so the guidance teaches the snippet shape that suits it."""
     repl_states: ReplStates | None = None
     """Where `WorkspaceCodeMode` keeps the session's REPL, so the guidance says whether state outlives the run."""
-    permissions: Sequence[Permissions[AgentDepsT]] = ()
-    """The run's `Permissions`, any of which in `read-only` mode mounts the directory read-only, as the guidance then says."""
+    permissions: Permissions[AgentDepsT] | Sequence[Permissions[AgentDepsT]] | None = None
+    """The run's `Permissions`, one or several; any of them in `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
         """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
@@ -561,7 +564,7 @@ def speculative_capabilities(
     """
     leaves = _leaves(granted)
     mode = _mount_mode(leaves)
-    permissions = tuple(leaf for leaf in leaves or () if isinstance(leaf, Permissions))
+    permissions = tuple(leaf for leaf in leaves or () if isinstance(leaf, Permissions)) or None
     return [
         WorkspaceCodeMode(
             tools=_sandboxed,
