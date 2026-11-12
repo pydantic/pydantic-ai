@@ -71,8 +71,8 @@ def unfenced(text: str) -> str:
     for index in range(len(answer) - 1, -1, -1):
         char = answer[index]
         if char == '"':
-            # A quote after an odd run of backslashes is escaped. Only the quote right after a run counts it, so the
-            # scan stays linear.
+            # A quote after an odd run of backslashes is escaped. Each run of backslashes precedes at most one quote,
+            # so counting runs stays linear.
             backslashes = 0
             while backslashes < index and answer[index - backslashes - 1] == '\\':
                 backslashes += 1
