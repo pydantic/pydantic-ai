@@ -36,6 +36,9 @@ from pydantic_clai2.ui.prompt.image_input import (
 )
 from tests.conftest import IsStr, no_leaked_tasks
 
+READINESS_WAIT_TIMEOUT = 300
+"""Bounds a wait only to catch a hang: far longer than any stall of a loaded runner, so it never decides a test."""
+
 
 @pytest.fixture
 def image_path(tmp_path: Path) -> Path:
@@ -418,7 +421,11 @@ async def test_shell_image_and_text_turns(image_path: Path, tmp_path: Path, term
                 observed.append([item for item in part.content if isinstance(item, (str, BinaryContent))])
             return request_context
 
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(READINESS_WAIT_TIMEOUT),
+    ):
         pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\rtext only\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
