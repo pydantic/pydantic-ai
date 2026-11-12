@@ -501,9 +501,9 @@ requests, MCP tool calls, and tools decorated with `@DBOS.step`, and DBOS checks
 `@DBOS.step` tools require. Recovery replays a call's finished steps and runs on from there. Other
 function tools run as workflow code and run again on recovery, so put side effects in `@DBOS.step`
 tools. A sub-agent without `DBOSDurability` keeps no checkpoints for its model requests, so recovery
-runs those again. Recording each
-call as one DBOS step would let the calls overlap, but DBOS runs a step called from inside another
-step as a plain function call, without its own checkpoint or role check.
+runs those again. Recording each call as one DBOS step would let the calls overlap, but DBOS runs a
+step called from inside another step as a plain function call, without its own checkpoint or role
+check.
 
 `AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,
 the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,
