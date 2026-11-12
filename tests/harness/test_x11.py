@@ -152,12 +152,50 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     ]
 
 
-async def test_x11_computer_types_long_text_2000_characters_per_command() -> None:
+def fits_the_providers(argv: WorkspaceCommand) -> bool:
+    """Whether Sprites and Modal take `argv`, as measured: Sprites puts each argument in its exec URL after `&cmd=` and
+    ran a command of one 64,984-byte argument; Modal takes arguments adding up to 65,536 bytes."""
+    return sum(len(arg) + len('&cmd=') for arg in argv) <= 64_984
+
+
+async def test_x11_computer_types_long_text_in_commands_the_providers_take() -> None:
     commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='a' * 4_001))
+    await X11Computer(commands).act(TypeText(text='a' * 10_909))
     typed = [argv[argv.index('--') + 1 :] for argv in commands.argvs]
-    assert [len(keysyms) for keysyms in typed] == [2_000, 2_000, 1]
+    assert [len(keysyms) for keysyms in typed] == [5_454, 5_454, 1]
     assert {keysym for keysyms in typed for keysym in keysyms} == {'U0061'}
+    assert all(fits_the_providers(argv) for argv in commands.argvs)
+
+
+LONG_DRAG = Drag(path=tuple(Point(x=100 + i % 2 * 300, y=100 + i) for i in range(1_500)), modifiers=('alt',))
+"""A drag too long for one command: on Sprites, one command for it was refused (HTTP 414)."""
+
+
+async def test_x11_computer_drags_a_long_path_in_commands_the_providers_take_holding_on_between_them() -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(LONG_DRAG)
+    chains = [argv[argv.index('xdotool') + 1 :] for argv in commands.argvs]
+    assert len(chains) > 1
+    assert all(fits_the_providers(argv) for argv in commands.argvs)
+    # Pressed in the first, let go in the last: X keeps the button and the key down between commands.
+    pressed = ['keydown', 'alt', 'mousemove', '100', '100', 'mousedown', '1']
+    assert chains[0][: len(RELEASE_MODIFIERS) + len(pressed)] == [*RELEASE_MODIFIERS, *pressed]
+    assert chains[-1][-6:] == ['sleep', '0.1', 'mouseup', '1', 'keyup', 'alt']
+    held = [arg for chain in chains for arg in chain if arg in ('mousedown', 'mouseup', 'keydown', 'keyup')]
+    assert held == ['keyup', 'keydown', 'mousedown', 'mouseup', 'keyup']
+    # Every step of every leg, ending on the last point: each 300-pixel leg is two steps.
+    moves = [chain[i + 1 : i + 3] for chain in chains for i, arg in enumerate(chain) if arg == 'mousemove']
+    assert len(moves) == 1 + 2 * 1_499
+    assert moves[-1] == ['400', '1599']
+
+
+async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() -> None:
+    commands = ScriptedCommands(
+        CommandResult(exit_code=0, stdout='', stderr=''), CommandResult(exit_code=1, stdout='', stderr='BadValue')
+    )
+    with pytest.raises(WorkspaceError, match='BadValue'):
+        await X11Computer(commands).act(LONG_DRAG)
+    assert recovery(commands.argvs[1:]) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'alt'])
 
 
 @pytest.mark.parametrize(
