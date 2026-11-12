@@ -309,15 +309,22 @@ async def test_wait_inside_a_durable_unit_is_rejected() -> None:
     assert waiter.waits == []
 
 
-async def test_a_handler_without_a_token_is_called_directly_and_declines_with_none() -> None:
-    """No token was handed out, so nothing could resolve a wait: `None` passes the calls on, without a wait."""
+@pytest.mark.parametrize('variadic', [False, True], ids=['defaulted-third-parameter', 'variadic-third-parameter'])
+async def test_a_handler_without_a_token_is_called_directly_and_declines_with_none(variadic: bool) -> None:
+    """No token was handed out, so nothing could resolve a wait: `None` passes the calls on, without a wait.
+
+    A third parameter only takes the token when it is required, so neither a defaulted one nor `*args` does.
+    """
     deleted: list[str] = []
     asked: list[list[str]] = []
 
     def decline(ctx: RunContext[None], requests: DeferredToolRequests, extra: str = 'unused') -> None:
         asked.append([call.tool_call_id for call in requests.approvals])
 
-    capability = HandleDeferredToolCalls[None](decline)
+    def decline_variadic(ctx: RunContext[None], requests: DeferredToolRequests, *extra: str) -> None:
+        asked.append([call.tool_call_id for call in requests.approvals])
+
+    capability = HandleDeferredToolCalls[None](decline_variadic if variadic else decline)
     assert capability.get_ordering() is None
     agent = approval_agent(capability, deleted)
 
