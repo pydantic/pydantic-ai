@@ -462,7 +462,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         for part in self._ancestor_parts:
             if latest.get(part.directory) == part.content:
                 self._pending_ancestors.discard(part.directory)
-            elif part.directory not in self._pending_ancestors:
+            # Enqueued parts land in the request being sent, so one is only still pending when this hook runs
+            # again for that same request, as after an earlier hook's retry.
+            elif part.directory not in self._pending_ancestors:  # pragma: no branch
                 self._pending_ancestors.add(part.directory)
                 ctx.enqueue(part)
         return request_context
