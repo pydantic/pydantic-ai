@@ -332,7 +332,7 @@ def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
 def _preserved(by_id: dict[str, JsonObject], boundary: JsonObject) -> set[str]:
     """The IDs of the messages a compaction `boundary` kept from before it, its tail back to its head.
 
-    None when the head is not behind the tail, rather than the history before it that compaction replaced.
+    Empty when the head is not behind the tail, so the history compaction replaced is never imported.
     """
     segment = obj(obj(boundary.get('compactMetadata')).get('preservedSegment'))
     head = text(segment.get('headUuid'))

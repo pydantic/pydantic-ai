@@ -607,10 +607,6 @@ def test_claude_code_import_starts_at_the_compaction_summary(tmp_path: Path, seg
         'file',
         'import_end',
     ]
-    # A summary imported before summaries were `CompactionPart`s is still read as the context it was saved as.
-    metadata = {'origin': 'pydantic-ai-harness.imported-context', 'source': 'codex', 'kind': 'compaction_summary'}
-    saved = UserPromptPart([TextContent('Theirs', metadata=metadata)])
-    assert imported_kind(saved) == 'compaction_summary' and not is_typed_prompt(saved)
 
 
 async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
@@ -925,6 +921,10 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         'Summary so far',
         'Another language model started to solve this problem. Summary',
     ]
+    # A summary imported before summaries were `CompactionPart`s is still read as the context it was saved as.
+    metadata = {'origin': 'pydantic-ai-harness.imported-context', 'source': 'codex', 'kind': 'compaction_summary'}
+    saved = UserPromptPart([TextContent('Summary so far', metadata=metadata)])
+    assert imported_kind(saved) == 'compaction_summary' and not is_typed_prompt(saved)
     # Images compaction kept come along.
     for body, image in (('See', 'https://example.com/d.png'), ('out', 'https://example.com/c.png')):
         [kept] = [p for p in requests if is_imported_context(p) and context(p)[1] == body]
