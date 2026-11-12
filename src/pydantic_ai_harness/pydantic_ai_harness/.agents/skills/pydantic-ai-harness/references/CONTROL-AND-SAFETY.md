@@ -796,8 +796,9 @@ print(agent.run_sync('Explain the change').output)
 
 - Each round costs at least one more model request and counts toward `UsageLimits`. Output validators
   and output functions run on every answer, so keep them free of side effects.
-- The instruction is a `SystemPromptPart` (conversation scope, so it stays in the history); find it by
-  `metadata['origin'] == 'pydantic-ai-harness.refine_output.v1'`, never by text. Each run starts with no
+- The instruction is a `ReviewRoundPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.refine_output`;
+  conversation scope, so it stays in the history); find it by `isinstance(part, ReviewRoundPart)`, never by text. Its
+  `round` field never reaches the model. Each run starts with no
   rounds used. The count is per-run state, so compaction that drops the instruction does not restart it.
 - Not reviewed: a run that returns `DeferredToolRequests` or `PendingModelResponse`, an output no model
   request produced (an `InputGuardrail` refusal; detected as a response with no `model_name`), and `run_stream()`, which ends at the first output it

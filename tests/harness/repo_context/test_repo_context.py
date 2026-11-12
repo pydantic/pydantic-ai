@@ -987,7 +987,7 @@ class TestNestedTraversal:
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert _repo_notes(result.all_messages()) == snapshot(
-            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+            ['<context_file path="sub/AGENTS.md">NESTED BODY</context_file>']
         )
 
     @pytest.mark.parametrize(
@@ -997,12 +997,12 @@ class TestNestedTraversal:
             # A read can return a window of the file and an edit changes part of it, so the note still comes.
             pytest.param(
                 ('read_file', {'path': 'sub/AGENTS.md'}),
-                snapshot(['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']),
+                snapshot(['<context_file path="sub/AGENTS.md">NESTED BODY</context_file>']),
                 id='read',
             ),
             pytest.param(
                 ('edit_file', {'path': 'sub/AGENTS.md', 'old_text': 'NESTED', 'new_text': 'EDITED'}),
-                snapshot(['<context-file path="sub/AGENTS.md">\nEDITED BODY\n</context-file>']),
+                snapshot(['<context_file path="sub/AGENTS.md">EDITED BODY</context_file>']),
                 id='edit',
             ),
         ],
@@ -1376,11 +1376,7 @@ class TestNestedTraversal:
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        [
-                            TextContent(
-                                '<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>', metadata=legacy
-                            )
-                        ]
+                        [TextContent('<context_file path="sub/AGENTS.md">NESTED BODY</context_file>', metadata=legacy)]
                     )
                 ]
             ),

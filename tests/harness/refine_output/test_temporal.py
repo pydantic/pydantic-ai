@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, SystemPromptPart, TextPart
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 pytest.importorskip('temporalio')
@@ -20,9 +20,11 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.refine_output import RefineOutput
+from pydantic_ai_harness.refine_output import DEFAULT_REFINE_OUTPUT_INSTRUCTIONS, RefineOutput
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
+
+from ._drafting_agent import reviews
 
 pytestmark = [
     pytest.mark.temporal,
@@ -69,8 +71,7 @@ async def test_review_runs_inside_a_workflow_and_survives_replay() -> None:
     messages = ModelMessagesTypeAdapter.validate_json(dumped)
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'revised'
-    rounds = [part.metadata for message in messages for part in message.parts if isinstance(part, SystemPromptPart)]
-    assert rounds == [{'origin': 'pydantic-ai-harness.refine_output.v1', 'round': 1}]
+    assert reviews(messages) == [(DEFAULT_REFINE_OUTPUT_INSTRUCTIONS, 1)]
     # Replaying the recorded history counts the rounds again in workflow code; a different count would be
     # a nondeterminism error.
     replayer = Replayer(workflows=[RefiningWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner)

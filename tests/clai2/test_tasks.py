@@ -828,9 +828,7 @@ async def test_cancelling_a_turn_leaves_its_background_child_running(
             child_started.set()
             await release.wait()
             yield 'Child finished.'
-        elif any(
-            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-        ):
+        elif any(task_texts(message) for message in messages if isinstance(message, ModelRequest)):
             yield 'Report read.'
             continued.set()
         elif len(messages) == 1:
