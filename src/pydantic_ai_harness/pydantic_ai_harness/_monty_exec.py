@@ -345,7 +345,7 @@ class MontyExecutor:
         """Dispatch (or defer) a single external function call."""
         if snapshot.is_os_function:
             match snapshot.function_name:
-                case 'time.sleep' | 'asyncio.sleep':
+                case 'time.sleep' | 'asyncio.sleep' | 'system.sleep' | 'system.async_sleep':
                     return await self._sleep(snapshot)
                 case (
                     'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
@@ -411,7 +411,7 @@ class MontyExecutor:
                 ),
             )
         self._slept_seconds += seconds
-        if snapshot.function_name == 'time.sleep':
+        if snapshot.function_name in ('time.sleep', 'system.sleep'):
             await self.sleep(seconds)
             return await call_monty(self.portal, snapshot.resume, ExternalReturnValue(return_value=None))
         # `asyncio.sleep` is awaitable, so defer it like a parallel call and gathered sleeps overlap.

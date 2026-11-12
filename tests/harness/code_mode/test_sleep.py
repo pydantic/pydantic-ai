@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from pydantic_monty import AsyncMonty
@@ -17,7 +17,12 @@ from pydantic_ai_harness._monty_exec import MontyExecutor
 
 
 async def _run(
-    code: str, *, max_sleep_seconds: float | None = None, global_sequential: bool = False, starts_before_waking: int = 1
+    code: str,
+    *,
+    max_sleep_seconds: float | None = None,
+    global_sequential: bool = False,
+    starts_before_waking: int = 1,
+    sleep_policy: Literal['call_host', 'system'] = 'call_host',
 ) -> tuple[Any, list[str]]:
     """Run `code` through the executor with a sleep that records when each wait starts and ends.
 
@@ -41,7 +46,7 @@ async def _run(
         raise AssertionError('no tools in these snippets')  # pragma: no cover
 
     async with AsyncMonty() as pool:
-        async with pool.checkout(os_policy={'sleep': 'call_host'}) as session:
+        async with pool.checkout(os_policy={'sleep': sleep_policy}) as session:
             executor = MontyExecutor(
                 dispatch=dispatch,
                 valid_names=set[str](),
@@ -80,15 +85,18 @@ async def test_gathered_sleeps_take_turns_when_calls_are_sequential() -> None:
     assert _kinds(events) == ['start', 'end', 'start', 'end']
 
 
+@pytest.mark.parametrize('sleep_policy', ['call_host', 'system'])
 @pytest.mark.parametrize(
     'second_sleep',
     [pytest.param('time.sleep(3)', id='time.sleep'), pytest.param('await asyncio.sleep(3)', id='asyncio.sleep')],
 )
-async def test_sleep_past_the_allowance_raises_without_waiting(second_sleep: str) -> None:
+async def test_sleep_past_the_allowance_raises_without_waiting(
+    second_sleep: str, sleep_policy: Literal['call_host', 'system']
+) -> None:
     code = (
         f'import asyncio, time\ntime.sleep(3)\ntry:\n    {second_sleep}\nexcept TimeoutError as e:\n    r = str(e)\nr'
     )
-    output, events = await _run(code, max_sleep_seconds=5)
+    output, events = await _run(code, max_sleep_seconds=5, sleep_policy=sleep_policy)
     assert output == 'sleeping 3s would exceed the 5s this code may sleep (max_duration_seconds); 2s left'
     assert events == ['start 3', 'end 3']
 
