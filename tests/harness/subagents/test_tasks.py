@@ -98,9 +98,11 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
                 agent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
                 await agent.run('go', conversation_id='parent')
                 (record,) = owner.records.values()
-                first_history = list(record.messages)
+                first_history = owner.history(record.id)
                 assert record.delivered and record.outcome == 'ok'
-                assert record.messages and record.id != 'parent'
+                assert first_history and record.id != 'parent'
+                # A settled task's history is kept in its file only.
+                assert record.messages == []
                 resumed = Agent(
                     parent_model(resume=record.id),
                     capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
@@ -108,11 +110,51 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
                 await resumed.run('continue', conversation_id='parent')
                 assert len(owner.records) == 1
                 assert record.generation == 2
-                assert record.messages[: len(first_history)] == first_history
+                assert owner.history(record.id)[: len(first_history)] == first_history
     async with DelegationTasks(directory=tmp_path).opened() as restored:
         saved = restored.records[record.id]
         assert saved.delivered
-        assert saved.messages == record.messages
+        assert restored.history(saved.id) == owner.history(record.id)
+
+
+async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
+    """An owner holds no settled task's history in memory, and closing it rewrites no task it didn't change."""
+    child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')
+    owner = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                await agent.run('go', conversation_id='parent')
+    (record,) = owner.records.values()
+    first_history = owner.history(record.id)
+    assert first_history
+    path = tmp_path / f'{record.id}.json'
+    saved_at = path.stat().st_mtime_ns
+
+    async with DelegationTasks(directory=tmp_path).opened() as idle:
+        assert idle.records[record.id].messages == []
+        assert idle.history(record.id) == first_history
+    assert path.stat().st_mtime_ns == saved_at
+
+    restored = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with restored.opened():
+            # A change saved while the history is in the file only keeps it there.
+            await restored.cancel(record.id)
+            await restored.allow_resume(record.id)
+            assert restored.history(record.id) == first_history
+            with restored.bind():
+                resumed = Agent(
+                    parent_model(resume=record.id),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                await resumed.run('continue', conversation_id='parent')
+            saved = restored.records[record.id]
+            assert (saved.generation, saved.messages) == (2, [])
+            history = restored.history(record.id)
+            assert history[: len(first_history)] == first_history
+            assert len(history) > len(first_history)
 
 
 async def test_child_history_with_binary_tool_return_is_saved(tmp_path: Path) -> None:
@@ -139,7 +181,8 @@ async def test_child_history_with_binary_tool_return_is_saved(tmp_path: Path) ->
     assert result.output == 'parent finished'
     async with DelegationTasks(directory=tmp_path).opened() as restored:
         (saved,) = restored.records.values()
-    returns = [part.content for message in saved.messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        history = restored.history(saved.id)
+    returns = [part.content for message in history for part in message.parts if isinstance(part, ToolReturnPart)]
     assert returns == ['gA==']
 
 
@@ -869,7 +912,8 @@ async def test_interrupted_restore_and_copy_history(tmp_path: Path) -> None:
     async with owner.opened():
         await delegate(owner)
         (record,) = owner.records.values()
-        record.messages = [ModelResponse(parts=[TextPart('saved')])]
+        history: list[ModelMessage] = [ModelResponse(parts=[TextPart('saved')])]
+        record.messages = history
         copied = owner.history(record.id)
         copied.clear()
         assert record.messages
@@ -881,7 +925,7 @@ async def test_interrupted_restore_and_copy_history(tmp_path: Path) -> None:
         saved = restored.records[record.id]
         assert saved.outcome == 'cancelled'
         assert 'process exit' in saved.output
-        assert saved.messages == record.messages
+        assert saved.messages == history
 
 
 async def test_cancellation_before_worker_starts_and_manual_resume(tmp_path: Path) -> None:
@@ -1224,6 +1268,7 @@ async def test_restore_adds_a_finished_task_unless_it_has_run_since(tmp_path: Pa
         assert await owner.restore(replace(task, output='Again'))
         assert [update.task.output for update in seen] == ['Again']
         owner.records[task.id] = replace(task, run_id='c' * 32, output='Resumed')
+        await owner.save(owner.records[task.id])
         assert not await owner.restore(task)
     # A closed owner finds the later run on disk.
     assert not await DelegationTasks(directory=tmp_path / 'tasks').restore(task)

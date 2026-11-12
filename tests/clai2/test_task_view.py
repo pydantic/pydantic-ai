@@ -4,11 +4,21 @@ import asyncio
 import io
 import time
 from itertools import count
+from pathlib import Path
 
 import pytest
 from rich.console import Console
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.subagents import DelegationOutcome, DelegationTask
 from pydantic_clai2.runtime.tasks import Tasks
 from pydantic_clai2.ui.menus.task_view import Action, TaskView, perform, task_rows, transcript_blocks
@@ -54,7 +64,9 @@ class Driver:
         self.ui.owner.records = {record.id: record for record in records}
         self.acts: list[tuple[Action, str, str]] = []
         self.error = error
-        self.view = TaskView(snapshot=lambda: task_rows(self.ui), act=self.act, size=lambda: size)
+        self.view = TaskView(
+            snapshot=lambda: task_rows(self.ui), act=self.act, history=self.ui.history, size=lambda: size
+        )
         self.view.app.running = True
 
     def act(self, action: Action, task_id: str, text: str) -> str:
@@ -165,6 +177,37 @@ def test_transcript_keeps_its_newest_blocks(monkeypatch: pytest.MonkeyPatch) -> 
     record.messages[:] = [ModelResponse(parts=[TextPart('compacted')])]
     screen = driver.screen(refresh=True)
     assert 'compacted' in screen and 'answer 5' not in screen, 'a history rewritten shorter is shown from its start'
+
+
+async def test_a_settled_task_shows_the_history_and_usage_its_owner_saved(tmp_path: Path) -> None:
+    """A settled task's history is in its owner's saved file only: the view and its usage read it from there once."""
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=tmp_path)
+    record = task(outcome='ok')
+    record.messages = [
+        ModelRequest(parts=[UserPromptPart('inspect a')]),
+        ModelResponse(parts=[TextPart('Found the **registry**.')], usage=RequestUsage(input_tokens=7)),
+    ]
+    reads: list[str] = []
+
+    def history(task_id: str) -> list[ModelMessage]:
+        reads.append(task_id)
+        return ui.history(task_id)
+
+    def act(action: Action, task_id: str, text: str) -> str:
+        raise AssertionError('no action is taken')  # pragma: no cover
+
+    async with ui.router.opened(view=ui):
+        assert await ui.owner.restore(record)
+        assert record.messages == []
+        (info,) = ui.listing()
+        assert (info.usage.requests, info.usage.input_tokens) == (1, 7)
+        view = TaskView(snapshot=lambda: task_rows(ui), act=act, history=history, size=lambda: SIZE)
+        view.app.running = True
+        assert 'Found the registry.' in frame(view.app)
+        for _ in range(3):
+            frame(view.app, 0.1)
+        assert 'Found the registry.' in frame(view.app)
+        assert reads == [record.id], 'read once while it stays selected'
 
 
 def test_transcript_blocks_escape_terminal_control_and_show_the_directory() -> None:

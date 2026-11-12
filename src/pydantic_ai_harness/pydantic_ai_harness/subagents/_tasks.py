@@ -200,6 +200,35 @@ def _ancestry_loops(record: DelegationTask, tasks: Mapping[str, DelegationTask])
     return False
 
 
+async def _discover(directory: Path, *, keep_history: Callable[[DelegationTask], bool]) -> SavedTasks:
+    """`DelegationTasks.discover`, emptying each task's `messages` as it loads unless `keep_history` says to keep them.
+
+    A saved history can be far larger than the rest of its task, so emptying it per file keeps a large task
+    directory from being held in memory at once.
+    """
+    tasks: dict[str, DelegationTask] = {}
+    problems: list[SavedTaskProblem] = []
+    paths = sorted([path async for path in anyio.Path(directory).glob('*.json')], key=lambda path: path.name)
+    for path in paths:
+        try:
+            record = await _read(path)
+        except ValidationError as exc:
+            problems.append(SavedTaskProblem(path=Path(path), reason=_validation_reason(exc)))
+        except OSError as exc:
+            problems.append(SavedTaskProblem(path=Path(path), reason=f'{type(exc).__name__}: {exc}'))
+        except ValueError:
+            problems.append(SavedTaskProblem(path=Path(path), reason='Invalid saved task identity'))
+        else:
+            if not keep_history(record):
+                record.messages = []
+            tasks[record.id] = record
+
+    for task_id in [task_id for task_id, record in tasks.items() if _ancestry_loops(record, tasks)]:
+        del tasks[task_id]
+        problems.append(SavedTaskProblem(path=directory / f'{task_id}.json', reason='Cyclic saved task ancestry'))
+    return SavedTasks(tasks=tasks, problems=problems)
+
+
 def _validation_reason(exc: ValidationError) -> str:
     """Describe `exc` by error type and saved-task field only.
 
@@ -254,6 +283,8 @@ class DelegationTasks:
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
+        self._history_on_disk: dict[str, Path] = {}
+        """The saved file of each settled task whose history is kept there only, so idle histories don't fill memory."""
         self._questions: dict[str, _Question] = {}
         self._queued_questions: dict[str, str] = {}
         self._woken = anyio.Event()
@@ -281,25 +312,7 @@ class DelegationTasks:
         still load. Nothing is written. A task saved as `running` is returned as saved, since the process that
         owns it may still be running it.
         """
-        tasks: dict[str, DelegationTask] = {}
-        problems: list[SavedTaskProblem] = []
-        paths = sorted([path async for path in anyio.Path(directory).glob('*.json')], key=lambda path: path.name)
-        for path in paths:
-            try:
-                record = await _read(path)
-            except ValidationError as exc:
-                problems.append(SavedTaskProblem(path=Path(path), reason=_validation_reason(exc)))
-            except OSError as exc:
-                problems.append(SavedTaskProblem(path=Path(path), reason=f'{type(exc).__name__}: {exc}'))
-            except ValueError:
-                problems.append(SavedTaskProblem(path=Path(path), reason='Invalid saved task identity'))
-            else:
-                tasks[record.id] = record
-
-        for task_id in [task_id for task_id, record in tasks.items() if _ancestry_loops(record, tasks)]:
-            del tasks[task_id]
-            problems.append(SavedTaskProblem(path=directory / f'{task_id}.json', reason='Cyclic saved task ancestry'))
-        return SavedTasks(tasks=tasks, problems=problems)
+        return await _discover(directory, keep_history=lambda _: True)
 
     @contextmanager
     def bind(self) -> Generator[None]:
@@ -327,17 +340,7 @@ class DelegationTasks:
         self._open = True
         try:
             if self.directory is not None:
-                await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
-                saved = await self.discover(self.directory)
-                self.problems = saved.problems
-                for problem in saved.problems:
-                    logging.getLogger(__name__).warning(
-                        'Skipping saved delegation task %r: %r', str(problem.path), problem.reason
-                    )
-                for record in saved.tasks.values():
-                    if record.status == 'running':
-                        await self._settle_interrupted(record)
-                    self.records[record.id] = record
+                await self._load_saved(self.directory)
             yield self
         finally:
             # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
@@ -350,9 +353,27 @@ class DelegationTasks:
                     if record.status == 'running':
                         record.status, record.outcome = 'finished', 'cancelled'
                         record.finished_at = time.time()
-                    await self.save(record)
+                    # One whose history is in its file only was saved when it last changed.
+                    if self._saved_history(record) is None:
+                        await self.save(record)
             if cleanup.cancel_called:
                 raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
+
+    async def _load_saved(self, directory: Path) -> None:
+        """Load the tasks saved under `directory`, leaving each settled one's history in its file."""
+        await anyio.Path(directory).mkdir(parents=True, exist_ok=True)
+        saved = await _discover(directory, keep_history=lambda record: record.status == 'running')
+        self.problems = saved.problems
+        for problem in saved.problems:
+            logging.getLogger(__name__).warning(
+                'Skipping saved delegation task %r: %r', str(problem.path), problem.reason
+            )
+        for record in saved.tasks.values():
+            if record.status == 'running':
+                await self._settle_interrupted(record)
+            else:
+                self._history_on_disk[record.id] = directory / f'{record.id}.json'
+            self.records[record.id] = record
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
         """Settle a saved child that was still running when its process exited."""
@@ -389,15 +410,25 @@ class DelegationTasks:
             )
 
     async def save(self, record: DelegationTask) -> None:
-        """Atomically replace one child's persisted history."""
+        """Atomically replace one child's persisted history.
+
+        Once a settled task is saved, its history is kept in the file only: `history` reads it from there, and
+        a resume loads it back first.
+        """
         if not _SAFE_ID.fullmatch(record.id):
             raise ValueError('Invalid task identity')
         if self.directory is not None:
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
+                if (saved := self._saved_history(record)) is not None:
+                    record.messages = (await _read(anyio.Path(saved))).messages
+                self._history_on_disk.pop(record.id, None)
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
+                if record.status == 'finished':
+                    record.messages = []
+                    self._history_on_disk[record.id] = Path(destination)
 
     async def restore(self, record: DelegationTask) -> bool:
         """Add a finished task made elsewhere, such as one imported from another agent's session.
@@ -417,6 +448,8 @@ class DelegationTasks:
         if self.directory is not None:
             await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
         self.records[record.id] = record
+        # Its own history replaces the saved one.
+        self._history_on_disk.pop(record.id, None)
         await self.save(record)
         if self._open:
             await self.notify(record)
@@ -682,8 +715,21 @@ class DelegationTasks:
         return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
-        """Independent replay history; callers cannot mutate the saved child through it."""
-        return copy.deepcopy(self.records[task_id].messages)
+        """Independent replay history; callers cannot mutate the saved child through it.
+
+        A settled task's history is read from its saved file, since the owner doesn't keep it in memory.
+        """
+        record = self.records[task_id]
+        if (path := self._saved_history(record)) is not None:
+            return _ADAPTER.validate_json(path.read_bytes(), context=STORED_HISTORY_CONTEXT).messages
+        return copy.deepcopy(record.messages)
+
+    def _saved_history(self, record: DelegationTask) -> Path | None:
+        """The file holding `record`'s history when the owner doesn't hold it, as after a settled task was saved.
+
+        History a caller has set on the record since replaces the saved one.
+        """
+        return None if record.messages else self._history_on_disk.get(record.id)
 
     async def allow_resume(self, task_id: str) -> None:
         """Explicit user authorization to resume a stopped, resumable child."""

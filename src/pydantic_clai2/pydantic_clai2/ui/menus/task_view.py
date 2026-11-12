@@ -32,7 +32,7 @@ from termflow.live.console import default_console_io
 from termflow.tui.keys import Key
 from termflow.tui.terminal import terminal_size
 
-from pydantic_ai.messages import TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2.plugins import TaskInfo
 from pydantic_clai2.runtime.tasks import Tasks, task_tree
@@ -109,9 +109,12 @@ async def perform(tasks: Tasks, action: Action, task_id: str, text: str = '') ->
     return f'Steered {label}.'
 
 
-def transcript_blocks(task: DelegationTask) -> list[str]:
-    """`task`'s conversation as Markdown blocks: what it was told, quoted, what it said, and its tool calls as code."""
-    parts = [part for message in task.messages for part in message.parts]
+def transcript_blocks(task: DelegationTask, messages: Sequence[ModelMessage] | None = None) -> list[str]:
+    """`task`'s conversation as Markdown blocks: what it was told, quoted, what it said, and its tool calls as code.
+
+    `messages` is its history when `task` doesn't hold it, as a settled task's owner keeps that on disk.
+    """
+    parts = [part for message in (task.messages if messages is None else messages) for part in message.parts]
     blocks = [f'*Directory: {task.working_directory}*'] if task.working_directory is not None else []
     if not any(isinstance(part, UserPromptPart) for part in parts):
         blocks.append(_quote(task.prompt))
@@ -164,11 +167,18 @@ class TaskView:
         *,
         snapshot: Callable[[], Sequence[Row]],
         act: Callable[[Action, str, str], str],
+        history: Callable[[str], Sequence[ModelMessage]],
         size: Callable[[], tuple[int, int]] | None = None,
     ) -> None:
-        """`snapshot` reads the tasks and `act` does an action on one, both from the view's thread."""
+        """`snapshot` reads the tasks, `act` does an action on one, and `history` reads a settled one's history.
+
+        All three are called from the view's thread.
+        """
         self.snapshot = snapshot
         self.act = act
+        self.history = history
+        self._history: tuple[tuple[str, int], Sequence[ModelMessage]] | None = None
+        """The selected settled task's history, by ID and generation, read once while it stays selected."""
         self.size = size or terminal_size
         self.rows: Sequence[Row] = ()
         self.selected: str | None = None
@@ -264,7 +274,16 @@ class TaskView:
         state = info.activity if info.status == 'running' else info.outcome
         title = ' · '.join(filter(None, [info.agent, info.id[:8], info.model, state]))
         self.transcript.title = terminal_text(title, keep='')
-        self._tail.show(info.id, transcript_blocks(row.task))
+        self._tail.show(info.id, transcript_blocks(row.task, self._settled_history(row.task)))
+
+    def _settled_history(self, task: DelegationTask) -> Sequence[ModelMessage] | None:
+        """`task`'s history when it is settled and its snapshot doesn't hold it, else `None`."""
+        if task.messages or task.status == 'running':
+            return None
+        key = (task.id, task.generation)
+        if self._history is None or self._history[0] != key:
+            self._history = (key, self.history(task.id))
+        return self._history[1]
 
     def move(self, delta: int) -> None:
         """Select the task `delta` rows away, stopping at either end."""
@@ -465,8 +484,17 @@ async def open_tasks(tasks: Tasks, *, run: Callable[[LiveApp], object] = _run) -
     def act(action: Action, task_id: str, text: str) -> str:
         return asyncio.run_coroutine_threadsafe(perform(tasks, action, task_id, text), loop).result()
 
+    async def read_history(task_id: str) -> list[ModelMessage]:
+        return tasks.history(task_id)
+
+    def history(task_id: str) -> list[ModelMessage]:
+        return asyncio.run_coroutine_threadsafe(read_history(task_id), loop).result()
+
+    def rows() -> list[Row]:
+        return asyncio.run_coroutine_threadsafe(snapshot(), loop).result()
+
     def view() -> None:
-        run(TaskView(snapshot=lambda: asyncio.run_coroutine_threadsafe(snapshot(), loop).result(), act=act).app)
+        run(TaskView(snapshot=rows, act=act, history=history).app)
 
     await run_worker(view)
     return ''

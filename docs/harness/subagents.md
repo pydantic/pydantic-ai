@@ -492,6 +492,10 @@ show the child's context usage. Managed start/end events carry `task_id` and
 `parent_task_id`. Managed cancellation and uncontained exceptions produce terminal
 outcomes; unmanaged events and exception propagation keep their original contract.
 Metadata and final/interrupted histories are atomically saved under `directory`.
+Once a task settles and is saved, the owner keeps its history in that file only, so a
+directory of long-finished tasks doesn't fill memory: `records` holds each settled task
+with empty `messages`, `history(task_id)` reads its history from the file, and a resume
+loads it back.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
