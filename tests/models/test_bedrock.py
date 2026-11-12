@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from itertools import count
@@ -3507,6 +3508,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     signature=IsStr(),
                     provider_name='bedrock',
                 ),
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=0,
@@ -3517,6 +3519,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=1,
@@ -3527,6 +3530,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=1,
@@ -3537,6 +3541,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=2,
@@ -3985,6 +3990,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(index=1, part=TextPart(content='Hello! It'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -9113,6 +9119,95 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
 
     with pytest.raises(UserError, match='does not support thinking and output tools'):
         model.prepare_request(settings, params)
+
+
+def test_bedrock_deepseek_default_output_mode_falls_back_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
+    """A default output type falls back from Tool Output with thinking on, and an explicit output tool is refused.
+
+    Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
+    """
+    model = BedrockConverseModel('deepseek.v3.2', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='auto',
+        allow_text_output=False,
+    )
+
+    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
+    assert prepared_params.output_mode == 'prompted'
+
+    with pytest.raises(UserError, match='does not support thinking and output tools'):
+        model.prepare_request(BedrockModelSettings(thinking=True), replace(params, output_mode='tool'))
+
+
+def test_bedrock_zai_default_output_mode_falls_back_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
+    """A default output type falls back from Tool Output to Native Output while Z.AI GLM thinks.
+
+    Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
+    """
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='auto',
+        allow_text_output=False,
+    )
+
+    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
+    assert prepared_params.output_mode == 'native'
+
+
+async def test_bedrock_zai_explicit_tool_output_while_thinking_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """An explicit `ToolOutput` reaches Z.AI GLM while it thinks, offered with `toolChoice: auto`."""
+
+    class City(BaseModel):
+        city: str
+        country: str
+
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(City))
+    with _capture_bedrock_request_bodies(model, 'Converse') as sent:
+        result = await agent.run('What is the capital of France?', model_settings={'thinking': True})
+
+    assert result.output == City(city='Paris', country='France')
+    assert sent[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert sent[0]['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'thinking', 'expected_effort', 'reasons'),
+    [
+        pytest.param('zai.glm-4.7', True, 'high', True, id='glm-4.7-on'),
+        pytest.param('zai.glm-4.7-flash', True, 'high', True, id='glm-4.7-flash-on'),
+        pytest.param('zai.glm-5', True, 'high', True, id='glm-5-on'),
+        pytest.param('zai.glm-5', False, 'none', False, id='glm-5-off'),
+        pytest.param('deepseek.v3.2', True, 'high', True, id='deepseek-v3.2-on'),
+        pytest.param('deepseek.v3.2', False, 'none', False, id='deepseek-v3.2-off'),
+    ],
+)
+async def test_bedrock_reasoning_effort_thinking(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+    thinking: bool,
+    expected_effort: str,
+    reasons: bool,
+) -> None:
+    """Unified `thinking` reaches Z.AI GLM and DeepSeek V3.2 as `reasoning_effort`, which Converse accepts.
+
+    These models only reason with `'high'`, so `thinking=True` sends it and the response carries reasoning, while
+    `thinking=False` sends `'none'` and gets none back.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    with _capture_bedrock_request_bodies(model, 'Converse') as sent:
+        result = await Agent(model).run('What is 17 * 23?', model_settings={'thinking': thinking})
+
+    assert '391' in result.output
+    assert sent[0]['additionalModelRequestFields'] == {'reasoning_effort': expected_effort}
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is reasons
 
 
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])

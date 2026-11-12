@@ -17,6 +17,7 @@ import review_gates
 import yaml
 from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, run
 from publish_douwebot_review import Finding, ReviewResult, publication
+from publish_pr_review_checks import CheckResult, review_payload as pr_review_checks_payload
 from pydantic import BaseModel, Field
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
@@ -679,6 +680,28 @@ def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
     assert not verdicts(github)['douwebot'].failures
 
 
+def test_pr_review_checks_receipt_does_not_count_as_douwebot_finding():
+    result = CheckResult(
+        check='general',
+        files=['a.py'],
+        outcome='COMPLETE',
+        findings=[],
+        dropped={},
+        coverage='Reviewed a.py.',
+        steps=1,
+        tokens=1,
+        seconds=1,
+    )
+    parent = review(8, body=json.loads(pr_review_checks_payload([result], HEAD, 30, inline=True, lines={}))['body'])
+    comment = review_gates.ReviewComment(
+        pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='Security finding'
+    )
+    github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
+    assert not verdicts(github)['douwebot'].failures
+    github.current_reviews = [review(8, body='Unidentified review'), review()]
+    assert verdicts(github)['douwebot'].failures
+
+
 ENV = {
     'HEAD_SHA': HEAD,
     'EXPECTED_HEAD_SHA': HEAD,
@@ -791,7 +814,7 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     )
 
 
-@pytest.mark.parametrize('engine', ['claude', 'opencode'])
+@pytest.mark.parametrize('engine', ['claude', 'opencode', 'opencode-deepinfra'])
 def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebot_review.ReviewEngine):
     result = ReviewResult(verdict='APPROVE', comments=[], discussion='')
     body = json.loads(publication(result, HEAD, 20, engine=engine))['body']

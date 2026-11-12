@@ -2,8 +2,8 @@
 
 Capabilities that constrain, screen, budget, or steer a run: repair malformed tool arguments,
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
-a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
-judge model. All are
+a question mid-run, re-inject reminders, interrupt repeated-action loops, review the trajectory with a
+judge model, and have the agent revise its answer before the run ends. All are
 `AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `RepairToolArguments` (`[repair-tool-arguments]`) and
 `PromptInjectionDefender` need an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
@@ -31,6 +31,7 @@ judge model. All are
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
 | Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
+| Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
 
@@ -266,14 +267,17 @@ Parameters: `defense` (positional; a configured `stackone_defender.PromptDefense
 `block_high_risk=None` (library default: report only), `semantic_detection=False` (needs the `-ml`
 extra; catches text under unrecognised fields), `tool_filter='all'` (names, `'all'`, or a
 `ToolSelector`), `on_detection` (sync/async; raising fails the run), `blocked_message` (supports
-`{tool_name}` and `{risk_level}` only).
+`{tool_name}` and `{risk_level}` only), `id` (none by default; required on durable agents).
 
 Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserError`; so does
 `semantic_detection=True` without ONNX Runtime. Importing the module without the extra raises
 `ImportError`. Not scanned: provider-native tools, externally supplied deferred results,
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
-`defense`, call `defense.warmup_tier2()` at startup.
+`defense`, call `defense.warmup_tier2()` at startup (on the worker, under durable execution).
+Under Temporal, DBOS, and Prefect, semantic warmup and classification with `semantic_detection=True`
+or a supplied `defense` are durable operations. Give every defender on a durable-capable agent a
+distinct explicit `id`, or the agent build raises `UserError`. Ordinary runs do not require one.
 
 ## ArtifactScanner
 
@@ -434,7 +438,7 @@ Gotchas:
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
-  `remembered` set; inside durable execution nothing is remembered.
+  `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
 - `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
   reach something.
@@ -579,12 +583,23 @@ print(agent.run_sync('Set up storage').output)
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
-- The run waits inside the tool call. `timeout=<seconds>` cancels a slow answerer; the model gets
-  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`. A thread cannot be cancelled:
-  wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, and read terminal
-  input with an async prompt library, not `input()` in a thread.
-- By default, parallel `ask_user_question` calls reach the answerer concurrently; serialize in the
-  answerer if the UI shows one request at a time. Custom text has no length cap, so bound client input.
+- Each question is a deferred call marked `kind='question'` (`requests.kind(id) == 'question'`); `AskUser`
+  answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
+  at a time, through core `wait_for_external_event` like `RequestInput`: in process by default, journaled
+  and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect the engine refuses it with `UserError`
+  (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
+  tool body defers, so streaming doesn't stop on the call.
+- Three required positional parameters receive `(ctx, request, token)` (`TokenAnswerer[DepsT]`): return the
+  response, or hand `token` on and return `None`; the answer then arrives when the token is resolved
+  with the JSON of an `AskUserResponse` (`resolve_external_event` in process, the engine's API durably).
+  In a durable run the answerer runs in a durable unit, so it must return quickly.
+- `timeout=<seconds>` bounds the wait (and, in process, cancels a slow async answerer); the model gets
+  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`, as it does when the token is failed.
+  A thread cannot be cancelled: wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`,
+  and read terminal input with an async prompt library, not `input()` in a thread.
+- Custom text has no length cap, so bound client input.
+- With `RequestInput` on the same agent, `AskUser` answers its questions first; with `answerer=None`,
+  `RequestInput`'s `ask` gets the question and answers it with `ask_user_result` in `calls`.
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
@@ -756,6 +771,40 @@ except LoopDetectedError as error:
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
   `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
 
+## RefineOutput
+
+When a run would end with an output, adds a system prompt telling the model to review its last answer
+and give the complete answer again, revised. The last answer is the run's output. `rounds=1` sets how
+many times per run; `instructions` replaces `DEFAULT_REFINE_OUTPUT_INSTRUCTIONS`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import RefineOutput
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('draft' if len(messages) == 1 else 'revised')])
+
+
+agent = Agent(FunctionModel(answer), capabilities=[RefineOutput()])
+print(agent.run_sync('Explain the change').output)
+#> revised
+```
+
+- Each round costs at least one more model request and counts toward `UsageLimits`. Output validators
+  and output functions run on every answer, so keep them free of side effects.
+- The instruction is a `SystemPromptPart` (conversation scope, so it stays in the history); find it by
+  `metadata['origin'] == 'pydantic-ai-harness.refine_output.v1'`, never by text. Each run starts with no
+  rounds used. The count is per-run state, so compaction that drops the instruction does not restart it.
+- Not reviewed: a run that returns `DeferredToolRequests` or `PendingModelResponse`, an output no model
+  request produced (an `InputGuardrail` refusal; detected as a response with no `model_name`), and `run_stream()`, which ends at the first output it
+  streams. Stream a refined run with `run(event_stream_handler=...)` or `iter()`; the stream carries
+  every answer, the first one included.
+- Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -768,4 +817,5 @@ except LoopDetectedError as error:
 - https://pydantic.dev/docs/ai/harness/system-reminders/
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
+- https://pydantic.dev/docs/ai/harness/refine-output/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

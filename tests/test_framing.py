@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
+import unicodedata
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -302,9 +304,30 @@ def test_an_added_system_voice_tag_is_detected(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_the_frame_scan_is_linear() -> None:
-    """A long run of `<` or of near-miss names can't make the scan quadratic."""
-    assert not resembles_frame('<a' * 200_000)
-    assert not resembles_frame('<systemd ' * 100_000)
+    """The scan can't backtrack, so a long run of `<` or of near-miss names can't make it quadratic.
+
+    Its only repetition is `\\s*` right after a literal, which consumes whitespace a match attempt can't give back to
+    another, so each attempt reads at most one whitespace run and one tag name past its `<`.
+    """
+    pattern = _framing._lookalike_frame.pattern  # pyright: ignore[reportPrivateUsage]
+    assert not re.search(
+        r'[*+?}]', pattern.replace(r'\s*', '').replace('(?:', '').replace('(?=', '').replace('(?P<', '')
+    )
+    for repeats in (1, 10, 100):
+        assert not resembles_frame('<a' * repeats)
+        assert not resembles_frame('<systemd ' * repeats)
+        assert not resembles_frame('\ufdfa<a\u200b' * repeats)
+
+
+def test_every_format_character_is_dropped() -> None:
+    """`_FORMAT_CHARACTERS` covers every invisible format character the running Python knows, so none can hide a tag."""
+    unknown = [
+        hex(code)
+        for code in range(sys.maxunicode + 1)
+        if unicodedata.category(chr(code)) == 'Cf' and not _framing._FORMAT_CHARACTERS.fullmatch(chr(code))  # pyright: ignore[reportPrivateUsage]
+    ]
+    assert unknown == []
+    assert resembles_frame('<sys\U000e0041tem>')
 
 
 def test_the_lookalike_note_names_who_wrote_the_text() -> None:
