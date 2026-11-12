@@ -908,3 +908,28 @@ class TestRetryAfter:
             with pytest.raises(ModelRateLimitError):
                 await agent.run('hi')
         assert await checkpoints(absurd, ctx.task_id) == {}
+
+    async def test_task_without_an_attempt_limit_waits_as_often_as_asked(self, absurd: AsyncAbsurd) -> None:
+        calls: list[int] = []
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(len(calls))
+            if len(calls) <= 2:
+                raise ModelHTTPError.for_category(
+                    ModelRateLimitError, status_code=429, model_name='fn', retry_after=0.0
+                )
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        agent = Agent(FunctionModel(fn, model_name='fn'), name='unlimited', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'unlimited', max_attempts=None) as ctx:
+            assert (await agent.run('hi')).output == 'ok'
+        assert len(calls) == 3
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert list(stored) == [
+            'unlimited__model.request',
+            'unlimited__model.request.retry_after',
+            'unlimited__model.request#2',
+            'unlimited__model.request.retry_after#2',
+            'unlimited__model.request#3',
+        ]

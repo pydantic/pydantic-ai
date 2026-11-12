@@ -25,9 +25,6 @@ from pydantic_ai.durable_exec import (
     DurableOperationConfig,
     DurableOperationId,
     JournalOperationNamer,
-    ModelCancelSuspendedResponseId,
-    ModelCompactMessagesId,
-    ModelRequestId,
     ParameterTransports,
     RegisteredOperationBackend,
     ToolsetGetInstructionsId,
@@ -37,7 +34,7 @@ from pydantic_ai.durable_exec import (
 )
 from pydantic_ai.exceptions import UserError
 
-from .._retry_after import MINIMUM_RETRY_AFTER_CAP
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP, MODEL_OPERATION_IDS
 from ._bridge import current_loop
 from ._transports import INPUT, JsonTransport
 
@@ -52,7 +49,6 @@ _JSON_OBJECT = TypeAdapter[dict[str, JsonValue]](dict[str, JsonValue])
 _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-durabletask-result-v1'
 _ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
 _DEFAULT_CONFIG = object()
-_MODEL_OPERATION_IDS = (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId)
 
 
 class _AzureDurableTaskNamer(JournalOperationNamer):
@@ -262,7 +258,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
         if not isinstance(transport, JsonTransport):  # pragma: no cover - this capability installs every transport
             raise TypeError(f'{type(transport).__name__} does not accept the Durable Task JSON wire.')
         json_transport: JsonTransport[ParamsT] = transport
-        model_operation = isinstance(operation.operation_id, _MODEL_OPERATION_IDS)
+        model_operation = isinstance(operation.operation_id, MODEL_OPERATION_IDS)
 
         async def execute(payload: object) -> object:
             try:

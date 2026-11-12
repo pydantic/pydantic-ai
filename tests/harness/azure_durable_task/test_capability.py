@@ -1038,10 +1038,11 @@ class TestAzureDurableTaskDurability:
         assert state.get_output() == [1, 10]
 
     @pytest.mark.parametrize(
-        ('policy', 'answer_on', 'waits', 'output'),
+        ('retry_after', 'policy', 'answer_on', 'waits', 'output'),
         [
             # The policy's own backoff would wait 30 seconds.
             pytest.param(
+                5,
                 {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 3},
                 2,
                 [5.0],
@@ -1049,6 +1050,7 @@ class TestAzureDurableTaskDurability:
                 id='retry-after',
             ),
             pytest.param(
+                5,
                 {
                     'first_retry_interval': timedelta(seconds=1),
                     'max_number_of_attempts': 3,
@@ -1061,6 +1063,7 @@ class TestAzureDurableTaskDurability:
             ),
             # A backoff too long for a `timedelta` is capped at `max_retry_interval` before it's built.
             pytest.param(
+                5,
                 {
                     'first_retry_interval': timedelta(seconds=1),
                     'max_number_of_attempts': 3,
@@ -1073,6 +1076,7 @@ class TestAzureDurableTaskDurability:
                 id='long-backoff-capped-at-max-retry-interval',
             ),
             pytest.param(
+                5,
                 {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 2},
                 None,
                 [5.0],
@@ -1080,6 +1084,7 @@ class TestAzureDurableTaskDurability:
                 id='attempts-exhausted',
             ),
             pytest.param(
+                5,
                 {
                     'first_retry_interval': timedelta(seconds=30),
                     'max_number_of_attempts': 3,
@@ -1090,12 +1095,30 @@ class TestAzureDurableTaskDurability:
                 'failed',
                 id='retry-timeout-elapsed',
             ),
-            pytest.param(None, None, [], 'failed', id='no-retry-policy'),
+            # Without `max_retry_interval`, the policy's own backoff caps the wait once it's longer than a minute.
+            pytest.param(
+                300,
+                {'first_retry_interval': timedelta(seconds=90), 'max_number_of_attempts': 3},
+                2,
+                [90.0],
+                'recovered',
+                id='capped-at-the-policys-backoff',
+            ),
+            pytest.param(
+                300,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 3},
+                2,
+                [60.0],
+                'recovered',
+                id='capped-at-a-minute',
+            ),
+            pytest.param(5, None, None, [], 'failed', id='no-retry-policy'),
         ],
     )
     def test_model_retry_after_waits_on_a_durable_timer(
         self,
         durable_worker: InMemoryWorker,
+        retry_after: int,
         policy: _RetryPolicyOptions | None,
         answer_on: int | None,
         waits: list[float],
@@ -1109,7 +1132,7 @@ class TestAzureDurableTaskDurability:
             calls.append('request')
             if len(calls) == answer_on:
                 return ModelResponse(parts=[TextPart('recovered')])
-            raise ModelHTTPError(429, 'test-model', headers={'Retry-After': '5'})
+            raise ModelHTTPError(429, 'test-model', headers={'Retry-After': str(retry_after)})
 
         agent = Agent(
             FunctionModel(model),

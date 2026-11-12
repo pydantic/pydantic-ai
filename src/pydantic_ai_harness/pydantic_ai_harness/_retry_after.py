@@ -12,9 +12,17 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.durable_exec import model_error_retry_after
+from pydantic_ai.durable_exec import (
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
+    ModelRequestId,
+    model_error_retry_after,
+)
 
-__all__ = ('MINIMUM_RETRY_AFTER_CAP', 'step_waiting_retry_after')
+__all__ = ('MINIMUM_RETRY_AFTER_CAP', 'MODEL_OPERATION_IDS', 'step_waiting_retry_after')
+
+MODEL_OPERATION_IDS = (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId)
+"""The operations that send a model request, whose error can ask to wait before the request is sent again."""
 
 MINIMUM_RETRY_AFTER_CAP = 60.0
 """The cap on a model error's `retry_after`, in seconds, when the engine sets no longer one."""

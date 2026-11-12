@@ -10,13 +10,10 @@ from pydantic_ai.durable_exec import (
     DurabilityCodec,
     DurableOperationId,
     JournalCallableOperationBackend,
-    ModelCancelSuspendedResponseId,
-    ModelCompactMessagesId,
-    ModelRequestId,
     RoleBasedOperationConfig,
 )
 
-from .._retry_after import MINIMUM_RETRY_AFTER_CAP, step_waiting_retry_after
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP, MODEL_OPERATION_IDS, step_waiting_retry_after
 from ._context import current_task_steps
 
 # pgtask steps take no per-operation options.
@@ -63,7 +60,7 @@ class PGTaskOperationBackend(JournalCallableOperationBackend[None]):
         del cache_key, config
         steps = current_task_steps()
         assert steps is not None
-        if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId):
+        if isinstance(operation_id, MODEL_OPERATION_IDS):
             # The task's `retry_delay` is set where its handler is registered, out of reach here, so a wait is
             # capped at a minute. Each model request waits at most as many times as the task has attempts left
             # after the current one.

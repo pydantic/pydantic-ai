@@ -13,15 +13,13 @@ from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic_ai.durable_exec import (
     DurableOperationId,
     JournalCallableOperationBackend,
-    ModelCancelSuspendedResponseId,
-    ModelCompactMessagesId,
-    ModelRequestId,
     RoleBasedOperationConfig,
     model_error_retry_after,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import ToolsetTool
 
+from .._retry_after import MODEL_OPERATION_IDS
 from ._bridge import ENGINE_NAME, current_bridge
 
 TOOL_CONFIG_KEY = 'aws_lambda'
@@ -107,7 +105,7 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         bridge = current_bridge()
         # Execution in a durable context guarantees a bridge.
         assert bridge is not None
-        if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId):
+        if isinstance(operation_id, MODEL_OPERATION_IDS):
             config = _waiting_retry_after(config)
         return await bridge.run_step(name, body, config)
 

@@ -9,14 +9,11 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.durable_exec import (
     DurableOperationId,
     JournalCallableOperationBackend,
-    ModelCancelSuspendedResponseId,
-    ModelCompactMessagesId,
-    ModelRequestId,
     RoleBasedOperationConfig,
     ToolsetCallToolId,
 )
 
-from .._retry_after import MINIMUM_RETRY_AFTER_CAP, step_waiting_retry_after
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP, MODEL_OPERATION_IDS, step_waiting_retry_after
 from ._context import current_async_task_context
 
 # A tool-call checkpoint holds the raw return value; a `ToolReturn` has no raw form, so it goes under this key.
@@ -93,7 +90,7 @@ class AbsurdOperationBackend(JournalCallableOperationBackend[None]):
         del cache_key, config
         task_ctx = current_async_task_context()
         assert task_ctx is not None
-        if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId):
+        if isinstance(operation_id, MODEL_OPERATION_IDS):
             max_waits, maximum = _retry_after_limits(task_ctx)
             return await step_waiting_retry_after(
                 name, body, step=task_ctx.step, sleep=task_ctx.sleep_for, max_waits=max_waits, maximum=maximum
