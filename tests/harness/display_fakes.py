@@ -125,7 +125,7 @@ class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
 
 
 @runtime_checkable
-class FullDisplay(Display, SupportsZoom, SupportsScaledScreenshot, SupportsCursorPosition, Protocol):
+class FullDisplay(Display, SupportsZoom, SupportsCursorPosition, Protocol):
     """A display with every optional ability, as every harness sandbox's is."""
 
 
