@@ -6,7 +6,22 @@ Let an agent delegate self-contained tasks to named child agents.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.](https://pydantic.dev/docs/ai/img/harness/subagents.svg)
+```mermaid
+flowchart TB
+    accTitle: Subagents: hand a task to another agent run
+    accDescr: The parent model calls delegate_task and gets a result. The SubAgents capability passes the task to researcher, writer or self, a new run with its own message history, and gets str(result.output) back. It does not run the child on an unknown agent name, max_calls used up or max_depth reached, and a child stops early if timeout_seconds or usage_limits is reached or it failed.
+    model(["parent model"])
+    subagents["SubAgents()<br/>delegate_task"]:::capability
+    child["researcher, writer or self<br/>a new run with its<br/>own message history"]
+    refused["unknown agent name,<br/>max_calls used up,<br/>or max_depth reached"]:::blocked
+    stopped["timeout_seconds or<br/>usage_limits reached,<br/>or the child failed"]:::blocked
+    model <-->|"tool call, result"| subagents
+    subagents <-->|"task, str(result.output)"| child
+    subagents -.-x|"does not run the child"| refused
+    child -.-x|"stopped early"| stopped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -485,6 +500,13 @@ show the child's context usage. Managed start/end events carry `task_id` and
 `parent_task_id`. Managed cancellation and uncontained exceptions produce terminal
 outcomes; unmanaged events and exception propagation keep their original contract.
 Metadata and final/interrupted histories are atomically saved under `directory`.
+Once a task settles and is saved, the owner keeps its history in that file only, so a
+directory of long-finished tasks doesn't fill memory: an observer is told a task settled
+with its history, and after that the task in `records` has empty `messages`.
+`history(task_id)` reads its history from the file (from async code, call it in a worker
+thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
+back. To copy a settled task with its history, use
+`replace(task, messages=owner.history(task.id))`.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool

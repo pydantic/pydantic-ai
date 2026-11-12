@@ -330,6 +330,7 @@ class FileUrl(ABC):
     Supported by:
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GoogleDecisionsModel`: `ImageUrl.vendor_metadata['media_resolution']`, as `GoogleModel` takes it, sets the image's `resolution`: `{'level': 'MEDIA_RESOLUTION_LOW'}` is sent as `'low'`
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
@@ -802,6 +803,7 @@ class BinaryContent:
     Supported by:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata` for video files: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GoogleDecisionsModel`: `BinaryContent.vendor_metadata['media_resolution']`, as `GoogleModel` takes it, sets the image's `resolution`: `{'level': 'MEDIA_RESOLUTION_LOW'}` is sent as `'low'`
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `MistralModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
@@ -4381,7 +4383,9 @@ class BaseToolCallPart(Generic[ArgsT_co]):
             return self.args
         try:
             args = pydantic_core.from_json(self.args)
-            assert isinstance(args, dict), 'args should be a dict'
+            # Not an `assert`: `python -O` strips those.
+            if not isinstance(args, dict):
+                raise AssertionError('args should be a dict')
             return cast(dict[str, Any], args)
         except (ValueError, AssertionError):
             if raise_if_invalid:
