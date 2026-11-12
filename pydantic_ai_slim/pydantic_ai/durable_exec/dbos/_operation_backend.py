@@ -56,16 +56,18 @@ _RETRY_AFTER_KEY = 'pydantic_ai_retry_after'
 _MINIMUM_RETRY_AFTER_CAP = 60.0
 """The shortest cap on a model error's `retry_after`, when the step's own backoff for the attempt is shorter."""
 
-# DBOS's defaults for the `StepConfig` fields left unset, and the cap on its backoff (see `dbos._core.invoke_step`).
+# DBOS's defaults for the `StepConfig` fields left unset (`dbos._core.DEFAULT_STEP_OPTIONS`), and the cap on its
+# backoff (`dbos._core.invoke_step`), as of dbos 3.4.
 _DBOS_DEFAULT_INTERVAL_SECONDS = 1.0
 _DBOS_DEFAULT_BACKOFF_RATE = 2.0
 _DBOS_DEFAULT_MAX_ATTEMPTS = 3
 _DBOS_MAX_RETRY_INTERVAL_SECONDS = 3600.0
 
-_waiting_retry_after: ContextVar[bool] = ContextVar('_dbos_waiting_retry_after', default=False)
-"""Whether workflow code is calling a model step directly, so it can wait the `retry_after` the step returns.
+_retry_after_attempts_before: ContextVar[int | None] = ContextVar('_dbos_retry_after_attempts_before', default=None)
+"""How many attempts the model step had before this run of it, when workflow code is calling it directly.
 
-Unset for the body of the step, so a model step called inline from inside another step fails as it always did.
+`None` otherwise, including in the body of the step, so a model step called inline from inside another step fails
+as it always did instead of returning a wait no workflow code is there to wait.
 """
 
 
@@ -85,27 +87,28 @@ def _returning_retry_after(
 
     @functools.wraps(step)
     async def model_step(*args: Any, **kwargs: Any) -> object:
-        waiting = _waiting_retry_after.get()
-        token = _waiting_retry_after.set(False)
+        attempts_before = _retry_after_attempts_before.get()
+        token = _retry_after_attempts_before.set(None)
         try:
             return await step(*args, **kwargs)
         except Exception as error:
             status = DBOS.step_status
             if (
-                not waiting
+                attempts_before is None
                 or status is None
                 or status.current_attempt is None
                 or status.max_attempts is None
                 or status.current_attempt + 1 >= status.max_attempts
             ):
                 raise
-            backoff = min(interval * backoff_rate**status.current_attempt, _DBOS_MAX_RETRY_INTERVAL_SECONDS)
+            attempt = attempts_before + status.current_attempt
+            backoff = min(interval * backoff_rate**attempt, _DBOS_MAX_RETRY_INTERVAL_SECONDS)
             delay = model_error_retry_after(error, maximum=max(backoff, _MINIMUM_RETRY_AFTER_CAP))
             if delay is None:
                 raise
             return {_RETRY_AFTER_KEY: delay, 'attempts': status.current_attempt + 1}
         finally:
-            _waiting_retry_after.reset(token)
+            _retry_after_attempts_before.reset(token)
 
     return model_step
 
@@ -196,23 +199,30 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
         """Run a model step, and run it again after each durable wait a model error asked for, up to its `max_attempts`.
 
         Each run of the step after a wait gets the attempts the earlier runs left, so the step is attempted no more
-        often than its `max_attempts`, with DBOS's own backoff between attempts that failed without asking to wait.
+        often than its `max_attempts`, and the backoff DBOS waits between attempts that failed without asking to wait
+        goes on growing from where the earlier runs left it.
         """
         assert self._retry_after_max_attempts is not None
+        interval = self._step_options.get('interval_seconds', _DBOS_DEFAULT_INTERVAL_SECONDS)
+        backoff_rate = self._step_options.get('backoff_rate', _DBOS_DEFAULT_BACKOFF_RATE)
         step: Callable[..., Awaitable[object]] = self.step
         attempts = 0
         while True:
-            token = _waiting_retry_after.set(True)
+            token = _retry_after_attempts_before.set(attempts)
             try:
                 payload = await step(*args)
             finally:
-                _waiting_retry_after.reset(token)
+                _retry_after_attempts_before.reset(token)
             if (wait := _retry_after_wait(payload)) is None:
                 return payload
             delay, step_attempts = wait
             attempts += step_attempts
             await DBOS.sleep_async(delay)
-            options: StepOptions = {**self._step_options, 'max_attempts': self._retry_after_max_attempts - attempts}
+            options: StepOptions = {
+                **self._step_options,
+                'max_attempts': self._retry_after_max_attempts - attempts,
+                'interval_seconds': interval * backoff_rate**attempts,
+            }
             step = functools.partial(DBOS.run_step_async, options, self._step_function)
 
     async def call_reserved(self, reservation: StepReservation | SnapshotStepReservation, params: ParamsT) -> ResultT:

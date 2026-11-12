@@ -120,6 +120,7 @@ from ..realtime_connections import InferredConnection
 pytest.importorskip('dbos')
 
 from dbos import DBOS, DBOSConfig, SetWorkflowID
+from dbos._core import DEFAULT_STEP_OPTIONS
 from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSMaxStepRetriesExceeded
 
 from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
@@ -130,6 +131,11 @@ from pydantic_ai.durable_exec.dbos import (
     StepConfig,
 )
 from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
+from pydantic_ai.durable_exec.dbos._operation_backend import (
+    _DBOS_DEFAULT_BACKOFF_RATE,  # pyright: ignore[reportPrivateUsage]
+    _DBOS_DEFAULT_INTERVAL_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    _DBOS_DEFAULT_MAX_ATTEMPTS,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 try:
@@ -2894,6 +2900,23 @@ async def test_dbos_durability_model_error_retry_after_waits_durably(dbos: DBOS)
         'DBOS.sleep',
         'durability_retry_after__model.request',
     ]
+
+    # Recovering from the last model step replays the recorded failed attempt and wait, and runs only that step again.
+    last_model_step = max(
+        step['function_id'] for step in steps if step['function_name'] == 'durability_retry_after__model.request'
+    )
+    handle = await DBOS.fork_workflow_async(wfid, last_model_step)
+    assert await handle.get_result() == 'answered'
+    assert len(attempts) == 3
+
+
+def test_dbos_retry_after_uses_dbos_step_defaults() -> None:
+    """The step defaults the `retry_after` wait is worked out with are DBOS's own."""
+    assert (
+        DEFAULT_STEP_OPTIONS['interval_seconds'],
+        DEFAULT_STEP_OPTIONS['backoff_rate'],
+        DEFAULT_STEP_OPTIONS['max_attempts'],
+    ) == (_DBOS_DEFAULT_INTERVAL_SECONDS, _DBOS_DEFAULT_BACKOFF_RATE, _DBOS_DEFAULT_MAX_ATTEMPTS)
 
 
 async def test_dbos_durability_model_error_retry_after_counts_every_attempt(dbos: DBOS) -> None:

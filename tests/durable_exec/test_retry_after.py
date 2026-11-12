@@ -44,6 +44,17 @@ def test_model_error_retry_after_finds_the_model_error_an_engine_error_was_raise
         assert model_error_retry_after(error, maximum=60.0) == 7.0
 
 
+def test_model_error_retry_after_stops_at_a_suppressed_context() -> None:
+    """A wrapper that raised its own error `from None` hid the model error, so its wait no longer applies."""
+    try:
+        try:
+            raise _rate_limited(7.0)
+        except ModelAPIError:
+            raise RuntimeError('step failed') from None
+    except RuntimeError as error:
+        assert model_error_retry_after(error, maximum=60.0) is None
+
+
 def test_model_error_retry_after_ignores_errors_that_are_not_model_errors() -> None:
     """Without a model error in the chain, even one that loops back on itself, the engine's backoff applies."""
     first = RuntimeError('first')

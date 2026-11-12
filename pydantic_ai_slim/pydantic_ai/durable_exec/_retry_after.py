@@ -15,7 +15,8 @@ def model_error_retry_after(error: BaseException, *, maximum: float) -> float | 
     `Retry-After` header or the like. An engine that retries a failed model request waits this instead of its
     configured backoff, as a durable wait: a Temporal activity's `next_retry_delay`, say, or the delay of an AWS
     Lambda step's retry decision. The model error is looked for in `error` and in the exceptions it was raised from
-    or while handling, since an engine or a wrapper can raise its own error around it.
+    or while handling, since an engine or a wrapper can raise its own error around it, but not past a
+    `raise ... from None`.
 
     Args:
         error: The exception the durable unit failed with.
@@ -32,5 +33,7 @@ def model_error_retry_after(error: BaseException, *, maximum: float) -> float | 
         seen.add(id(current))
         if isinstance(current, ModelAPIError) and current.retry_after is not None:
             return min(current.retry_after, maximum)
-        current = current.__cause__ or current.__context__
+        current = (
+            current.__cause__ if current.__cause__ is not None or current.__suppress_context__ else current.__context__
+        )
     return None
