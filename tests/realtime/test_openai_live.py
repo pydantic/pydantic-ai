@@ -3273,7 +3273,12 @@ def test_transcript_spacing_does_not_carry_across_turns() -> None:
     assert fragment('Yes', 'input') == [InputTranscript('Yes')]
 
 
-async def test_special_token_text_is_counted_as_live_counts_it() -> None:
+@pytest.fixture(scope='module')
+def _warm_context_tokenizer() -> None:
+    live_module.tiktoken.get_encoding('o200k_base')
+
+
+async def test_special_token_text_is_counted_as_live_counts_it(_warm_context_tokenizer: None) -> None:
     """tiktoken refuses special-token text such as `<|endoftext|>` by default, which raised its own error.
 
     Live counts it as the single token it is (checked live: 499 words plus it are accepted, 500 refused).
