@@ -59,7 +59,13 @@ _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
 _TYPE_TIMEOUT = 120
-"""Typing 2,000 characters, the most one action types, takes about 10 s."""
+"""Maximum time for one typing request, of at most `_TYPED_PER_REQUEST` characters."""
+
+_TYPED_PER_REQUEST = 2_000
+"""Characters typed by one request: 2,000 took about 11 s, and 30,000 in one request ran past `_TYPE_TIMEOUT`."""
+
+_SCROLLED_PER_REQUEST = 500
+"""Wheel clicks scrolled by one request: 1,000 took about 21 s, near `_REQUEST_TIMEOUT`."""
 
 _BUTTONS = frozenset({'left', 'middle', 'right'})
 
@@ -208,6 +214,22 @@ class DaytonaDesktop:
                         await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
             raise
 
+    async def _scroll(self, x: int, y: int, direction: str, amount: int, modifiers: list[str]) -> None:
+        """Scroll `amount` wheel clicks, `_SCROLLED_PER_REQUEST` at a time."""
+        for start in range(0, amount, _SCROLLED_PER_REQUEST):
+            clicks = min(_SCROLLED_PER_REQUEST, amount - start)
+            await self._computer_use.mouse.scroll(
+                x, y, direction, clicks, modifiers=modifiers, request_timeout=_REQUEST_TIMEOUT
+            )
+
+    async def _type(self, text: str) -> None:
+        """Type `text`, `_TYPED_PER_REQUEST` characters at a time."""
+        if any(ord(character) > 0xFFFF for character in text):
+            raise UnsupportedActionError("Daytona's desktop cannot type emoji or other characters beyond U+FFFF.")
+        for start in range(0, len(text), _TYPED_PER_REQUEST):
+            part = text[start : start + _TYPED_PER_REQUEST]
+            await self._computer_use.keyboard.type(part, request_timeout=_TYPE_TIMEOUT)
+
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()
         mouse, keyboard = self._computer_use.mouse, self._computer_use.keyboard
@@ -240,14 +262,9 @@ class DaytonaDesktop:
                 await mouse.up(button=_button(button), request_timeout=_REQUEST_TIMEOUT)
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 held = _keys(modifiers)
-                x, y = await self._at(x, y)
-                await mouse.scroll(x, y, direction, amount, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
+                await self._scroll(*await self._at(x, y), direction, amount, held)
             case TypeText(text=text):
-                if any(ord(character) > 0xFFFF for character in text):
-                    raise UnsupportedActionError(
-                        "Daytona's desktop cannot type emoji or other characters beyond U+FFFF."
-                    )
-                await keyboard.type(text, request_timeout=_TYPE_TIMEOUT)
+                await self._type(text)
             case PressKeys(keys=keys, repeat=repeat):
                 names = _keys(keys)
                 modifiers = [name for name in names if name in _MODIFIERS.values()]

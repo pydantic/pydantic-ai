@@ -55,7 +55,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "3388"
+      - "4218"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -65,16 +65,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0c3e1d2366ce5dcf006af4a6b5ed6087d2b6b8f80c9e67941c
+        id: resp_0ec06a3bcf0be314006af58d4eecf487d283d9f1879a8cba63
         object: response
-        created_at: 1794418357
+        created_at: 1794477390
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794418360
+        completed_at: 1794477394
         error: null
         frequency_penalty: 0.0
         image:
@@ -93,18 +93,18 @@ interactions:
         model: gpt-5.5-2026-04-23
         moderation: null
         output:
-        - id: rs_0c3e1d2366ce5dcf006af4a6b7494487d2854ef6eb78ad44c8
+        - id: rs_0ec06a3bcf0be314006af58d4fe10887d287efac01e0b0bdf4
           type: reasoning
           content: []
           encrypted_content: >-
-            gAAAAABq9Ka50WUe3sHNhBqBdT7sEWTz4sVlxzh25F8PRRw7ohVoUHNZaXd5n6yZOxf-SfmNf3T_vZDx-v4Fh3_X9jHVHsfQ0ZePTDeiexLRXWlszUt7H8Plha_ByGR_DlePYgfZvazvmCtfs2K4FEdiIVtBCYKVnZHL7qzUKPvJMyId2U1gipdqQlC7EXkr_Lcu-pZdAqxHoaDYAtlv66lLGFGlnJNrJ89l-eLctMM7gqlndIbgFcwwJZNeYz294xEKqA5UsKQySxU8uu8JVLLEU6zRFXUrfHYFBmXn7h1mQV0fAw9KVuMzVAk_iJYY8fj9XUDSucDDI6BSuHtTVQfTWcW8phpHDD2BQ8xaJsGvx-_SfK9TGxH49PynGVe_lzkRw20kGeUHtl0FXmkddOicGYxlpC51U_aTW6BmqBfsd3fyiFOSbJxv5xwe7G1XA2vqe1YUfhcEUXEM0ESF0cVyAjeXk4MZpfpgIqfxrcb6c3wlTfYJ2uDNgZfbbaYODmVKF56sXFmqDncukdaorwaTzAmIJa2LtS5966gnCAc0O6nQpqZngls8xhAoFt-9D362QhyYHn70TRmaYsp66Gtzm8RtBM-Y62A_noPgFT4YM0Uq21XpOgV1yG6aLAS6jZzdhHEcSL1GdGrRxLvT_3GkEcoe9U1y96xe-ndO8T5azQEOkzQOakb9BeY08ury6nphuh161L6TnxPZ97SfYKQvay1OWAo7oy2fc9iyoKWCM-Ft3TuF4F8fEnWuP0Pk8oMyHpa4YZKJvpj5kmFTuRG5mTvLUxmAzoDqD7AszfSZ20lLvRQZMkUHZE-N2PQv7DbREJ6wULfHR-pjxGQcqWpS44ZE4h2j-Tp230NRWoftM1vyWFYx8Df_cH37QdAvW_ZnVALQWRDxNqpFgCJ5TZ9tof_vXomtqZpeV2g_i8Vg4Glc7vuZR3rx7foe11Fpk1ZacwhC32hqwOYbVAcelhzMTpUrSjl8h5yQxZ0L8kim9IQwxIO8jEXePzWfjhRYIIsusrthg3IUyqQ8ztCkFT1mJo0NT0RPKyQCXygG7bCgRc0B3xBZk7ZHMxzuRV9Cp7GeEHJe8m-PASvLMXaxNkPqdmraes9YKffcAxZykOj1gm17bGu02dGsEznisCbHnUA8ie8H6SrWyKbB_DX1lO_Ngk-OpGHjcA_TyZHVFDWJfhtJhv2u7HiiBV10p7XvXH0P0396wBagBHLj0b5lVss9eYT6fkSbgRDECO7-bcSLjFNsyH-7E6YLjIBH9yLTLdugEB56nSysPcA8g5XxKQwtPJh7bnpbbYQlFakcxmbV_UiEX6BmnMJwZM8gVJukUPS1M1HHewomc0oDRrdrkZQcmNrR9JmL68LF5JhNwZrXPS4U9T02i3kwOoIhlxu15Xwc3IBBndQV-IpS2Vc4cQVx-aS2kQrx4p_zMDDJ7M2ybGtuCuy-LwegnTkjNamnxsXs_2Jn4Pom0-A0gTxiiQbMnbMVHX1S9l_kmFUTjPjp7h_dRgr6P-QHl60lCHKgSWw84eZk9OxY3Xvp8goGI5j7fXK0_hxWRDb34uzgvNn0_4E2eH5but9No9m4bBEWze0Ow2espC3lQKVjIf2T6RvK7q96Zb_s8f4uNktYJH4vUma3O-HZhdS2_6nPUOd4svVCjC7IUvcd8gDlDtag8Ve_hcag8cxvBGVtalbLyqdFssYe1khLheUMIsSOKySfa36x0eM1Hi_6PwFt2wfzbKYGr4VJ9pRKnF7hgNzuMROAjB86Tn56NqM9Z3JfoQNWCBOjIcsdlqUPoY8hOdH9mYwoDG23o_P0uoqLQ6gBF7LmyF0XLRQCpRYgs06rDib5M6EySFloY_NBBtJnwG6CGVK-8a46kXRXYiiK5QrwsvKhlHX_4DYREAgU_X7ceaHldJt2vOxcwMV66v8zoAXDfDvXV0h0jgygK67DkK6ZckFjBubAGhhSdNTdapGlg1qtnit5JZdhwZNdaLR3vCEHNvCj1wtNglLQp6flemqqBVbT5nhKxMNibKo3F8yabDkYSUEwF8ZZZHePbLihGZabA3yXTexG0Zl2gS_4zfHeGGrH34WSIW_aCOOcnPSntCaNOOUkiAzepEJ22RbysytJLiLD-dQw8VUP6OUXvBU60eBVxkhSZblBkJc8qBiFBzn7viuIIEWjLq6Ebrt_ScoL6S5iry2FKYp5VlR1qIXjTFnbhsbpd-_yqNOVFomze5iEOFKCGTWbpwUlOeoYZqnSdOv3-EzgHGMHIsAM8NQaWl9X0xEbenz4pLRjsHu_mM_DTuVCE5SDVEXNkWJc4rPNkoPw5p1sENT5V_66zCfacejV9LgsKOQNuSj5UuG9W0S9_W-lf-sbgQrJnXlGtwaO7F9VwhgRkCngAaILndz7eGeKZucS2gKROn5baAt1jPLcAii6NQUvSRY9I1AKj0Y1HAgBTOHXgRCZ1Q==
+            gAAAAABq9Y1TqI3_NGGOrNF3Q0JcjviDPEgIKZb4r4cnfVzK6iBC4fquYLw7nW4W-j_fRO9bQcJEKhp9Rf6GSaKSLpQKCpVZPYFH67EkOWDb_dYB0u9NdQA6PDcrNS0CaBa8FvZvNe6FhK5Bb2YLOb24MFC1cVwT8jtQF-gSKCOn8Hnjl1nkH_5PQGWw93OPTsU3xi2aRonV1CyzmAvV_Y93ZavSGa9HWb6sByNqjQN-QLE11uSFKxxtPzLmWEqhK8yULi9jcI8jqP_3okYa0yY85KDdI72CQhe-Q76Ovv8_CwzGvk-o1IQlhLgYOLZXYAAZ6aljxpwYAYV_yP9kjwmWHP1ZS4G-wUXg-tNNSHXZFQ_TEUf9cVrpjbMQUlXMdgyDzUHt_AtU4230PyFXjVZ4bUen2c4Li-1XxKT_RscbILYEmNQus5uXOts-AKmW2BVcieakSvLqb798wZpIlVJ5jFYCVyvrgvHQgECZMKnf2saZ-53O1a6fTjbXd4nklTPUn_J0EXF9KjYDk5QWvkKuesmEf-IW3AcMw8NlqdEgWdg6QolBO29zVh0Hh0IkQkAbWjOgnv8Ln1XFid-_yDi2jpHxWgtNqPE12nQ33kJpGI3Dd25v8Zuk7gZ6SZpf4MkdbscOkdcJriTilSUXSkrTWK7F9Cy8h4gs-xgcwNGUgZ6pVMAfAJyyUbJx3Odh3yH0MH5c_Pi_nYlqzESxYf1tflH3wN5JGNTwW2jvKTLUpxOl1-pnYucCl-mmiJrepGSLhLBe8eRIf6Z4I3ifVJlFwH9ICCA1Kp414jUr4x4BqQUcHRJXBvqgSyCgXTih_YKdc-_vZsePrgKh3xgDnMv2VsKBWD5cIll7J7nDmCDGJRQXI54Dvu51ydkuHKsZgzLwlDTyRhcmyrFz61atysMnfBYHQIEYU__oZeDlan1m-JS__ieB_3DZXF5BL79ZBdiZd8AqZuZefgs0JnJfrVwl9IeVrqYf_eGvy1VTRztcEyS05eAzchUlUu973qnIOFKFdJEUUtM75RuDW3TztJwrZKp9oNm0tLXkew6dOeU1z6CqG6_AkVioR3zdVs2t6W_eM9hnftzqm1JBHZn6FEWLvg-MEUd7X4O_jBmux1onCyzNXACxwI12QZ24z4gUDzO0gI2sEwjIN1tMfBPSBjyl6KgFBosPdvrm-peLWr66pRYPtZh7yYA4G1EiXpxrIrdwCBs8DEVb6bE8UVzVQmbiMy_uh3UBh7eliDatTQJ8FtE6-koECynPOcbGwLjpHrXN3tBSgrQLzDPJtgOtC0souEjkMZTjq1WbqRefE0Crzg1umWaaxoIcdrUNmUjU1jvypA6Fu87XxlyoVsGp72G7awX0eojhbO4cD9WL9Ik-9rb2uDQTl0qMjcUA6dZ49B3yVAbmHuiFuj2ofzdJeS0DCNEOyFOYfnkuZQvc-YKsBnVeVGhJgVPUSVS9y-gF3n1Doi9ECMJBzwEprRHO5-NQg64YJaY54s6nzvojgf2ZdOHE-qae5jCjpFSOuv4YeCzgLB0ljVpk6GUkIbYIanN6uXoslzm2BkIUEp20dTufFjCvagJtgO33n1qm4tDOLbdM4087faUqM1d6mjCd-akOf4Y9iyu_WgB-8AA4Z6vS7qHtDhJdCCYP2yaRzXIW2vBRK95ryrcWamx7kQRAwwM6BIYSi8Uv_EJFqE7bj9ihP84Biylmjc4XoSCmgGXtDsOyzilPyTARn2AqrvxVzuhwZrQ8h9x1G-6WeRCpwQKCqulY9q4mXHo_BkTy2IPQokfhZw4q2dKsJseLQfZAlTB_6xU2BPaZe4ayTD-EQ1YYRU2ELY9EeRgvNVfDVhDpVlbjpP2fmkAq5pQS-WgawDMO9djV7ivUL3MNAd21rbaWsPW-Csj-556BqNlR-VpVbPGxqJQQ92RDE7BZTZk6uGVEyM5Bsd0R5pLFzJjZI2nTxepfD7GOWMwwNcXYiQXXJTm2s24hssRnbiDUyGtpstPzDkOBMKyz5FR6IM4uCOuwUCR4iI4yZpHbF-NaYQE-I9jsAAc7WTZjqF5cgNHVzSe09ucYhH3aVGhnXGQjfjBGDTs1tmkcumOB2hRuW7CK7dgxFNI36knnpZsnXHDr4Kg2Z9yAQZLZS37OZN4yy4w3ZcZob7lpy9mAcZeFPYz66Gkn2GQdyW5z4DfzqH6WuWGKPeQeTOfQmleJq5CO8GapoCA154ui2ncG6g3NFEPxOQ9l0sQ8FKW0iWp93FCS_ByackFV7p5ZPxXE15fOJLsLE3n2ygUiTs1XAFkkvHuBv5WWwRIhUyNjttQxOzM9G8pfCSEgLYZHPA==
           summary: []
-        - id: cu_0c3e1d2366ce5dcf006af4a6b83c8887d2bda4a44e5415615f
+        - id: cu_0ec06a3bcf0be314006af58d50df2887d2a7463e05f2960e83
           type: computer_call
           status: completed
           actions:
           - type: screenshot
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
@@ -147,13 +147,13 @@ interactions:
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
-          output_tokens: 85
+          output_tokens: 92
           output_tokens_details:
-            reasoning_tokens: 62
-          total_tokens: 1259
+            reasoning_tokens: 53
+          total_tokens: 1266
         user: null
         metadata: {}
-  recorded_at: 2026-11-11T17:32:41.308612+00:00
+  recorded_at: 2026-11-12T09:56:35.146925+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -165,7 +165,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "8684"
+      - "8556"
       content-type:
       - application/json
       host:
@@ -182,19 +182,19 @@ interactions:
           content: >-
             Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
             Do nothing else.
-        - id: rs_0c3e1d2366ce5dcf006af4a6b7494487d2854ef6eb78ad44c8
+        - id: rs_0ec06a3bcf0be314006af58d4fe10887d287efac01e0b0bdf4
           summary: []
           encrypted_content: >-
-            gAAAAABq9Ka50WUe3sHNhBqBdT7sEWTz4sVlxzh25F8PRRw7ohVoUHNZaXd5n6yZOxf-SfmNf3T_vZDx-v4Fh3_X9jHVHsfQ0ZePTDeiexLRXWlszUt7H8Plha_ByGR_DlePYgfZvazvmCtfs2K4FEdiIVtBCYKVnZHL7qzUKPvJMyId2U1gipdqQlC7EXkr_Lcu-pZdAqxHoaDYAtlv66lLGFGlnJNrJ89l-eLctMM7gqlndIbgFcwwJZNeYz294xEKqA5UsKQySxU8uu8JVLLEU6zRFXUrfHYFBmXn7h1mQV0fAw9KVuMzVAk_iJYY8fj9XUDSucDDI6BSuHtTVQfTWcW8phpHDD2BQ8xaJsGvx-_SfK9TGxH49PynGVe_lzkRw20kGeUHtl0FXmkddOicGYxlpC51U_aTW6BmqBfsd3fyiFOSbJxv5xwe7G1XA2vqe1YUfhcEUXEM0ESF0cVyAjeXk4MZpfpgIqfxrcb6c3wlTfYJ2uDNgZfbbaYODmVKF56sXFmqDncukdaorwaTzAmIJa2LtS5966gnCAc0O6nQpqZngls8xhAoFt-9D362QhyYHn70TRmaYsp66Gtzm8RtBM-Y62A_noPgFT4YM0Uq21XpOgV1yG6aLAS6jZzdhHEcSL1GdGrRxLvT_3GkEcoe9U1y96xe-ndO8T5azQEOkzQOakb9BeY08ury6nphuh161L6TnxPZ97SfYKQvay1OWAo7oy2fc9iyoKWCM-Ft3TuF4F8fEnWuP0Pk8oMyHpa4YZKJvpj5kmFTuRG5mTvLUxmAzoDqD7AszfSZ20lLvRQZMkUHZE-N2PQv7DbREJ6wULfHR-pjxGQcqWpS44ZE4h2j-Tp230NRWoftM1vyWFYx8Df_cH37QdAvW_ZnVALQWRDxNqpFgCJ5TZ9tof_vXomtqZpeV2g_i8Vg4Glc7vuZR3rx7foe11Fpk1ZacwhC32hqwOYbVAcelhzMTpUrSjl8h5yQxZ0L8kim9IQwxIO8jEXePzWfjhRYIIsusrthg3IUyqQ8ztCkFT1mJo0NT0RPKyQCXygG7bCgRc0B3xBZk7ZHMxzuRV9Cp7GeEHJe8m-PASvLMXaxNkPqdmraes9YKffcAxZykOj1gm17bGu02dGsEznisCbHnUA8ie8H6SrWyKbB_DX1lO_Ngk-OpGHjcA_TyZHVFDWJfhtJhv2u7HiiBV10p7XvXH0P0396wBagBHLj0b5lVss9eYT6fkSbgRDECO7-bcSLjFNsyH-7E6YLjIBH9yLTLdugEB56nSysPcA8g5XxKQwtPJh7bnpbbYQlFakcxmbV_UiEX6BmnMJwZM8gVJukUPS1M1HHewomc0oDRrdrkZQcmNrR9JmL68LF5JhNwZrXPS4U9T02i3kwOoIhlxu15Xwc3IBBndQV-IpS2Vc4cQVx-aS2kQrx4p_zMDDJ7M2ybGtuCuy-LwegnTkjNamnxsXs_2Jn4Pom0-A0gTxiiQbMnbMVHX1S9l_kmFUTjPjp7h_dRgr6P-QHl60lCHKgSWw84eZk9OxY3Xvp8goGI5j7fXK0_hxWRDb34uzgvNn0_4E2eH5but9No9m4bBEWze0Ow2espC3lQKVjIf2T6RvK7q96Zb_s8f4uNktYJH4vUma3O-HZhdS2_6nPUOd4svVCjC7IUvcd8gDlDtag8Ve_hcag8cxvBGVtalbLyqdFssYe1khLheUMIsSOKySfa36x0eM1Hi_6PwFt2wfzbKYGr4VJ9pRKnF7hgNzuMROAjB86Tn56NqM9Z3JfoQNWCBOjIcsdlqUPoY8hOdH9mYwoDG23o_P0uoqLQ6gBF7LmyF0XLRQCpRYgs06rDib5M6EySFloY_NBBtJnwG6CGVK-8a46kXRXYiiK5QrwsvKhlHX_4DYREAgU_X7ceaHldJt2vOxcwMV66v8zoAXDfDvXV0h0jgygK67DkK6ZckFjBubAGhhSdNTdapGlg1qtnit5JZdhwZNdaLR3vCEHNvCj1wtNglLQp6flemqqBVbT5nhKxMNibKo3F8yabDkYSUEwF8ZZZHePbLihGZabA3yXTexG0Zl2gS_4zfHeGGrH34WSIW_aCOOcnPSntCaNOOUkiAzepEJ22RbysytJLiLD-dQw8VUP6OUXvBU60eBVxkhSZblBkJc8qBiFBzn7viuIIEWjLq6Ebrt_ScoL6S5iry2FKYp5VlR1qIXjTFnbhsbpd-_yqNOVFomze5iEOFKCGTWbpwUlOeoYZqnSdOv3-EzgHGMHIsAM8NQaWl9X0xEbenz4pLRjsHu_mM_DTuVCE5SDVEXNkWJc4rPNkoPw5p1sENT5V_66zCfacejV9LgsKOQNuSj5UuG9W0S9_W-lf-sbgQrJnXlGtwaO7F9VwhgRkCngAaILndz7eGeKZucS2gKROn5baAt1jPLcAii6NQUvSRY9I1AKj0Y1HAgBTOHXgRCZ1Q==
+            gAAAAABq9Y1TqI3_NGGOrNF3Q0JcjviDPEgIKZb4r4cnfVzK6iBC4fquYLw7nW4W-j_fRO9bQcJEKhp9Rf6GSaKSLpQKCpVZPYFH67EkOWDb_dYB0u9NdQA6PDcrNS0CaBa8FvZvNe6FhK5Bb2YLOb24MFC1cVwT8jtQF-gSKCOn8Hnjl1nkH_5PQGWw93OPTsU3xi2aRonV1CyzmAvV_Y93ZavSGa9HWb6sByNqjQN-QLE11uSFKxxtPzLmWEqhK8yULi9jcI8jqP_3okYa0yY85KDdI72CQhe-Q76Ovv8_CwzGvk-o1IQlhLgYOLZXYAAZ6aljxpwYAYV_yP9kjwmWHP1ZS4G-wUXg-tNNSHXZFQ_TEUf9cVrpjbMQUlXMdgyDzUHt_AtU4230PyFXjVZ4bUen2c4Li-1XxKT_RscbILYEmNQus5uXOts-AKmW2BVcieakSvLqb798wZpIlVJ5jFYCVyvrgvHQgECZMKnf2saZ-53O1a6fTjbXd4nklTPUn_J0EXF9KjYDk5QWvkKuesmEf-IW3AcMw8NlqdEgWdg6QolBO29zVh0Hh0IkQkAbWjOgnv8Ln1XFid-_yDi2jpHxWgtNqPE12nQ33kJpGI3Dd25v8Zuk7gZ6SZpf4MkdbscOkdcJriTilSUXSkrTWK7F9Cy8h4gs-xgcwNGUgZ6pVMAfAJyyUbJx3Odh3yH0MH5c_Pi_nYlqzESxYf1tflH3wN5JGNTwW2jvKTLUpxOl1-pnYucCl-mmiJrepGSLhLBe8eRIf6Z4I3ifVJlFwH9ICCA1Kp414jUr4x4BqQUcHRJXBvqgSyCgXTih_YKdc-_vZsePrgKh3xgDnMv2VsKBWD5cIll7J7nDmCDGJRQXI54Dvu51ydkuHKsZgzLwlDTyRhcmyrFz61atysMnfBYHQIEYU__oZeDlan1m-JS__ieB_3DZXF5BL79ZBdiZd8AqZuZefgs0JnJfrVwl9IeVrqYf_eGvy1VTRztcEyS05eAzchUlUu973qnIOFKFdJEUUtM75RuDW3TztJwrZKp9oNm0tLXkew6dOeU1z6CqG6_AkVioR3zdVs2t6W_eM9hnftzqm1JBHZn6FEWLvg-MEUd7X4O_jBmux1onCyzNXACxwI12QZ24z4gUDzO0gI2sEwjIN1tMfBPSBjyl6KgFBosPdvrm-peLWr66pRYPtZh7yYA4G1EiXpxrIrdwCBs8DEVb6bE8UVzVQmbiMy_uh3UBh7eliDatTQJ8FtE6-koECynPOcbGwLjpHrXN3tBSgrQLzDPJtgOtC0souEjkMZTjq1WbqRefE0Crzg1umWaaxoIcdrUNmUjU1jvypA6Fu87XxlyoVsGp72G7awX0eojhbO4cD9WL9Ik-9rb2uDQTl0qMjcUA6dZ49B3yVAbmHuiFuj2ofzdJeS0DCNEOyFOYfnkuZQvc-YKsBnVeVGhJgVPUSVS9y-gF3n1Doi9ECMJBzwEprRHO5-NQg64YJaY54s6nzvojgf2ZdOHE-qae5jCjpFSOuv4YeCzgLB0ljVpk6GUkIbYIanN6uXoslzm2BkIUEp20dTufFjCvagJtgO33n1qm4tDOLbdM4087faUqM1d6mjCd-akOf4Y9iyu_WgB-8AA4Z6vS7qHtDhJdCCYP2yaRzXIW2vBRK95ryrcWamx7kQRAwwM6BIYSi8Uv_EJFqE7bj9ihP84Biylmjc4XoSCmgGXtDsOyzilPyTARn2AqrvxVzuhwZrQ8h9x1G-6WeRCpwQKCqulY9q4mXHo_BkTy2IPQokfhZw4q2dKsJseLQfZAlTB_6xU2BPaZe4ayTD-EQ1YYRU2ELY9EeRgvNVfDVhDpVlbjpP2fmkAq5pQS-WgawDMO9djV7ivUL3MNAd21rbaWsPW-Csj-556BqNlR-VpVbPGxqJQQ92RDE7BZTZk6uGVEyM5Bsd0R5pLFzJjZI2nTxepfD7GOWMwwNcXYiQXXJTm2s24hssRnbiDUyGtpstPzDkOBMKyz5FR6IM4uCOuwUCR4iI4yZpHbF-NaYQE-I9jsAAc7WTZjqF5cgNHVzSe09ucYhH3aVGhnXGQjfjBGDTs1tmkcumOB2hRuW7CK7dgxFNI36knnpZsnXHDr4Kg2Z9yAQZLZS37OZN4yy4w3ZcZob7lpy9mAcZeFPYz66Gkn2GQdyW5z4DfzqH6WuWGKPeQeTOfQmleJq5CO8GapoCA154ui2ncG6g3NFEPxOQ9l0sQ8FKW0iWp93FCS_ByackFV7p5ZPxXE15fOJLsLE3n2ygUiTs1XAFkkvHuBv5WWwRIhUyNjttQxOzM9G8pfCSEgLYZHPA==
           type: reasoning
-        - id: cu_0c3e1d2366ce5dcf006af4a6b83c8887d2bda4a44e5415615f
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+        - id: cu_0ec06a3bcf0be314006af58d50df2887d2a7463e05f2960e83
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           status: completed
           type: computer_call
           actions:
           - type: screenshot
         - type: computer_call_output
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           output:
             type: computer_screenshot
             image_url: >-
@@ -227,7 +227,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "2253"
+      - "2953"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -237,16 +237,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0c3e1d2366ce5dcf006af4a6b97de887d2b96578a0db126532
+        id: resp_0ec06a3bcf0be314006af58d54332c87d2ab72535feabbbd12
         object: response
-        created_at: 1794418361
+        created_at: 1794477396
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794418363
+        completed_at: 1794477398
         error: null
         frequency_penalty: 0.0
         image:
@@ -265,7 +265,7 @@ interactions:
         model: gpt-5.5-2026-04-23
         moderation: null
         output:
-        - id: cu_0c3e1d2366ce5dcf006af4a6badda087d2aad00eeee22e403a
+        - id: cu_0ec06a3bcf0be314006af58d559f6487d2ac1ef046e141458b
           type: computer_call
           status: completed
           actions:
@@ -276,7 +276,7 @@ interactions:
             "y": 200
           - type: type
             text: hello
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
@@ -315,17 +315,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 2469
+          input_tokens: 2475
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 39
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 2508
+          total_tokens: 2514
         user: null
         metadata: {}
-  recorded_at: 2026-11-11T17:32:43.736416+00:00
+  recorded_at: 2026-11-12T09:56:39.083275+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -337,7 +337,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13172"
+      - "13044"
       content-type:
       - application/json
       host:
@@ -354,26 +354,26 @@ interactions:
           content: >-
             Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
             Do nothing else.
-        - id: rs_0c3e1d2366ce5dcf006af4a6b7494487d2854ef6eb78ad44c8
+        - id: rs_0ec06a3bcf0be314006af58d4fe10887d287efac01e0b0bdf4
           summary: []
           encrypted_content: >-
-            gAAAAABq9Ka50WUe3sHNhBqBdT7sEWTz4sVlxzh25F8PRRw7ohVoUHNZaXd5n6yZOxf-SfmNf3T_vZDx-v4Fh3_X9jHVHsfQ0ZePTDeiexLRXWlszUt7H8Plha_ByGR_DlePYgfZvazvmCtfs2K4FEdiIVtBCYKVnZHL7qzUKPvJMyId2U1gipdqQlC7EXkr_Lcu-pZdAqxHoaDYAtlv66lLGFGlnJNrJ89l-eLctMM7gqlndIbgFcwwJZNeYz294xEKqA5UsKQySxU8uu8JVLLEU6zRFXUrfHYFBmXn7h1mQV0fAw9KVuMzVAk_iJYY8fj9XUDSucDDI6BSuHtTVQfTWcW8phpHDD2BQ8xaJsGvx-_SfK9TGxH49PynGVe_lzkRw20kGeUHtl0FXmkddOicGYxlpC51U_aTW6BmqBfsd3fyiFOSbJxv5xwe7G1XA2vqe1YUfhcEUXEM0ESF0cVyAjeXk4MZpfpgIqfxrcb6c3wlTfYJ2uDNgZfbbaYODmVKF56sXFmqDncukdaorwaTzAmIJa2LtS5966gnCAc0O6nQpqZngls8xhAoFt-9D362QhyYHn70TRmaYsp66Gtzm8RtBM-Y62A_noPgFT4YM0Uq21XpOgV1yG6aLAS6jZzdhHEcSL1GdGrRxLvT_3GkEcoe9U1y96xe-ndO8T5azQEOkzQOakb9BeY08ury6nphuh161L6TnxPZ97SfYKQvay1OWAo7oy2fc9iyoKWCM-Ft3TuF4F8fEnWuP0Pk8oMyHpa4YZKJvpj5kmFTuRG5mTvLUxmAzoDqD7AszfSZ20lLvRQZMkUHZE-N2PQv7DbREJ6wULfHR-pjxGQcqWpS44ZE4h2j-Tp230NRWoftM1vyWFYx8Df_cH37QdAvW_ZnVALQWRDxNqpFgCJ5TZ9tof_vXomtqZpeV2g_i8Vg4Glc7vuZR3rx7foe11Fpk1ZacwhC32hqwOYbVAcelhzMTpUrSjl8h5yQxZ0L8kim9IQwxIO8jEXePzWfjhRYIIsusrthg3IUyqQ8ztCkFT1mJo0NT0RPKyQCXygG7bCgRc0B3xBZk7ZHMxzuRV9Cp7GeEHJe8m-PASvLMXaxNkPqdmraes9YKffcAxZykOj1gm17bGu02dGsEznisCbHnUA8ie8H6SrWyKbB_DX1lO_Ngk-OpGHjcA_TyZHVFDWJfhtJhv2u7HiiBV10p7XvXH0P0396wBagBHLj0b5lVss9eYT6fkSbgRDECO7-bcSLjFNsyH-7E6YLjIBH9yLTLdugEB56nSysPcA8g5XxKQwtPJh7bnpbbYQlFakcxmbV_UiEX6BmnMJwZM8gVJukUPS1M1HHewomc0oDRrdrkZQcmNrR9JmL68LF5JhNwZrXPS4U9T02i3kwOoIhlxu15Xwc3IBBndQV-IpS2Vc4cQVx-aS2kQrx4p_zMDDJ7M2ybGtuCuy-LwegnTkjNamnxsXs_2Jn4Pom0-A0gTxiiQbMnbMVHX1S9l_kmFUTjPjp7h_dRgr6P-QHl60lCHKgSWw84eZk9OxY3Xvp8goGI5j7fXK0_hxWRDb34uzgvNn0_4E2eH5but9No9m4bBEWze0Ow2espC3lQKVjIf2T6RvK7q96Zb_s8f4uNktYJH4vUma3O-HZhdS2_6nPUOd4svVCjC7IUvcd8gDlDtag8Ve_hcag8cxvBGVtalbLyqdFssYe1khLheUMIsSOKySfa36x0eM1Hi_6PwFt2wfzbKYGr4VJ9pRKnF7hgNzuMROAjB86Tn56NqM9Z3JfoQNWCBOjIcsdlqUPoY8hOdH9mYwoDG23o_P0uoqLQ6gBF7LmyF0XLRQCpRYgs06rDib5M6EySFloY_NBBtJnwG6CGVK-8a46kXRXYiiK5QrwsvKhlHX_4DYREAgU_X7ceaHldJt2vOxcwMV66v8zoAXDfDvXV0h0jgygK67DkK6ZckFjBubAGhhSdNTdapGlg1qtnit5JZdhwZNdaLR3vCEHNvCj1wtNglLQp6flemqqBVbT5nhKxMNibKo3F8yabDkYSUEwF8ZZZHePbLihGZabA3yXTexG0Zl2gS_4zfHeGGrH34WSIW_aCOOcnPSntCaNOOUkiAzepEJ22RbysytJLiLD-dQw8VUP6OUXvBU60eBVxkhSZblBkJc8qBiFBzn7viuIIEWjLq6Ebrt_ScoL6S5iry2FKYp5VlR1qIXjTFnbhsbpd-_yqNOVFomze5iEOFKCGTWbpwUlOeoYZqnSdOv3-EzgHGMHIsAM8NQaWl9X0xEbenz4pLRjsHu_mM_DTuVCE5SDVEXNkWJc4rPNkoPw5p1sENT5V_66zCfacejV9LgsKOQNuSj5UuG9W0S9_W-lf-sbgQrJnXlGtwaO7F9VwhgRkCngAaILndz7eGeKZucS2gKROn5baAt1jPLcAii6NQUvSRY9I1AKj0Y1HAgBTOHXgRCZ1Q==
+            gAAAAABq9Y1TqI3_NGGOrNF3Q0JcjviDPEgIKZb4r4cnfVzK6iBC4fquYLw7nW4W-j_fRO9bQcJEKhp9Rf6GSaKSLpQKCpVZPYFH67EkOWDb_dYB0u9NdQA6PDcrNS0CaBa8FvZvNe6FhK5Bb2YLOb24MFC1cVwT8jtQF-gSKCOn8Hnjl1nkH_5PQGWw93OPTsU3xi2aRonV1CyzmAvV_Y93ZavSGa9HWb6sByNqjQN-QLE11uSFKxxtPzLmWEqhK8yULi9jcI8jqP_3okYa0yY85KDdI72CQhe-Q76Ovv8_CwzGvk-o1IQlhLgYOLZXYAAZ6aljxpwYAYV_yP9kjwmWHP1ZS4G-wUXg-tNNSHXZFQ_TEUf9cVrpjbMQUlXMdgyDzUHt_AtU4230PyFXjVZ4bUen2c4Li-1XxKT_RscbILYEmNQus5uXOts-AKmW2BVcieakSvLqb798wZpIlVJ5jFYCVyvrgvHQgECZMKnf2saZ-53O1a6fTjbXd4nklTPUn_J0EXF9KjYDk5QWvkKuesmEf-IW3AcMw8NlqdEgWdg6QolBO29zVh0Hh0IkQkAbWjOgnv8Ln1XFid-_yDi2jpHxWgtNqPE12nQ33kJpGI3Dd25v8Zuk7gZ6SZpf4MkdbscOkdcJriTilSUXSkrTWK7F9Cy8h4gs-xgcwNGUgZ6pVMAfAJyyUbJx3Odh3yH0MH5c_Pi_nYlqzESxYf1tflH3wN5JGNTwW2jvKTLUpxOl1-pnYucCl-mmiJrepGSLhLBe8eRIf6Z4I3ifVJlFwH9ICCA1Kp414jUr4x4BqQUcHRJXBvqgSyCgXTih_YKdc-_vZsePrgKh3xgDnMv2VsKBWD5cIll7J7nDmCDGJRQXI54Dvu51ydkuHKsZgzLwlDTyRhcmyrFz61atysMnfBYHQIEYU__oZeDlan1m-JS__ieB_3DZXF5BL79ZBdiZd8AqZuZefgs0JnJfrVwl9IeVrqYf_eGvy1VTRztcEyS05eAzchUlUu973qnIOFKFdJEUUtM75RuDW3TztJwrZKp9oNm0tLXkew6dOeU1z6CqG6_AkVioR3zdVs2t6W_eM9hnftzqm1JBHZn6FEWLvg-MEUd7X4O_jBmux1onCyzNXACxwI12QZ24z4gUDzO0gI2sEwjIN1tMfBPSBjyl6KgFBosPdvrm-peLWr66pRYPtZh7yYA4G1EiXpxrIrdwCBs8DEVb6bE8UVzVQmbiMy_uh3UBh7eliDatTQJ8FtE6-koECynPOcbGwLjpHrXN3tBSgrQLzDPJtgOtC0souEjkMZTjq1WbqRefE0Crzg1umWaaxoIcdrUNmUjU1jvypA6Fu87XxlyoVsGp72G7awX0eojhbO4cD9WL9Ik-9rb2uDQTl0qMjcUA6dZ49B3yVAbmHuiFuj2ofzdJeS0DCNEOyFOYfnkuZQvc-YKsBnVeVGhJgVPUSVS9y-gF3n1Doi9ECMJBzwEprRHO5-NQg64YJaY54s6nzvojgf2ZdOHE-qae5jCjpFSOuv4YeCzgLB0ljVpk6GUkIbYIanN6uXoslzm2BkIUEp20dTufFjCvagJtgO33n1qm4tDOLbdM4087faUqM1d6mjCd-akOf4Y9iyu_WgB-8AA4Z6vS7qHtDhJdCCYP2yaRzXIW2vBRK95ryrcWamx7kQRAwwM6BIYSi8Uv_EJFqE7bj9ihP84Biylmjc4XoSCmgGXtDsOyzilPyTARn2AqrvxVzuhwZrQ8h9x1G-6WeRCpwQKCqulY9q4mXHo_BkTy2IPQokfhZw4q2dKsJseLQfZAlTB_6xU2BPaZe4ayTD-EQ1YYRU2ELY9EeRgvNVfDVhDpVlbjpP2fmkAq5pQS-WgawDMO9djV7ivUL3MNAd21rbaWsPW-Csj-556BqNlR-VpVbPGxqJQQ92RDE7BZTZk6uGVEyM5Bsd0R5pLFzJjZI2nTxepfD7GOWMwwNcXYiQXXJTm2s24hssRnbiDUyGtpstPzDkOBMKyz5FR6IM4uCOuwUCR4iI4yZpHbF-NaYQE-I9jsAAc7WTZjqF5cgNHVzSe09ucYhH3aVGhnXGQjfjBGDTs1tmkcumOB2hRuW7CK7dgxFNI36knnpZsnXHDr4Kg2Z9yAQZLZS37OZN4yy4w3ZcZob7lpy9mAcZeFPYz66Gkn2GQdyW5z4DfzqH6WuWGKPeQeTOfQmleJq5CO8GapoCA154ui2ncG6g3NFEPxOQ9l0sQ8FKW0iWp93FCS_ByackFV7p5ZPxXE15fOJLsLE3n2ygUiTs1XAFkkvHuBv5WWwRIhUyNjttQxOzM9G8pfCSEgLYZHPA==
           type: reasoning
-        - id: cu_0c3e1d2366ce5dcf006af4a6b83c8887d2bda4a44e5415615f
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+        - id: cu_0ec06a3bcf0be314006af58d50df2887d2a7463e05f2960e83
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           status: completed
           type: computer_call
           actions:
           - type: screenshot
         - type: computer_call_output
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           output:
             type: computer_screenshot
             image_url: >-
               data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABQAAAAMgCAIAAADz+lisAAALuElEQVR4nO3BgQAAAADDoPlTH+AKVQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAG+XSAAFMvxSRAAAAAElFTkSuQmCC
             detail: original
-        - id: cu_0c3e1d2366ce5dcf006af4a6badda087d2aad00eeee22e403a
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+        - id: cu_0ec06a3bcf0be314006af58d559f6487d2ac1ef046e141458b
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
           status: completed
           type: computer_call
           actions:
@@ -384,7 +384,7 @@ interactions:
           - text: hello
             type: type
         - type: computer_call_output
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
           output:
             type: computer_screenshot
             image_url: >-
@@ -417,7 +417,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "2485"
+      - "1488"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -427,16 +427,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0c3e1d2366ce5dcf006af4a6bbdd3887d2bed1ff6038e3477f
+        id: resp_0ec06a3bcf0be314006af58d5732b487d2ae2da2598f7fbac2
         object: response
-        created_at: 1794418364
+        created_at: 1794477399
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794418365
+        completed_at: 1794477400
         error: null
         frequency_penalty: 0.0
         image:
@@ -455,7 +455,7 @@ interactions:
         model: gpt-5.5-2026-04-23
         moderation: null
         output:
-        - id: msg_0c3e1d2366ce5dcf006af4a6bda9c087d28918e3bcce8599bb
+        - id: msg_0ec06a3bcf0be314006af58d581bb887d2a9ee5ebb2250310c
           type: message
           status: completed
           content:
@@ -503,17 +503,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 3718
+          input_tokens: 3724
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 1792
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 3723
+          total_tokens: 3729
         user: null
         metadata: {}
-  recorded_at: 2026-11-11T17:32:46.342362+00:00
+  recorded_at: 2026-11-12T09:56:40.669492+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -525,7 +525,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "21611"
+      - "21208"
       content-type:
       - application/json
       host:
@@ -542,17 +542,17 @@ interactions:
           content: >-
             Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
             Do nothing else.
-        - id: rs_0c3e1d2366ce5dcf006af4a6b7494487d2854ef6eb78ad44c8
+        - id: rs_0ec06a3bcf0be314006af58d4fe10887d287efac01e0b0bdf4
           summary: []
           encrypted_content: >-
-            gAAAAABq9Ka50WUe3sHNhBqBdT7sEWTz4sVlxzh25F8PRRw7ohVoUHNZaXd5n6yZOxf-SfmNf3T_vZDx-v4Fh3_X9jHVHsfQ0ZePTDeiexLRXWlszUt7H8Plha_ByGR_DlePYgfZvazvmCtfs2K4FEdiIVtBCYKVnZHL7qzUKPvJMyId2U1gipdqQlC7EXkr_Lcu-pZdAqxHoaDYAtlv66lLGFGlnJNrJ89l-eLctMM7gqlndIbgFcwwJZNeYz294xEKqA5UsKQySxU8uu8JVLLEU6zRFXUrfHYFBmXn7h1mQV0fAw9KVuMzVAk_iJYY8fj9XUDSucDDI6BSuHtTVQfTWcW8phpHDD2BQ8xaJsGvx-_SfK9TGxH49PynGVe_lzkRw20kGeUHtl0FXmkddOicGYxlpC51U_aTW6BmqBfsd3fyiFOSbJxv5xwe7G1XA2vqe1YUfhcEUXEM0ESF0cVyAjeXk4MZpfpgIqfxrcb6c3wlTfYJ2uDNgZfbbaYODmVKF56sXFmqDncukdaorwaTzAmIJa2LtS5966gnCAc0O6nQpqZngls8xhAoFt-9D362QhyYHn70TRmaYsp66Gtzm8RtBM-Y62A_noPgFT4YM0Uq21XpOgV1yG6aLAS6jZzdhHEcSL1GdGrRxLvT_3GkEcoe9U1y96xe-ndO8T5azQEOkzQOakb9BeY08ury6nphuh161L6TnxPZ97SfYKQvay1OWAo7oy2fc9iyoKWCM-Ft3TuF4F8fEnWuP0Pk8oMyHpa4YZKJvpj5kmFTuRG5mTvLUxmAzoDqD7AszfSZ20lLvRQZMkUHZE-N2PQv7DbREJ6wULfHR-pjxGQcqWpS44ZE4h2j-Tp230NRWoftM1vyWFYx8Df_cH37QdAvW_ZnVALQWRDxNqpFgCJ5TZ9tof_vXomtqZpeV2g_i8Vg4Glc7vuZR3rx7foe11Fpk1ZacwhC32hqwOYbVAcelhzMTpUrSjl8h5yQxZ0L8kim9IQwxIO8jEXePzWfjhRYIIsusrthg3IUyqQ8ztCkFT1mJo0NT0RPKyQCXygG7bCgRc0B3xBZk7ZHMxzuRV9Cp7GeEHJe8m-PASvLMXaxNkPqdmraes9YKffcAxZykOj1gm17bGu02dGsEznisCbHnUA8ie8H6SrWyKbB_DX1lO_Ngk-OpGHjcA_TyZHVFDWJfhtJhv2u7HiiBV10p7XvXH0P0396wBagBHLj0b5lVss9eYT6fkSbgRDECO7-bcSLjFNsyH-7E6YLjIBH9yLTLdugEB56nSysPcA8g5XxKQwtPJh7bnpbbYQlFakcxmbV_UiEX6BmnMJwZM8gVJukUPS1M1HHewomc0oDRrdrkZQcmNrR9JmL68LF5JhNwZrXPS4U9T02i3kwOoIhlxu15Xwc3IBBndQV-IpS2Vc4cQVx-aS2kQrx4p_zMDDJ7M2ybGtuCuy-LwegnTkjNamnxsXs_2Jn4Pom0-A0gTxiiQbMnbMVHX1S9l_kmFUTjPjp7h_dRgr6P-QHl60lCHKgSWw84eZk9OxY3Xvp8goGI5j7fXK0_hxWRDb34uzgvNn0_4E2eH5but9No9m4bBEWze0Ow2espC3lQKVjIf2T6RvK7q96Zb_s8f4uNktYJH4vUma3O-HZhdS2_6nPUOd4svVCjC7IUvcd8gDlDtag8Ve_hcag8cxvBGVtalbLyqdFssYe1khLheUMIsSOKySfa36x0eM1Hi_6PwFt2wfzbKYGr4VJ9pRKnF7hgNzuMROAjB86Tn56NqM9Z3JfoQNWCBOjIcsdlqUPoY8hOdH9mYwoDG23o_P0uoqLQ6gBF7LmyF0XLRQCpRYgs06rDib5M6EySFloY_NBBtJnwG6CGVK-8a46kXRXYiiK5QrwsvKhlHX_4DYREAgU_X7ceaHldJt2vOxcwMV66v8zoAXDfDvXV0h0jgygK67DkK6ZckFjBubAGhhSdNTdapGlg1qtnit5JZdhwZNdaLR3vCEHNvCj1wtNglLQp6flemqqBVbT5nhKxMNibKo3F8yabDkYSUEwF8ZZZHePbLihGZabA3yXTexG0Zl2gS_4zfHeGGrH34WSIW_aCOOcnPSntCaNOOUkiAzepEJ22RbysytJLiLD-dQw8VUP6OUXvBU60eBVxkhSZblBkJc8qBiFBzn7viuIIEWjLq6Ebrt_ScoL6S5iry2FKYp5VlR1qIXjTFnbhsbpd-_yqNOVFomze5iEOFKCGTWbpwUlOeoYZqnSdOv3-EzgHGMHIsAM8NQaWl9X0xEbenz4pLRjsHu_mM_DTuVCE5SDVEXNkWJc4rPNkoPw5p1sENT5V_66zCfacejV9LgsKOQNuSj5UuG9W0S9_W-lf-sbgQrJnXlGtwaO7F9VwhgRkCngAaILndz7eGeKZucS2gKROn5baAt1jPLcAii6NQUvSRY9I1AKj0Y1HAgBTOHXgRCZ1Q==
+            gAAAAABq9Y1TqI3_NGGOrNF3Q0JcjviDPEgIKZb4r4cnfVzK6iBC4fquYLw7nW4W-j_fRO9bQcJEKhp9Rf6GSaKSLpQKCpVZPYFH67EkOWDb_dYB0u9NdQA6PDcrNS0CaBa8FvZvNe6FhK5Bb2YLOb24MFC1cVwT8jtQF-gSKCOn8Hnjl1nkH_5PQGWw93OPTsU3xi2aRonV1CyzmAvV_Y93ZavSGa9HWb6sByNqjQN-QLE11uSFKxxtPzLmWEqhK8yULi9jcI8jqP_3okYa0yY85KDdI72CQhe-Q76Ovv8_CwzGvk-o1IQlhLgYOLZXYAAZ6aljxpwYAYV_yP9kjwmWHP1ZS4G-wUXg-tNNSHXZFQ_TEUf9cVrpjbMQUlXMdgyDzUHt_AtU4230PyFXjVZ4bUen2c4Li-1XxKT_RscbILYEmNQus5uXOts-AKmW2BVcieakSvLqb798wZpIlVJ5jFYCVyvrgvHQgECZMKnf2saZ-53O1a6fTjbXd4nklTPUn_J0EXF9KjYDk5QWvkKuesmEf-IW3AcMw8NlqdEgWdg6QolBO29zVh0Hh0IkQkAbWjOgnv8Ln1XFid-_yDi2jpHxWgtNqPE12nQ33kJpGI3Dd25v8Zuk7gZ6SZpf4MkdbscOkdcJriTilSUXSkrTWK7F9Cy8h4gs-xgcwNGUgZ6pVMAfAJyyUbJx3Odh3yH0MH5c_Pi_nYlqzESxYf1tflH3wN5JGNTwW2jvKTLUpxOl1-pnYucCl-mmiJrepGSLhLBe8eRIf6Z4I3ifVJlFwH9ICCA1Kp414jUr4x4BqQUcHRJXBvqgSyCgXTih_YKdc-_vZsePrgKh3xgDnMv2VsKBWD5cIll7J7nDmCDGJRQXI54Dvu51ydkuHKsZgzLwlDTyRhcmyrFz61atysMnfBYHQIEYU__oZeDlan1m-JS__ieB_3DZXF5BL79ZBdiZd8AqZuZefgs0JnJfrVwl9IeVrqYf_eGvy1VTRztcEyS05eAzchUlUu973qnIOFKFdJEUUtM75RuDW3TztJwrZKp9oNm0tLXkew6dOeU1z6CqG6_AkVioR3zdVs2t6W_eM9hnftzqm1JBHZn6FEWLvg-MEUd7X4O_jBmux1onCyzNXACxwI12QZ24z4gUDzO0gI2sEwjIN1tMfBPSBjyl6KgFBosPdvrm-peLWr66pRYPtZh7yYA4G1EiXpxrIrdwCBs8DEVb6bE8UVzVQmbiMy_uh3UBh7eliDatTQJ8FtE6-koECynPOcbGwLjpHrXN3tBSgrQLzDPJtgOtC0souEjkMZTjq1WbqRefE0Crzg1umWaaxoIcdrUNmUjU1jvypA6Fu87XxlyoVsGp72G7awX0eojhbO4cD9WL9Ik-9rb2uDQTl0qMjcUA6dZ49B3yVAbmHuiFuj2ofzdJeS0DCNEOyFOYfnkuZQvc-YKsBnVeVGhJgVPUSVS9y-gF3n1Doi9ECMJBzwEprRHO5-NQg64YJaY54s6nzvojgf2ZdOHE-qae5jCjpFSOuv4YeCzgLB0ljVpk6GUkIbYIanN6uXoslzm2BkIUEp20dTufFjCvagJtgO33n1qm4tDOLbdM4087faUqM1d6mjCd-akOf4Y9iyu_WgB-8AA4Z6vS7qHtDhJdCCYP2yaRzXIW2vBRK95ryrcWamx7kQRAwwM6BIYSi8Uv_EJFqE7bj9ihP84Biylmjc4XoSCmgGXtDsOyzilPyTARn2AqrvxVzuhwZrQ8h9x1G-6WeRCpwQKCqulY9q4mXHo_BkTy2IPQokfhZw4q2dKsJseLQfZAlTB_6xU2BPaZe4ayTD-EQ1YYRU2ELY9EeRgvNVfDVhDpVlbjpP2fmkAq5pQS-WgawDMO9djV7ivUL3MNAd21rbaWsPW-Csj-556BqNlR-VpVbPGxqJQQ92RDE7BZTZk6uGVEyM5Bsd0R5pLFzJjZI2nTxepfD7GOWMwwNcXYiQXXJTm2s24hssRnbiDUyGtpstPzDkOBMKyz5FR6IM4uCOuwUCR4iI4yZpHbF-NaYQE-I9jsAAc7WTZjqF5cgNHVzSe09ucYhH3aVGhnXGQjfjBGDTs1tmkcumOB2hRuW7CK7dgxFNI36knnpZsnXHDr4Kg2Z9yAQZLZS37OZN4yy4w3ZcZob7lpy9mAcZeFPYz66Gkn2GQdyW5z4DfzqH6WuWGKPeQeTOfQmleJq5CO8GapoCA154ui2ncG6g3NFEPxOQ9l0sQ8FKW0iWp93FCS_ByackFV7p5ZPxXE15fOJLsLE3n2ygUiTs1XAFkkvHuBv5WWwRIhUyNjttQxOzM9G8pfCSEgLYZHPA==
           type: reasoning
         - name: computer
           arguments: "{\"actions\":[{\"type\":\"screenshot\"}]}"
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           type: function_call
         - type: function_call_output
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           output:
           - type: input_text
             text: Ran 1 action. Screenshot attached (1280x800).
@@ -562,10 +562,10 @@ interactions:
             detail: auto
         - name: computer
           arguments: "{\"actions\":[{\"type\":\"click\",\"x\":100,\"y\":200,\"button\":\"left\",\"modifiers\":[]},{\"type\":\"type\",\"text\":\"hello\"}]}"
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
           type: function_call
         - type: function_call_output
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
           output:
           - type: input_text
             text: Ran 2 actions. Screenshot attached (1280x800).
@@ -574,7 +574,7 @@ interactions:
             type: input_image
             detail: auto
         - role: assistant
-          id: msg_0c3e1d2366ce5dcf006af4a6bda9c087d28918e3bcce8599bb
+          id: msg_0ec06a3bcf0be314006af58d581bb887d2a9ee5ebb2250310c
           content:
           - text: done
             type: output_text
@@ -669,7 +669,6 @@ interactions:
                     description: "Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -699,7 +698,6 @@ interactions:
                     description: "The points to drag through: at least a start and an end."
                     items:
                       $ref: "#/$defs/Point"
-                    maxItems: 50
                     minItems: 2
                     type: array
                   modifiers:
@@ -707,7 +705,6 @@ interactions:
                     description: "Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -725,13 +722,11 @@ interactions:
                     description: One key per entry, held together.
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   seconds:
-                    description: How long to hold them, up to 30 seconds.
+                    description: How long to hold them.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -799,7 +794,6 @@ interactions:
                     description: "Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -832,13 +826,11 @@ interactions:
                     description: "One key per entry, pressed together: `[\"enter\"]`, `[\"ctrl\", \"a\"]`, `[\"super\", \"shift\", \"t\"]`."
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   repeat:
                     default: 1
                     description: How many times to press the combination.
-                    maximum: 100
                     minimum: 1
                     type: integer
                 required:
@@ -902,7 +894,6 @@ interactions:
                   amount:
                     default: 3
                     description: Mouse-wheel clicks; one click scrolls about three lines.
-                    maximum: 50
                     minimum: 1
                     type: integer
                   x:
@@ -929,7 +920,6 @@ interactions:
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -948,8 +938,6 @@ interactions:
                     default: type
                     type: string
                   text:
-                    description: Up to 2,000 characters; type longer text in several actions.
-                    maxLength: 2000
                     minLength: 1
                     type: string
                 required:
@@ -966,9 +954,8 @@ interactions:
                     type: string
                   seconds:
                     default: 1
-                    description: How long to wait, up to 30 seconds.
+                    description: How long to wait.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -1008,7 +995,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "2392"
+      - "2180"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -1018,16 +1005,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0c3e1d2366ce5dcf006af4a6be825087d298f80845ac3b6d4e
+        id: resp_0ec06a3bcf0be314006af58d58d88487d29dff378639131071
         object: response
-        created_at: 1794418366
+        created_at: 1794477401
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794418368
+        completed_at: 1794477402
         error: null
         frequency_penalty: 0.0
         image:
@@ -1046,17 +1033,11 @@ interactions:
         model: gpt-5.5-2026-04-23
         moderation: null
         output:
-        - id: rs_0c3e1d2366ce5dcf006af4a6bfce1087d28726219bd14a9847
-          type: reasoning
-          content: []
-          encrypted_content: >-
-            gAAAAABq9KbAHvJJVnvk5XneHWtYCAT2gHbOJrIF71aSDoTLm7WyE5lPe7mtb1TfF-7oHR8dsUoZRiJNwDtrTDCyXvGye9W3sau9oNylCg1HqBmMGrPGZntv_HE7mtggK_tgq-ZmA7_P9cK6ETPEZIWW_MWJYMo7o1N6Tfgy7rgDvf-oWCOBqzho1YUX4ApzEHMf68xrrR00MHC0wCKGnKJoMBJK1RL5wO2FSrS0BTfEt_Ut9ZyO5Xm57ej79PU_Q-wcFL6Bs0GfXpOAVw8ikuVnx1TXAT-mgg0jT__cY65T3SVjku4DSYVplpGLhQI5DsR6qgspHzwMl4QbUTRdBu34x4ZCfYar9tFNMOvCK_mu5yqE2g4UDoEgPV5qB2tmVmEwWH4DDw_A9JqrRZjYK-gSh9imsBJ11SzDwmQOfOQqChjkBKp6KNFAX154dcUvI4HfKjJUUIl3agHK2XHd5f1V92Ty6BNbFLwZiatBf9jQQdxe0rplQIU9h_hKVYYbtenwCyNaL_skj6tiQyhTEGANT0UTy5-trhJYFO5jr4MYxIrH9J1zCkIFOBL_9eU4ilDydYvNyr89izPTvd8WhjpsD3WbowZ5tmhG97ovhYghCUbJdnAoXgy1GyVorY1P4IoTf3aAdc-s8-vvQqmxA1c8DXnyFZPV3jHSe4ZCus0TXPElswuhJKnJ8SLcKKQtp6Vm8uUSpOXKOcc37dBJDZleGoXrmO_zHtc98t5cas1-1O0q1wLG3aPwDm3b3LU72hG2-MWvy0gTpoyZyrS5qGf0Ircg0ql2hFNqtBv8rerb4_WKlPCdCBJZlfxHVzhZsOodQNjwjMCdQS7ui_HV1GBLE66_prTA4rB5GucPesnn1ltmGmqKPXgULdCOWWuvAQbnBAtTlc7OD1T-7j31VTzuF8waBCCM6snrWIwIaPfKLJ6GdlBli63rTdVT7l2KBwBQAsVBb0RTJyh09EahBWwkKnnbiPdRC8AtPfuC1LkH0jMH8Uk6Dcd_8apdPvaEJkoPrmHWH6RVlGVqf5F4LcAdSgRZyZEtb_-lbQsZd98tBOsBcJCCVikkdcOix44-brEId_bUk7qb1WBgJDb_jVe1c9jno4Lp1UjBBpdLiIcuSIbOMKSQpsm0tCxYOkTrvAnDUFcrXSVHtZehm-B2yBkVh2l3fJo6oN2Kxgz_inAKE9lmUNR72gdkuu7-STu1AgAl5LzoFsDFRxuRiLRFX50zNGjFzL9eFof8ttmejkrnHfhle0UXd0VsYUB6iTTagbAFVn64Fbc_SAzi7aSp6CLwQxAHdObq8Spr7qndIPD6UCVyL8mydKx4zZcXCx9--AQrDwQUUHZccz5j2nNue5vCBw9pLdAuuupmjDnYq4L9A3zScBlU8fbGjr5RNPgIftnkZomqANy7qMD8zu_JAsFWUggNmKidCuBLsLwJvtcrcpMpZyKPHUy8S7wuw7Yo96o75BhfC5cT8TC3XvtSCMNjupW1jo7TUoxRwA5lr--mk0OwDyyo7dp-_HFM-nhKIPxlerI5CMM1EntbWdjPkvOrPwtVpo1BmZNf2iUTJoZ9bPRFNrtNbHkPdOuzs1UtD3dNC0Hkb-VzIbz4fnXnQ4BF80G3kgWeDhfRezLdakzg_op-NhdmAvtrxCL31kSgihfMkCKWkYNlMCwOiHx-FRF-ps4rJOY9G8rbgDw05CHDE0Mrz9VseN0=
-          summary: []
-        - id: fc_0c3e1d2366ce5dcf006af4a6bffad087d2b37bfc503e60988c
+        - id: fc_0ec06a3bcf0be314006af58d5a454887d2b46f7ef371a4db16
           type: function_call
           status: completed
           arguments: "{\"actions\":[{\"type\":\"keypress\",\"keys\":[\"enter\"]}]}"
-          call_id: call_pGs4AoGC9XhQSI2hhM8rcW0q
+          call_id: call_nJx83mLGUh6osrNGrcY6Ahpm
           name: computer
         parallel_tool_calls: true
         presence_penalty: 0.0
@@ -1167,7 +1148,6 @@ interactions:
                     description: "Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1197,7 +1177,6 @@ interactions:
                     description: "The points to drag through: at least a start and an end."
                     items:
                       $ref: "#/$defs/Point"
-                    maxItems: 50
                     minItems: 2
                     type: array
                   modifiers:
@@ -1205,7 +1184,6 @@ interactions:
                     description: "Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1223,13 +1201,11 @@ interactions:
                     description: One key per entry, held together.
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   seconds:
-                    description: How long to hold them, up to 30 seconds.
+                    description: How long to hold them.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -1297,7 +1273,6 @@ interactions:
                     description: "Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1330,13 +1305,11 @@ interactions:
                     description: "One key per entry, pressed together: `[\"enter\"]`, `[\"ctrl\", \"a\"]`, `[\"super\", \"shift\", \"t\"]`."
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   repeat:
                     default: 1
                     description: How many times to press the combination.
-                    maximum: 100
                     minimum: 1
                     type: integer
                 required:
@@ -1400,7 +1373,6 @@ interactions:
                   amount:
                     default: 3
                     description: Mouse-wheel clicks; one click scrolls about three lines.
-                    maximum: 50
                     minimum: 1
                     type: integer
                   x:
@@ -1427,7 +1399,6 @@ interactions:
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1446,8 +1417,6 @@ interactions:
                     default: type
                     type: string
                   text:
-                    description: Up to 2,000 characters; type longer text in several actions.
-                    maxLength: 2000
                     minLength: 1
                     type: string
                 required:
@@ -1464,9 +1433,8 @@ interactions:
                     type: string
                   seconds:
                     default: 1
-                    description: How long to wait, up to 30 seconds.
+                    description: How long to wait.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -1494,17 +1462,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 4348
+          input_tokens: 4239
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
-          output_tokens: 37
+          output_tokens: 27
           output_tokens_details:
-            reasoning_tokens: 8
-          total_tokens: 4385
+            reasoning_tokens: 0
+          total_tokens: 4266
         user: null
         metadata: {}
-  recorded_at: 2026-11-11T17:32:48.888493+00:00
+  recorded_at: 2026-11-12T09:56:43.017916+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -1516,7 +1484,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "27984"
+      - "25743"
       content-type:
       - application/json
       host:
@@ -1533,17 +1501,17 @@ interactions:
           content: >-
             Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
             Do nothing else.
-        - id: rs_0c3e1d2366ce5dcf006af4a6b7494487d2854ef6eb78ad44c8
+        - id: rs_0ec06a3bcf0be314006af58d4fe10887d287efac01e0b0bdf4
           summary: []
           encrypted_content: >-
-            gAAAAABq9Ka50WUe3sHNhBqBdT7sEWTz4sVlxzh25F8PRRw7ohVoUHNZaXd5n6yZOxf-SfmNf3T_vZDx-v4Fh3_X9jHVHsfQ0ZePTDeiexLRXWlszUt7H8Plha_ByGR_DlePYgfZvazvmCtfs2K4FEdiIVtBCYKVnZHL7qzUKPvJMyId2U1gipdqQlC7EXkr_Lcu-pZdAqxHoaDYAtlv66lLGFGlnJNrJ89l-eLctMM7gqlndIbgFcwwJZNeYz294xEKqA5UsKQySxU8uu8JVLLEU6zRFXUrfHYFBmXn7h1mQV0fAw9KVuMzVAk_iJYY8fj9XUDSucDDI6BSuHtTVQfTWcW8phpHDD2BQ8xaJsGvx-_SfK9TGxH49PynGVe_lzkRw20kGeUHtl0FXmkddOicGYxlpC51U_aTW6BmqBfsd3fyiFOSbJxv5xwe7G1XA2vqe1YUfhcEUXEM0ESF0cVyAjeXk4MZpfpgIqfxrcb6c3wlTfYJ2uDNgZfbbaYODmVKF56sXFmqDncukdaorwaTzAmIJa2LtS5966gnCAc0O6nQpqZngls8xhAoFt-9D362QhyYHn70TRmaYsp66Gtzm8RtBM-Y62A_noPgFT4YM0Uq21XpOgV1yG6aLAS6jZzdhHEcSL1GdGrRxLvT_3GkEcoe9U1y96xe-ndO8T5azQEOkzQOakb9BeY08ury6nphuh161L6TnxPZ97SfYKQvay1OWAo7oy2fc9iyoKWCM-Ft3TuF4F8fEnWuP0Pk8oMyHpa4YZKJvpj5kmFTuRG5mTvLUxmAzoDqD7AszfSZ20lLvRQZMkUHZE-N2PQv7DbREJ6wULfHR-pjxGQcqWpS44ZE4h2j-Tp230NRWoftM1vyWFYx8Df_cH37QdAvW_ZnVALQWRDxNqpFgCJ5TZ9tof_vXomtqZpeV2g_i8Vg4Glc7vuZR3rx7foe11Fpk1ZacwhC32hqwOYbVAcelhzMTpUrSjl8h5yQxZ0L8kim9IQwxIO8jEXePzWfjhRYIIsusrthg3IUyqQ8ztCkFT1mJo0NT0RPKyQCXygG7bCgRc0B3xBZk7ZHMxzuRV9Cp7GeEHJe8m-PASvLMXaxNkPqdmraes9YKffcAxZykOj1gm17bGu02dGsEznisCbHnUA8ie8H6SrWyKbB_DX1lO_Ngk-OpGHjcA_TyZHVFDWJfhtJhv2u7HiiBV10p7XvXH0P0396wBagBHLj0b5lVss9eYT6fkSbgRDECO7-bcSLjFNsyH-7E6YLjIBH9yLTLdugEB56nSysPcA8g5XxKQwtPJh7bnpbbYQlFakcxmbV_UiEX6BmnMJwZM8gVJukUPS1M1HHewomc0oDRrdrkZQcmNrR9JmL68LF5JhNwZrXPS4U9T02i3kwOoIhlxu15Xwc3IBBndQV-IpS2Vc4cQVx-aS2kQrx4p_zMDDJ7M2ybGtuCuy-LwegnTkjNamnxsXs_2Jn4Pom0-A0gTxiiQbMnbMVHX1S9l_kmFUTjPjp7h_dRgr6P-QHl60lCHKgSWw84eZk9OxY3Xvp8goGI5j7fXK0_hxWRDb34uzgvNn0_4E2eH5but9No9m4bBEWze0Ow2espC3lQKVjIf2T6RvK7q96Zb_s8f4uNktYJH4vUma3O-HZhdS2_6nPUOd4svVCjC7IUvcd8gDlDtag8Ve_hcag8cxvBGVtalbLyqdFssYe1khLheUMIsSOKySfa36x0eM1Hi_6PwFt2wfzbKYGr4VJ9pRKnF7hgNzuMROAjB86Tn56NqM9Z3JfoQNWCBOjIcsdlqUPoY8hOdH9mYwoDG23o_P0uoqLQ6gBF7LmyF0XLRQCpRYgs06rDib5M6EySFloY_NBBtJnwG6CGVK-8a46kXRXYiiK5QrwsvKhlHX_4DYREAgU_X7ceaHldJt2vOxcwMV66v8zoAXDfDvXV0h0jgygK67DkK6ZckFjBubAGhhSdNTdapGlg1qtnit5JZdhwZNdaLR3vCEHNvCj1wtNglLQp6flemqqBVbT5nhKxMNibKo3F8yabDkYSUEwF8ZZZHePbLihGZabA3yXTexG0Zl2gS_4zfHeGGrH34WSIW_aCOOcnPSntCaNOOUkiAzepEJ22RbysytJLiLD-dQw8VUP6OUXvBU60eBVxkhSZblBkJc8qBiFBzn7viuIIEWjLq6Ebrt_ScoL6S5iry2FKYp5VlR1qIXjTFnbhsbpd-_yqNOVFomze5iEOFKCGTWbpwUlOeoYZqnSdOv3-EzgHGMHIsAM8NQaWl9X0xEbenz4pLRjsHu_mM_DTuVCE5SDVEXNkWJc4rPNkoPw5p1sENT5V_66zCfacejV9LgsKOQNuSj5UuG9W0S9_W-lf-sbgQrJnXlGtwaO7F9VwhgRkCngAaILndz7eGeKZucS2gKROn5baAt1jPLcAii6NQUvSRY9I1AKj0Y1HAgBTOHXgRCZ1Q==
+            gAAAAABq9Y1TqI3_NGGOrNF3Q0JcjviDPEgIKZb4r4cnfVzK6iBC4fquYLw7nW4W-j_fRO9bQcJEKhp9Rf6GSaKSLpQKCpVZPYFH67EkOWDb_dYB0u9NdQA6PDcrNS0CaBa8FvZvNe6FhK5Bb2YLOb24MFC1cVwT8jtQF-gSKCOn8Hnjl1nkH_5PQGWw93OPTsU3xi2aRonV1CyzmAvV_Y93ZavSGa9HWb6sByNqjQN-QLE11uSFKxxtPzLmWEqhK8yULi9jcI8jqP_3okYa0yY85KDdI72CQhe-Q76Ovv8_CwzGvk-o1IQlhLgYOLZXYAAZ6aljxpwYAYV_yP9kjwmWHP1ZS4G-wUXg-tNNSHXZFQ_TEUf9cVrpjbMQUlXMdgyDzUHt_AtU4230PyFXjVZ4bUen2c4Li-1XxKT_RscbILYEmNQus5uXOts-AKmW2BVcieakSvLqb798wZpIlVJ5jFYCVyvrgvHQgECZMKnf2saZ-53O1a6fTjbXd4nklTPUn_J0EXF9KjYDk5QWvkKuesmEf-IW3AcMw8NlqdEgWdg6QolBO29zVh0Hh0IkQkAbWjOgnv8Ln1XFid-_yDi2jpHxWgtNqPE12nQ33kJpGI3Dd25v8Zuk7gZ6SZpf4MkdbscOkdcJriTilSUXSkrTWK7F9Cy8h4gs-xgcwNGUgZ6pVMAfAJyyUbJx3Odh3yH0MH5c_Pi_nYlqzESxYf1tflH3wN5JGNTwW2jvKTLUpxOl1-pnYucCl-mmiJrepGSLhLBe8eRIf6Z4I3ifVJlFwH9ICCA1Kp414jUr4x4BqQUcHRJXBvqgSyCgXTih_YKdc-_vZsePrgKh3xgDnMv2VsKBWD5cIll7J7nDmCDGJRQXI54Dvu51ydkuHKsZgzLwlDTyRhcmyrFz61atysMnfBYHQIEYU__oZeDlan1m-JS__ieB_3DZXF5BL79ZBdiZd8AqZuZefgs0JnJfrVwl9IeVrqYf_eGvy1VTRztcEyS05eAzchUlUu973qnIOFKFdJEUUtM75RuDW3TztJwrZKp9oNm0tLXkew6dOeU1z6CqG6_AkVioR3zdVs2t6W_eM9hnftzqm1JBHZn6FEWLvg-MEUd7X4O_jBmux1onCyzNXACxwI12QZ24z4gUDzO0gI2sEwjIN1tMfBPSBjyl6KgFBosPdvrm-peLWr66pRYPtZh7yYA4G1EiXpxrIrdwCBs8DEVb6bE8UVzVQmbiMy_uh3UBh7eliDatTQJ8FtE6-koECynPOcbGwLjpHrXN3tBSgrQLzDPJtgOtC0souEjkMZTjq1WbqRefE0Crzg1umWaaxoIcdrUNmUjU1jvypA6Fu87XxlyoVsGp72G7awX0eojhbO4cD9WL9Ik-9rb2uDQTl0qMjcUA6dZ49B3yVAbmHuiFuj2ofzdJeS0DCNEOyFOYfnkuZQvc-YKsBnVeVGhJgVPUSVS9y-gF3n1Doi9ECMJBzwEprRHO5-NQg64YJaY54s6nzvojgf2ZdOHE-qae5jCjpFSOuv4YeCzgLB0ljVpk6GUkIbYIanN6uXoslzm2BkIUEp20dTufFjCvagJtgO33n1qm4tDOLbdM4087faUqM1d6mjCd-akOf4Y9iyu_WgB-8AA4Z6vS7qHtDhJdCCYP2yaRzXIW2vBRK95ryrcWamx7kQRAwwM6BIYSi8Uv_EJFqE7bj9ihP84Biylmjc4XoSCmgGXtDsOyzilPyTARn2AqrvxVzuhwZrQ8h9x1G-6WeRCpwQKCqulY9q4mXHo_BkTy2IPQokfhZw4q2dKsJseLQfZAlTB_6xU2BPaZe4ayTD-EQ1YYRU2ELY9EeRgvNVfDVhDpVlbjpP2fmkAq5pQS-WgawDMO9djV7ivUL3MNAd21rbaWsPW-Csj-556BqNlR-VpVbPGxqJQQ92RDE7BZTZk6uGVEyM5Bsd0R5pLFzJjZI2nTxepfD7GOWMwwNcXYiQXXJTm2s24hssRnbiDUyGtpstPzDkOBMKyz5FR6IM4uCOuwUCR4iI4yZpHbF-NaYQE-I9jsAAc7WTZjqF5cgNHVzSe09ucYhH3aVGhnXGQjfjBGDTs1tmkcumOB2hRuW7CK7dgxFNI36knnpZsnXHDr4Kg2Z9yAQZLZS37OZN4yy4w3ZcZob7lpy9mAcZeFPYz66Gkn2GQdyW5z4DfzqH6WuWGKPeQeTOfQmleJq5CO8GapoCA154ui2ncG6g3NFEPxOQ9l0sQ8FKW0iWp93FCS_ByackFV7p5ZPxXE15fOJLsLE3n2ygUiTs1XAFkkvHuBv5WWwRIhUyNjttQxOzM9G8pfCSEgLYZHPA==
           type: reasoning
         - name: computer
           arguments: "{\"actions\":[{\"type\":\"screenshot\"}]}"
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           type: function_call
         - type: function_call_output
-          call_id: call_9SuKJWSQVDwjNlWyrizxRLIB
+          call_id: call_QXoB5IJkupEaNCf0ggkiwr2H
           output:
           - type: input_text
             text: Ran 1 action. Screenshot attached (1280x800).
@@ -1553,10 +1521,10 @@ interactions:
             detail: auto
         - name: computer
           arguments: "{\"actions\":[{\"type\":\"click\",\"x\":100,\"y\":200,\"button\":\"left\",\"modifiers\":[]},{\"type\":\"type\",\"text\":\"hello\"}]}"
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
           type: function_call
         - type: function_call_output
-          call_id: call_IDnkJvmCNHxHdnWrV02F6lKp
+          call_id: call_rxZBM9myTIQdjYsNRzr6w11M
           output:
           - type: input_text
             text: Ran 2 actions. Screenshot attached (1280x800).
@@ -1565,7 +1533,7 @@ interactions:
             type: input_image
             detail: auto
         - role: assistant
-          id: msg_0c3e1d2366ce5dcf006af4a6bda9c087d28918e3bcce8599bb
+          id: msg_0ec06a3bcf0be314006af58d581bb887d2a9ee5ebb2250310c
           content:
           - text: done
             type: output_text
@@ -1575,18 +1543,13 @@ interactions:
           phase: final_answer
         - role: user
           content: Now press Enter, then reply "done". Do nothing else.
-        - id: rs_0c3e1d2366ce5dcf006af4a6bfce1087d28726219bd14a9847
-          summary: []
-          encrypted_content: >-
-            gAAAAABq9KbAHvJJVnvk5XneHWtYCAT2gHbOJrIF71aSDoTLm7WyE5lPe7mtb1TfF-7oHR8dsUoZRiJNwDtrTDCyXvGye9W3sau9oNylCg1HqBmMGrPGZntv_HE7mtggK_tgq-ZmA7_P9cK6ETPEZIWW_MWJYMo7o1N6Tfgy7rgDvf-oWCOBqzho1YUX4ApzEHMf68xrrR00MHC0wCKGnKJoMBJK1RL5wO2FSrS0BTfEt_Ut9ZyO5Xm57ej79PU_Q-wcFL6Bs0GfXpOAVw8ikuVnx1TXAT-mgg0jT__cY65T3SVjku4DSYVplpGLhQI5DsR6qgspHzwMl4QbUTRdBu34x4ZCfYar9tFNMOvCK_mu5yqE2g4UDoEgPV5qB2tmVmEwWH4DDw_A9JqrRZjYK-gSh9imsBJ11SzDwmQOfOQqChjkBKp6KNFAX154dcUvI4HfKjJUUIl3agHK2XHd5f1V92Ty6BNbFLwZiatBf9jQQdxe0rplQIU9h_hKVYYbtenwCyNaL_skj6tiQyhTEGANT0UTy5-trhJYFO5jr4MYxIrH9J1zCkIFOBL_9eU4ilDydYvNyr89izPTvd8WhjpsD3WbowZ5tmhG97ovhYghCUbJdnAoXgy1GyVorY1P4IoTf3aAdc-s8-vvQqmxA1c8DXnyFZPV3jHSe4ZCus0TXPElswuhJKnJ8SLcKKQtp6Vm8uUSpOXKOcc37dBJDZleGoXrmO_zHtc98t5cas1-1O0q1wLG3aPwDm3b3LU72hG2-MWvy0gTpoyZyrS5qGf0Ircg0ql2hFNqtBv8rerb4_WKlPCdCBJZlfxHVzhZsOodQNjwjMCdQS7ui_HV1GBLE66_prTA4rB5GucPesnn1ltmGmqKPXgULdCOWWuvAQbnBAtTlc7OD1T-7j31VTzuF8waBCCM6snrWIwIaPfKLJ6GdlBli63rTdVT7l2KBwBQAsVBb0RTJyh09EahBWwkKnnbiPdRC8AtPfuC1LkH0jMH8Uk6Dcd_8apdPvaEJkoPrmHWH6RVlGVqf5F4LcAdSgRZyZEtb_-lbQsZd98tBOsBcJCCVikkdcOix44-brEId_bUk7qb1WBgJDb_jVe1c9jno4Lp1UjBBpdLiIcuSIbOMKSQpsm0tCxYOkTrvAnDUFcrXSVHtZehm-B2yBkVh2l3fJo6oN2Kxgz_inAKE9lmUNR72gdkuu7-STu1AgAl5LzoFsDFRxuRiLRFX50zNGjFzL9eFof8ttmejkrnHfhle0UXd0VsYUB6iTTagbAFVn64Fbc_SAzi7aSp6CLwQxAHdObq8Spr7qndIPD6UCVyL8mydKx4zZcXCx9--AQrDwQUUHZccz5j2nNue5vCBw9pLdAuuupmjDnYq4L9A3zScBlU8fbGjr5RNPgIftnkZomqANy7qMD8zu_JAsFWUggNmKidCuBLsLwJvtcrcpMpZyKPHUy8S7wuw7Yo96o75BhfC5cT8TC3XvtSCMNjupW1jo7TUoxRwA5lr--mk0OwDyyo7dp-_HFM-nhKIPxlerI5CMM1EntbWdjPkvOrPwtVpo1BmZNf2iUTJoZ9bPRFNrtNbHkPdOuzs1UtD3dNC0Hkb-VzIbz4fnXnQ4BF80G3kgWeDhfRezLdakzg_op-NhdmAvtrxCL31kSgihfMkCKWkYNlMCwOiHx-FRF-ps4rJOY9G8rbgDw05CHDE0Mrz9VseN0=
-          type: reasoning
         - name: computer
           arguments: "{\"actions\":[{\"type\":\"keypress\",\"keys\":[\"enter\"]}]}"
-          call_id: call_pGs4AoGC9XhQSI2hhM8rcW0q
+          call_id: call_nJx83mLGUh6osrNGrcY6Ahpm
           type: function_call
-          id: fc_0c3e1d2366ce5dcf006af4a6bffad087d2b37bfc503e60988c
+          id: fc_0ec06a3bcf0be314006af58d5a454887d2b46f7ef371a4db16
         - type: function_call_output
-          call_id: call_pGs4AoGC9XhQSI2hhM8rcW0q
+          call_id: call_nJx83mLGUh6osrNGrcY6Ahpm
           output:
           - type: input_text
             text: Ran 1 action. Screenshot attached (1280x800).
@@ -1679,7 +1642,6 @@ interactions:
                     description: "Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1709,7 +1671,6 @@ interactions:
                     description: "The points to drag through: at least a start and an end."
                     items:
                       $ref: "#/$defs/Point"
-                    maxItems: 50
                     minItems: 2
                     type: array
                   modifiers:
@@ -1717,7 +1678,6 @@ interactions:
                     description: "Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1735,13 +1695,11 @@ interactions:
                     description: One key per entry, held together.
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   seconds:
-                    description: How long to hold them, up to 30 seconds.
+                    description: How long to hold them.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -1809,7 +1767,6 @@ interactions:
                     description: "Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1842,13 +1799,11 @@ interactions:
                     description: "One key per entry, pressed together: `[\"enter\"]`, `[\"ctrl\", \"a\"]`, `[\"super\", \"shift\", \"t\"]`."
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   repeat:
                     default: 1
                     description: How many times to press the combination.
-                    maximum: 100
                     minimum: 1
                     type: integer
                 required:
@@ -1912,7 +1867,6 @@ interactions:
                   amount:
                     default: 3
                     description: Mouse-wheel clicks; one click scrolls about three lines.
-                    maximum: 50
                     minimum: 1
                     type: integer
                   x:
@@ -1939,7 +1893,6 @@ interactions:
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -1958,8 +1911,6 @@ interactions:
                     default: type
                     type: string
                   text:
-                    description: Up to 2,000 characters; type longer text in several actions.
-                    maxLength: 2000
                     minLength: 1
                     type: string
                 required:
@@ -1976,9 +1927,8 @@ interactions:
                     type: string
                   seconds:
                     default: 1
-                    description: How long to wait, up to 30 seconds.
+                    description: How long to wait.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -2018,7 +1968,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1605"
+      - "1649"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -2028,16 +1978,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0c3e1d2366ce5dcf006af4a6c1169487d2b15c72db256ae2de
+        id: resp_0ec06a3bcf0be314006af58d5b1c2487d2a0474d6acecb85e5
         object: response
-        created_at: 1794418369
+        created_at: 1794477403
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794418370
+        completed_at: 1794477404
         error: null
         frequency_penalty: 0.0
         image:
@@ -2056,7 +2006,7 @@ interactions:
         model: gpt-5.5-2026-04-23
         moderation: null
         output:
-        - id: msg_0c3e1d2366ce5dcf006af4a6c1fcd487d2ae678de44c16db39
+        - id: msg_0ec06a3bcf0be314006af58d5c33fc87d2be94621ba33606a2
           type: message
           status: completed
           content:
@@ -2175,7 +2125,6 @@ interactions:
                     description: "Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -2205,7 +2154,6 @@ interactions:
                     description: "The points to drag through: at least a start and an end."
                     items:
                       $ref: "#/$defs/Point"
-                    maxItems: 50
                     minItems: 2
                     type: array
                   modifiers:
@@ -2213,7 +2161,6 @@ interactions:
                     description: "Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -2231,13 +2178,11 @@ interactions:
                     description: One key per entry, held together.
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   seconds:
-                    description: How long to hold them, up to 30 seconds.
+                    description: How long to hold them.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -2305,7 +2250,6 @@ interactions:
                     description: "Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -2338,13 +2282,11 @@ interactions:
                     description: "One key per entry, pressed together: `[\"enter\"]`, `[\"ctrl\", \"a\"]`, `[\"super\", \"shift\", \"t\"]`."
                     items:
                       type: string
-                    maxItems: 8
                     minItems: 1
                     type: array
                   repeat:
                     default: 1
                     description: How many times to press the combination.
-                    maximum: 100
                     minimum: 1
                     type: integer
                 required:
@@ -2408,7 +2350,6 @@ interactions:
                   amount:
                     default: 3
                     description: Mouse-wheel clicks; one click scrolls about three lines.
-                    maximum: 50
                     minimum: 1
                     type: integer
                   x:
@@ -2435,7 +2376,6 @@ interactions:
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
-                    maxItems: 8
                     type: array
                 required:
                 - type
@@ -2454,8 +2394,6 @@ interactions:
                     default: type
                     type: string
                   text:
-                    description: Up to 2,000 characters; type longer text in several actions.
-                    maxLength: 2000
                     minLength: 1
                     type: string
                 required:
@@ -2472,9 +2410,8 @@ interactions:
                     type: string
                   seconds:
                     default: 1
-                    description: How long to wait, up to 30 seconds.
+                    description: How long to wait.
                     exclusiveMinimum: 0
-                    maximum: 30
                     type: number
                 required:
                 - type
@@ -2502,14 +2439,14 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 5610
+          input_tokens: 5491
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 3840
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 5615
+          total_tokens: 5496
         user: null
         metadata: {}
-  recorded_at: 2026-11-11T17:32:50.677082+00:00
+  recorded_at: 2026-11-12T09:56:44.754029+00:00
