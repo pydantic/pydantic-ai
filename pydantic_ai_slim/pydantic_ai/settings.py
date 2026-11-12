@@ -354,7 +354,9 @@ class ModelSettings(TypedDict, total=False):
       mid-conversation system prompt includes an instruction change appended by a dynamic instruction with
       `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`). A conversation
       with none of these keeps its system prompt as written; one that has them changes its cached prompt prefix
-      once, at that request, and keeps it stable from then on.
+      once, at that request, and keeps it stable from then on, as long as the stored history keeps what needed it.
+      A UI adapter's frontend doesn't send a mid-conversation system prompt back (AG-UI, Vercel AI), so there the
+      announcement drops out of the next turn and the prefix changes every turn: use `'always'`.
     - `'always'`: at the start of the system prompt, on every request from the first, so the prefix never changes, at
       the cost of the announcement in conversations that never need it. The default on Claude Sonnet 4.6 and
       gpt-oss, which follow the system prompt less reliably without it (see

@@ -808,20 +808,38 @@ _CONFUSABLES: Final = str.maketrans(
 )  # fmt: skip
 
 
+_FORMAT_CHARACTERS: Final = re.compile(
+    r'[\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e'
+    r'\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f'
+    r'\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
+)
+"""The invisible format characters (Unicode category `Cf`, as of Unicode 17), such as a zero-width space or joiner.
+
+Spelled out rather than looked up per character with `unicodedata.category`, so dropping them runs at regex speed
+on text of any length. `tests/test_framing.py` checks it covers every `Cf` character the running Python knows.
+"""
+
+_COULD_FOLD_TO_A_TAG: Final = ('<', '&', '\uff1c', '\ufe64', '\uff06', '\ufe60')
+"""The characters NFKC folds to a `<` or a `&`, one of which text needs to hold anything `_comparable` reads as a tag."""
+
+
 def _comparable(text: str) -> str:
     """`text` as a model reads it, for matching lookalike frames.
 
     Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into
-    `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
-    Cyrillic, Greek and small-capital look-alikes of the letters in the system-voice tags folded to Latin. Entities are
-    decoded again after that, as folding can leave one behind, such as from a full-width `&`.
+    `<`), invisible format characters (`_FORMAT_CHARACTERS`) dropped, and Cyrillic, Greek and small-capital
+    look-alikes of the letters in the system-voice tags folded to Latin. Entities are decoded again after that, as
+    folding can leave one behind, such as from a full-width `&`.
+
+    Every history item is checked on every request, so text that can't hold a `<` once folded, or is plain ASCII,
+    skips the folding, and every pass that runs is a C-level one, linear in the length of the text.
     """
+    if not any(char in text for char in _COULD_FOLD_TO_A_TAG):
+        return text
     text = _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
     if text.isascii():
-        # Every history item is checked on every request, so skip the per-character passes where they change nothing.
         return text
-    text = unicodedata.normalize('NFKC', text)
-    text = ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
+    text = _FORMAT_CHARACTERS.sub('', unicodedata.normalize('NFKC', text)).translate(_CONFUSABLES)
     return _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
 
 

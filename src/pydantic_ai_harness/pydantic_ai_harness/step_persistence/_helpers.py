@@ -42,11 +42,11 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     see `SnapshotState`) rather than gating what gets persisted.
     """
     open_calls: set[str] = set()
-    for msg in messages:
-        if isinstance(msg, ModelResponse):
-            open_calls.update(part.tool_call_id for part in msg.parts if isinstance(part, ToolCallPart))
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            open_calls.update(part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart))
             continue
-        for tool_call_id in _answered_call_ids(msg):
+        for tool_call_id in _answered_call_ids(message):
             if tool_call_id not in open_calls:
                 return False
             open_calls.discard(tool_call_id)

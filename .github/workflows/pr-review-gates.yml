@@ -129,6 +129,7 @@ jobs:
             .github/scripts/pr_gates.py
             .github/scripts/review_gates.py
             .github/scripts/publish_douwebot_review.py
+            .github/scripts/publish_pr_review_checks.py
             .github/scripts/pr_size.sh
             .github/scripts/check_api_compatibility.py
           sparse-checkout-cone-mode: false

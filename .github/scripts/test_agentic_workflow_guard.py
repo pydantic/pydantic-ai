@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import agentic_workflow_guard
 from agent_provider_health import AGENT_START_HEALTH_STEPS
 from agentic_workflow_guard import (
+    HOST_RESULT_JOB,
     Violation,
     changed_files,
     check_ai_credits_accounting,
@@ -34,12 +35,14 @@ from agentic_workflow_guard import (
     check_compiler_versions,
     check_daily_aic_guardrail,
     check_dangling_needs,
+    check_engine_sys_path_order,
     check_job_timeout_env,
     check_lock_regenerated,
     check_logfire_wiring,
     check_prompt_paths,
     check_provider_engine_config,
     check_provider_health_agent_start,
+    check_provider_health_host_result,
     check_provider_health_identity,
     check_provider_health_monitor,
     check_provider_health_recovery_wiring,
@@ -866,6 +869,7 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     )
     assert 'gh_aw_opencode_detect.py' in detector['run']
     assert detector['env']['OPENCODE_API_KEY'] == '${{ secrets.OPENCODE_API_KEY }}'
+    assert detector['env']['DEEPINFRA_API_KEY'] == '${{ secrets.DEEPINFRA_API_KEY }}'
     assert detector['continue-on-error'] is True
     reporter = next(
         step
@@ -1217,6 +1221,85 @@ jobs:
     )
 
     assert check_daily_aic_guardrail(lock) == []
+
+
+# --- engine wrapper `sys.path` order (the pre-#12818 engine pin, #12815) --------
+
+
+def _harness_lock(resolve_agent: str) -> str:
+    """The harness step every lock compiles, around the wrapper's `PAI_AGENT` import branch."""
+    return f"""
+jobs:
+  agent:
+    steps:
+      - name: Write Pydantic AI harness script
+        run: |
+          cat <<'GHAW_HARNESS_SCRIPT_3c7b9f1a_EOF' > "${{RUNNER_TEMP}}/gh-aw/actions/pydantic-ai_harness.cjs"
+          const AGENT_MODULE = `import importlib
+          import os
+          import sys
+
+          _configured_agent = os.environ.get('PAI_AGENT', '').strip()
+          if _configured_agent:
+{resolve_agent}
+              agent = getattr(importlib.import_module(_module_name), _attribute)
+          `;
+          const DEFAULT_AGENT = "gh_aw_agent:agent";
+          GHAW_HARNESS_SCRIPT_3c7b9f1a_EOF
+"""
+
+
+def test_engine_sys_path_order_rejects_the_pre_12818_wrapper(tmp_path: Path):
+    """The wrapper every lock compiled from engine revision `764a75c329`."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        _harness_lock(
+            """\
+              sys.path.insert(0, os.getcwd())
+              _module_name, _separator, _attribute = _configured_agent.rpartition(':')"""
+        ),
+    )
+
+    violations = check_engine_sys_path_order(lock)
+
+    assert [v.check for v in violations] == ['engine-sys-path-order']
+    assert '#12818' in violations[0].message
+
+
+def test_engine_sys_path_order_rejects_the_pre_12818_wrapper_in_a_double_quoted_run(tmp_path: Path):
+    """A double-quoted `run` escapes the wrapper's line breaks, so only the parsed step has statement lines."""
+    run = (
+        'cat <<\'GHAW_HARNESS_SCRIPT_EOF\' > "${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs"\n'
+        'const AGENT_MODULE = `import os\nimport sys\n\nsys.path.insert(0, os.getcwd())\n`;\n'
+        'GHAW_HARNESS_SCRIPT_EOF\n'
+    )
+    lock = _write(tmp_path / 'w.lock.yml', f'jobs:\n  agent:\n    steps:\n      - run: {json.dumps(run)}\n')
+
+    assert [v.check for v in check_engine_sys_path_order(lock)] == ['engine-sys-path-order']
+
+
+def test_engine_sys_path_order_accepts_the_12818_wrapper(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        _harness_lock(
+            """\
+              _module_name, _separator, _attribute = _configured_agent.rpartition(':')
+              # The checkout joins sys.path, after installed packages, only when nothing installed has the target's
+              # top-level name. sys.path.insert(0, ...) would put it first.
+              _top_level = _module_name.partition('.')[0]
+              if _top_level not in sys.modules and find_spec(_top_level) is None:
+                  sys.path.append(os.getcwd())"""
+        ),
+    )
+
+    assert check_engine_sys_path_order(lock) == []
+
+
+def test_engine_sys_path_order_rejects_a_lock_without_the_wrapper(tmp_path: Path):
+    """A renamed wrapper must fail the check rather than leave it passing on nothing."""
+    lock = _write(tmp_path / 'w.lock.yml', _harness_lock('').replace('const AGENT_MODULE', 'const WRAPPER'))
+
+    assert [v.check for v in check_engine_sys_path_order(lock)] == ['engine-sys-path-order']
 
 
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
@@ -1757,29 +1840,12 @@ Prompt
     }
 
 
-def test_provider_health_recovery_wiring_allows_ui_pull_request_only_model_canary(tmp_path: Path):
+def test_provider_health_recovery_input_must_be_an_optional_string(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
-    _write(
-        workflows / 'pydantic-ai-ui-security-review.md',
-        """---
-name: Z.AI
-imports:
-  - shared/engine-zai.md
-on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-  workflow_dispatch: {}
----
-Prompt
-""",
-    )
     _write(
         workflows / 'shared' / 'provider-health.md',
         "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
     )
-
-    assert check_provider_health_recovery_wiring(workflows) == []
-
     ordinary = _write(
         workflows / 'pydantic-ai-mini.md',
         """---
@@ -1938,6 +2004,221 @@ def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inferenc
 
     assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
         'provider-health-agent-start'
+    ]
+
+
+_RECORD_ENV: dict[str, str] = {key: value for key, value in _GATE_ENV.items() if key != 'GITHUB_TOKEN'}
+_RECORD_RUN = (
+    'python3 -I .github/scripts/agent_provider_health.py record \\\n'
+    '  --agent-session agent/agent-session.jsonl \\\n'
+    '  --output provider-health/run-result.json\n'
+)
+# The authored condition inside gh-aw's clean-detection guard, as the compiled lock carries it.
+_AFTER_AGENT = (
+    "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && "
+    "((!cancelled()) && needs.agent.result != 'skipped') }}"
+)
+_CONTROLLER_CHECKOUT: dict[str, object] = {
+    'persist-credentials': False,
+    'ref': '${{ github.event.repository.default_branch }}',
+    'repository': '${{ github.repository }}',
+    'sparse-checkout': '.github/scripts/agent_provider_health.py',
+}
+_AGENT_DOWNLOAD: dict[str, str] = {'name': 'agent', 'path': 'agent'}
+_RECORD_UPLOAD_PATH = 'provider-health/provider-health.json\nprovider-health/run-result.json\n'
+
+
+def _host_result_job(
+    *,
+    needs: tuple[str, ...] = ('agent', 'detection'),
+    condition: str = _AFTER_AGENT,
+    job_fields: dict[str, object] | None = None,
+    continue_on_error: bool = True,
+    checkouts: tuple[dict[str, object], ...] = (_CONTROLLER_CHECKOUT,),
+    download_id: str = 'agent_artifact',
+    download: dict[str, str] = _AGENT_DOWNLOAD,
+    download_env: dict[str, str] | None = None,
+    run: str = _RECORD_RUN,
+    record_fields: dict[str, object] | None = None,
+    env: dict[str, str] = _RECORD_ENV,
+    upload_path: str = _RECORD_UPLOAD_PATH,
+    record_first: bool = False,
+    upload_first: bool = False,
+) -> dict[str, object]:
+    """The record job as gh-aw compiles it from `shared/provider-health.md`, trimmed, with one part changed."""
+    download_step: dict[str, object] = {
+        'name': "Download the agent's terminal session record",
+        'id': download_id,
+        'uses': 'actions/download-artifact@sha',
+        'with': download,
+    }
+    if download_env is not None:
+        download_step['env'] = download_env
+    downloads: list[dict[str, object]] = [
+        download_step,
+        {
+            'name': 'Download the health decision the run acted on',
+            'id': 'health_artifact',
+            'uses': 'actions/download-artifact@sha',
+            'with': {'name': 'provider-health', 'path': 'provider-health'},
+        },
+    ]
+    record: dict[str, object] = {
+        'name': 'Record the terminal agent result',
+        'if': "steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'",
+        'run': run,
+        'env': env,
+        **(record_fields or {}),
+    }
+    upload: dict[str, object] = {
+        'name': 'Add the host-recorded agent result to the health decision artifact',
+        'uses': 'actions/upload-artifact@sha',
+        'with': {'name': 'provider-health', 'overwrite': True, 'path': upload_path},
+    }
+    if record_first:
+        after_checkout = [record, *downloads, upload]
+    else:
+        after_checkout = [*downloads, *([upload, record] if upload_first else [record, upload])]
+    return {
+        'needs': list(needs),
+        'if': condition,
+        'continue-on-error': continue_on_error,
+        'steps': [*({'uses': 'actions/checkout@sha', 'with': checkout} for checkout in checkouts), *after_checkout],
+        **(job_fields or {}),
+    }
+
+
+def _write_host_result_workflow(workflows: Path, record_job: dict[str, object] | None) -> None:
+    source = _write(
+        workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
+    )
+    jobs: dict[str, object] = {
+        'provider_health': {'steps': [{'id': 'health', 'env': _GATE_ENV, 'run': 'python3 controller check'}]},
+        'agent': {'needs': ['activation', 'provider_health'], 'steps': _SHIPPED_AGENT_STEPS},
+        'detection': {'needs': ['agent']},
+    }
+    if record_job is not None:
+        jobs[HOST_RESULT_JOB] = record_job
+    _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
+
+
+def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write_host_result_workflow(workflows, _host_result_job())
+
+    assert check_provider_health_host_result(workflows) == []
+
+
+@pytest.mark.parametrize(
+    'record_job',
+    [
+        pytest.param(None, id='no-record-job'),
+        pytest.param(_host_result_job(needs=('detection',)), id='not-after-agent'),
+        pytest.param(
+            _host_result_job(condition=_AFTER_AGENT.replace("!= 'skipped'", "== 'success'")),
+            id='skipped-after-a-failed-agent',
+        ),
+        pytest.param(
+            _host_result_job(
+                condition="${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == "
+                "'true' && (!((!cancelled()) && needs.agent.result != 'skipped')) }}"
+            ),
+            id='negated-condition',
+        ),
+        pytest.param(_host_result_job(continue_on_error=False), id='record-failure-fails-the-run'),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'ref': '${{ github.event.pull_request.head.sha }}'},)),
+            id='pr-head-controller',
+        ),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'repository': 'someone/fork'},)),
+            id='other-repository-controller',
+        ),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'persist-credentials': True},)),
+            id='checkout-keeps-credentials',
+        ),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'sparse-checkout': '.github/scripts'},)),
+            id='checkout-beyond-the-controller',
+        ),
+        pytest.param(
+            _host_result_job(
+                checkouts=(
+                    _CONTROLLER_CHECKOUT,
+                    {'ref': '${{ github.event.pull_request.head.sha }}', 'persist-credentials': False},
+                )
+            ),
+            id='second-checkout',
+        ),
+        pytest.param(
+            _host_result_job(download={'name': 'agent-output-fallback', 'path': 'agent'}), id='other-artifact'
+        ),
+        pytest.param(_host_result_job(download={**_AGENT_DOWNLOAD, 'run-id': '${{ inputs.run_id }}'}), id='other-run'),
+        pytest.param(_host_result_job(download_id='session_artifact'), id='download-the-record-step-does-not-check'),
+        pytest.param(_host_result_job(record_first=True), id='record-before-download'),
+        pytest.param(
+            _host_result_job(run=_RECORD_RUN.replace('agent/agent-session.jsonl', 'agent/agent-stdio.log')),
+            id='reads-the-stdio-log',
+        ),
+        pytest.param(_host_result_job(run=_RECORD_RUN.replace('python3 -I ', 'python3 ', 1)), id='not-isolated'),
+        pytest.param(
+            _host_result_job(run=f'cp agent/agent_provider_health.py .github/scripts/\n{_RECORD_RUN}'),
+            id='command-before-record',
+        ),
+        pytest.param(_host_result_job(record_fields={'if': 'false'}), id='record-step-disabled'),
+        pytest.param(_host_result_job(record_fields={'working-directory': 'agent'}), id='record-in-another-directory'),
+        pytest.param(
+            _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
+            id='no-zai-key',
+        ),
+        pytest.param(
+            _host_result_job(env={**_RECORD_ENV, 'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}'}),
+            id='identity-differs-from-gate',
+        ),
+        pytest.param(
+            _host_result_job(download_env={'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}), id='key-in-another-step'
+        ),
+        pytest.param(
+            _host_result_job(download_env={'KEY': "${{ secrets['ZAI_API_KEY'] }}"}), id='bracket-key-in-another-step'
+        ),
+        pytest.param(
+            _host_result_job(download_env={'KEYS': '${{ toJSON(secrets) }}'}), id='all-secrets-in-another-step'
+        ),
+        pytest.param(_host_result_job(download_env={'KEY': '${{ secrets.OTHER }}'}), id='other-secret-in-another-step'),
+        pytest.param(
+            _host_result_job(job_fields={'env': {'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}}), id='key-in-job-env'
+        ),
+        pytest.param(
+            _host_result_job(
+                job_fields={'container': {'image': 'ubuntu', 'env': {'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}}}
+            ),
+            id='key-in-job-container',
+        ),
+        pytest.param(
+            _host_result_job(
+                job_fields={
+                    'services': {'cache': {'image': 'redis', 'env': {'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}}}
+                }
+            ),
+            id='key-in-job-services',
+        ),
+        pytest.param(
+            _host_result_job(job_fields={'defaults': {'run': {'working-directory': '${{ SECRETS.ZAI_API_KEY }}'}}}),
+            id='key-in-job-defaults',
+        ),
+        pytest.param(_host_result_job(upload_path='provider-health/provider-health.json\n'), id='record-not-uploaded'),
+        pytest.param(_host_result_job(upload_first=True), id='upload-before-record'),
+    ],
+)
+def test_provider_health_host_result_rejects_a_record_the_monitor_cannot_trust(
+    tmp_path: Path, record_job: dict[str, object] | None
+):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write_host_result_workflow(workflows, record_job)
+
+    assert [violation.check for violation in check_provider_health_host_result(workflows)] == [
+        'provider-health-host-result'
     ]
 
 
@@ -2138,7 +2419,9 @@ jobs:
       github.event_name == 'workflow_run' &&
       (github.event.workflow_run.event != 'pull_request' ||
        (github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.actor.login != 'dependabot[bot]'))
+        github.event.workflow_run.actor.login != 'dependabot[bot]')) &&
+      (github.event.workflow_run.event != 'pull_request_review' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
       actions: read
       contents: read
@@ -2335,6 +2618,12 @@ jobs:
             '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
             "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
             '       github.event.workflow_run.head_repository.full_name == github.repository)',
+        ),
+        # A gate that accepts a fork's `pull_request_review` run.
+        (
+            " &&\n      (github.event.workflow_run.event != 'pull_request_review' ||\n"
+            '       github.event.workflow_run.head_repository.full_name == github.repository)',
+            '',
         ),
     ],
 )

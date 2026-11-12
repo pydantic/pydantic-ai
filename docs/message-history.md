@@ -360,7 +360,15 @@ The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announce
 | `'always'` (default on Claude Sonnet 4.6 and gpt-oss) | At the start of the system prompt, on every request from the first | The same as `'when_needed'` |
 | `'never'` | Not sent | Not sent |
 
-The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
+The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there, as long as the history keeps what needed it. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
+
+Use `'always'` in an [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) app: their frontends don't send mid-conversation system prompts back, so with `'when_needed'` the announcement drops out of the next turn's system prompt and the cached prefix changes every turn.
+
+```python {title="framing_announcement.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'always'})
+```
 
 `'never'` leaves the lookalike notes in place: they only appear next to text that resembles one of the application's frames, so they cost nothing in a conversation without any. Without the announcement, though, the model isn't told what the notes or the application's `<system>` blocks mean, and it may not follow a `<system>` block it has no explanation for. With it turned off, Claude Sonnet 4.6 and Grok 4.7 followed none of 24 instruction changes (all 24 with it), and Claude Sonnet 5.5, Claude Haiku 5.5 and Gemini 4 Argon couldn't say who had asked for a change (0 of 24, against 24 of 24). Turn it off only if your application doesn't change instructions mid-conversation and you've checked your model without it.
 
@@ -839,6 +847,15 @@ result = agent.run_sync('Tell me a different joke.', message_history=message_his
 ```
 
 Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts and tool return content, `model_id` is always reset on responses, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+
+`sanitize_messages` keeps, as sent, the references to state the model provider holds: [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], the `conversation_id` and `container_id` keys of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry these, so history an adapter loads has none, but history you load yourself keeps whatever the client sent. These provider-generated IDs are enough on their own to reach the state they name, and the settings and the resume path below do so with your provider credentials. An ID a client sends is not proof that it owns that state (see the [threat model](https://github.com/pydantic/pydantic-ai/blob/main/THREAT_MODEL.md#persistent-state-and-tenant-identity)), so with client-held history, save the references you need on your server, bound to the user they belong to, and set each of these as follows:
+
+- [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id]: pass a concrete ID you saved, not `'auto'`.
+- [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container]: pass a container ID you saved, or `False` for a fresh container, rather than relying on its default reuse of the latest container in the history.
+- [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]: don't use it, as a response ID in the history can take precedence even over a concrete one. With `openai_transport='websocket'`, where it defaults to `'auto'`, pass a concrete `openai_conversation_id` instead to turn it off.
+- [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics]: set it to `False`. It is on by default for models that support it, and sends the latest response ID in the history to compare the new request against.
+- [`anthropic_cache_diagnostics`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_diagnostics]: leave it off, its default; it does the same with the latest Anthropic response.
+- A history that ends in a response with `state='suspended'`: don't accept one from a client. A run without a new prompt resumes it, fetching the stored response or batch result it names, and no setting turns this off, so resume suspended runs only from server-side history.
 
 ## Persisting sessions
 

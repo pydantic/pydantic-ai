@@ -65,28 +65,28 @@ from pydantic_ai_harness.subagents import (
     InMemoryTransport,
     RemoteSubAgent,
     SubAgent,
-    SubAgentMessage,
+    SubAgentMessageEvent,
     SubAgents,
     SubAgentToolset,
     SubAgentTransport,
     SubAgentWorker,
-    TaskAnswerEvent,
+    TaskAnsweredEvent,
     TaskAssignedEvent,
     TaskBackgroundedEvent,
     TaskCancelledEvent,
-    TaskCancelRequestEvent,
+    TaskCancelRequestedEvent,
     TaskCompletedEvent,
     TaskControl,
     TaskFailedEvent,
-    TaskFollowUpEvent,
-    TaskForceCancelEvent,
-    TaskMessageEvent,
+    TaskForceCancelRequestedEvent,
     TaskOutputPart,
     TaskProgressEvent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
     TaskQuestionPart,
-    TaskRetryEvent,
+    TaskResumedEvent,
+    TaskRetriedEvent,
     TaskStartedEvent,
+    TaskSteeredEvent,
     deserialize_message,
     is_task_report,
     serialize_message,
@@ -383,8 +383,8 @@ class TestSubAgentsTaskControl:
         assert 'Which year?' in question_text
         assert 'used 1999' in report
         assert [event.reason for event in recorder.of(TaskBackgroundedEvent)] == ['question']
-        [question] = recorder.of(TaskQuestionEvent)
-        [answered] = recorder.of(TaskAnswerEvent)
+        [question] = recorder.of(TaskQuestionAskedEvent)
+        [answered] = recorder.of(TaskAnsweredEvent)
         assert answered.question_id == question.question_id and answered.answer == '1999'
 
     async def test_a_listener_can_answer_a_question(self) -> None:
@@ -394,8 +394,8 @@ class TestSubAgentsTaskControl:
 
         @dataclass
         class Answerer(AbstractCapability[Any]):
-            @on_event(TaskQuestionEvent)
-            async def answer(self, ctx: RunContext[Any], event: TaskQuestionEvent) -> None:
+            @on_event(TaskQuestionAskedEvent)
+            async def answer(self, ctx: RunContext[Any], event: TaskQuestionAskedEvent) -> None:
                 event.answer = '2001'
 
         parent = Agent(
@@ -556,7 +556,7 @@ class TestSubAgentsTaskControl:
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert cancelled.forced
-        assert len(recorder.of(TaskForceCancelEvent)) == 1
+        assert len(recorder.of(TaskForceCancelRequestedEvent)) == 1
 
     async def test_a_resumed_task_continues_its_conversation(self) -> None:
         recorder = Recorder()
@@ -580,7 +580,7 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         assert result.output.endswith('(ok):\nanswer 2')
         assert seen == [1, 3]
-        [follow] = recorder.of(TaskFollowUpEvent)
+        [follow] = recorder.of(TaskResumedEvent)
         assert follow.task_id == recorder.of(TaskAssignedEvent)[0].task_id
 
     async def test_a_one_shot_task_cannot_be_resumed(self) -> None:
@@ -780,16 +780,16 @@ class TestSubAgentsTaskControl:
                     event.veto('not allowed')
                 event.prompt = event.prompt.upper()
 
-            @on_event(TaskMessageEvent)
-            async def message(self, ctx: RunContext[Any], event: TaskMessageEvent) -> None:
+            @on_event(TaskSteeredEvent)
+            async def message(self, ctx: RunContext[Any], event: TaskSteeredEvent) -> None:
                 event.veto()
 
-            @on_event(TaskCancelRequestEvent)
-            async def cancel(self, ctx: RunContext[Any], event: TaskCancelRequestEvent) -> None:
+            @on_event(TaskCancelRequestedEvent)
+            async def cancel(self, ctx: RunContext[Any], event: TaskCancelRequestedEvent) -> None:
                 event.veto('keep it')
 
-            @on_event(TaskAnswerEvent)
-            async def answer(self, ctx: RunContext[Any], event: TaskAnswerEvent) -> None:
+            @on_event(TaskAnsweredEvent)
+            async def answer(self, ctx: RunContext[Any], event: TaskAnsweredEvent) -> None:
                 if event.answer == 'bad':
                     event.veto('rude')
 
@@ -911,6 +911,30 @@ class TestSubAgentsTaskControl:
         assert returns[2].endswith('already finished (ok); there is nothing to cancel.')
         assert "Unknown task 'unknown'" in returns[3]
 
+    async def test_listing_passes_a_parent_whose_saved_file_was_damaged(self, tmp_path: Path) -> None:
+        """A loaded task whose parent's file was skipped as damaged does not break the walk up its ancestry."""
+        orphan = DelegationTask(
+            id='b' * 32,
+            parent_id='1' * 32,
+            agent_name='researcher',
+            prompt='Find x.',
+            conversation_id='root',
+            status='finished',
+            outcome='ok',
+        )
+        (tmp_path / f'{orphan.id}.json').write_bytes(TypeAdapter(DelegationTask).dump_json(orphan))
+        (tmp_path / f'{orphan.parent_id}.json').write_text('{"id": "')
+        owner = DelegationTasks(directory=tmp_path)
+        parent = Agent(scripted(call('list_tasks'), echo_last_return), capabilities=[controlled()])
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    result = await parent.run('Go.', conversation_id='root')
+        assert [problem.path.name for problem in owner.problems] == [f'{orphan.parent_id}.json']
+        assert result.output == (
+            f"- {orphan.id} (researcher, finished: ok, started by task {orphan.parent_id}, resumable): 'Find x.'"
+        )
+
     async def test_an_application_owner_gets_every_task_event(self) -> None:
         observed: list[DelegationTaskEvent] = []
 
@@ -974,8 +998,8 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert result.output.endswith('(ok):\nmiddle done')
-        assert [event.question for event in inner_recorder.of(TaskQuestionEvent)] == ['Inner?']
-        assert not outer_recorder.of(TaskQuestionEvent)
+        assert [event.question for event in inner_recorder.of(TaskQuestionAskedEvent)] == ['Inner?']
+        assert not outer_recorder.of(TaskQuestionAskedEvent)
         [inner_assigned] = inner_recorder.of(TaskAssignedEvent)
         assert inner_assigned.depth == 3
         assert inner_assigned.parent_task_id == outer_recorder.of(TaskAssignedEvent)[0].task_id
@@ -1003,7 +1027,7 @@ class TestDynamicAgents:
         created_text = "Created sub-agent 'poet'. Delegate tasks to it with `delegate_task`."
         assert tool_returns(result.all_messages())[0] == created_text
         [created] = recorder.of(AgentCreatedEvent)
-        assert (created.name, created.instructions, created.model) == ('poet', 'Rhyme.', 'fast')
+        assert (created.agent_name, created.instructions, created.model) == ('poet', 'Rhyme.', 'fast')
         assert result.output == 'old pond'
 
 
@@ -1014,7 +1038,7 @@ class SerializingTransport(InMemoryTransport):
         super().__init__()
         self.sent: list[str] = []
 
-    async def send(self, message: SubAgentMessage) -> None:
+    async def send(self, message: SubAgentMessageEvent) -> None:
         self.sent.append(message.kind)
         await super().send(deserialize_message(serialize_message(message)))
 
@@ -1116,7 +1140,7 @@ class TestRemoteSubAgents:
                 result = await parent.run('Go.')
         assert seen[-1] == 'Hurry.'
         assert result.output.endswith('(ok):\nsecond')
-        assert len(recorder.of(TaskFollowUpEvent)) == 1
+        assert len(recorder.of(TaskResumedEvent)) == 1
 
     async def test_a_remote_task_can_be_cancelled_softly_or_by_force(self) -> None:
         transport = InMemoryTransport()
@@ -1211,7 +1235,7 @@ class TestSubAgentWorker:
             async with serving(worker):
                 result = await parent.run('Go.')
         assert result.output.endswith('(ok):\nrecovered')
-        [retry] = recorder.of(TaskRetryEvent)
+        [retry] = recorder.of(TaskRetriedEvent)
         assert (retry.attempt, retry.error) == (2, 'RuntimeError: flaky')
 
     async def test_a_task_that_cannot_finish_fails(self) -> None:
@@ -1297,7 +1321,7 @@ class TestSubAgentWorker:
         class Checkpointing(InMemoryTransport):
             """A transport whose sends wait on the event loop, as a real one does."""
 
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 await anyio.lowlevel.checkpoint()
                 await super().send(message)
 
@@ -1333,7 +1357,7 @@ class TestSubAgentWorker:
         class Slow(InMemoryTransport):
             """A transport that is still sending a settled report when the worker stops."""
 
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 if isinstance(message, TaskCompletedEvent):
                     sending.set()
                     await delivered.wait()
@@ -1376,11 +1400,11 @@ class TestSubAgentWorker:
                 super().__init__()
                 self.sent: list[str] = []
 
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 self.sent.append(message.kind)
                 await super().send(message)
 
-            async def receive(self, mailbox: str) -> SubAgentMessage:
+            async def receive(self, mailbox: str) -> SubAgentMessageEvent:
                 try:
                     return await super().receive(mailbox)
                 except anyio.get_cancelled_exc_class():
@@ -1420,7 +1444,7 @@ class TestSubAgentWorker:
         monkeypatch.setattr('pydantic_ai_harness.subagents._worker._STOP_REPORT_SECONDS', 0.01)
 
         class Stuck(InMemoryTransport):
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 if isinstance(message, TaskFailedEvent):
                     await anyio.Event().wait()
                 await super().send(message)
@@ -1476,7 +1500,7 @@ class TestSubAgentWorker:
         released = anyio.Event()
 
         class Stuck(InMemoryTransport):
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 if isinstance(message, TaskCompletedEvent):
                     await anyio.Event().wait()
                 await super().send(message)
@@ -1519,8 +1543,8 @@ class TestSubAgentWorker:
         monkeypatch.setattr('pydantic_ai_harness.subagents._control._TEARDOWN_SECONDS', 0.01)
 
         class Stuck(InMemoryTransport):
-            async def send(self, message: SubAgentMessage) -> None:
-                if isinstance(message, TaskForceCancelEvent):
+            async def send(self, message: SubAgentMessageEvent) -> None:
+                if isinstance(message, TaskForceCancelRequestedEvent):
                     await anyio.Event().wait()
                 await super().send(message)
 
@@ -1538,7 +1562,7 @@ class TestSubAgentWorker:
                 super().__init__()
                 self.sent: list[str] = []
 
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 self.sent.append(message.kind)
                 await super().send(message)
 
@@ -1559,7 +1583,7 @@ class TestSubAgentWorker:
 
     async def test_a_stopping_worker_that_cannot_report_logs_it(self, caplog: pytest.LogCaptureFixture) -> None:
         class NoFailures(InMemoryTransport):
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 if isinstance(message, TaskFailedEvent):
                     raise ConnectionError('gone')
                 await super().send(message)
@@ -1610,8 +1634,8 @@ class TestSubAgentWorker:
 
         worker = SubAgentWorker(agents={'remote': Agent(scripted(respond))}, transport=transport, deps=None)
         start = TaskAssignedEvent(task_id='t1', agent_name='remote', prompt='Work.', can_ask_questions=False)
-        await transport.send(TaskMessageEvent(task_id='t1', agent_name='remote', message='Early.'))
-        await transport.send(TaskAnswerEvent(task_id='t1', agent_name='remote', question_id='unknown', answer='x'))
+        await transport.send(TaskSteeredEvent(task_id='t1', agent_name='remote', message='Early.'))
+        await transport.send(TaskAnsweredEvent(task_id='t1', agent_name='remote', question_id='unknown', answer='x'))
         await transport.send(start)
         with anyio.fail_after(WAIT):
             async with serving(worker):
@@ -1622,7 +1646,7 @@ class TestSubAgentWorker:
     async def test_a_cancel_request_before_a_task_runs_cancels_it(self) -> None:
         transport = InMemoryTransport()
         worker = SubAgentWorker(agents={'remote': child()}, transport=transport, deps=None)
-        await transport.send(TaskCancelRequestEvent(task_id='t1', agent_name='remote'))
+        await transport.send(TaskCancelRequestedEvent(task_id='t1', agent_name='remote'))
         await transport.send(TaskAssignedEvent(task_id='t1', agent_name='remote', prompt='Work.'))
         with anyio.fail_after(WAIT):
             async with serving(worker):
@@ -1730,8 +1754,8 @@ class TestTaskControlTelemetry:
 
         @dataclass
         class Answerer(AbstractCapability[Any]):
-            @on_event(TaskQuestionEvent)
-            async def answer(self, ctx: RunContext[Any], event: TaskQuestionEvent) -> None:
+            @on_event(TaskQuestionAskedEvent)
+            async def answer(self, ctx: RunContext[Any], event: TaskQuestionAskedEvent) -> None:
                 event.answer = '2001'
 
         settings, exporter = traced(include_content)
@@ -1754,12 +1778,12 @@ class TestTaskControlTelemetry:
 
         @dataclass
         class Answerer(AbstractCapability[Any]):
-            @on_event(TaskQuestionEvent)
-            async def question(self, ctx: RunContext[Any], event: TaskQuestionEvent) -> None:
+            @on_event(TaskQuestionAskedEvent)
+            async def question(self, ctx: RunContext[Any], event: TaskQuestionAskedEvent) -> None:
                 event.answer = 'guess'
 
-            @on_event(TaskAnswerEvent)
-            async def answer(self, ctx: RunContext[Any], event: TaskAnswerEvent) -> None:
+            @on_event(TaskAnsweredEvent)
+            async def answer(self, ctx: RunContext[Any], event: TaskAnsweredEvent) -> None:
                 if event.answer == 'guess':
                     event.veto()
 
@@ -1887,7 +1911,7 @@ class TestTaskControlTelemetry:
 
 class TestSubAgentMessages:
     def test_every_message_round_trips_and_has_its_mailbox(self) -> None:
-        messages: list[SubAgentMessage] = [
+        messages: list[SubAgentMessageEvent] = [
             TaskAssignedEvent(
                 task_id='t',
                 agent_name='a',
@@ -1895,14 +1919,14 @@ class TestSubAgentMessages:
                 usage_limits=UsageLimits(request_limit=3, total_tokens_limit=100),
                 trace_context={'traceparent': 'x'},
             ),
-            TaskFollowUpEvent(task_id='t', agent_name='a', prompt='p'),
-            TaskMessageEvent(task_id='t', agent_name='a', message='m'),
-            TaskAnswerEvent(task_id='t', agent_name='a', question_id='q', answer='x'),
-            TaskCancelRequestEvent(task_id='t', agent_name='a'),
-            TaskForceCancelEvent(task_id='t', agent_name='a'),
+            TaskResumedEvent(task_id='t', agent_name='a', prompt='p'),
+            TaskSteeredEvent(task_id='t', agent_name='a', message='m'),
+            TaskAnsweredEvent(task_id='t', agent_name='a', question_id='q', answer='x'),
+            TaskCancelRequestedEvent(task_id='t', agent_name='a'),
+            TaskForceCancelRequestedEvent(task_id='t', agent_name='a'),
             TaskStartedEvent(task_id='t', agent_name='a'),
-            TaskQuestionEvent(task_id='t', agent_name='a', question_id='q', question='?'),
-            TaskRetryEvent(task_id='t', agent_name='a', attempt=2, error='e'),
+            TaskQuestionAskedEvent(task_id='t', agent_name='a', question_id='q', question='?'),
+            TaskRetriedEvent(task_id='t', agent_name='a', attempt=2, error='e'),
             TaskCompletedEvent(task_id='t', agent_name='a', output='o', usage=RunUsage(requests=1)),
             TaskFailedEvent(task_id='t', agent_name='a', error='e'),
             TaskCancelledEvent(task_id='t', agent_name='a', forced=True),
@@ -1933,10 +1957,10 @@ class TestSubAgentMessages:
 
     async def test_a_custom_transport_release_is_a_no_op_by_default(self) -> None:
         class Minimal(SubAgentTransport):
-            async def send(self, message: SubAgentMessage) -> None:
+            async def send(self, message: SubAgentMessageEvent) -> None:
                 raise NotImplementedError
 
-            async def receive(self, mailbox: str) -> SubAgentMessage:
+            async def receive(self, mailbox: str) -> SubAgentMessageEvent:
                 raise NotImplementedError
 
         assert await Minimal().release('task:t:parent') is None
@@ -2073,7 +2097,7 @@ class TestTaskControlEdges:
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
-        assert [event.question for event in recorder.of(TaskQuestionEvent)] == ['First?']
+        assert [event.question for event in recorder.of(TaskQuestionAskedEvent)] == ['First?']
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
 
     async def test_two_answers_to_one_question_deliver_one(self) -> None:
@@ -2113,8 +2137,8 @@ class TestTaskControlEdges:
 
         @dataclass
         class Policy(AbstractCapability[Any]):
-            @on_event(TaskMessageEvent)
-            async def let_it_finish(self, ctx: RunContext[Any], event: TaskMessageEvent) -> None:
+            @on_event(TaskSteeredEvent)
+            async def let_it_finish(self, ctx: RunContext[Any], event: TaskSteeredEvent) -> None:
                 gate.opened.set()
                 await settled.wait()
 
@@ -2144,8 +2168,8 @@ class TestTaskControlEdges:
 
         @dataclass
         class QuestionSeen(AbstractCapability[Any]):
-            @on_event(TaskQuestionEvent)
-            async def seen(self, ctx: RunContext[Any], event: TaskQuestionEvent) -> None:
+            @on_event(TaskQuestionAskedEvent)
+            async def seen(self, ctx: RunContext[Any], event: TaskQuestionAskedEvent) -> None:
                 asked.set()
 
         asker = Agent(
@@ -2385,7 +2409,7 @@ class TestTaskControlEdges:
         class Slow(AbstractCapability[Any]):
             @on_event(AgentCreatedEvent)
             async def let_the_others_run(self, ctx: RunContext[Any], event: AgentCreatedEvent) -> None:
-                announced.append(event.name)
+                announced.append(event.agent_name)
                 for _ in range(5):
                     await anyio.lowlevel.checkpoint()
 
@@ -2488,7 +2512,7 @@ class TestDynamicAgentLimits:
         class Policy(AbstractCapability[Any]):
             @on_event(AgentCreatedEvent)
             async def check(self, ctx: RunContext[Any], event: AgentCreatedEvent) -> None:
-                if event.name == 'rogue':
+                if event.agent_name == 'rogue':
                     event.veto('not on my watch')
                 event.instructions = f'Be careful. {event.instructions}'
 
@@ -2518,7 +2542,7 @@ class FailingTransport(InMemoryTransport):
         self.release_fails = release_fails
         self.released: list[str] = []
 
-    async def send(self, message: SubAgentMessage) -> None:
+    async def send(self, message: SubAgentMessageEvent) -> None:
         if message.kind in self.kinds and self.task_id in (None, message.task_id):
             raise ConnectionError(f'cannot send {message.kind}')
         await super().send(message)
@@ -2628,7 +2652,7 @@ class TestTaskControlBoundaries:
         [assigned] = recorder.of(TaskAssignedEvent)
         assert not assigned.can_ask_questions
         assert 'which messages cannot reach' in str(result.all_messages())
-        assert len(recorder.of(TaskForceCancelEvent)) == 1
+        assert len(recorder.of(TaskForceCancelRequestedEvent)) == 1
         assert 'It is one-shot and cannot be resumed.' in tool_returns(result.all_messages())[-1]
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
@@ -2678,6 +2702,48 @@ class TestTaskControlBoundaries:
         assert result.output == 'Done.'
         assert len(task_texts(result.all_messages())) == 1
         assert task_texts(result.all_messages()[-2:-1])
+
+    async def test_a_replayed_background_task_is_announced_as_backgrounded(self) -> None:
+        def parent(durability: RecordingDurability) -> tuple[Agent[Any, str], Recorder]:
+            recorder = Recorder()
+            agent = Agent(
+                scripted(
+                    call('delegate_task', agent_name='researcher', task='Find x.', background=True),
+                    text('Waiting.'),
+                    text('Done.'),
+                ),
+                name='durable',
+                capabilities=[controlled(), recorder, durability],
+            )
+            return agent, recorder
+
+        def task_kinds(recorder: Recorder) -> list[str]:
+            return [kind for kind in recorder.kinds() if kind.startswith('sub_agents.task_')]
+
+        recording = RecordingDurability()
+        agent, recorder = parent(recording)
+        with anyio.fail_after(WAIT):
+            await agent.run('Go.')
+        assert task_kinds(recorder) == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_backgrounded',
+            'sub_agents.task_completed',
+        ]
+
+        delegation = 'durable__capability__sub_agents.delegate'
+        journal = {name: result for name, result in recording.results if name == delegation}
+        agent, recorder = parent(RecordingDurability(journal=journal))
+        with anyio.fail_after(WAIT):
+            result = await agent.run('Go.')
+        assert result.output == 'Done.'
+        # The replayed task settles before the delegating tool resumes, so its backgrounding is announced last.
+        assert task_kinds(recorder) == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_completed',
+            'sub_agents.task_backgrounded',
+        ]
 
     async def test_a_durable_task_keeps_the_owners_usage_rules(self) -> None:
         ticks: list[str] = []
@@ -2873,7 +2939,7 @@ class TestTaskControlBoundaries:
             async with owner.opened():
                 with owner.bind():
                     await parent.run('Go.', conversation_id='session')
-        assert sum(isinstance(event.event, TaskFollowUpEvent) for event in observed) == 1
+        assert sum(isinstance(event.event, TaskResumedEvent) for event in observed) == 1
 
     async def test_a_remote_task_the_transport_cannot_send_fails(self) -> None:
         transport = FailingTransport('sub_agents.task_assigned')
@@ -2890,10 +2956,10 @@ class TestTaskControlBoundaries:
         class Stray(FailingTransport):
             strayed = False
 
-            async def receive(self, mailbox: str) -> SubAgentMessage:
+            async def receive(self, mailbox: str) -> SubAgentMessageEvent:
                 if mailbox == 'agent:remote' and not self.strayed:
                     self.strayed = True
-                    return TaskMessageEvent(task_id='t0', agent_name='remote', message='stray')
+                    return TaskSteeredEvent(task_id='t0', agent_name='remote', message='stray')
                 return await super().receive(mailbox)
 
         unreported = anyio.Event()

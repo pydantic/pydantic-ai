@@ -15,11 +15,11 @@ from pydantic_ai import CapabilityEvent
 # Private import: core has no public way to tell when new event kinds were registered, which the
 # cached adapter below has to be rebuilt for.
 from pydantic_ai._event_registry import event_registry_version
-from pydantic_ai_harness.subagents._events import SubAgentMessage
+from pydantic_ai_harness.subagents._events import SubAgentMessageEvent
 
 
 class SubAgentTransport(ABC):
-    """Carries `SubAgentMessage`s between a delegating run and the `SubAgentWorker` serving its remote agents.
+    """Carries `SubAgentMessageEvent`s between a delegating run and the `SubAgentWorker` serving its remote agents.
 
     A transport is a set of mailboxes. `send` delivers a message to the mailbox named by its `mailbox`
     property, and `receive` waits for the next message in a mailbox. Messages a mailbox receives before
@@ -38,12 +38,12 @@ class SubAgentTransport(ABC):
     """
 
     @abstractmethod
-    async def send(self, message: SubAgentMessage) -> None:
+    async def send(self, message: SubAgentMessageEvent) -> None:
         """Deliver `message` to `message.mailbox`, without waiting for anyone to receive it."""
         raise NotImplementedError
 
     @abstractmethod
-    async def receive(self, mailbox: str) -> SubAgentMessage:
+    async def receive(self, mailbox: str) -> SubAgentMessageEvent:
         """Wait for the next message delivered to `mailbox` and return it, in the order they were sent.
 
         A stopping worker reports its running tasks as failed. Raise once a worker is gone without doing so,
@@ -72,13 +72,13 @@ class InMemoryTransport(SubAgentTransport):
         """Create a transport with no mailboxes; each is created when first sent to or received from."""
         self._mailboxes: dict[str, _Mailbox] = {}
 
-    async def send(self, message: SubAgentMessage) -> None:
+    async def send(self, message: SubAgentMessageEvent) -> None:
         """Append `message` to its mailbox's queue and wake whoever waits on that mailbox."""
         mailbox = self._mailboxes.setdefault(message.mailbox, _Mailbox())
         mailbox.messages.append(message)
         mailbox.arrived.set()
 
-    async def receive(self, mailbox: str) -> SubAgentMessage:
+    async def receive(self, mailbox: str) -> SubAgentMessageEvent:
         """Take the oldest message in `mailbox`, waiting until one arrives."""
         box = self._mailboxes.setdefault(mailbox, _Mailbox())
         while not box.messages:
@@ -95,7 +95,7 @@ class InMemoryTransport(SubAgentTransport):
 
 @dataclass
 class _Mailbox:
-    messages: deque[SubAgentMessage] = field(default_factory=deque[SubAgentMessage])
+    messages: deque[SubAgentMessageEvent] = field(default_factory=deque[SubAgentMessageEvent])
     arrived: anyio.Event = field(default_factory=anyio.Event)
 
 
@@ -105,18 +105,18 @@ def _message_adapter(registry_version: int) -> TypeAdapter[CapabilityEvent]:
     return TypeAdapter(CapabilityEvent)
 
 
-def serialize_message(message: SubAgentMessage) -> bytes:
+def serialize_message(message: SubAgentMessageEvent) -> bytes:
     """Serialize a sub-agent message to JSON, for a transport that crosses a process boundary."""
     return _message_adapter(event_registry_version()).dump_json(message)
 
 
-def deserialize_message(data: str | bytes) -> SubAgentMessage:
+def deserialize_message(data: str | bytes) -> SubAgentMessageEvent:
     """Deserialize a sub-agent message serialized by `serialize_message`.
 
     Raises:
         ValueError: If `data` is not a sub-agent message.
     """
     event = _message_adapter(event_registry_version()).validate_json(data)
-    if not isinstance(event, SubAgentMessage):
+    if not isinstance(event, SubAgentMessageEvent):
         raise ValueError(f'Expected a sub-agent message, got a {event.kind!r} event.')
     return event

@@ -91,13 +91,17 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (on by default)
 
-When the model lists a directory or reads a file in it, surface the
-instruction file of that directory and of every directory between it and
-the working directory, shallowest first: reading `packages/foo/src/x.py` also
-surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
-`DirectoryListedEvent`, so it receives normalized, containment-checked paths
-instead of inspecting raw tool arguments. It is on by default, so with
-`FileSystem` on the agent nothing else is needed; this switches it to pointers:
+When the model lists a directory, reads a file in it, or writes or edits a file
+in it, surface the instruction file of that directory and of every directory
+between it and the working directory, shallowest first: reading
+`packages/foo/src/x.py` also surfaces `packages/foo/AGENTS.md`. A plain
+`FileWrittenEvent` for the instruction file itself counts as surfacing it, since
+the model wrote the whole file. A `FileReadEvent` or `FileEditedEvent` for it
+doesn't: a read can return part of the file and an edit changes part of it. This
+strategy subscribes to `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`, so it receives normalized, containment-checked paths instead
+of inspecting raw tool arguments. It is on by default, so with `FileSystem` on the
+agent nothing else is needed; this switches it to pointers:
 
 ```python
 from pydantic_ai import Agent
@@ -143,9 +147,9 @@ more deeply nested file wins a conflict, and the user's direct instructions win
 over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
-the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
-`pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
-`path` is relative to.
+the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
@@ -167,7 +171,7 @@ Walk-up files become part of the agent's instructions, so the model gives them t
 In a workspace with less than `'operator'` [authority](../workspace.md#workspace-authority), the walk-up reads each file at its own level, `Workspace.authority_of(path)`. A file above the working directory gets the level of the `path_authority` entry covering it, or else the workspace's own level, so a plain workspace loads its ancestors' files as before. Only files at `'operator'` go in the instructions:
 
 - The working directory's own file below `'operator'` is named in the instructions, by its configured name, and the model reads it with its file tools, so its contents reach it as tool output.
-- An ancestor's file below `'operator'`, which the file tools can't reach, is sent as a `ContextFilePart` with the run's first request: repository data on the user channel, with a note saying who wrote it. It's sent again only when its text changed or a compaction dropped it.
+- An ancestor's file below `'operator'`, which the file tools can't reach, is sent as a `ContextFilePart` with the run's first request: repository data on the user channel, with a note saying who wrote it. It's sent again when its text changed, and put back on the next request when a compaction drops it.
 - The instructions leave out the sentence on how nested instruction files relate ("the more deeply nested one takes precedence"), which would rank repository files over the operator's.
 
 Give the operator's own files above an untrusted checkout their level with `path_authority`, such as `LocalWorkspace('./checkout', authority='none', path_authority={'~/AGENTS.md': 'operator'})`.
