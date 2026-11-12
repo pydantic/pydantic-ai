@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "402"
+      - "403"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               What is the largest city in the user country? Use the get_user_country tool and
               then your own world knowledge.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -49,10 +49,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=106
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a42f581fc5cfb1e7bfef7d1781b682c4-eb09fbe0efc1cecc-01
+      - 00-ff468ce365075f26cfa771e52517fe38-a1dd7f17b0f088a4-01
       transfer-encoding:
       - chunked
       vary:
@@ -61,54 +63,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3wx3ex3fuPktYXmnv8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":566,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}  }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgNQXnE28zf714XDqBfU7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":374,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01RF9txTNLJ9bnS7gbdJviZo","name":"get_user_country","input":{},"caller":{"type":"direct"}}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll help you find the largest city"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in your"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" country"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Let me first determine"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" country you're in."}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01A6nVcvkJZ34xjbVWD68U9W","name":"get_user_country","input":{},"caller":{"type":"direct"}}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1          }
+        data: {"type":"content_block_stop","index":0  }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":566,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":61}}
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":374,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":28,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"    }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-29T16:32:30.931574+00:00
+  recorded_at: 2026-10-25T05:30:57.007358+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -116,11 +91,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "815"
+      - "690"
       content-type:
       - application/json
       host:
@@ -128,7 +103,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -138,23 +113,19 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: >-
-              I'll help you find the largest city in your country. Let me first determine
-              which country you're in.
-            type: text
-          - id: toolu_01A6nVcvkJZ34xjbVWD68U9W
+          - id: toolu_01RF9txTNLJ9bnS7gbdJviZo
             type: tool_use
             name: get_user_country
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01A6nVcvkJZ34xjbVWD68U9W
+          - tool_use_id: toolu_01RF9txTNLJ9bnS7gbdJviZo
             type: tool_result
             content:
             - text: Mexico
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -176,10 +147,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=91
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-0eb76e17865e4c0ffdfd6de7666d6a42-eddf4d5d411260d1-01
+      - 00-18e92080217dd115a55303d47cfecab4-4c5b9339babac87e-01
       transfer-encoding:
       - chunked
       vary:
@@ -188,117 +161,87 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3x4W79KgsD9VqZQY5W","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":640,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}         }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgNQXrawkLT2TP6bNEvQv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":411,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":90,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Based"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on the tool"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" t"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" result"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ool says"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", you"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'re in Mexico. The"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" country is Mexico,"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" largest city in Mexico is **"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and its largest city is **"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Mexico City ("}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Mexico City**"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Ciudad"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (Ciudad de México"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" de México)**,"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"). The"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" city"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pro"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" also"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"per has about"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the capital of"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 9 million resid"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ents. The gre"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" country.\n\nMexico"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ater metropolitan area has"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" City is not"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" more"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" only the largest city in Mexico but also"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" than 21 million, which"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" one"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" makes it one"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the largest"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the largest ur"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" metropolitan"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ban areas in the"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" areas in the world, with a metropolitan"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Western"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" population of"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" over 21"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" million people. The"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" city proper"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has a population of approximately"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 9"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" million people."}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" It"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" serves"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as the political, economic, and cultural"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" center of Mexico."}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Hemisphere."}      }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
+        data: {"type":"content_block_stop","index":0        }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":640,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":101}        }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":411,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":90,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"        }
+        data: {"type":"message_stop" }
 
-  recorded_at: 2026-09-29T16:32:34.127950+00:00
+  recorded_at: 2026-10-25T05:30:58.559483+00:00

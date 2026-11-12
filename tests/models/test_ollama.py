@@ -10,7 +10,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -181,6 +182,7 @@ async def test_ollama_local_native_output_uses_json_schema(allow_model_requests:
                 ],
                 usage=RequestUsage(input_tokens=136, output_tokens=15),
                 model_name='qwen3:0.6b',
+                model_id='ollama:qwen3:0.6b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='http://localhost:11434/v1/',
@@ -226,6 +228,7 @@ async def test_ollama_cloud_prompted_output(allow_model_requests: None, ollama_a
                 ],
                 usage=RequestUsage(input_tokens=172, output_tokens=88),
                 model_name='gpt-oss:20b',
+                model_id='ollama:gpt-oss:20b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='https://ollama.com/v1/',
@@ -269,6 +272,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                 ],
                 usage=RequestUsage(input_tokens=134, output_tokens=122),
                 model_name='gpt-oss:20b',
+                model_id='ollama:gpt-oss:20b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='https://ollama.com/v1/',
@@ -280,7 +284,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -289,7 +293,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'input': 'Paris.',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -316,6 +320,7 @@ We need to provide answer in JSON format. Let's do that.\
                 ],
                 usage=RequestUsage(input_tokens=206, output_tokens=194),
                 model_name='gpt-oss:20b',
+                model_id='ollama:gpt-oss:20b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='https://ollama.com/v1/',

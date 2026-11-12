@@ -150,7 +150,7 @@ dataset = Dataset(
         LLMJudge(
             rubric='Response is accurate and helpful',
             include_input=True,
-            model='anthropic:claude-sonnet-4-6',
+            model='{{ anthropic:medium }}',
         )
     ],
 )

@@ -14,12 +14,14 @@ processes that keep running across the runs of a conversation.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](../img/harness/shell.svg)
+
 ## The problem
 
 Agents frequently need to run a build, a test suite, a linter, or a quick
-`grep`. Wiring up subprocess handling -- streaming output, timeouts, truncation,
-killing runaway processes, and tracking background jobs across runs --
-is fiddly boilerplate that every agent reinvents.
+`grep`. Doing that well takes subprocess handling: streaming output, timeouts,
+truncation, killing runaway process groups, and tracking background jobs across
+runs.
 
 `Shell` bundles that plumbing into a single [capability](../capabilities/overview.md):
 configurable allow/deny lists, output truncation tuned to keep the useful tail,
@@ -41,7 +43,7 @@ from pydantic_ai_harness import Shell
 
 Path('./workspace').mkdir(exist_ok=True)
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('./workspace'),
         Shell(allowed_commands=['ls', 'cat', 'rg']),
@@ -101,27 +103,36 @@ shell operators and interactive commands:
 both. Setting non-empty values for both raises a `ValueError` when the toolset
 is constructed. `denied_commands` defaults to a list of destructive commands
 (`rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`, `halt`,
-`poweroff`, `init`); pass an empty list to disable it. The executable name is
-extracted with `shlex`, so arguments don't bypass the check.
+`poweroff`, `init`). The executable name is extracted with `shlex`, so
+arguments don't bypass the check.
 
-An empty `allowed_commands` collection does not select allowlist mode. The
-configured `denied_commands` remain active; when omitted, this is the built-in
-denylist. Pass `denied_commands=[]` to disable command-name filtering.
+An empty `allowed_commands` collection does not select allowlist mode: the
+configured `denied_commands` (by default the built-in denylist) remain active.
+Pass `denied_commands=[]` to disable command-name filtering.
 
 A denied command surfaces to the model as a
 [`ModelRetry`](../tools-advanced.md#tool-retries), not a hard error:
 the run continues and the model can pick an allowed command instead. So does
-every other failure the model can act on: a working directory an earlier command
-deleted or replaced with a file, and a command the operating system refuses to
-spawn because it holds a NUL byte or contains a character the operating system
-cannot encode. Failures
-the model can do nothing about still abort the run: a host that cannot allocate
-a process, an argument or environment that exceeds the platform's combined
-size limit, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
-`[Command timed out after Ns]`. A workspace that is gone ends the run.
+every other failure the model can act on:
+
+- a working directory an earlier command deleted or replaced with a file
+- a command the operating system refuses to spawn because it holds a NUL byte or
+  a character the operating system cannot encode
+- a command too long for the operating system to start (the model is asked to
+  write it to a file and run that instead)
+
+Failures the model can do nothing about abort the run:
+
+- a host that cannot allocate a process
+- an application-supplied `env` too large to start even a short command
+- an invalid character in an application-supplied `env`
+- a workspace that is gone
+
+A command that runs past its timeout returns its output so far, ending in
+`[Command timed out after Ns]`.
 
 !!! warning "Best-effort, not a security boundary"
-    `allowed_commands` is a guardrail against accidents, not a security boundary.
+    `allowed_commands` is a guardrail against accidents.
     Validation checks only the first token, and allowlisted commands such as
     `python`, `git`, `uv`, and `make` can spawn arbitrary processes. A model that
     wants to work around the allowlist can. For untrusted work, give the run an
@@ -152,6 +163,28 @@ partial files, shrink existing files, or prevent creating many smaller files.
 Use filesystem quotas or OS isolation for aggregate disk protection and
 untrusted commands. No additional telemetry spans are emitted; the existing
 tool-call result carries the failure and limit context.
+
+## Limit command logs
+
+The output logs of `start_command` and `shell` commands are bounded by
+`Shell(max_log_bytes=...)`, 100 MB by default. Each log is checked once a
+second while a command runs and once more when it ends; a log past the limit
+is emptied and gets the notice
+`[Log exceeded max_log_bytes=<n>; earlier output was cleared.]`. The command
+keeps running, so a dev server that logs a lot is not stopped, and later output
+is logged as usual. Pass `max_log_bytes=None` to turn it off.
+
+This also stops a command that reads its own log, such as
+`cat .pydantic-ai-harness/shell/*/output.log | grep failed`. Its output is
+appended to a log it is still reading, so without a limit it never reaches the
+end and the log grows until the disk is full. Once the log is emptied, the
+command reads to the end and exits.
+
+Unlike `max_file_bytes`, this works with `tools=['shell']` and only applies to
+the logs, not to files the command writes. A log can grow by up to one second
+of output past the limit before it is emptied. No telemetry spans are emitted
+for a clear: it shows as the notice in the log and, when it happens while a
+`shell` call waits, as `truncated=True` on its finished event.
 
 ## Environment control
 
@@ -209,7 +242,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Shell
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('./app'),
         Shell(allowed_commands=['npm', 'curl']),
@@ -222,6 +255,16 @@ result = agent.run_sync(
 )
 print(result.output)
 ```
+
+`stop_command` signals the entire process group, including children left after
+the wrapper exits, then removes the job's output files. When the command took
+write permission away from `.pydantic-ai-harness/shell/` (as `chmod -R a-w .`
+does), the job's directory stays behind and the result ends with
+`[job directory not removed: permission denied]`. In a workspace without
+`setsid` where the job cannot get a process group of its own, only the wrapper
+process is signalled, which does not stop the command or its children.
+
+Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
 ## Persistent commands
 
@@ -267,18 +310,20 @@ show output as it arrives without parsing the tool result:
 |---|---|---|
 | `CommandStartedEvent` | stream | `command`, `pid` |
 | `CommandOutputEvent` | stream | `text`: a chunk of the combined log, decoded incrementally |
-| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `total_lines` |
+| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `line_count` |
 
 Output events are emitted while a foreground call waits: at most the first
 16,000 bytes of the log per call, in chunks of up to 4,096 bytes, polled every
 50 ms to 1 s. A background call emits only the started and finished events. `finished`
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
-more than the events showed. `total_lines` counts logical lines in logs up to
-1 MiB and is `None` for larger logs, which are not scanned. A cancelled call may
-emit no finished event. Events carry command text and command output, so treat
-them as untrusted when rendering. They add no telemetry spans; core already
-traces the tool call.
+more than the events showed. `line_count` counts logical lines in logs up to
+1 MiB and is `None` for larger logs, which are not scanned. If `max_log_bytes`
+empties the log during the call, output events start again from its notice,
+`truncated` is true and `line_count` is `None`. A cancelled call may emit no
+finished event. Events carry command text and command output, so treat them as
+untrusted when rendering. They add no telemetry spans; core already traces the
+tool call. `total_lines` is the deprecated name of `line_count`. It still reads, with a warning, and a payload saved under it still loads.
 
 ## Working directory
 
@@ -296,7 +341,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Shell
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.'), Shell(persist_cwd=True, allowed_commands=['cd', 'ls', 'pwd'])],
 )
 ```
@@ -304,10 +349,6 @@ agent = Agent(
 Each run gets a fresh toolset instance, so the tracked directory is isolated
 between concurrent runs and always starts back at the workspace's working
 directory.
-
-`stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files. In a workspace without `setsid` where the job cannot get a process group of its own, only the wrapper process is signalled, which does not stop the command or its children.
-
-Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
@@ -325,6 +366,7 @@ Shell(
     default_timeout=30.0,          # seconds, per run_command
     max_output_chars=50_000,       # output cap returned to the model
     max_file_bytes=None,           # per-file size limit for commands (None = no limit)
+    max_log_bytes=100_000_000,     # background and `shell` log size limit (None = no limit)
     persist_cwd=False,             # make cd sticky across calls
     allow_interactive=False,       # allow TTY-style commands
     env=None,                      # variables added to the workspace's environment
@@ -344,7 +386,7 @@ config file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-opus-5-5
+model: {{ anthropic:large }}
 capabilities:
   - Shell:
       allowed_commands: ['ls', 'cat', 'rg', 'pytest']
@@ -363,7 +405,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`. [Durable execution](durable-execution.md) shows an example for each engine, which command events Temporal delivers live, and how long a command can run in a Temporal activity.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
 
 ## Further reading
 

@@ -18,7 +18,7 @@ This is useful for:
 A spec file defines the agent's configuration in YAML or JSON:
 
 ```yaml {title="agent.yaml" test="skip"}
-model: anthropic:claude-opus-4-6
+model: {{ anthropic:large }}
 instructions: You are a helpful research assistant.
 model_settings:
   max_tokens: 8192
@@ -54,7 +54,7 @@ class UserContext:
 
 agent = Agent.from_spec(
     {
-        'model': 'anthropic:claude-opus-4-6',
+        'model': '{{ anthropic:large }}',
         'instructions': 'You are helping {{user_name}}.',
         'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
     },
@@ -75,6 +75,12 @@ The spec may omit `model`; it can instead be supplied to `Agent.from_spec` or wh
 When `deps_type` is passed, [template strings](#template-strings) in the spec's `instructions`, `description`, and capability arguments are compiled and validated against the deps type at construction time.
 
 For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
+
+### Where specs come from
+
+A spec has the same authority as the code that builds the agent. It chooses the model and provider, the instructions, and every capability with its arguments, including the endpoints the agent connects to. For example, an [`MCP`](capabilities/mcp.md) capability connects to the server URL the spec names, `localhost` and private addresses included, with the network access of the machine the agent runs on.
+
+Load specs only from sources you trust. If your application accepts specs from its users, load each one with [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] or `AgentSpec.model_validate`, and check every entry in `spec.capabilities` (its `name`, and its `kwargs` such as an `MCP` `url`) against what that user may use before passing it to `Agent.from_spec`.
 
 ## Template strings
 
@@ -101,7 +107,7 @@ class UserProfile:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=UserProfile,
     instructions=TemplateStr('You are assisting {{name}}, who is a {{role}}.'),
 )
@@ -118,7 +124,7 @@ Capabilities in specs support three forms:
 * `{'MyCapability': value}` — single positional argument, calls `MyCapability.from_spec(value)`
 * `{'MyCapability': {key: value, ...}}` — keyword arguments, calls `MyCapability.from_spec(**kwargs)`
 
-These built-in capabilities can be declared in specs: [`Thinking`][pydantic_ai.capabilities.Thinking], [`Caching`][pydantic_ai.capabilities.Caching], [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], [`MCP`][pydantic_ai.capabilities.MCP], [`ToolSearch`][pydantic_ai.capabilities.ToolSearch], [`PrefixTools`][pydantic_ai.capabilities.PrefixTools], [`NativeTool`][pydantic_ai.capabilities.NativeTool], [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas], [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError], [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt], and [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace]. The other [built-in capabilities](capabilities/overview.md#available-capabilities) take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
+These built-in capabilities can be declared in specs: [`Thinking`][pydantic_ai.capabilities.Thinking], [`Caching`][pydantic_ai.capabilities.Caching], [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], [`MCP`][pydantic_ai.capabilities.MCP], [`ToolSearch`][pydantic_ai.capabilities.ToolSearch], [`PrefixTools`][pydantic_ai.capabilities.PrefixTools], [`NativeTool`][pydantic_ai.capabilities.NativeTool], [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas], [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError], [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt], [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] (see [Model Fallback](capabilities/model-fallback.md#agent-specs)), and [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] (see [Batch processing](batch.md#agent-specs)). The other [built-in capabilities](capabilities/overview.md#available-capabilities) take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
 ## Custom capabilities in specs
 
@@ -156,7 +162,7 @@ When provided (and no `output_type` keyword argument is passed to `from_spec`), 
     The model's response is not validated against the schema's `properties` or `required` fields — it is accepted as a plain dict. The schema serves as an instruction to the model, not a runtime validation constraint.
 
 ```yaml {title="agent_with_schema.yaml" test="skip"}
-model: anthropic:claude-opus-4-6
+model: {{ anthropic:large }}
 deps_schema:
   type: object
   properties:
@@ -186,7 +192,7 @@ from pydantic_ai import AgentSpec
 
 spec = AgentSpec.model_validate(
     {
-        'model': 'anthropic:claude-opus-4-6',
+        'model': '{{ anthropic:large }}',
         'instructions': 'You are a helpful assistant.',
         'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
     }

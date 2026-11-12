@@ -21,12 +21,14 @@ If you only need background execution, a native Render task around `agent.run(..
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Your application starts the support task with start_task and gets a run ID back at once. On Render, the root task run calls agent.run. RenderWorkflows sends each model request to a chained support__model.request task run and each tool call to a chained call_tool task run, each in its own instance with its own retries, timeout and compute plan. The application reads the result later with get_task_run. Nothing is checkpointed, so a retried root task run repeats finished calls.](../img/harness/render-workflows.svg)
+
 ## Prerequisites
 
 The example uses Pydantic AI's `TestModel` and a mock weather tool, so it needs no LLM API key or Render deployment.
 The model generates sample tool arguments and returns fixed text rather than interpreting the prompt.
 
-You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.2.0 or later.
+You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.6.0 or later.
 
 ## 1. Install dependencies
 
@@ -127,7 +129,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 To make real model requests, set `OPENAI_API_KEY` in the terminal where you start the worker. In `app.py`, replace
-`TestModel(custom_output_text='The workflow completed.')` with `'openai:gpt-5.6-sol'` and remove the `TestModel` import.
+`TestModel(custom_output_text='The workflow completed.')` with `'{{ openai:medium }}'` and remove the `TestModel` import.
 Restart the server and repeat step 4; the response now comes from the model and will vary with the prompt.
 
 Replace `get_weather` with your own tool functions and update the agent's `tools` list to use them. Their arguments
@@ -169,8 +171,8 @@ updated task still runs. These settings are fixed when tasks register and cannot
 For task configuration, see [Task options and tool opt-out](#task-options-and-tool-opt-out).
 
 A failed chained task run can retry while the entry task run waits. Retrying the entry task run restarts
-`agent.run(...)`, so model and tool calls that already finished may run again. There is no checkpoint resume or replay
-of completed steps. The Render SDK also does not let this integration assign stable idempotency keys to chained calls.
+`agent.run(...)`, so model and tool calls that already finished may run again. The Render SDK also does not let this
+integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
@@ -384,6 +386,9 @@ shared toolset definitions remain registered. `False` is rejected for MCP and dy
 - **Streaming and cancellation:** Model responses and events are buffered until the chained task run finishes;
   provider tokens do not stream live to the caller. Pydantic AI cancellation tokens are unsupported inside a
   workflow, so use Render's native task cancellation. Cancellation does not undo external tool side effects.
+- **Batched requests:** Under [`BatchModelRequests`](../batch.md#durable-execution), the waits between checks of a batch are plain
+  sleeps, so the task has to stay up for as long as the batch takes, and a retried entry task submits a waiting
+  request again in a new batch.
 
 Retry behavior is described in [Configure retries and timeouts](#6-configure-retries-and-timeouts).
 

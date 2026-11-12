@@ -1,0 +1,171 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Always call get_weather for a weather question, then answer in one
+            short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Look up the weather for a city.
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: STRING
+            required:
+            - city
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.931
+  data:
+    setupComplete:
+      sessionId: 8cfc8a13-bac9-45d4-baef-19ff38c1704e
+- kind: message
+  direction: sent
+  at: 0.931
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the weather in London?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.365
+  data:
+    toolCall:
+      functionCalls:
+      - name: get_weather
+        args:
+          city: London
+        id: 919101a5-d755-40cf-86b2-2718f4929f34
+- kind: message
+  direction: received
+  at: 1.366
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.366
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 24
+      candidatesTokenCount: 5
+      totalTokenCount: 29
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 24
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 5
+- kind: message
+  direction: sent
+  at: 1.37
+  data:
+    tool_response:
+      functionResponses:
+      - id: 919101a5-d755-40cf-86b2-2718f4929f34
+        name: get_weather
+        response:
+          output: '{"error":"The tool raised an unhandled error."}'
+- kind: message
+  direction: received
+  at: 1.825
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: I'm sorry, I
+- kind: message
+  direction: received
+  at: 1.863
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' couldn''t retrieve the weather for London.'
+- kind: message
+  direction: received
+  at: 1.864
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.864
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 45
+      candidatesTokenCount: 15
+      totalTokenCount: 60
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 45
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 15
+- kind: message
+  direction: sent
+  at: 1.864
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is two plus two? Answer with just the number.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 2.253
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: Four.
+- kind: message
+  direction: received
+  at: 2.253
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 2.253
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 72
+      candidatesTokenCount: 2
+      totalTokenCount: 74
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 72
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 2

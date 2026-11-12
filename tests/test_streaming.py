@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import TracebackType
+from types import AsyncGeneratorType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -49,23 +49,28 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _run_context,
     _utils,
     capture_run_messages,
     models,
+    result as result_module,
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
@@ -91,11 +96,16 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
+from .canonical_system_utils import PROVIDER_NAME, StampedModel
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
+from .realtime.simulation._loop import SimulatedLoop
+
+READINESS_WAIT_TIMEOUT = 5
+"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -129,6 +139,7 @@ async def test_streamed_text_response():
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
@@ -170,6 +181,7 @@ async def test_streamed_text_response():
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
@@ -189,6 +201,7 @@ async def test_streamed_text_response():
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
                     usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
@@ -232,6 +245,7 @@ def test_streamed_text_sync_response():
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
@@ -267,6 +281,7 @@ def test_streamed_text_sync_response():
             parts=[TextPart(content='{"ret_a":"a-apple"}')],
             usage=RequestUsage(input_tokens=52, output_tokens=11),
             model_name='test',
+            model_id='test:test',
             timestamp=IsDatetime(),
             provider_name='test',
         )
@@ -283,6 +298,7 @@ def test_streamed_text_sync_response():
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
@@ -302,6 +318,7 @@ def test_streamed_text_sync_response():
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=11),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
@@ -738,7 +755,6 @@ def test_sync_stream_bridge_rejects_iterator_resume_from_another_thread():
     assert cleanup_thread_id == owner_thread_id
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: pytest.MonkeyPatch):
     """Foreign-thread iterator GC queues cleanup without emitting an unraisable exception.
 
@@ -785,7 +801,6 @@ def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: 
     bridge.shutdown()
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytest.MonkeyPatch):
     """Foreign-thread iterator GC closes its receive stream after wrapper shutdown.
 
@@ -1053,7 +1068,6 @@ def test_sync_stream_bridge_shutdown_accepts_prior_exit_request():
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     """The non-context-manager fallback can request cleanup from its running owner loop.
 
@@ -1079,7 +1093,6 @@ def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     assert owner_task.done()
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_with_unclosed_iterator():
     """Dropping an active iterator releases its pump before the wrapper's GC cleanup runs.
 
@@ -1160,7 +1173,6 @@ def test_sync_stream_bridge_gc_request_retrieves_owner_exit_error():
     asyncio.run(run())
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     """The non-context-manager fallback requests cleanup if another event loop is active.
 
@@ -1188,7 +1200,6 @@ def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     assert owner_task.done()
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_on_another_thread():
     """The GC fallback never moves the stopped caller-owned loop to the finalizer thread.
 
@@ -1270,7 +1281,6 @@ def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pyte
     assert stream_closed.wait(timeout=5)
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_run_stream_sync_keyboard_interrupt_mid_iteration_closes_receive_stream(monkeypatch: pytest.MonkeyPatch):
     """A Ctrl-C *while iterating* a sync stream closes its receive stream too, leaking nothing (#5975).
 
@@ -1459,11 +1469,17 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
         assert await anext(stream)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_run_stream_cancel_during_debounce_from_another_task():
     """`cancel()` interrupts a debounced background pull without cancelling its caller.
 
     A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
     guarantee that the debounced prefetch is still active when cancellation starts.
+
+    The deadlines only catch a hang, so the test runs on a virtual clock that moves when nothing else can run: a task
+    waiting forever fails at once, and no amount of real time on a stalled runner can expire them.
     """
     pull_started = anyio.Event()
     finalization_started = anyio.Event()
@@ -1561,6 +1577,70 @@ async def test_run_stream_cancel_during_debounce_from_another_task():
     assert result.response.state == 'interrupted'
 
 
+@pytest.mark.parametrize('stream_method', ['stream_text', 'stream_response'])
+async def test_run_stream_outer_cancel_during_debounce_lets_source_cleanup_finish(
+    stream_method: Literal['stream_text', 'stream_response'],
+):
+    """An outer `anyio` cancel landing on a debounced pull lets the source's shielded cleanup finish.
+
+    The cancelled scope keeps re-cancelling the consumer while the debounce teardown waits for the pull it cancelled.
+    A plain `await` on that pull would forward each re-cancel into the source natively and interrupt its cleanup.
+    """
+    source_waiting = anyio.Event()
+    cleanup_started = anyio.Event()
+    cleanup_permitted = anyio.Event()
+    cleanup_finished = anyio.Event()
+    sources: list[AsyncGenerator[str]] = []
+    source_tasks: list[asyncio.Task[object] | None] = []
+
+    async def tokens() -> AsyncGenerator[str]:
+        try:
+            yield 'first'
+            source_tasks.append(asyncio.current_task())
+            source_waiting.set()
+            await anyio.sleep_forever()
+        finally:
+            cleanup_started.set()
+            with anyio.CancelScope(shield=True):
+                await cleanup_permitted.wait()
+                cleanup_finished.set()
+
+    def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        iterator = tokens()
+        sources.append(iterator)
+        return iterator
+
+    scope = anyio.CancelScope()
+
+    async def cancel_during_pull() -> None:
+        await source_waiting.wait()
+        scope.cancel()
+        await cleanup_started.wait()
+        await anyio.lowlevel.checkpoint()
+        cleanup_permitted.set()
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    try:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(cancel_during_pull)
+                with scope:
+                    async with agent.run_stream('hello') as result:
+                        stream = result.stream_text() if stream_method == 'stream_text' else result.stream_response()
+                        async for _ in stream:  # pragma: no branch
+                            pass
+                assert cleanup_finished.is_set(), 'Model source cleanup was interrupted during teardown'
+
+        assert scope.cancelled_caught
+        # The debouncer pulls the source in a task of its own: that pull is what teardown has to wait for.
+        [source_task] = source_tasks
+        assert source_task is not asyncio.current_task()
+    finally:
+        cleanup_permitted.set()
+        for iterator in sources:
+            await iterator.aclose()
+
+
 def test_run_stream_sync_rejects_already_entered_result():
     """Passing an already-entered `StreamedRunResult` (the old constructor arg) raises a clear error."""
     with pytest.raises(TypeError, match='now takes the `run_stream\\(\\)` context manager'):
@@ -1589,6 +1669,7 @@ async def test_streamed_structured_response():
             ],
             usage=RequestUsage(input_tokens=50),
             model_name='test',
+            model_id='test:test',
             timestamp=IsDatetime(),
             provider_name='test',
         )
@@ -1688,6 +1769,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1696,6 +1778,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1704,6 +1787,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1712,6 +1796,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1720,6 +1805,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1728,6 +1814,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1736,6 +1823,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
@@ -1744,6 +1832,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     state='complete',
@@ -1819,6 +1908,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1827,6 +1917,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1835,6 +1926,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1843,6 +1935,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1851,6 +1944,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1859,6 +1953,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the mat.')],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1867,6 +1962,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the mat.')],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -1875,6 +1971,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the mat.')],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 state='complete',
@@ -1974,6 +2071,7 @@ async def test_call_tool():
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
+                    model_id='function:function::stream_structured_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2006,6 +2104,7 @@ async def test_call_tool():
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
+                    model_id='function:function::stream_structured_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2033,6 +2132,7 @@ async def test_call_tool():
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::stream_structured_function',
+                    model_id='function:function::stream_structured_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2087,15 +2187,16 @@ async def test_empty_response():
                 parts=[],
                 usage=RequestUsage(input_tokens=50),
                 model_name='function::stream_structured_function',
+                model_id='function:function::stream_structured_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2107,6 +2208,7 @@ async def test_empty_response():
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
                 model_name='function::stream_structured_function',
+                model_id='function:function::stream_structured_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2138,6 +2240,7 @@ async def test_run_stream_allows_none_output_empty_response():
                     parts=[],
                     usage=RequestUsage(input_tokens=50),
                     model_name='function::empty_stream',
+                    model_id='function:function::empty_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2177,6 +2280,7 @@ async def test_call_tool_wrong_name():
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_structured_function',
+                model_id='function:function::stream_structured_function',
                 timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2637,6 +2741,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=13),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2671,6 +2776,66 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_early_strategy_emits_events_for_skipped_tool_calls(self):
+        """Calls skipped because an output tool already produced the final result still emit their events.
+
+        Each skipped function or deferred call gets an unvalidated `FunctionToolCallEvent` and a
+        `FunctionToolResultEvent` carrying the stub return recorded in history, like a skipped output tool.
+        """
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield {
+                0: DeltaToolCall('final_result', '{"value": "final"}', tool_call_id='call-output'),
+                1: DeltaToolCall('regular_tool', '{"x": 1}', tool_call_id='call-regular'),
+                2: DeltaToolCall('deferred_tool', '{"x": 2}', tool_call_id='call-deferred'),
+                3: DeltaToolCall('final_result', '{"value": "other"}', tool_call_id='call-output-2'),
+            }
+
+        agent = Agent(
+            FunctionModel(stream_function=sf),
+            output_type=[OutputType, DeferredToolRequests],
+            end_strategy='early',
+            toolsets=[ExternalToolset([ToolDefinition(name='deferred_tool')])],
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        async with agent.run_stream_events('test early strategy') as event_stream:
+            events: list[tuple[str, str, bool | str | None]] = []
+            async for event in event_stream:
+                if isinstance(event, ToolCallEvent):
+                    events.append((type(event).__name__, event.tool_call_id, event.args_valid))
+                elif isinstance(event, ToolResultEvent):
+                    assert isinstance(event.part, ToolReturnPart)
+                    events.append((type(event).__name__, event.tool_call_id, event.part.model_response_str()))
+
+        assert events == snapshot(
+            [
+                ('OutputToolCallEvent', 'call-output', True),
+                ('OutputToolResultEvent', 'call-output', 'Final result processed.'),
+                ('OutputToolCallEvent', 'call-output-2', None),
+                (
+                    'OutputToolResultEvent',
+                    'call-output-2',
+                    'Output tool not used - a final result was already processed.',
+                ),
+                ('FunctionToolCallEvent', 'call-regular', None),
+                (
+                    'FunctionToolResultEvent',
+                    'call-regular',
+                    'Tool not executed - a final result was already processed.',
+                ),
+                ('FunctionToolCallEvent', 'call-deferred', None),
+                (
+                    'FunctionToolResultEvent',
+                    'call-deferred',
+                    'Tool not executed - a final result was already processed.',
                 ),
             ]
         )
@@ -2782,6 +2947,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
+                    model_id='function:function::stream_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2839,6 +3005,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2950,6 +3117,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=17),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3080,6 +3248,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3165,6 +3334,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=3),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3228,6 +3398,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=57),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3256,6 +3427,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=58, output_tokens=4),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3326,6 +3498,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=10),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3409,6 +3582,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
+                    model_id='function:function::stream_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3466,6 +3640,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3578,6 +3753,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=17),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3602,11 +3778,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3687,6 +3865,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=21),
                     model_name='function::sf',
+                    model_id='function:function::sf',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3717,11 +3896,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3791,6 +3972,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
+                    model_id='function:function::stream_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3876,7 +4058,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content='First output validation failed',
                             tool_name='first_output',
                             tool_call_id=IsStr(),
@@ -3950,6 +4132,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
+                    model_id='function:function::stream_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -4031,6 +4214,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
+                    model_id='function:function::stream_function',
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -4043,11 +4227,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                     ],
                     timestamp=IsNow(tz=datetime.UTC),
@@ -4121,7 +4307,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content=[
                                 ErrorDetails(
                                     type='missing',
@@ -4459,6 +4645,7 @@ async def test_custom_output_type_default_str() -> None:
             parts=[TextPart(content='success (no tool calls)')],
             usage=RequestUsage(input_tokens=51, output_tokens=4),
             model_name='test',
+            model_id='test:test',
             timestamp=IsDatetime(),
             provider_name='test',
         )
@@ -4509,6 +4696,7 @@ async def test_iter_stream_output():
             parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=51, output_tokens=7),
             model_name='test',
+            model_id='test:test',
             timestamp=IsDatetime(),
             provider_name='test',
         )
@@ -4675,6 +4863,7 @@ async def test_iter_stream_response():
                 parts=[TextPart(content=text)],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
@@ -4685,6 +4874,7 @@ async def test_iter_stream_response():
             parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
+            model_id='test:test',
             timestamp=IsNow(tz=datetime.UTC),
             provider_name='test',
         ),
@@ -4766,11 +4956,13 @@ async def test_unknown_tool_call_events():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                 ),
             ),
             FunctionToolResultEvent(
@@ -4869,18 +5061,20 @@ async def test_output_tool_events():
                 args_valid=False,
             ),
             OutputToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content=[
-                        ErrorDetails(
-                            type='missing',
-                            loc=('value',),
-                            msg='Field required',
-                            input={'bad_value': 'invalid'},
-                        ),
+                        {
+                            'type': 'missing',
+                            'loc': ['value'],
+                            'msg': 'Field required',
+                            'input': {'bad_value': 'invalid'},
+                        },
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 )
             ),
             OutputToolCallEvent(
@@ -5107,6 +5301,7 @@ async def test_tool_raises_call_deferred():
                     parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -5169,6 +5364,7 @@ async def test_tool_raises_approval_required():
                     parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='my_tool')],
                     usage=RequestUsage(input_tokens=50, output_tokens=3),
                     model_name='function::llm',
+                    model_id='function:function::llm',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -5190,6 +5386,7 @@ async def test_tool_raises_approval_required():
                     parts=[TextPart(content='Done!')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::llm',
+                    model_id='function:function::llm',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -5913,6 +6110,7 @@ async def test_get_output_after_stream_output():
                 ],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
@@ -5933,6 +6131,190 @@ async def test_get_output_after_stream_output():
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('entry', ['run_stream', 'iter'])
+async def test_stream_early_exit_in_cancelled_scope_closes_model_stream(entry: Literal['run_stream', 'iter']):
+    """Leaving a model stream early inside a cancelled `anyio` scope still closes it before teardown returns.
+
+    The stream is left through `run_stream()`, or through `iter()` and `node.stream()`. The cancelled scope re-cancels
+    the consumer at every checkpoint of the teardown; none of those cancels may cut short the stream's shielded close.
+    Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    stream_closed = False
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_closed
+        try:
+            while True:
+                yield 'chunk '
+        finally:
+            stream_closed = True
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with anyio.CancelScope() as scope:
+            if entry == 'run_stream':
+                async with agent.run_stream('hello') as result:
+                    stream = result.stream_text(delta=True, debounce_by=None)
+                    assert await anext(stream)
+                    scope.cancel()
+            else:
+                async with agent.iter('hello') as run:
+                    user_prompt = run.next_node
+                    assert Agent.is_user_prompt_node(user_prompt)
+                    node = await run.next(user_prompt)
+                    assert Agent.is_model_request_node(node)
+                    async with node.stream(run.ctx) as events:
+                        assert await anext(aiter(events))
+                        scope.cancel()
+
+    assert stream_closed
+
+
+@dataclass
+class _ModelRequestCleanup(AbstractCapability[None]):
+    """Cleanup in `wrap_model_request` that starts once its handler returns, and finishes once `permitted` is set."""
+
+    shielded: bool
+    started: anyio.Event = field(default_factory=anyio.Event)
+    permitted: anyio.Event = field(default_factory=anyio.Event)
+    finished: anyio.Event = field(default_factory=anyio.Event)
+
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        finally:
+            with anyio.CancelScope(shield=self.shielded):
+                self.started.set()
+                await self.permitted.wait()
+                self.finished.set()
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_run_stream_early_exit_in_cancelled_scope_cancels_model_request_cleanup_like_the_scope(shielded: bool):
+    """Leaving `run_stream()` early inside a cancelled `anyio` scope lets `wrap_model_request` cleanup finish only if it
+    shields it. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup = _ModelRequestCleanup(shielded=shielded)
+
+    async def permit_cleanup() -> None:
+        await cleanup.started.wait()
+        # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+        for _ in range(3):
+            await anyio.lowlevel.checkpoint()
+        cleanup.permitted.set()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(permit_cleanup)
+            with anyio.CancelScope() as scope:
+                async with agent.run_stream('hello') as result:
+                    assert await anext(result.stream_text(delta=True, debounce_by=None))
+                    scope.cancel()
+
+    assert cleanup.finished.is_set() is shielded
+
+
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+async def test_run_stream_records_response_returned_after_absorbing_cancellation(
+    cancellation: Literal['native', 'anyio'],
+):
+    """A response `wrap_model_request` returns after absorbing a cancellation is recorded before the run is cancelled,
+    as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup_started = anyio.Event()
+    run_usages: list[RunUsage] = []
+
+    class AbsorbCancellation(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            run_usages.append(ctx.usage)
+            response = await handler(request_context)
+            cleanup_started.set()
+            try:
+                await anyio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+            return response
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[AbsorbCancellation()])
+    messages: list[ModelMessage] = []
+    scope = anyio.CancelScope()
+
+    async def drive() -> None:
+        nonlocal messages
+        with capture_run_messages() as messages, scope:
+            async with agent.run_stream('hello') as result:
+                async for _ in result.stream_text(debounce_by=None):
+                    pass
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    if cancellation == 'native':
+        task.cancel()
+    else:
+        scope.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    if cancellation == 'native':
+        with pytest.raises(asyncio.CancelledError):
+            task.result()
+    else:
+        task.result()
+        assert scope.cancelled_caught
+    assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
+    # The run's live usage counts the response's tokens once (the stream handler recorded them) and the request once
+    # (recording the response counted it).
+    assert run_usages == snapshot([RunUsage(output_tokens=4, input_tokens=51, requests=1)])
+
+
+async def test_run_stream_cancellation_is_not_masked_by_usage_limit_of_response_returned_after_it():
+    """A response `wrap_model_request` returns once a cancelled `anyio` scope stopped the stream is recorded without
+    the usage-limit check, so `UsageLimitExceeded` can't mask the cancellation. Not a VCR test: no recorded response
+    can trigger the cancellation.
+    """
+    run_usages: list[RunUsage] = []
+
+    async def stream_then_fail_to_close(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'hello'
+        finally:
+            raise RuntimeError('stream close failed')
+
+    class SubstituteOnError(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            run_usages.append(ctx.usage)
+            try:
+                return await handler(request_context)
+            except RuntimeError:
+                return ModelResponse(parts=[TextPart('substitute')], usage=RequestUsage(output_tokens=1000))
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_then_fail_to_close),
+        deps_type=type(None),
+        capabilities=[SubstituteOnError()],
+    )
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with capture_run_messages() as messages, anyio.CancelScope() as scope:
+            async with agent.run_stream('hello', usage_limits=UsageLimits(output_tokens_limit=100)) as result:
+                assert await anext(result.stream_text(delta=True, debounce_by=None))
+                scope.cancel()
+
+    assert scope.cancelled_caught
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart('substitute')]
+    # The response's usage still counts towards the run, though it's over the limit.
+    assert run_usages == snapshot([RunUsage(output_tokens=1000, requests=1)])
 
 
 @pytest.mark.parametrize('delta', [True, False])
@@ -6008,11 +6390,13 @@ async def test_args_validator_failure_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                 ),
             ),
             PartStartEvent(
@@ -6480,6 +6864,7 @@ async def test_run_stream_cancel_all_messages_includes_interrupted_response():
                 parts=[TextPart(content='success ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -6519,6 +6904,7 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
                 parts=[TextPart(content='success ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -6945,7 +7331,8 @@ async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
         pass
     assert stream.get() == response
     assert start.content == 'a'
-    assert seen_lengths == ([2, 3] if custom_part else [])
+    # The 1 is replay copying the start part, so later deltas never mutate the caller's event.
+    assert seen_lengths == ([1, 2, 3] if custom_part else [])
 
 
 async def test_replay_text_requires_start() -> None:
@@ -7138,6 +7525,69 @@ async def test_stream_response_state_incomplete_after_early_break():
                 return
 
 
+@pytest.mark.parametrize(
+    'usage_limits,expected_layers',
+    [
+        pytest.param(
+            None,
+            snapshot(['AgentStream._events_iter', 'AgentStream._model_events', 'dispatch_event_stream']),
+            id='no-limits',
+        ),
+        pytest.param(
+            UsageLimits(total_tokens_limit=1000),
+            snapshot(
+                [
+                    'AgentStream._events_iter',
+                    'AgentStream._model_events',
+                    '_get_usage_checking_stream_response.<locals>._usage_checking_iterator',
+                    'dispatch_event_stream',
+                ]
+            ),
+            id='limits',
+        ),
+    ],
+)
+async def test_node_stream_early_exit_closes_event_stream(usage_limits: UsageLimits | None, expected_layers: list[str]):
+    """Leaving `node.stream()` early closes every generator `AgentStream` stacks on the model stream.
+
+    Each layer has to close the one it reads from. Otherwise the garbage collector closes it later, by
+    scheduling an `aclose()` task that can still be pending when `agent.iter()` returns. The generators are
+    held here, so the garbage collector can't close them in place of the stream. Token limits add a layer.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        for piece in ('aa', 'bb', 'cc'):  # pragma: no branch
+            yield piece
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    event_stream_modules = {result_module.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    # The consumer's own iterator is the consumer's to close.
+    consumers: list[AsyncIterator[AgentStreamEvent]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    async with agent.iter('Hello', usage_limits=usage_limits) as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                sys.set_asyncgen_hooks(track, finalizer)
+                try:
+                    async with node.stream(run.ctx) as stream:
+                        consumers.append(aiter(stream))
+                        await anext(consumers[0])
+                finally:
+                    sys.set_asyncgen_hooks(firstiter, finalizer)
+                layers = [agen for agen in layers if agen not in consumers]
+                assert sorted(agen.ag_code.co_qualname for agen in layers) == expected_layers
+                assert [agen.ag_code.co_qualname for agen in layers if agen.ag_frame is not None] == []
+                break
+
+
 async def test_run_stream_events_break_cleanup():
     agent = Agent(TestModel())
 
@@ -7207,12 +7657,11 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
-        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
-        await asyncio.wait_for(anext(events), timeout=1.0)
+        # Bound the first iteration so a lazy-start regression fails instead of hanging here.
+        await asyncio.wait_for(anext(events), timeout=READINESS_WAIT_TIMEOUT)
         assert producer_started.is_set()
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
     """Breaking on the documented final-result event must still retrieve background task errors."""
     producer_finished = asyncio.Event()
@@ -7320,8 +7769,8 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
 async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
     """Outer cancellation while waiting for streaming model wrapper readiness should clean up the wrapper task.
 
-    Target boundary: `ModelRequestNode.stream()` creates `wrap_task` and `ready_waiter`, then waits for
-    `asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
+    Target boundary: `ModelRequestNode.stream()` creates `wrap.task` and `ready_waiter`, then waits for
+    `_serve_stream_offers(handoff, ready_waiter, wrap.task)`. If the outer task is
     cancelled while parked on that wait, the wrapper task must be drained; otherwise the user's
     `wrap_model_request` cleanup never runs.
     """
@@ -7340,7 +7789,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
             try:
                 started.set()
                 # Suspend before calling handler() so we sit inside the readiness wait at
-                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                # `_agent_graph.py:_serve_stream_offers(handoff, ready_waiter, wrap.task)`.
                 return await never_finishes
             finally:
                 # Without the drain on the readiness wait, this finally never runs.
@@ -7354,7 +7803,11 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
                 pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(started.wait(), timeout=1)
+    # Order on the wrapper rather than a wall-clock deadline, which a stalled CI worker can overrun before the run
+    # gets that far. A run that ends without reaching the wrapper fails here instead of hanging.
+    wrapper_reached = asyncio.create_task(started.wait())
+    await asyncio.wait({wrapper_reached, task}, return_when=asyncio.FIRST_COMPLETED)
+    assert started.is_set(), task
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -7364,3 +7817,65 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
 
 
 # endregion
+
+
+async def test_part_events_carry_canonical_system():
+    """Part events carry the response's `canonical_system` when the part is from the response's provider.
+
+    A thinking part's `provider_name` arrives in a delta here, so only its `PartEndEvent` can tell that it applies.
+    """
+
+    def script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+        return [
+            ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME),
+            ThinkingPart(content='Earlier thinking.', signature='other', provider_name='other'),
+            TextPart(content='Done.', provider_name=PROVIDER_NAME),
+            TextPart(content=' Really.'),
+        ]
+
+    agent = Agent(StampedModel(script, canonical_system='stamp-system'))
+    async with agent.run_stream_events('Go') as stream:
+        events = [
+            (event.event_kind, event.index, event.canonical_system)
+            async for event in stream
+            if isinstance(event, PartStartEvent | PartEndEvent)
+        ]
+
+    assert events == snapshot(
+        [
+            ('part_start', 0, None),
+            ('part_end', 0, 'stamp-system'),
+            ('part_start', 1, None),
+            ('part_end', 1, None),
+            ('part_start', 2, 'stamp-system'),
+            ('part_end', 2, 'stamp-system'),
+            ('part_start', 3, None),
+            ('part_end', 3, None),
+        ]
+    )
+
+
+async def test_completed_streamed_response_replays_canonical_system():
+    """A response replayed as a stream, as durable execution and `BatchModel` do, keeps its `canonical_system`."""
+    response = ModelResponse(
+        parts=[TextPart(content='Ours.', provider_name='google'), TextPart(content='Theirs.', provider_name='other')],
+        provider_name='google',
+        canonical_system='google-cloud',
+    )
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=True
+    )
+    events = [
+        (event.event_kind, event.index, event.canonical_system)
+        async for event in stream
+        if isinstance(event, PartStartEvent | PartEndEvent)
+    ]
+
+    assert events == snapshot(
+        [
+            ('part_start', 0, 'google-cloud'),
+            ('part_end', 0, 'google-cloud'),
+            ('part_start', 1, None),
+            ('part_end', 1, None),
+        ]
+    )

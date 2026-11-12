@@ -1,0 +1,579 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "637"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "201"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","object":"response","created_at":1794349798,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","object":"response","created_at":1794349798,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"A","item_id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","logprobs":[],"obfuscation":"xg8vFGuN19KePxH","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","logprobs":[],"output_index":0,"sequence_number":5,"text":"A"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"A"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","object":"response","created_at":1794349798,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794349799,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_0e79b89f1cddd8e3006af39ae70be087d19967cc4a83d81440","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":108,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":113},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-11-10T22:29:59.305623+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "935"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: system
+          content: |-
+            <pyai:context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </pyai:context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653
+        prompt_cache_options:
+          comparison_response_id: resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "336"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","object":"response","created_at":1794349799,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","object":"response","created_at":1794349799,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","prompt_cache_diagnostics":{"type":"unavailable"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"B","item_id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","logprobs":[],"obfuscation":"BoeRY0YQhjAGFaE","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","logprobs":[],"output_index":0,"sequence_number":5,"text":"B"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"B"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","object":"response","created_at":1794349799,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794349800,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_0e79b89f1cddd8e3006af39ae80c0487d1a5c919d3e59a603f","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","prompt_cache_diagnostics":{"type":"cache_hit"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae6676c87d189b1487d7f4ed653","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":164,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":169},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-11-10T22:30:00.380099+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "802"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98
+        prompt_cache_options:
+          comparison_response_id: resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "402"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","object":"response","created_at":1794349800,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","object":"response","created_at":1794349800,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","prompt_cache_diagnostics":{"type":"unavailable"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"B","item_id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","logprobs":[],"obfuscation":"x0riBS6RoSEAErd","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","logprobs":[],"output_index":0,"sequence_number":5,"text":"B"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"B"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","object":"response","created_at":1794349800,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794349801,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_0e79b89f1cddd8e3006af39ae952bc87d1935a01b92a029377","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","prompt_cache_diagnostics":{"type":"cache_hit"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae7677c87d1b1932b397efeca98","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":189,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":194},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-11-10T22:30:01.830589+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "911"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: system
+          content: |-
+            <pyai:context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </pyai:context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde
+        prompt_cache_options:
+          comparison_response_id: resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "237"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","object":"response","created_at":1794349801,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","object":"response","created_at":1794349801,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","prompt_cache_diagnostics":{"type":"unavailable"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"A","item_id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","logprobs":[],"obfuscation":"16Ct1SgyXzRRmJI","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","logprobs":[],"output_index":0,"sequence_number":5,"text":"A"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"A"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","object":"response","created_at":1794349801,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794349802,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_0e79b89f1cddd8e3006af39aea7d1c87d1886dfa7fdd1f4b81","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","prompt_cache_diagnostics":{"type":"cache_hit"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae8789887d1a536bda4ed543fde","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":238,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":243},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-11-10T22:30:02.795273+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "928"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: A pallet of bottled water arrived at the dock. Where to?
+        - role: system
+          content: |-
+            <pyai:context id="capability:memory:state">
+            This context has been withdrawn.
+            </pyai:context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f
+        prompt_cache_options:
+          comparison_response_id: resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "344"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","object":"response","created_at":1794349802,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","object":"response","created_at":1794349802,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","prompt_cache_diagnostics":{"type":"unavailable"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"UN","item_id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","logprobs":[],"obfuscation":"n8vCg44Qb8wTF8","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"ASS","item_id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","logprobs":[],"obfuscation":"EWjnSi5ZMEJyi","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"IGNED","item_id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","logprobs":[],"obfuscation":"Mq9jVabD6qX","output_index":0,"sequence_number":6}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","logprobs":[],"output_index":0,"sequence_number":7,"text":"UNASSIGNED"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"UNASSIGNED"},"sequence_number":8}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"UNASSIGNED"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":9}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","object":"response","created_at":1794349802,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794349803,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_0e79b89f1cddd8e3006af39aebe2b887d1ad10824df523c8fd","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"UNASSIGNED"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","prompt_cache_diagnostics":{"type":"cache_hit"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39ae9ea4087d19694a0fd818e399f","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":292,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":299},"user":null,"metadata":{}},"sequence_number":10}
+
+  recorded_at: 2026-11-10T22:30:04.214329+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "941"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+        - role: system
+          content: |-
+            <pyai:context id="capability:memory:state">
+            Send parcels to warehouse C.
+            </pyai:context>
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2
+        prompt_cache_options:
+          comparison_response_id: resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "327"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0e79b89f1cddd8e3006af39aec4acc87d1937c6478c2dfc9f4","object":"response","created_at":1794349804,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0e79b89f1cddd8e3006af39aec4acc87d1937c6478c2dfc9f4","object":"response","created_at":1794349804,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","prompt_cache_diagnostics":{"type":"unavailable"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"C","item_id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","logprobs":[],"obfuscation":"hMNfcWPdcvgknNC","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","logprobs":[],"output_index":0,"sequence_number":5,"text":"C"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"C"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"C"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0e79b89f1cddd8e3006af39aec4acc87d1937c6478c2dfc9f4","object":"response","created_at":1794349804,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794349804,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\n<pyai:context id=\"capability:memory:state\">\nSend parcels to warehouse A.\n</pyai:context>\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_0e79b89f1cddd8e3006af39aecebc487d19c5958bda949b229","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"C"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","prompt_cache_diagnostics":{"type":"cache_hit"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_0e79b89f1cddd8e3006af39aeae29087d1a84b09095213d5c2","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":348,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":353},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-11-10T22:30:05.287629+00:00

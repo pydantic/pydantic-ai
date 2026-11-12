@@ -54,7 +54,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live']
+ProviderName = Literal['openai', 'gemini', 'xai', 'elevenlabs', 'openai_live', 'elevenlabs_agents']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -92,14 +92,19 @@ def _transcription_model(frame: dict[str, Any]) -> object:
 
 
 def _is_audio_send(frame: dict[str, Any]) -> bool:
-    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, or Gemini protocol."""
-    return frame.get('type') in _AUDIO_APPEND_TYPES or _gemini_realtime_audio(frame) is not None
+    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, Gemini, or ElevenLabs protocol."""
+    return (
+        frame.get('type') in _AUDIO_APPEND_TYPES
+        or _gemini_realtime_audio(frame) is not None
+        # ElevenLabs: the one client frame without a `type`.
+        or isinstance(frame.get('user_audio_chunk'), str)
+    )
 
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
 _SECRET_RE = re.compile(
-    r'(sk-[A-Za-z0-9_\-]{8,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
+    r'(sk-[A-Za-z0-9_\-]{8,}|(?<![A-Za-z0-9])sk_[A-Za-z0-9]{20,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
 )
 _SECRET_PLACEHOLDER = '<scrubbed>'
 
@@ -113,6 +118,7 @@ _SECRET_ENV_VARS = (
     'GEMINI_API_KEY',
     'GOOGLE_API_KEY',
     'XAI_API_KEY',
+    'ELEVENLABS_API_KEY',
 )
 
 
@@ -313,6 +319,16 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
         if isinstance(video, dict) and isinstance(data := cast('dict[str, Any]', video).get('data'), str):
             video = {**cast('dict[str, Any]', video), 'data': _truncate_b64_audio(data)}
             return {**frame, 'realtime_input': {**cast('dict[str, Any]', realtime_input), 'video': video}}
+    # ElevenLabs outbound microphone chunk (the one client message without a `type` field).
+    if isinstance(frame.get('user_audio_chunk'), str):
+        return {**frame, 'user_audio_chunk': _truncate_b64_audio(frame['user_audio_chunk'])}
+    # ElevenLabs inbound audio: truncate the payload, keeping the per-character `alignment` the session times
+    # words by, which doesn't depend on the audio bytes.
+    if frame.get('type') == 'audio' and isinstance(audio_event := frame.get('audio_event'), dict):
+        audio_event = cast('dict[str, Any]', audio_event)
+        payload = audio_event.get('audio_base_64')
+        if isinstance(payload, str):  # pragma: no branch
+            return {**frame, 'audio_event': {**audio_event, 'audio_base_64': _truncate_b64_audio(payload)}}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):
@@ -332,7 +348,7 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
 
 
 class _SentFrameNormalizer:
-    """Map random client-generated ids in outbound frames to stable `<client-id-N>` placeholders."""
+    """Map random client-generated ids in outbound frames to stable `<client-id-N>` placeholders, and the library version to one."""
 
     def __init__(self) -> None:
         self._ids: dict[str, str] = {}
@@ -343,6 +359,9 @@ class _SentFrameNormalizer:
             for key, item in cast('dict[str, Any]', value).items():
                 if key in _CLIENT_ID_KEYS and isinstance(item, str) and _CLIENT_ID_RE.fullmatch(item):
                     result[key] = self._ids.setdefault(item, f'<client-id-{len(self._ids) + 1}>')
+                elif key == 'version' and isinstance(item, str) and item.startswith('pydantic-ai/'):
+                    # The library version an ElevenLabs `source_info` reports changes with every commit.
+                    result[key] = 'pydantic-ai/<version>'
                 else:
                     result[key] = self.normalize(item)
             return result
@@ -375,6 +394,15 @@ class ReplayWebSocket:
     def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
         # A copy: a session-ending send reorders it (see `_SESSION_END_TYPES`), and the cassette is the recording.
         self._interactions = list(cassette.interactions)
+        # Recorded before ElevenLabs Agents typed turns went out under an id naming their input (see
+        # `_CascadeLifecycle.text_sent`): the server made ids up for them, which the replies' `in_response_to_ids` name.
+        self._unnamed_user_messages = any(
+            isinstance(interaction, CassetteMessage)
+            and interaction.direction == 'sent'
+            and interaction.data.get('type') == 'user_message'
+            and 'id' not in interaction.data
+            for interaction in self._interactions
+        )
         self._hold_open = hold_open
         self._position = 0
         cassette._replay = self  # pyright: ignore[reportPrivateUsage]
@@ -438,6 +466,14 @@ class ReplayWebSocket:
             item: dict[str, Any] = actual.get('item') or {}
             if str(item.get('id', '')).startswith('pydantic_ai_item_'):
                 del item['id']
+        if (
+            actual.get('type') == 'user_message'
+            and 'id' not in expected
+            and str(actual.get('id', '')).startswith('pydantic_ai_input_')
+        ):
+            # Recorded before a typed turn went out under an id naming its input (see `_unnamed_user_messages`);
+            # only that id is let through, and the rest of the frame is still pinned.
+            del actual['id']
         if actual.get('type') == 'response.create' and 'response' not in expected:
             # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
@@ -519,7 +555,12 @@ class ReplayWebSocket:
             if interaction.direction == 'received':
                 self._advance()
                 self._delivered.append(interaction.at)
-                return interaction.data
+                data = interaction.data
+                if self._unnamed_user_messages and data.get('type') == 'agent_response':
+                    # The ids the server made up name nothing the connection sent: replayed without them, revising nothing.
+                    data = {**data, 'agent_response_event': dict(data['agent_response_event'])}
+                    data['agent_response_event'].pop('in_response_to_ids', None)
+                return data
             await self._condition.wait()
 
     async def __aiter__(self):
@@ -668,6 +709,16 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
+    if provider == 'elevenlabs':
+        # Same raw-frame engine as xAI: an OpenAI-protocol clone dialed with the `websockets` library.
+        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
+
+        return rt_elevenlabs.websockets, 'connect'
+    if provider == 'elevenlabs_agents':
+        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
+        from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs_agents
+
+        return rt_elevenlabs_agents.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'
