@@ -395,12 +395,16 @@ async def test_registered_work_handles_and_waiting_for_idle():
         with pytest.raises(asyncio.CancelledError):
             await untracked.result()
 
+        running = asyncio.Event()
+
         async def forever() -> None:
+            running.set()
             await asyncio.Event().wait()
 
         slow = registry.start(forever, kind='other', name='slow', id='slow', on_end='cancel')
         with pytest.raises(UserError, match=r"In-flight work 'slow' was started with `start\(\)`"):
             registry.settle(slow)
+        await asyncio.wait_for(running.wait(), READINESS_WAIT_TIMEOUT)
         slow.cancel()
         await slow.wait()
         assert slow.state == 'cancelled'
@@ -433,12 +437,11 @@ async def test_adding_work_off_the_event_loop_raises(method: str):
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    def add_in_thread(ctx: RunContext) -> str:
+    def add_in_thread(ctx: RunContext) -> None:
         if method == 'start':
             ctx.in_flight.start(lambda: asyncio.sleep(0), kind='test', name='work', id='work')
         else:
             ctx.in_flight.register(kind='test', name='work', id='work')
-        return 'added'
 
     with pytest.raises(UserError, match=rf'`ctx\.in_flight\.{method}\(\)` must be called from the event loop'):
         await agent.run('go')
