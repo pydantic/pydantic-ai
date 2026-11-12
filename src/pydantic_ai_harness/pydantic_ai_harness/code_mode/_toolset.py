@@ -778,8 +778,8 @@ def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
         raise execution.usage_limit_exceeded
 
 
-def _escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecution) -> ToolFailed | None:
-    """The failure to report when the snippet ended on a nested call's uncaught `ToolFailed`, else `None`.
+def _raise_escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecution) -> None:
+    """Raise a `ToolFailed` when the snippet ended on a nested call's uncaught `ToolFailed`.
 
     Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
     tool directly does. Its `__cause__` is the instance the tool raised, so a `ToolFailed` subclass
@@ -795,11 +795,11 @@ def _escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecution) 
     reach the match and need no reset advice here.
     """
     if type(error.exception()) is not Exception:
-        return None
+        return
     message = error.display(format='msg')
     escaped = next((nested for nested in reversed(execution.nested_errors.values()) if str(nested) == message), None)
     if not isinstance(escaped, ToolFailed):
-        return None
+        return
     _raise_usage_limit_exceeded(execution)
     content = execution.capture.prepend_to(message)
     if len(execution.nested_calls) > 1:
@@ -813,9 +813,7 @@ def _escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecution) 
                     tool_name=tool_name, content=nested.message, tool_call_id=call_id, outcome='failed'
                 )
         content += f'\n\n{_describe_started_calls(execution.nested_calls, returns)}'
-    tool_failed = ToolFailed(content)
-    tool_failed.__cause__ = escaped
-    return tool_failed
+    raise ToolFailed(content) from escaped
 
 
 def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
@@ -1357,8 +1355,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
                 raise
-            if retry.__cause__ is not None:
-                raise retry
             raise retry from exc
 
         _raise_usage_limit_exceeded(execution)
@@ -1409,10 +1405,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     async def _feed_failure_retry(
         self, error: BaseException, run_state: MontyRunState, execution: RunCodeExecution, *, fresh_repl: bool
-    ) -> ModelRetry | ToolFailed | None:
-        """Reset the session a failed feed left unusable and build the retry or failure to raise for it.
+    ) -> ModelRetry | None:
+        """Reset the session a failed feed left unusable and build the retry to raise for it.
 
-        Returns `None` for an interruption, which the caller re-raises unchanged.
+        Returns `None` for an interruption, which the caller re-raises unchanged. Raises `ToolFailed`
+        instead when the snippet let a nested call's `ToolFailed` escape.
         """
         capture = execution.capture
         match error:
@@ -1428,8 +1425,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
                 run_state.has_executed_feed = True
-                if (tool_failed := _escaped_tool_failed(error, execution)) is not None:
-                    return tool_failed
+                _raise_escaped_tool_failed(error, execution)
                 return _runtime_failure_retry(
                     error, execution, reset_advice=await self._reset_for_runtime_error(error, run_state)
                 )
