@@ -4725,6 +4725,46 @@ async def test_dbos_durability_retry_moved_back_to_run_model_keeps_run_model(dbo
     assert calls == ['primary', 'primary']
 
 
+async def test_dbos_durability_retry_moved_back_to_run_alias_keeps_run_alias(dbos: DBOS) -> None:
+    """A hook that moves a retry attempt back to a run model named by an alias sends the run's alias across.
+
+    The retry's alias names the model the hook moved away from, so the step rebuilds the run's model
+    from the run's own alias instead.
+    """
+    calls: list[str] = []
+
+    def resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+        if model_id != 'run-alias':
+            return _dbos_tenant_resolver(ctx, model_id)
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('run-alias')
+            if len(calls) == 1:
+                raise ModelAPIError(model_name='run-alias', message='boom')
+            return ModelResponse(parts=[TextPart('from run alias')])
+
+        return FunctionModel(fn, model_name='run-alias')
+
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_retry_moved_back_alias',
+        deps_type=str,
+        capabilities=[
+            _RetryOnAliasCapability(),
+            _ReturnToRunModelCapability(),
+            ResolveModelId(resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', model='run-alias', deps='acme')).output
+
+    assert await run_agent() == 'from run alias'
+    assert calls == ['run-alias', 'run-alias']
+
+
 @dataclass
 class _WrapRequestModelCapability(AbstractCapability[str]):
     """Swaps a transparent `WrapperModel` around the request's model in `before_model_request`."""

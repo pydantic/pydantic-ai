@@ -2067,13 +2067,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`
         # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
         run_model = ctx.model
-        if provenance is not None:
-            # The model the string was resolved to: a `RetryModelRequest`'s, or else the run's.
-            resolved_to = request_context._model_id_resolved_to  # pyright: ignore[reportPrivateUsage]
-            if resolved_to is None and isinstance(run_model, Model):
-                resolved_to = cast('Model[Any]', run_model)
-            if resolved_to is not None and unwrap_model(request_context.model) is unwrap_model(resolved_to):
-                return provenance
+        request_model = unwrap_model(request_context.model)
+        # Set when `provenance` is a `RetryModelRequest`'s string, to the model that string was resolved to.
+        resolved_to = request_context._model_id_resolved_to  # pyright: ignore[reportPrivateUsage]
+        if resolved_to is not None and request_model is unwrap_model(resolved_to):
+            return provenance
+        # A hook may move a retried attempt back to the run's model: the run's own string names it then.
+        run_provenance = provenance if resolved_to is None else ctx.model_id
+        if (
+            run_provenance is not None
+            and isinstance(run_model, Model)
+            and request_model is unwrap_model(cast('Model[Any]', run_model))
+        ):
+            return run_provenance
         resolved = self._resolved_request_model(request_context.model)
         if resolved is not None:
             return resolved.model_id
