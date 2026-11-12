@@ -14,13 +14,13 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness._message_text import user_prompt_text
 
 WORKER_CALLS: list[str] = []
 """The worker's model requests, one entry per request."""
@@ -35,6 +35,15 @@ def reset_worker() -> None:
     _turn_ended = asyncio.Event()
 
 
+def _user_text(part: UserPromptPart) -> str:
+    """A user prompt's text items joined with spaces."""
+    if isinstance(part.content, str):
+        return part.content
+    return ' '.join(
+        item if isinstance(item, str) else item.content for item in part.content if isinstance(item, str | TextContent)
+    )
+
+
 def _parent(messages: list[ModelMessage], background: bool) -> ModelResponse:
     # The model is sent the report rendered from its `TaskOutputPart`: user text in a `<task_output>` frame.
     reports = [
@@ -42,7 +51,7 @@ def _parent(messages: list[ModelMessage], background: bool) -> ModelResponse:
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart) and '<task_output ' in (text := user_prompt_text(part))
+        if isinstance(part, UserPromptPart) and '<task_output ' in (text := _user_text(part))
     ]
     if reports:
         return ModelResponse(parts=[TextPart(reports[-1])])
