@@ -139,6 +139,8 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         sandbox_timeout: int | None = None,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
         **kwargs: Any,
     ) -> OpenSandbox[Any]:
         """Build from an agent spec using fields expressible in JSON.
@@ -157,6 +159,8 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             working_dir=working_dir,
             env=env,
             **kwargs,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> OpenSandboxBackend:

@@ -107,6 +107,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
     ) -> DaytonaSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -123,6 +125,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=allow_internet_access,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:

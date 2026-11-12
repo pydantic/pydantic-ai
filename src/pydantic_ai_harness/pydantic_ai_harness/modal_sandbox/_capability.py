@@ -239,6 +239,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         warn_if_no_tools: bool = True,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
         workdir: str | None = None,
         client: modal.Client | None = None,
         **removed_arguments: Never,
@@ -280,6 +282,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.env = env
         self.client = client
         self.warn_if_no_tools = warn_if_no_tools
+        self.authority = authority
+        self.path_authority = path_authority
         self._warned_no_tools = False
         self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
 
@@ -297,6 +301,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         warn_if_no_tools: bool = True,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
         **kwargs: Any,
     ) -> ModalSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -320,6 +326,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             warn_if_no_tools=warn_if_no_tools,
             **kwargs,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:

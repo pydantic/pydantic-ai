@@ -90,6 +90,8 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         runtime: str | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
     ) -> SpritesSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -103,6 +105,8 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
             runtime=runtime,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> SpritesSandboxBackend:

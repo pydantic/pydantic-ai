@@ -125,6 +125,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
     ) -> BoxdSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -142,6 +144,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=auto_suspend_timeout,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:

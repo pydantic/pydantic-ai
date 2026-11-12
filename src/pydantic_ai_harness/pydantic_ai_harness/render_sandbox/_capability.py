@@ -83,6 +83,8 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
     ) -> RenderSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -97,6 +99,8 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=sandbox_timeout,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
