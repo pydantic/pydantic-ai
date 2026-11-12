@@ -59,7 +59,6 @@ from pydantic_ai.durable_exec._operation_backend import (
     RegisteredOperationBackend,
 )
 from pydantic_ai.durable_exec._operation_names import DurableOperationNamer, JournalOperationNamer
-from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
@@ -417,28 +416,35 @@ async def test_durable_metadata_refuses_tools_that_cannot_leave_the_durable_unit
         await agent.run('Go.')
 
 
-def test_runtime_function_toolset_opted_out_with_durable_metadata_is_allowed() -> None:
-    async def tool() -> str:
-        return 'never called'  # pragma: no cover
-
-    def check(metadata: dict[str, Any], function: Callable[[], Any] = tool) -> None:
-        reject_unsupported_runtime_toolsets(
-            [FunctionToolset(tools=[Tool(function, metadata=metadata)])],
-            unsupported_kinds=frozenset({'function'}),
-            engine='Journal',
+async def test_runtime_function_toolset_opted_out_with_durable_metadata_is_allowed() -> None:
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(
+            JournalDurability.engine_spec,
             tool_config_key='journal',
+            unsupported_runtime_toolset_kinds=frozenset({'function'}),
         )
 
-    check({'durable': False})
-    check({'journal': False, 'durable': True})
-    check({'journal': False}, _sync_tool)
-    rejected = "cannot be added at runtime with Journal.*opt out with metadata=\\{'durable': False\\}"
+    async def async_tool() -> str:
+        return 'ran'
+
+    def sync_tool() -> str:
+        return 'ran'
+
+    agent = Agent[None, str](TestModel(), name='agent', deps_type=type(None), capabilities=[KeyedJournalDurability()])
+
+    async def run(metadata: dict[str, Any], function: Callable[[], Any] = async_tool) -> None:
+        await agent.run('Go.', toolsets=[FunctionToolset(tools=[Tool(function, metadata=metadata)])])
+
+    await run({'durable': False})
+    await run({'journal': False, 'durable': True})
+    await run({'journal': False}, sync_tool)
+    rejected = r"cannot be added at runtime with Journal.*opt out with metadata=\{'durable': False\}"
     with pytest.raises(UserError, match=rejected):
-        check({'journal': {}, 'durable': False})
+        await run({'journal': {}, 'durable': False})
     with pytest.raises(UserError, match=rejected):
-        check({'durable': True})
+        await run({'durable': True})
     with pytest.raises(UserError, match=rejected):
-        check({'durable': False}, _sync_tool)
+        await run({'durable': False}, sync_tool)
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
