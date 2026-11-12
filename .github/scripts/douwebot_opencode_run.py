@@ -53,9 +53,9 @@ OPENCODE_GO = Provider(
     'opencode',
     frozenset({'provider.go-limit', 'provider.quota'}),
 )
-# The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
-# Each account hands a run its quota or rate limit refused to the other account.
+# Each Coding Plan account hands a run its quota or rate limit refused to the other account.
 CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'})
+# The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
     'zai-coding-plan',
     'zai-coding-plan/glm-5.3-flash',
