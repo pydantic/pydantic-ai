@@ -48,7 +48,7 @@ def final_text(path: Path) -> str:
 
 
 def unfenced(text: str) -> str:
-    """Return the fenced block that ends `text`, or `text` from its first `{` when no fence ends it.
+    """Return the fenced block that ends `text`, or `text` itself when no fence ends it.
 
     One pass over the lines: the answer is model-controlled, and a backtracking regex over it is quadratic.
     """
@@ -58,8 +58,7 @@ def unfenced(text: str) -> str:
         for index in range(len(lines) - 2, -1, -1):
             if _OPENING_FENCE.fullmatch(lines[index]):
                 return '\n'.join(lines[index + 1 :])
-    # Some models write prose before a bare JSON object too. Prose that holds a `{` itself still fails.
-    return text[max(text.find('{'), 0) :]
+    return text
 
 
 def rejection_reason(error: ValueError) -> str:
@@ -73,7 +72,9 @@ def rejection_reason(error: ValueError) -> str:
 
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
-    return ReviewResult.model_validate_json(unfenced(final_text(path)))
+    text = unfenced(final_text(path))
+    # glm-5.3-flash writes prose before a bare JSON object too. Prose that holds a `{` itself still fails.
+    return ReviewResult.model_validate_json(text[max(text.find('{'), 0) :])
 
 
 def main() -> None:

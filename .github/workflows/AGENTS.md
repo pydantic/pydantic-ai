@@ -13,6 +13,10 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 `douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
 
+`.github/scripts/douwebot_opencode_result.py` unwraps a Markdown code fence that ends the OpenCode answer.
+It then validates the answer from its first `{`.
+Prose that holds a `{` before the JSON object still fails, and so does text after the object.
+
 If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
 Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
 Cancellation keeps ordinary-label cleanup and ends without a failure notice. Report actual review or publisher failures.
@@ -263,9 +267,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. The job validates the model's answer
   against its schema. When a Markdown code fence ends the answer, the job validates only that fenced
-  block. Otherwise it validates the answer from its first `{`, so prose before a bare JSON object
-  passes unless the prose holds a `{`. Text after the fence or the object still fails. The check's
-  `max_steps` and `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
+  block, so prose before the fence passes; text after it still fails. The check's `max_steps` and
+  `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
   with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
@@ -310,9 +313,9 @@ credential included.
   the Claude prompt, through the `category-prompt` YAML anchor, plus `TOOL_GUIDANCE` from
   `.github/scripts/category_classify_opencode.py`, which names each prefetched file. Edit the classification rules
   in the Claude step's prompt only.
-- The answer must be one JSON object whose only field is an allowed `category`. The job drops prose before that
-  object, and a Markdown code fence that ends the answer, as `PR Review Checks` does. Any other answer fails the job,
-  and no label is applied. `category-apply` applies the category from whichever job set it.
+- The answer must be one JSON object whose only field is an allowed `category`. When a Markdown code fence ends the
+  answer, the job validates only that fenced block, as `PR Review Checks` does. Any other answer fails the job, and
+  no label is applied. `category-apply` applies the category from whichever job set it.
 
 # OpenCode falls back from OpenCode Go to the GLM Coding Plan
 

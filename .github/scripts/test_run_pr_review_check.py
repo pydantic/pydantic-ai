@@ -354,6 +354,18 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
             'validation failed: json_invalid',
             id='text-after-the-fence',
         ),
+        pytest.param(
+            f"I've read the files.\n\n```json\n{_result('a.py')}",
+            'stop',
+            'validation failed: json_invalid',
+            id='unterminated-fence',
+        ),
+        pytest.param(
+            f"I've read the files.\n\n{_result('a.py')}",
+            'stop',
+            'validation failed: json_invalid',
+            id='text-before-bare-json',
+        ),
     ],
 )
 def test_rejected_answer_under_the_budget_fails_with_its_reason(
@@ -388,12 +400,10 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
             f'The caller:\n\n```python\nf()\n```\n\n```json\n{_result("a.py", indent=2)}\n```',
             id='code-block-before-the-fence',
         ),
-        pytest.param(f"I've read the files.\n\n{_result('a.py')}", id='text-before-bare-json'),
-        pytest.param(f"I've read the files.\n\n```json\n{_result('a.py')}", id='unterminated-fence'),
     ],
 )
 def test_accepted_answer_completes_the_review(tmp_path: Path, text: str) -> None:
-    """An answer that ends with the JSON object, bare or in a Markdown code fence, completes the review."""
+    """An answer that is the JSON object, or that ends with it in a Markdown code fence, completes the review."""
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
     assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
 
