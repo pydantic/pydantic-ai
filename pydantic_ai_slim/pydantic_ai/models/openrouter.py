@@ -1069,22 +1069,20 @@ class OpenRouterModel(OpenAIChatModel):
                     'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
                     'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
                 )
-            OpenRouterModel._move_cache_control_to_previous_user_message(earlier, placeholder)
+            OpenRouterModel._move_cache_control_to_previous_user_message(earlier, placeholder['cache_control'])
             cast(dict[str, Any], message)['content'] = rest
 
     @staticmethod
     def _move_cache_control_to_previous_user_message(
-        earlier: list[dict[str, Any]], placeholder: _LeadingCachePointPlaceholder
+        earlier: list[dict[str, Any]], cache_control: dict[str, str]
     ) -> None:
-        """Put the placeholder's `cache_control` on the last user message in `earlier`, unless it has a `1h` one."""
+        """Put `cache_control` on the last user message in `earlier`, unless that message has a `1h` one."""
         target = next((m for m in reversed(earlier) if m['role'] == 'user' and m.get('content')), None)
         if target is not None:
             if isinstance(target_content := target['content'], str):
-                target['content'] = [
-                    {'type': 'text', 'text': target_content, 'cache_control': placeholder['cache_control']}
-                ]
+                target['content'] = [{'type': 'text', 'text': target_content, 'cache_control': cache_control}]
             elif target_content[-1].get('cache_control', {}).get('ttl') != '1h':
-                target_content[-1]['cache_control'] = placeholder['cache_control']
+                target_content[-1]['cache_control'] = cache_control
 
     def _add_cache_control_to_message(
         self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'
