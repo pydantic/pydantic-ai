@@ -73,7 +73,15 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         pytest.param(
             Scroll(direction='down'), ['get_position', 'scroll 7 8 down 3 modifiers=[]'], id='scroll-at-pointer'
         ),
+        pytest.param(
+            Scroll(x=1, y=2, direction='down', amount=1_001),
+            [f'scroll 1 2 down {clicks} modifiers=[]' for clicks in (500, 500, 1)],
+            id='scroll-in-parts',
+        ),
         pytest.param(TypeText(text='héllo'), ['type héllo'], id='type'),
+        pytest.param(
+            TypeText(text='a' * 4_001), [f'type {"a" * 2_000}', f'type {"a" * 2_000}', 'type a'], id='type-in-parts'
+        ),
         pytest.param(
             PressKeys(keys=('ctrl+s',), repeat=2),
             ["press s modifiers=['ctrl']", "press s modifiers=['ctrl']"],
