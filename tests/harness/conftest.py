@@ -148,6 +148,10 @@ class CountingModel(WrapperModel):
         super().__init__(wrapped)
         self.input_tokens = input_tokens
 
+    @property
+    def provider(self) -> None:
+        return None
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],
