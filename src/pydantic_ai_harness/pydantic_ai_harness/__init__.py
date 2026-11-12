@@ -126,6 +126,8 @@ __all__ = [
     'DetectLoops',
     'DockerContainer',
     'DockerContainerBackend',
+    'DockerSandbox',
+    'DockerSandboxBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',

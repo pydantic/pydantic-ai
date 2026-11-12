@@ -42,8 +42,10 @@ _CLASS_WARNING = r'`DockerSandbox` is now `DockerContainer`.*rename the `DockerS
 
 
 def test_root_old_names_resolve_to_shim() -> None:
+    """The old names stay in the root `__all__`, so code that star-imports the package and uses them keeps working."""
     import pydantic_ai_harness
 
+    assert {'DockerSandbox', 'DockerSandboxBackend'} <= set(pydantic_ai_harness.__all__)
     old = _import_old_class()
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')

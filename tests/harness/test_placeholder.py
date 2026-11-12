@@ -1,4 +1,5 @@
 import inspect
+import warnings
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,18 @@ import pydantic_ai_harness
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Coder, FileSystem, Researcher, Shell
+from pydantic_ai_harness import (
+    LLM_API_KEY_ENV_PATTERNS,
+    Coder,
+    FileSystem,
+    HarnessDeprecationWarning,
+    Researcher,
+    Shell,
+)
+
+# Deprecated names stay in `__all__` so star imports keep them; loading them warns, which
+# `test_deprecated_names.py` checks.
+DEPRECATED_EXPORTS = {'DockerSandbox', 'DockerSandboxBackend'}
 
 
 def test_import():
@@ -37,7 +49,10 @@ def test_all_exports_are_importable(
 
     for name in pydantic_ai_harness.__all__:
         try:
-            export = getattr(pydantic_ai_harness, name)
+            with warnings.catch_warnings():
+                if name in DEPRECATED_EXPORTS:
+                    warnings.simplefilter('ignore', HarnessDeprecationWarning)
+                export = getattr(pydantic_ai_harness, name)
         except (ImportError, UserError) as exc:
             assert 'pydantic-ai-harness[' in str(exc) or 'pydantic-ai-slim[' in str(exc)
             continue
