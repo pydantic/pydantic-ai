@@ -504,6 +504,23 @@ def test_cancelled_review_exports_its_span(
     }
 
 
+def test_review_without_a_logfire_token_exports_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exported: list[dict[str, object]],
+) -> None:
+    """Without `LOGFIRE_TOKEN`, a review exports no span and says so in the job log."""
+    _fake_opencode(tmp_path, monkeypatch, 'exit 1')
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pr_review_check.main()
+    assert exported == []
+    assert (
+        '::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.'
+        in capsys.readouterr().out.splitlines()
+    )
+
+
 def test_review_that_fails_before_opencode_runs_exports_its_span(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
 ) -> None:
