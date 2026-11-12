@@ -250,9 +250,10 @@ async def _ask(
     handler: _TokenHandler[AgentDepsT], ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str
 ) -> JsonValue:
     """Call `handler`, and turn an answer into the JSON form a resolver would send, so both reach the run the same way."""
-    # A plain bool, so the checker keeps the handler's declared return type in both branches.
-    is_async: bool = is_async_callable(handler)
-    if is_async:
+    # Checked through a separate `object` reference, so the checker doesn't narrow `handler` itself and
+    # keeps its declared return type in both branches.
+    subject: object = handler
+    if is_async_callable(subject):
         results = await await_maybe(handler(ctx, requests, token))
     else:
         results = await await_maybe(await run_in_executor(handler, ctx, requests, token))
