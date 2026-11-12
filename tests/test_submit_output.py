@@ -1455,3 +1455,54 @@ async def test_first_of_two_submitting_calls_wins():
     result = await agent.run('go')
 
     assert result.output == Invoice(order_id='first', total=1)
+
+
+class _Unencodable:
+    pass
+
+
+@pytest.mark.parametrize('route', ['tool_call', 'outside_a_tool_call'])
+async def test_native_submission_with_a_value_json_cannot_encode_is_rejected(route: str):
+    """As Tool Output's validation would, Native Output rejects a submitted value with no JSON form."""
+    raised: list[str] = []
+
+    class SubmitBeforeRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if route == 'outside_a_tool_call' and ctx.run_step == 1:
+                try:
+                    await ctx.submit_output('final_result', {'order_id': _Unencodable(), 'total': 1})
+                except ModelRetry as e:
+                    raised.append(e.message)
+            return request_context
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1 and route == 'tool_call':
+            return ModelResponse(parts=[ToolCallPart('assemble', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('{"order_id": "from_model", "total": 2}')])
+
+    agent = Agent(
+        FunctionModel(model),
+        output_type=NativeOutput(Invoice),
+        capabilities=[SubmitBeforeRequest()],
+        deps_type=type(None),
+    )
+
+    @agent.tool
+    async def assemble(ctx: RunContext[None]) -> str:
+        try:
+            await ctx.submit_output('final_result', {'order_id': _Unencodable(), 'total': 1})
+        except Exception as e:
+            raised.append(type(e).__name__)
+            raise
+        return 'assembled'  # pragma: no cover
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_model', total=2)
+    if route == 'tool_call':
+        assert raised == ['ToolRetryError']
+    else:
+        [message] = raised
+        assert message.startswith('The output could not be encoded as JSON')

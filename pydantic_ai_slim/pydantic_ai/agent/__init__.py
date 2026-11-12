@@ -150,7 +150,7 @@ from ..toolsets._dynamic import (
 )
 from ..toolsets._instruction_collection import collect_toolset_instructions
 from ..toolsets._tool_search import parse_discovered_tools
-from ..toolsets.abstract import AGENT_TOOLSET_ID, ToolsetTool
+from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -212,7 +212,6 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
-    'ToolsetTool',
 )
 
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(

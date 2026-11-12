@@ -5195,7 +5195,7 @@ class _GraphOutputSubmitter(Generic[DepsT]):
         try:
             try:
                 text = target.raw_text(args)
-            except ValidationError as e:
+            except (ValidationError, exceptions.ModelRetry) as e:
                 raise _output.make_retry_signal(e, run_context) from e
             return await _output.run_output_with_hooks(
                 text_processor,
