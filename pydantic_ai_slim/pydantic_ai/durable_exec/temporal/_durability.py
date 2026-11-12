@@ -580,7 +580,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return await handler()
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
-            return await handler()
+            return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""

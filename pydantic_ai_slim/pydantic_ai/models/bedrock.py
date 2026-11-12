@@ -76,7 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
-from pydantic_ai._gateway_cost import fill_gateway_header_cost
+from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
@@ -107,6 +107,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -422,6 +423,45 @@ _QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
 Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced reasoning in live checks, so `medium`
 folds up to it rather than sending a level that doesn't reason.
 """
+
+_HIGH_ONLY_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to `reasoning_effort` for models where only `high` reasons on Converse.
+
+Used for Z.AI GLM-4.7/GLM-4.7-flash/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`,
+but in live checks only `high` produced reasoning, so every enabled level folds up to it.
+"""
+
+_GLM_EFFORT_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    # GLM-5.3 always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`/`max`, rejecting `none` and
+    # `minimal`, so `thinking=False` and `minimal` reason as little as it can. `True` sends `max`, the level the
+    # model uses when the field is left out (per the AWS model card).
+    False: 'low',
+    True: 'max',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+    'max': 'max',
+}
+"""Maps unified thinking values to `reasoning_effort` for Z.AI GLM models with effort levels on Converse (GLM-5.3)."""
+
+_REASONING_EFFORT_MAPS: dict[str, dict[ThinkingLevel, str]] = {
+    'openai': _GPT_OSS_REASONING_EFFORT_MAP,
+    'deepseek': _HIGH_ONLY_REASONING_EFFORT_MAP,
+    'zai': _HIGH_ONLY_REASONING_EFFORT_MAP,
+    'zai_effort': _GLM_EFFORT_REASONING_EFFORT_MAP,
+}
+"""The `reasoning_effort` table for each thinking variant that takes that field on Converse."""
 
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
@@ -826,6 +866,8 @@ class BedrockConverseModel(Model[BaseClient]):
     _unsupported_file_inputs = frozenset({'audio'})
     # For Claude, whose 400 for a schema that's too complex it raises as `ModelSchemaTooComplexError`.
     _classifies_schema_too_complex = True
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {
@@ -981,7 +1023,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if (
             (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
-            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant in _REASONING_EFFORT_MAPS and 'reasoning_effort' in fields)
             or (variant == 'openai_responses' and 'reasoning' in fields)
             or (variant == 'qwen' and 'reasoning_config' in fields)
             or (variant == 'xai' and 'reasoning' in fields)
@@ -1057,6 +1099,7 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
+        prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)
@@ -1087,8 +1130,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
-            and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
-            and _thinking_rejects_tool_forcing(
+            and _thinking_rejects_output_tools(
                 _effective_thinking_type(model_settings, model_request_parameters, profile), profile
             )
         ):
@@ -2446,6 +2488,11 @@ class BedrockStreamedResponse(StreamedResponse):
                 raw_finish_reason = message_stop['stopReason']
                 self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                # The gateway reports the stream's cost here. The `metadata` event's usage, which usually comes after,
+                # carries no cost, so adding it keeps this one.
+                response_fields = message_stop.get('additionalModelResponseFields')
+                if (cost := gateway_reported_cost({'usage': response_fields})) is not None:
+                    self._usage.cost = cost
             case {'metadata': metadata}:
                 if 'usage' in metadata:  # pragma: no branch
                     self._add_usage(
@@ -2693,9 +2740,9 @@ def _add_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, prof
         case 'anthropic':
             if 'thinking' not in existing:
                 _add_anthropic_thinking_fields(existing, thinking, profile)
-        case 'openai':
+        case str() if (effort_map := _REASONING_EFFORT_MAPS.get(variant)) is not None:
             if 'reasoning_effort' not in existing:
-                existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
+                existing['reasoning_effort'] = effort_map[thinking]
         case 'openai_responses':
             if 'reasoning' not in existing:
                 existing['reasoning'] = {'effort': _openai_responses_reasoning_effort(thinking, profile)}
@@ -2778,9 +2825,24 @@ def _thinking_rejects_tool_forcing(
     Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
     accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
     GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
-    forcing.
+    forcing. Z.AI GLM is not exempt: Converse accepts a forced `toolChoice` while it reasons, but GLM often answers in
+    text instead.
     """
     return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
+
+
+def _thinking_rejects_output_tools(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
+) -> bool:
+    """Whether this request's thinking rules out an explicit Tool Output on a non-Anthropic variant.
+
+    Z.AI GLM is the exception: Converse accepts its output tools while it reasons, so only its default output mode
+    falls back. An explicit `ToolOutput` is offered with `toolChoice: auto`, as forcing is off while thinking, and
+    relies on output retries when GLM answers in text instead.
+    """
+    if profile.get('bedrock_thinking_variant') in (None, 'anthropic', 'zai', 'zai_effort'):
+        return False
+    return _thinking_rejects_tool_forcing(thinking_type, profile)
 
 
 def _support_tool_forcing(

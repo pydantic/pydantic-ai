@@ -64,6 +64,7 @@ __all__ = (
     'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
     'ContentFilterError',
+    'OutputTokenLimitExceeded',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
@@ -178,14 +179,18 @@ class CallDeferred(Exception):
     Args:
         metadata: Optional dictionary of metadata to attach to the deferred tool call.
             This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+        kind: `'question'` when the call asks for content, such as an answer from the user, rather than
+            standing for work done outside the agent. Read back with `DeferredToolRequests.kind()`.
     """
 
-    def __init__(self, metadata: dict[str, Any] | None = None):
+    def __init__(self, metadata: dict[str, Any] | None = None, *, kind: Literal['external', 'question'] = 'external'):
         self.metadata = metadata
+        self.kind: Literal['external', 'question'] = kind
         super().__init__()
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.metadata,)
+    def __reduce__(self) -> tuple[Any, ...]:
+        # `kind` is keyword-only, so it is restored from the instance state.
+        return self.__class__, (self.metadata,), {'kind': self.kind}
 
 
 class ApprovalRequired(Exception):
@@ -1339,7 +1344,23 @@ class ToolFailedError(Exception):
         return self.__class__, (self.tool_failed,)
 
 
-class IncompleteToolCall(UnexpectedModelBehavior):
+class OutputTokenLimitExceeded(UnexpectedModelBehavior):
+    """Raised when a response reached the output token limit before the model finished its output.
+
+    The limit is the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's
+    own limit, and the response's [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] is `'length'`.
+    The agent raises it when the response has no output it can use, as re-prompting the model with the same limit
+    would run into it again, including when [`NativeOutput`][pydantic_ai.output.NativeOutput] or
+    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text was cut off into JSON that doesn't parse.
+    Plain text output that was cut off is the run's output instead.
+
+    Naming it in [`ModelFallback`][pydantic_ai.capabilities.ModelFallback]'s or
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]'s `fallback_on`, as `ModelFallback` does by default,
+    also rejects any response with `finish_reason='length'`, so the next model is tried.
+    """
+
+
+class IncompleteToolCall(OutputTokenLimitExceeded):
     """Error raised when a model stops due to token limit while emitting a tool call."""
 
 

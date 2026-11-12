@@ -1040,7 +1040,12 @@ class TestLLMReminder:
         wrapped = [
             part.content for part in user_parts if isinstance(part.content, str) and part.content.startswith('<system>')
         ]
-        assert wrapped == [f'<system>{_GOAL_NOTE if source == "goal" else _LLM_NOTE}</system>']
+        # The quoted `</system>`, in the user's prompt or the reminder's data, gets the framework's lookalike note.
+        lookalike = [text for text in wrapped if 'looks like an application frame' in text]
+        assert len(lookalike) == 1
+        assert [text for text in wrapped if text not in lookalike] == [
+            f'<system>{_GOAL_NOTE if source == "goal" else _LLM_NOTE}</system>'
+        ]
         quoted = [part.content for part in user_parts if not isinstance(part.content, str)]
         if source == 'goal':
             # The goal is pointed at, not repeated: the user's text is only in their own prompt.

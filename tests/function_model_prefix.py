@@ -79,7 +79,7 @@ class RequestRecorder:
             # Anthropic renders the output mode the test model resolved for its own profile, the one the
             # conversation was actually run with (a `final_result` tool, say), rather than the one it would pick.
             # The rest of the preparation is left to `AnthropicModel`: preparing twice would render the instructions'
-            # `<context>` blocks twice. The test model prepares the request again when it runs it, and warns about
+            # `<pyai:context>` blocks twice. The test model prepares the request again when it runs it, and warns about
             # ignored settings then.
             with suppress_warnings():
                 _, prepared = model.prepare_request(model_settings, model_request_parameters)
