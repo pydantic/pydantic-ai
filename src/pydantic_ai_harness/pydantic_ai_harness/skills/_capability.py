@@ -34,7 +34,7 @@ from pydantic_ai_harness.skills._toolset import UntrustedSkillsToolset
 
 _MAX_DESCRIPTION_LENGTH = 1024
 _UNTRUSTED_SKILLS_NOTE = (
-    'This workspace has skills: instructions for particular tasks, listed by `list_skills`. At the start of a task, '
+    'Skills, instructions for particular tasks, are listed by `list_skills`. At the start of a task, '
     'call `list_skills` to check whether one applies, and `load_skill` to read the one that does.'
 )
 
