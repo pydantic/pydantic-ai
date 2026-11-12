@@ -1,8 +1,6 @@
-"""What the `computer` tool's runner needs to know about the model that made a call, from that model's profile.
+"""Tells a model that points on a grid so, and labels its `computer` calls with its grid and screenshot limits.
 
-The agent applies it per attempt, from the model serving it, also when a capability like `ModelFallback` moves the
-request to another model: a model that points on a grid is told so in the tool's description, and its calls record the
-grid and the largest screenshot the model takes.
+The agent applies this per attempt, so it follows the model serving the request, also after `ModelFallback` switches.
 """
 
 from __future__ import annotations as _annotations
@@ -51,7 +49,7 @@ def shared_grid(model: Model) -> int | None:
 def _smallest_limit(
     models: list[Model], key: Literal['computer_use_screenshot_max_side', 'computer_use_screenshot_max_pixels']
 ) -> int | None:
-    """The smallest of the models' screenshot limits under `key`, which every one of them can see."""
+    """The smallest of the models' screenshot limits under `key`, so every one of them can see the screenshot."""
     return min((limit for answering in models if (limit := answering.profile.get(key))), default=None)
 
 
@@ -71,7 +69,7 @@ def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestP
 
 
 def label_calls(model: Model, params: ModelRequestParameters, response: _messages.ModelResponse) -> None:
-    """Record on the response's `computer` calls the grid `model` was told to point on and the screenshots it takes."""
+    """Record `model`'s grid and screenshot limits on the response's `computer` calls."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
     if name is None:
         return

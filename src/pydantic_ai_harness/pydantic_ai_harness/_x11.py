@@ -32,17 +32,17 @@ DISPLAY = ':1'
 DISPLAY_NUMBER = DISPLAY[1:]
 
 START_LOCK = f'exec 9>/tmp/.pydantic-ai-display-{DISPLAY_NUMBER}.lock; ! command -v flock >/dev/null || flock 9; '
-"""Starts a start script: waits for another start of the same display to finish, so two don't both find nothing
-running and start two. The script holds it until it exits; what it starts in the background must close it with
-`9>&-`, or that holds it as long as it runs."""
+"""The first line of a start script: waits for any other start of this display to finish, so two don't both start
+one. A program the script starts in the background must close the lock with `9>&-`, or it holds the lock while it
+runs."""
 
 
 def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
-    """A shell fragment that waits until the command `ready` succeeds, for a program just started in the background.
+    """A shell fragment that waits for a program just started in the background, until the command `ready` succeeds.
 
-    It gives up as soon as the process `pid` exits, or after 10 seconds, saying `what` didn't start, with the end of
-    `log` as the reason. `ready` must answer for the new process only: a log it reads is emptied before the program
-    starts, since the program's own redirect runs in the background, after the check may have read the last run's.
+    It fails once process `pid` exits, or after 10 seconds, saying `what` didn't start and printing the end of `log`.
+    `ready` must answer for the new process only: empty any log it reads before starting the program, or the check can
+    read the last run's log before the program's redirect replaces it.
     """
     return (
         f'i=0; until {ready}; do '
@@ -53,8 +53,7 @@ def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
 
 
 _MAX_REPEAT = 2**31 - 1
-"""The most times xdotool repeats a click or key: it reads `--repeat` into a C `int` with `atoi` (`cmd_click.c`,
-`cmd_key.c`)."""
+"""The most times xdotool repeats a click or key, since it reads `--repeat` into a C `int`."""
 
 
 def _repeat(count: int) -> str:
@@ -123,7 +122,7 @@ _PLAIN_KEYSYMS = frozenset({'ctrl', 'shift', 'alt', 'super', 'space'})
 """Key names xdotool takes as they are."""
 
 _COMMAND_TIMEOUT = 150
-"""Maximum time for one display command on top of the pauses it asks for, such as the seconds a `hold_key` holds."""
+"""Seconds one display command may take, on top of the pauses it asks for, such as a `hold_key`'s seconds."""
 
 _TYPING_DELAY_MS = '12'
 """Milliseconds between typed characters, `xdotool type`'s default, and between the presses of a repeated key."""
@@ -132,12 +131,11 @@ _KEY_SECONDS = int(_TYPING_DELAY_MS) / 1000
 """The pause one typed character or one key press asks for."""
 
 _COMMAND_BYTES = 60_000
-"""How long one input command's steps may be, each argument counted as its bytes plus `_ARGUMENT_BYTES`; a longer
-input, such as long text or a drag along many points, is split into several commands.
+"""The longest one input command may be, counting each argument as its bytes plus `_ARGUMENT_BYTES`. Longer input,
+such as long text or a drag through many points, is split into several commands.
 
-Sprites takes a command's arguments in its exec URL and refuses one over 64 KiB (HTTP 414): a command of one
-64,984-byte argument ran and one of 65,019 bytes was refused. Modal refuses a command whose arguments pass 65,536
-bytes (both measured 2026-11-12). The rest is room for the command's own start and the URL's other parameters."""
+Sprites and Modal refuse commands over 64 KiB; the rest is room for the command's start and the URL's other
+parameters."""
 
 _ARGUMENT_BYTES = 6
 """What a transport adds to each argument, such as the `&cmd=` Sprites' exec URL puts before each."""
@@ -149,14 +147,14 @@ _RELEASE_MODIFIERS = (
     'keyup',
     *('Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R', 'ISO_Level3_Shift'),
 )
-"""Starts every `xdotool` chain that acts: lets go of modifiers an earlier action left down, such as one stopped
-between pressing and releasing, which would otherwise change what follows (a stuck Shift types `a` as `A`).
+"""Starts every `xdotool` chain that acts: lets go of modifiers an earlier action left down, such as one cancelled
+mid-press, since a stuck Shift types `a` as `A`.
 
-Mouse buttons stay, since `MouseDown` holds one across actions, and so does Caps Lock, which the model may have
+Mouse buttons stay down, since `MouseDown` holds one across actions, and so does Caps Lock, which the model may have
 turned on."""
 
 _SCROLL_TICK_DELAY_MS = '20'
-"""Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
+"""Milliseconds between scroll wheel clicks; `xdotool`'s default is 100."""
 
 _SCROLL_TICK_SECONDS = int(_SCROLL_TICK_DELAY_MS) / 1000
 
@@ -164,14 +162,14 @@ _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
 _DISPLAY_SIZE = ['xwininfo', '-root']
-"""Prints the root window's size, which spans every monitor as a screenshot does. (`xdotool getdisplaygeometry`
-gives only the first monitor's, so a click on a second monitor would be scaled onto the first.)"""
+"""Prints the root window's size, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry` gives
+only the first monitor's, which would scale a click on a second monitor onto the first."""
 
 _ROOT_SIZE = re.compile(r'^\s*(Width|Height): (\d+)$', re.MULTILINE)
 
 _CAPTURES = '/tmp/pydantic-ai-captures'
-"""Where screenshots are captured before they are printed. Each capture removes captures older than a few minutes
-there, such as one a cancel stopped before it removed its own file, so they don't pile up."""
+"""Where screenshots are written before they are printed. Each capture removes files there older than five minutes,
+such as one a cancel left behind."""
 
 _CAPTURE = (
     f'd={_CAPTURES}; mkdir -p "$d" && find "$d" -type f -mmin +5 -exec rm -f {{}} + 2>/dev/null; f="$d/$$.png"; '
@@ -181,8 +179,7 @@ _CAPTURE = (
 go to scrot, such as `-a x,y,width,height` for a region."""
 
 _INPUT_PID = f'/tmp/.pydantic-ai-input-{DISPLAY_NUMBER}'
-"""Holds the process id of the input command running on the display. Only one runs at a time, since `ComputerUse`
-runs one batch at a time on a display."""
+"""Holds the process id of the input command running on the display; `ComputerUse` runs one at a time."""
 
 _INPUT = f'echo $$ > {_INPUT_PID}; exec "$@"'
 """Runs the input command in `$@` as the process whose id `_INPUT_PID` records."""
@@ -192,10 +189,8 @@ _STOP_INPUT = (
     'kill "$p" 2>/dev/null; '
     'while [ -e /proc/$p ] && ! grep -q "^State:[[:space:]]*Z" /proc/$p/status 2>/dev/null; do sleep 0.05; done'
 )
-"""Stops the input command `_INPUT_PID` names, if it is still running, and waits for it to exit.
-
-A cancelled command can keep running in the environment after the call that started it returns, and could press
-keys again after they were released."""
+"""Stops the input command `_INPUT_PID` names, if it still runs, and waits for it to exit. A cancelled command can
+outlive its call and press keys again after they were released."""
 
 
 def _keysym(key: str) -> str:
@@ -206,8 +201,7 @@ def _keysym(key: str) -> str:
         return key if key.isascii() and key.isalnum() else _character(key)
     if key in _PLAIN_KEYSYMS:
         return key
-    # Validation refuses other names; refusing them here too keeps out one xdotool would read as a command, such as
-    # `exec`.
+    # Validation refuses other names already; this also keeps out a name xdotool reads as a command, such as `exec`.
     raise UnsupportedActionError(f'The display cannot press the key {key!r}.')
 
 
@@ -268,13 +262,12 @@ def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
     It first installs any of `_PROGRAMS` that's missing with `apt-get`, as root or through `sudo -n`, even when an X
-    server already answers. Before starting Xvfb, it makes the directory for the X server's socket, which Xvfb makes
-    only when it runs as root. It gives up as soon as the X server exits, or after 10 seconds, with the end of `log`
-    as the reason. `then` runs once a new X server answers, such as to start a panel.
+    server already answers. It fails once the X server exits, or after 10 seconds, printing the end of `log`. `then`
+    runs once a new X server answers, such as to start a panel.
 
-    It takes `START_LOCK`, so a second start of the display waits and finds the first one's install and X server.
-    The script it begins holds the lock until it exits, so what follows it, such as starting a desktop, is under the
-    lock too; what `then` or the rest of the script starts in the background must close it with `9>&-`.
+    It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
+    until the script exits, so the rest of the script runs under it too; anything started in the background must close
+    it with `9>&-`.
     """
     return (
         f'{START_LOCK}missing=; for p in {" ".join(_PROGRAMS)}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
@@ -298,8 +291,8 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-        # Without `-noreset` an X server resets when its last client exits, such as each `xdotool` command while no
-        # window manager runs: the pointer goes back to the middle and held buttons are let go (seen on a plain Xvfb).
+        # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
+        # running: the pointer goes back to the middle and held buttons are let go.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + f'{then} fi; '
@@ -342,9 +335,9 @@ def desktop_display(
     size: tuple[int, int] | None,
     where: Callable[[], str],
 ) -> LazyDisplay | None:
-    """A sandbox's display on a plain Xvfb at `size`, or `None` when it has no desktop.
+    """A sandbox's display on a plain Xvfb at `size`, or `None` without a desktop.
 
-    For a sandbox with no desktop image of its own, which `start_x_server` provisions on first use.
+    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use.
     """
     if size is None:
         return None

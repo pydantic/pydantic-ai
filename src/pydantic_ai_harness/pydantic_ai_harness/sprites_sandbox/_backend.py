@@ -383,9 +383,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
     API; the other file operations run as shell commands.
 
-    With `desktop`, `True` or a `(width, height)` (1280x800 by default), the Sprite has a display for
-    [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse], started on first use and driven with `xdotool` and
-    `scrot`, which the first start installs with `apt-get`, as root or with passwordless `sudo`, when they're missing.
+    With `desktop`, `True` or a `(width, height)` (1280x800 by default), the Sprite gets a display for
+    [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse] on first use, which installs the programs it needs.
     """
 
     def __init__(
