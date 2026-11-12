@@ -655,7 +655,7 @@ jobs:
             A Python hunk covers its enclosing function or method, not the whole class.
             When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
             The sibling families are `models/`, `providers/`, `profiles/`, `toolsets/`, `native_tools/`, `capabilities/`, `embeddings/`, `images/`, `realtime/`, `ui/` and `durable_exec/` under `pydantic_ai_slim/pydantic_ai/`;
-            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/` and `ssh_workspace/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
+            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/`, `ssh_workspace/` and `docker_container/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
             Each commentable line in the diff is prefixed with its source line number: `NL:<number>` for new or context lines, `OL:<number>` for deleted lines.
             For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.
