@@ -5,6 +5,12 @@ window. These Pydantic AI `Capability` classes edit the message history just bef
 run's message history, so a trim, clear, or summary carries forward to later steps (it is not
 recomputed from the full history every turn).
 
+Across runs, the run's `result.conversation` keeps the whole history, including what a strategy
+dropped, so a `ConversationStore` stores every message. Carried into the next run, it is compacted
+again, which for `SummarizingCompaction` and `RelevanceCompaction` means another model call over the
+whole, growing history. To carry the compacted history instead, pass `result.all_messages()` as
+`message_history=`.
+
 All strategies preserve tool-call / tool-return **pairing** -- core does not validate this, and a
 provider rejects an orphaned pair. The zero-LLM strategies never call a model.
 
