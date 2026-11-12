@@ -489,6 +489,27 @@ class TestUntrustedWorkspaces:
         assert 'vendored' not in (requests[0].instructions or '')
         assert _tool_results(requests) == [{'vendored': 'Vendored help.'}]
 
+    @pytest.mark.parametrize('lowered', ['vendor', 'vendor/skills', 'vendor/skills/evil'])
+    async def test_a_skill_linked_out_of_a_lowered_directory_stays_lowered(self, tmp_path: Path, lowered: str) -> None:
+        # The repository controls `vendor`, so it can make a skill there a link to outside the workspace. Naming the
+        # skill's directory at `'operator'` doesn't lift the target: `authority_of` gives a link's target no more than
+        # the link's written location, here at `'none'`: the link itself, its library, or the directory above.
+        _write_skill(tmp_path / 'outside', 'evil', description='Evil help.')
+        (tmp_path / 'repo' / 'vendor' / 'skills').mkdir(parents=True)
+        (tmp_path / 'repo' / 'vendor' / 'skills' / 'evil').symlink_to(
+            tmp_path / 'outside' / 'evil', target_is_directory=True
+        )
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path / 'repo')), authority='operator', path_authority={lowered: 'none'}
+        )
+        model, requests, tools = _calling(ToolCallPart('list_skills', {}))
+
+        await Agent(model, capabilities=[Skills('vendor/skills')]).run('go', workspace=workspace)
+
+        assert tools == ['list_skills', 'load_skill']
+        assert 'evil' not in (requests[0].instructions or '')
+        assert _tool_results(requests) == [{'evil': 'Evil help.'}]
+
 
 class TestSkillValidation:
     @pytest.mark.parametrize(('include', 'exclude'), [(['alpha'], ['alpha']), ([], [])])

@@ -389,7 +389,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         self._report_skipped(ctx, catalog)
         return [skill for skill in catalog.skills if skill.name in lowered and skill.model_invocable]
 
-    def _report_skipped(self, ctx: RunContext[Any], catalog: SkillCatalog) -> None:
+    def _report_skipped(self, ctx: RunContext[AgentDepsT], catalog: SkillCatalog) -> None:
         """Record each flagged skill on the run's trace and warn about each skipped `SKILL.md` or library path."""
         for skipped in catalog.skipped:
             if skipped.scan is not None:

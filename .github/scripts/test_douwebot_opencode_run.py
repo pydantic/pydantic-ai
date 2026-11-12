@@ -10,6 +10,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -100,6 +101,7 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
     monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
+    monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
     return github_output
 
 
@@ -195,6 +197,41 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert 'Use the `gh` CLI only when' not in call.input
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode\n'
     assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash on OpenCode Go.\n'
+    assert not [name for name in call.env if name.startswith('OTEL_')]
+
+
+def test_logfire_token_tags_each_runs_telemetry_with_its_plan(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With `LOGFIRE_TOKEN`, each run exports OpenCode's telemetry, tagged with its workflow run, plan and place."""
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    monkeypatch.setenv('LOGFIRE_URL', 'https://logfire-eu.pydantic.info/')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
+    monkeypatch.setenv('GITHUB_RUN_ID', '43168376242')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
+    monkeypatch.setenv('GITHUB_JOB', 'douwebot-opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    douwebot_opencode_run.main()
+    run = 'github.repository=pydantic/pydantic-ai,github.run_id=43168376242,github.run_attempt=2'
+    assert [{name: value for name, value in launch.env.items() if name.startswith('OTEL_')} for launch in invoked] == [
+        {
+            'OTEL_EXPORTER_OTLP_ENDPOINT': 'https://logfire-eu.pydantic.info',
+            'OTEL_EXPORTER_OTLP_HEADERS': 'Authorization=logfire-token',
+            'OTEL_RESOURCE_ATTRIBUTES': f'{run},github.job=douwebot-opencode,'
+            f'opencode_fallback.plan={quote(plan)},opencode_fallback.attempt={attempt}',
+        }
+        for attempt, plan in enumerate([OPENCODE_GO.plan, ZAI.plan], start=1)
+    ]
+
+
+@pytest.mark.parametrize(
+    ('job', 'step'), [('douwebot-opencode', 'opencode'), ('category-classify-opencode', 'classify')]
+)
+def test_fallback_steps_hand_opencode_the_logfire_token(job: str, step: str) -> None:
+    """Both `bots.yml` OpenCode fallbacks export OpenCode's telemetry, as `PR Review Checks` does."""
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    env = next(entry['env'] for entry in workflow['jobs'][job]['steps'] if entry.get('id') == step)
+    assert (env['LOGFIRE_TOKEN'], env['LOGFIRE_URL']) == ('${{ secrets.LOGFIRE_TOKEN }}', '${{ vars.LOGFIRE_URL }}')
 
 
 GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.go-limit, status 429.'
@@ -209,6 +246,13 @@ PLAN_REFUSED: list[dict[str, object]] = [
     REFUSED[0],
     {'type': 'error', 'error': {'type': 'provider.quota', 'message': 'Usage limit reached for 5 hour.', 'status': 429}},
 ]
+
+
+def zai_error(kind: str, code: object) -> dict[str, object]:
+    """The `error` OpenCode 2.2.5 writes for a Z.AI 429 whose response body carries `code`."""
+    message = 'Rate limit reached for requests'
+    body = json.dumps({'error': {'code': code, 'message': message}})
+    return {'type': kind, 'message': message, 'status': 429, 'response': {'body': body}}
 
 
 @pytest.mark.parametrize('kind', ['provider.go-limit', 'provider.quota'])
@@ -314,8 +358,8 @@ def test_go_refusal_skips_a_coding_plan_account_without_a_key(
         pytest.param(
             '3188',
             None,
-            [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
-            'error type provider.rate-limit, status 429',
+            [REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}],
+            'error type provider.rate-limit, status 429, code 1302',
             id='no-backup-key-rate-limit',
         ),
         pytest.param('3188', '', PLAN_REFUSED, 'error type provider.quota, status 429', id='empty-backup-key'),
@@ -330,8 +374,8 @@ def test_go_refusal_skips_a_coding_plan_account_without_a_key(
         pytest.param(
             '3188',
             'zai-backup-key',
-            [*FINISHED, {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
-            'error type provider.rate-limit, status 429',
+            [*FINISHED, {'type': 'error', 'error': zai_error('provider.rate-limit', '1305')}],
+            'error type provider.rate-limit, status 429, code 1305',
             id='rate-limit-after-a-step',
         ),
     ],
@@ -447,6 +491,15 @@ def test_go_failure_stays_on_go(
             {'type': 'provider.auth: Invalid key', 'status': 401},
             'no error type, status 401',
             id='type-not-shaped-like-opencodes',
+        ),
+        pytest.param(zai_error('unknown', 1305), 'error type unknown, status 429, code 1305', id='numeric-code'),
+        pytest.param(zai_error('unknown', '1302: sk-key'), 'error type unknown, status 429', id='code-not-all-digits'),
+        pytest.param(zai_error('unknown', '1302130213'), 'error type unknown, status 429', id='code-too-long'),
+        pytest.param(zai_error('unknown', True), 'error type unknown, status 429', id='code-not-a-number'),
+        pytest.param(
+            {'type': 'unknown', 'status': 429, 'response': {'body': 'code 1302'}},
+            'error type unknown, status 429',
+            id='body-not-json',
         ),
     ],
 )
