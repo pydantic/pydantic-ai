@@ -186,7 +186,7 @@ A failed run returns no result, so there is no ref to store. Destroy the sandbox
 
 On a timeout or cancellation, the command and the processes it started are stopped in the sandbox. Creating the sandbox, including pulling the image, is not bounded by a command's `timeout`.
 
-Each command is a request to the sandbox that takes about a fifth of a second, and file operations run as commands, so reading or writing a large file takes several seconds per MiB. Keep large data out of the workspace or fetch it from inside the sandbox.
+Each command is a request to the sandbox that takes about a fifth of a second. File operations go through execd's file API as single requests, not shell commands.
 
 A sandbox that is gone, or destroyed mid-command, raises `WorkspaceUnavailableError`. A command whose working directory has been deleted raises `WorkspaceError`. Other errors from the server, such as an image it can't pull, are raised as the SDK reports them.
 
