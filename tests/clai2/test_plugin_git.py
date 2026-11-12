@@ -283,7 +283,7 @@ async def test_module_without_id_does_not_start_a_git_install(tmp_path: Path, so
 
 def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    with pytest.raises(ValueError, match=r'only inside a CLAI session: /plugins add GIT_URL'):
+    with pytest.raises(ValueError, match=r'Run `/plugins add https://example.com/plugin.git` in a CLAI session'):
         plugins_command(harness.store, ['add', 'https://example.com/plugin.git'])
     assert harness.store.plugins() == []
     assert not (harness.store.plugins_dir / '_git').exists()
@@ -341,6 +341,8 @@ async def test_add_usage_mentions_git_urls(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match='Usage: /plugins add GIT_URL'):
         await harness.loader.command(['add'])
+    with pytest.raises(ValueError, match=r'Usage: plugins list\|add ID MODULE\[:ATTR\] \[JSON\]'):
+        await harness.loader.command(['add', 'one', 'module:Factory', '{}', 'extra'])
     assert harness.store.plugins() == []
 
 

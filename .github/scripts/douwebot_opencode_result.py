@@ -72,12 +72,17 @@ def rejection_reason(error: ValueError) -> str:
 
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
-    return ReviewResult.model_validate_json(unfenced(final_text(path)))
+    text = unfenced(final_text(path))
+    # glm-5.3-flash also writes prose before a bare JSON object. That prose still fails when it holds a `{`.
+    return ReviewResult.model_validate_json(text[max(text.find('{'), 0) :])
 
 
 def main() -> None:
     """Publish one compact validated result as a GitHub Actions output."""
-    result = review_result(Path(sys.argv[1]))
+    try:
+        result = review_result(Path(sys.argv[1]))
+    except ValueError as exc:
+        sys.exit(f'OpenCode returned an invalid review: {rejection_reason(exc)}')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write('result=' + json.dumps(result.model_dump(), separators=(',', ':')) + '\n')
 
