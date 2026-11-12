@@ -122,7 +122,7 @@ Other routes get a `<system>`-tagged user message instead. This keeps prompt cac
 
 ## Video input
 
-OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. So only the profiles of models that read video, Gemini and Amazon Nova, say they take it. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. To send video a tool returns to another model that reads it, pass `profile=ModelProfile(supports_video_input=True)`.
+OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Only Gemini and Amazon Nova routes are marked as reading video. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
 
 ## Prompt Caching
 
