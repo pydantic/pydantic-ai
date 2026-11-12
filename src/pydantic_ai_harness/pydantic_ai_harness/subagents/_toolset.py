@@ -42,6 +42,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces._authority_paths import lowest_authority
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -1598,13 +1599,14 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
                 folded = _folded_dir(location)
                 if folded.startswith(inside) or inside.startswith(folded):
                     levels.append(level)
-    lowest = min(levels, key=_AUTHORITY_ORDER.index)
+    lowest = lowest_authority(levels)
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
 
 
 def _folded_dir(path: str) -> str:
-    """`path` case-folded with one trailing slash, so `a.startswith(b)` says whether `a` is inside or at `b`."""
+    """`path` case-folded with one trailing slash, so `a.startswith(b)` says whether `a` is inside or at `b`.
+
+    Case-folded like core's `layer_authority`, which also matches paths case-folded and only ever lowers with it, so
+    another spelling of a lower directory on a case-insensitive filesystem still counts.
+    """
     return path.casefold().rstrip('/') + '/'
-
-
-_AUTHORITY_ORDER: tuple[Authority, ...] = ('none', 'user', 'operator')
