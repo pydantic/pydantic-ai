@@ -980,9 +980,9 @@ async def test_a_legacy_retry_prompt_part_on_a_direct_request_is_judged_as_what_
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in one word
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
             ]
@@ -2116,9 +2116,9 @@ Please refund it.\
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Pick something else.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
                 {'thinking': 'A refund, then.'},
@@ -2375,9 +2375,9 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                         {
                             'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                         },
                     ],
@@ -2415,9 +2415,9 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer with a tool call.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
             ],
@@ -2454,9 +2454,9 @@ async def test_feedback_after_a_tool_returned_is_a_retry_entry(allow_model_reque
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                 },
             ],

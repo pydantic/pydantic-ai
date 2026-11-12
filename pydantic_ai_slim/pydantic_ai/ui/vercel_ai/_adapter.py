@@ -84,7 +84,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import get_ui_message_id, set_ui_message_id
+from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -928,7 +928,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     approval=ToolApprovalResponded(
                         id=str(uuid.uuid4()),
                         approved=False,
-                        reason=builtin_return.model_response_str(wrap_if_error=False),
+                        reason=client_error_text(builtin_return),
                     ),
                 )
             elif (
@@ -936,7 +936,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
             ):
                 response_obj = builtin_return.model_response_object(wrap_if_error=False)
-                error_text = response_obj.get('error_text', builtin_return.model_response_str(wrap_if_error=False))
+                error_text = response_obj.get('error_text', client_error_text(builtin_return))
                 return ToolOutputErrorPart(
                     type=tool_name,
                     tool_call_id=part.tool_call_id,
@@ -1032,7 +1032,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(wrap_if_error=False),
+                            reason=client_error_text(tool_result),
                         ),
                     )
                 )
@@ -1045,7 +1045,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(wrap_if_error=False),
+                        error_text=client_error_text(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -1625,7 +1625,8 @@ def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any]
     content: object = None if tool_result is None or tool_result.outcome != 'retried' else tool_result.content
     if not isinstance(content, list):
         return None
-    return tool_return_ta.dump_python(content, mode='json', by_alias=True)
+    items = cast(list[Any], content)
+    return tool_return_ta.dump_python(without_internal_text_metadata(items), mode='json', by_alias=True)
 
 
 def _validate_tool_output(output: Any) -> Any:

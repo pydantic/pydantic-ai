@@ -88,7 +88,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     warn_dropped_tool_results,
 )
-from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
+from .._utils import MCP_APPS_UI_TYPE, client_error_text, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
 try:
     from ag_ui.core import (
@@ -1242,9 +1242,7 @@ def _dump_tool_return_part(part: ToolReturnPart, context: _DumpRequestContext) -
             id=_new_message_id(),
             content=dump_tool_return_content(part.content),
             tool_call_id=part.tool_call_id,
-            error=part.model_response_str(wrap_if_error=False)
-            if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied'
-            else None,
+            error=client_error_text(part) if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied' else None,
             **tool_kind_encrypted_value_kwargs(
                 part.tool_kind, outcome=part.outcome, retry=part.retry, supported=context.use_encrypted_value
             ),
@@ -1278,7 +1276,7 @@ def _dump_retry_part(
                 id=_new_message_id(),
                 content=dump_tool_return_content(translated.content),
                 tool_call_id=translated.tool_call_id,
-                error=translated.model_response_str(wrap_if_error=False),
+                error=client_error_text(translated),
                 **tool_kind_encrypted_value_kwargs(
                     translated.tool_kind,
                     outcome=translated.outcome,
@@ -1380,7 +1378,7 @@ def _dump_native_tool_call_part(part: NativeToolCallPart, context: _DumpResponse
                 id=_new_message_id(),
                 content=dump_tool_return_content(builtin_return.content),
                 tool_call_id=prefixed_id,
-                error=builtin_return.model_response_str(wrap_if_error=False)
+                error=client_error_text(builtin_return)
                 if builtin_return.outcome in ERROR_OUTCOMES or builtin_return.outcome == 'denied'
                 else None,
                 **tool_kind_encrypted_value_kwargs(

@@ -101,7 +101,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, and the paste key bindings |
+| `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, paste key bindings, Linux clipboard guidance, and the 30-second paste-error lifetime |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
