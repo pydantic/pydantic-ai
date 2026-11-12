@@ -378,7 +378,8 @@ __all__ = (
     'bash_code_execution_tool_result_content_ta',
     'code_execution_tool_result_content_ta',
     'text_editor_code_execution_tool_result_content_ta',
-    'web_search_tool_result_content_ta', 'ComputerResult',
+    'web_search_tool_result_content_ta',
+    'ComputerResult',
 )
 
 # Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
@@ -3092,10 +3093,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
 
-        tool_result_content = [
-            await self._map_tool_result_item(item, map_context)
-            for item in part.content_items(mode='str', wrap_if_error=False)
-        ]
+        # A `computer` result is read as validated, so content stored as a JSON string keeps its screenshot.
+        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+        items = list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
+        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in items]
 
         return beta_tool_result_block_param.BetaToolResultBlockParam(
             tool_use_id=_guard_tool_call_id(t=part),
