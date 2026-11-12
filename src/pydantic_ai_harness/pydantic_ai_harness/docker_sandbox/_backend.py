@@ -251,7 +251,9 @@ _START_DESKTOP = (
     # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
     f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
     f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
+    # Without `-noreset` an X server resets when its last client exits, such as each `xdotool` command while no
+    # window manager runs: the pointer goes back to the middle and held buttons are let go (seen on a plain Xvfb).
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
     + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
     + 'setsid tint2 >/dev/null 2>&1 9>&- & fi; '
     'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
