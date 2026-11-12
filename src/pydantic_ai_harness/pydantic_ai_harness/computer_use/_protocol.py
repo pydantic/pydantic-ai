@@ -6,7 +6,7 @@ importing anything from here.
 
 These protocols don't change once released, since adding a member would break every display written before it. A new
 ability is a new optional protocol, like `SupportsZoom`, and a new kind of input is a new action type in
-`ComputerAction`, which a display written earlier refuses with `UnsupportedActionError`.
+`DisplayAction`, which a display written earlier refuses with `UnsupportedActionError`.
 """
 
 from __future__ import annotations as _annotations
@@ -31,8 +31,8 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.workspaces import WorkspaceError
 
 __all__ = (
-    'ComputerAction',
     'Display',
+    'DisplayAction',
     'SupportsCursorPosition',
     'SupportsDisplay',
     'SupportsScaledScreenshot',
@@ -40,7 +40,7 @@ __all__ = (
     'UnsupportedActionError',
 )
 
-ComputerAction: TypeAlias = Annotated[
+DisplayAction: TypeAlias = Annotated[
     Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
     Field(discriminator='type'),
 ]
@@ -76,7 +76,7 @@ class Display(Protocol):
         """Capture the whole screen as PNG bytes, at the size `display_size` reports."""
         ...
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         """Perform one action.
 
         Raise [`UnsupportedActionError`][pydantic_ai_harness.computer_use.UnsupportedActionError] for an action, or a
