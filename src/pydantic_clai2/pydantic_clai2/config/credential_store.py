@@ -30,8 +30,6 @@ _SLASH = '%2F'
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
 _NO_KEYRING = (NoKeyringError, InitError)
 _logger = logging.getLogger(__name__)
-# Avoid terminal noise when no application logging handler is configured.
-_logger.addHandler(logging.NullHandler())
 
 
 @cache
