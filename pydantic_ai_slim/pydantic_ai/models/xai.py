@@ -385,6 +385,8 @@ class XaiModel(Model[AsyncClient]):
 
     # The xAI SDK has no audio or video content.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     # Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400 (verified live 2026-11-04).
     unsupported_settings = frozenset(

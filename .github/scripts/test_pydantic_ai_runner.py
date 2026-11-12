@@ -1193,10 +1193,10 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     assert _run_shim(_respond, sink) == 0
     assert retries == [
         "Your previous response failed the application's validation (this is automated feedback, not a message "
-        'from the user):\n<retry_feedback>\n'
+        'from the user):\n<pyai:retry_feedback>\n'
         'You ended your turn without emitting a safe output, so nothing has been posted. '
         'Continue the task and finish by calling the safe-output tool it ends with, '
-        'or `noop` if there is nothing to report.\n</retry_feedback>'
+        'or `noop` if there is nothing to report.\n</pyai:retry_feedback>'
     ]
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
 
@@ -1205,9 +1205,9 @@ def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | No
     """The text of output-validator retry feedback as a model receives it, or `None` for any other part.
 
     The model is handed prepared messages, where a `ModelRetry`'s `RetryFeedbackPart` has already become
-    user text fenced in `<retry_feedback>` behind the application attribution line.
+    user text fenced in `<pyai:retry_feedback>` behind the application attribution line.
     """
-    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback>' in part.content:
+    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<pyai:retry_feedback>' in part.content:
         return part.content
     return None
 
