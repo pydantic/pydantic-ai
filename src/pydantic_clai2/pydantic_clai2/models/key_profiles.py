@@ -58,6 +58,7 @@ KEY_VARIABLES = {
     'bedrock-mantle': ('AWS_BEARER_TOKEN_BEDROCK',),
     'cohere': ('CO_API_KEY',),
     'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'google-decisions': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
     'google-cloud': (),  # Application Default Credentials win over its key variables.
     'heroku': ('HEROKU_INFERENCE_KEY',),
     'huggingface': ('HF_TOKEN',),
@@ -66,6 +67,9 @@ KEY_VARIABLES = {
     'voyageai': ('VOYAGE_API_KEY',),
 }
 """Providers whose API key variables are not just `PROVIDER_API_KEY`."""
+
+KEYED_ELSEWHERE = ('openrouter', 'vllm', 'github-copilot', 'openai-codex')
+"""Providers clai2 builds with the key `/model add` or `/login` saved, or a Codex sign-in, never a model's `api_key`."""
 
 
 class KeyedProvider(Protocol):
@@ -233,7 +237,7 @@ def takes_key(provider: str) -> bool:
 
     Connections such as OpenRouter keep the key `/model add` saved, and Codex signs in instead.
     """
-    if provider in ('openrouter', 'vllm', 'github-copilot', 'openai-codex'):
+    if provider in KEYED_ELSEWHERE:
         return False
     if provider.startswith('gateway/'):
         return True

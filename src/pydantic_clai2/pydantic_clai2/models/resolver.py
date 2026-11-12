@@ -48,8 +48,11 @@ def _check_built(provider: str, built: Mapping[str, str], *, plugin: bool) -> No
     """Fail when `/model settings` saved a `base_url` or `api_key` that `provider`'s models are not built with."""
     if plugin and 'base_url' in built:
         raise _no_endpoint(provider)
-    if 'api_key' in built and (plugin or provider in ('openrouter', 'vllm', 'github-copilot', 'openai-codex')):
-        raise _no_api_key(provider)
+    if 'api_key' in built:
+        from pydantic_clai2.models.key_profiles import KEYED_ELSEWHERE
+
+        if plugin or provider in KEYED_ELSEWHERE:
+            raise _no_api_key(provider)
 
 
 @dataclass(kw_only=True)

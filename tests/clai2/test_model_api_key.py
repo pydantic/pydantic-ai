@@ -85,6 +85,7 @@ def test_the_row_offers_saved_keys_and_names_the_environment_key(
     assert row is not None
     assert (row.label, row.choices, row.note) == ('API Key', ('TEAM_KEY',), 'from OPENAI_API_KEY in the environment')
     assert source.problem(row, 'OTHER_KEY') == 'OTHER_KEY is not in /keys. Save the key there first.'
+    assert source.problem(row, 'sk-team') == "String should match pattern '^[A-Z_][A-Z0-9_]*$'"  # Never the key.
     assert source.apply(row, 'TEAM_KEY') == 'Saved api_key for openai:gpt-5. Applies when this model is selected.'
     assert ModelSettingsForm(api_key='TEAM_KEY').to_model_settings() is None
     row = FieldMenu(source).row_for('api_key')
@@ -110,6 +111,7 @@ def test_each_provider_names_its_key_variable(monkeypatch: pytest.MonkeyPatch) -
         ('CO_API_KEY',),
         ('PYDANTIC_AI_GATEWAY_API_KEY', 'PAIG_API_KEY'),
     ]
+    assert key_profiles.key_variables('google-decisions') == ('GOOGLE_API_KEY', 'GEMINI_API_KEY')
     assert key_profiles.key_variables('google-cloud') == ()
     assert key_profiles.takes_key('gateway/openai')
 
