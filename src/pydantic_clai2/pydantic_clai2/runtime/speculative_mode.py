@@ -38,6 +38,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
     DynamicCapability,
+    Hooks,
     ValidatedToolArgs,
     WrapToolExecuteHandler,
 )
@@ -57,6 +58,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.permissions import Permissions
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.repl_state import ReplStates
@@ -243,7 +245,22 @@ def _is_capability(capability: AgentCapability[AgentDepsT]) -> TypeGuard[Abstrac
     return isinstance(capability, AbstractCapability)
 
 
-def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]] | None) -> _MountMode | None:
+def _leaves(granted: Sequence[AgentCapability[AgentDepsT]] | None) -> list[AbstractCapability[AgentDepsT]] | None:
+    """Every capability `granted` binds, groups such as an agent's root capability flattened.
+
+    `None` when `granted` is unknown or holds a capability function, which only resolves at run time.
+    """
+    if granted is None:
+        return None
+    leaves: list[AbstractCapability[AgentDepsT]] = []
+    for capability in granted:
+        if not _is_capability(capability):
+            return None
+        capability.apply(leaves.append)
+    return leaves
+
+
+def _mount_mode(leaves: Sequence[AbstractCapability[AgentDepsT]] | None) -> _MountMode | None:
     """Mount only what the run's `FileSystem` already lets its tools reach, or nothing.
 
     `pathlib` calls on a mount never pass through `FileSystem`'s checks, so an unconditional
@@ -255,16 +272,12 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]] | None) -> _Mount
     leaves the sandbox unmounted, as do zero or several file systems and any capability function
     or `DynamicCapability`, which may only resolve to a file system at run time. A `ToolGuardrail`
     is a restriction `pathlib` would bypass too: one over `read_file` leaves nothing mounted, and
-    one over a tool that writes, `run_code` included, keeps the mount read-only. `granted` is `None`
-    when the agent does not expose its capabilities, which may guard tools too: nothing is mounted.
+    one over a tool that writes, `run_code` included, keeps the mount read-only, as does a
+    `ToolCallJudge` or `Hooks` that may check one (`_checks_writes`). `leaves` is `None` when the
+    agent does not expose its capabilities, which may guard tools too: nothing is mounted.
     """
-    if granted is None:
+    if leaves is None:
         return None
-    leaves: list[AbstractCapability[AgentDepsT]] = []
-    for capability in granted:
-        if not _is_capability(capability):
-            return None
-        capability.apply(leaves.append)
     file_systems = [leaf for leaf in leaves if isinstance(leaf, FileSystem)]
     if len(file_systems) != 1 or any(isinstance(leaf, DynamicCapability) for leaf in leaves):
         return None
@@ -279,6 +292,7 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]] | None) -> _Mount
         and not file_system.read_only
         and not file_system.read_only_patterns
         and not _guarded(leaves, _WRITING_TOOLS)
+        and not any(_checks_writes(leaf) for leaf in leaves)
     )
     return 'read-write' if writable else 'read-only'
 
@@ -298,6 +312,22 @@ def _guarded(leaves: Sequence[AbstractCapability[AgentDepsT]], names: frozenset[
     return False
 
 
+def _checks_writes(leaf: AbstractCapability[AgentDepsT]) -> bool:
+    """Whether `leaf` is a `ToolCallJudge` or `Hooks` that may stop a call to a `_WRITING_TOOLS` tool.
+
+    A judge's metadata or function selector, like a `Hooks`' registered functions, can't be read
+    before the run, so either one may.
+    """
+    if isinstance(leaf, Hooks):
+        return True
+    if not isinstance(leaf, ToolCallJudge):
+        return False
+    tools = leaf.tools
+    if isinstance(tools, str | dict) or callable(tools):
+        return True
+    return not _WRITING_TOOLS.isdisjoint(tools)
+
+
 async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> MountDir | None:
     """The run's working directory at its real path, when `mode` allows a mount and the workspace is local.
 
@@ -311,10 +341,10 @@ async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> Mou
 
 
 def _permitted(
-    mode: _MountMode | None, permissions: Permissions[AgentDepsT] | None, ctx: RunContext[AgentDepsT]
+    mode: _MountMode | None, permissions: Sequence[Permissions[AgentDepsT]], ctx: RunContext[AgentDepsT]
 ) -> _MountMode | None:
-    """`mode`, read-only while `permissions` is in `read-only` mode, whose file writes ask first."""
-    if mode == 'read-write' and permissions is not None and permissions.mode_for(ctx) == 'read-only':
+    """`mode`, read-only while any of `permissions` is in `read-only` mode, whose file writes ask first."""
+    if mode == 'read-write' and any(permission.mode_for(ctx) == 'read-only' for permission in permissions):
         return 'read-only'
     return mode
 
@@ -324,7 +354,7 @@ class _MountWorkspace(WrapperToolset[AgentDepsT]):
     """Give `CodeMode`'s toolset this run's `_workspace_mount`, once the run's workspace is known."""
 
     mode: _MountMode | None = None
-    permissions: Permissions[AgentDepsT] | None = None
+    permissions: Sequence[Permissions[AgentDepsT]] = ()
     """The run's `Permissions`: in `read-only` mode `pathlib` must not write what the file tools would ask about."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
@@ -343,8 +373,8 @@ class WorkspaceCodeMode(CodeMode[AgentDepsT]):
     """
 
     mount_mode: _MountMode | None = None
-    permissions: Permissions[AgentDepsT] | None = None
-    """The run's `Permissions`, whose `read-only` mode mounts the directory read-only for that run."""
+    permissions: Sequence[Permissions[AgentDepsT]] = ()
+    """The run's `Permissions`, any of which in `read-only` mode mounts the directory read-only for that run."""
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """`CodeMode`'s toolset, mounted per run by `_MountWorkspace`."""
@@ -390,8 +420,8 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """Whether read-only calls launch early, so the guidance teaches the snippet shape that suits it."""
     repl_states: ReplStates | None = None
     """Where `WorkspaceCodeMode` keeps the session's REPL, so the guidance says whether state outlives the run."""
-    permissions: Permissions[AgentDepsT] | None = None
-    """The run's `Permissions`, whose `read-only` mode mounts the directory read-only, as the guidance then says."""
+    permissions: Sequence[Permissions[AgentDepsT]] = ()
+    """The run's `Permissions`, any of which in `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
         """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
@@ -529,8 +559,9 @@ def speculative_capabilities(
     sandbox mount follows their `FileSystem` and guardrails. `repl_states` keeps each session's REPL
     between prompts; without it the REPL ends with the run.
     """
-    mode = _mount_mode(granted)
-    permissions = next((leaf for leaf in granted or () if _is_capability(leaf) and isinstance(leaf, Permissions)), None)
+    leaves = _leaves(granted)
+    mode = _mount_mode(leaves)
+    permissions = tuple(leaf for leaf in leaves or () if isinstance(leaf, Permissions))
     return [
         WorkspaceCodeMode(
             tools=_sandboxed,

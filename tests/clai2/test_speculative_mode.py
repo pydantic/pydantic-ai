@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import (
     AgentCapability,
     CombinedCapability,
     DynamicCapability,
+    Hooks,
     LocalWorkspace,
 )
 from pydantic_ai.messages import (
@@ -34,7 +35,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import ToolDefinition, ToolSelector
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.code_mode import (
@@ -46,6 +47,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_ai_harness.permissions import PermissionMode, Permissions
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
@@ -418,6 +420,22 @@ def allow(call: object) -> GuardrailResult:
     return GuardrailResult.allow()  # pragma: no cover -- only inspected, never run.
 
 
+def hooks(**tool_hooks: Sequence[str]) -> Hooks[None]:
+    """A `Hooks` with a pass-through function registered for each `hook=tools` pair."""
+
+    async def passthrough(ctx: RunContext[None], **kwargs: object) -> object:
+        return kwargs['args']  # pragma: no cover -- only inspected, never run.
+
+    capability = Hooks[None]()
+    for name, tools in tool_hooks.items():
+        getattr(capability.on, name)(tools=tools)(passthrough)
+    return capability
+
+
+def judge(tools: ToolSelector[None] = 'all') -> ToolCallJudge[None]:
+    return ToolCallJudge[None](TestModel(), question='Is this call risky?', tools=tools)
+
+
 class OpaqueAgent(WrapperAgent[None, str]):
     """A custom agent that does not expose its capability tree."""
 
@@ -472,6 +490,26 @@ class TestWorkspaceMount:
         """`pathlib` on a mount bypasses a guardrail as it bypasses `FileSystem`'s own checks."""
         coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
         assert mount([coder, guardrail]) == expected
+
+    @pytest.mark.parametrize(
+        ('gate', 'expected'),
+        [
+            (hooks(before_tool_execute=['write_file']), 'read-only'),
+            (hooks(before_tool_validate=['run_code']), 'read-only'),
+            # Registered hook functions aren't public, so any `Hooks` may hold one that checks a write.
+            (Hooks[None](), 'read-only'),
+            (judge(), 'read-only'),
+            (judge(['edit_file']), 'read-only'),
+            (judge({'kind': 'write'}), 'read-only'),
+            (judge(['grep']), 'read-write'),
+        ],
+        ids=['hooks_writes', 'hooks_run_code', 'hooks', 'judge_all', 'judge_writes', 'judge_metadata', 'judge_other'],
+    )
+    def test_write_gates_mount_read_only(self, gate: AbstractCapability[None], expected: str) -> None:
+        """A `Hooks` or `ToolCallJudge` that may stop a write keeps `pathlib` from making it unchecked."""
+        coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
+        assert mount([coder, gate]) == expected
+        assert mount([CombinedCapability[None]([coder, gate])]) == expected
 
     @pytest.mark.parametrize(
         ('agent', 'expected'),
@@ -603,6 +641,36 @@ class TestWorkspaceMount:
         mounted = 'read-only' if mode == 'read-only' else 'read-write'
         assert all(f'mounted {mounted}' in (text or '') for text in instructions)
         assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
+
+    @pytest.mark.parametrize('session_mode', [None, 'auto'])
+    async def test_agents_own_read_only_permissions_mount_read_only(
+        self, tmp_path: Path, session_mode: PermissionMode | None
+    ) -> None:
+        """The agent's own `Permissions` sits inside its root capability, beside the session's own one."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        agent = Agent(streamed(respond), capabilities=[file_system, Permissions[object]('read-only')])
+        session = [] if session_mode is None else [Permissions[object](session_mode)]
+        sandbox = speculative_capabilities(SpeculationCounters(), [agent.root_capability, *session])
+        await agent.run('go', capabilities=[*session, *sandbox, LocalWorkspace(tmp_path)])
+        assert returned == ['original PermissionError']
+        assert all('mounted read-only' in (text or '') for text in instructions)
+        assert secret.read_text() == 'original'
 
     async def test_sandbox_workspace_is_not_mounted(self, tmp_path: Path) -> None:
         """A sandbox plugin's workspace is elsewhere, so the host directory stays out of the sandbox."""

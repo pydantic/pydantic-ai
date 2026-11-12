@@ -1865,8 +1865,12 @@ not the filesystem the file tools act on there.
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
-  `read_only_patterns` set, or a `ToolGuardrail` (a plugin's or the agent's own)
-  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`.
+  `read_only_patterns` set, a `ToolGuardrail` (a plugin's or the agent's own)
+  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`, or a
+  `ToolCallJudge` that may judge one of them. So does any `Hooks`, such as a
+  `before_tool` hooks table, because which tools its functions check can't be
+  read before the run. A `Permissions` in `read-only` mode, the session's or the
+  agent's own, mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
   `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
   one, a supplied agent that does not expose its capabilities, or a plugin that
