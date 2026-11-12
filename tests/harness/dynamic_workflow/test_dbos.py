@@ -24,10 +24,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='dbos not installed'),
 ]
 
-CATCHING_SCRIPT = (
-    "try:\n    result = await summarize(task='alpha')\nexcept RuntimeError as error:\n    result = str(error)\nresult"
-)
-
 
 @pytest.fixture
 def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
@@ -97,23 +93,6 @@ def workflow(dbos: DBOS, model_calls: list[str], tool_runs: list[str]) -> Callab
     return dbos_workflow(orchestrator, 'dynamic_workflow_dbos')
 
 
-@pytest.fixture
-def admin_workflow(dbos: DBOS, model_calls: list[str], tool_runs: list[str]) -> Callable[[], Awaitable[str]]:
-    # A class-level default is the role DBOS checks only when a step is called from workflow code.
-    @DBOS.default_required_roles(['admin'])
-    class AdminSteps:
-        @staticmethod
-        @DBOS.step(name='admin_record')
-        async def record(task: str) -> str:
-            tool_runs.append(task)
-            return f'recorded {task}'
-
-    orchestrator = build_orchestrator(
-        DBOSDurability, record_model(model_calls), script=CATCHING_SCRIPT, tools=[record_tool(AdminSteps.record)]
-    )
-    return dbos_workflow(orchestrator, 'dynamic_workflow_dbos_admin')
-
-
 async def test_gathered_sub_agents_run_one_at_a_time_and_recover_from_their_own_steps(
     dbos: DBOS, workflow: Callable[[], Awaitable[str]], model_calls: list[str], tool_runs: list[str]
 ) -> None:
@@ -135,6 +114,28 @@ async def test_gathered_sub_agents_run_one_at_a_time_and_recover_from_their_own_
     assert await handle.get_result(polling_interval_sec=0.01) == EXPECTED
     assert tool_runs == ['alpha', 'beta']
     assert model_calls == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3', 'beta 3']
+
+
+CATCHING_SCRIPT = (
+    "try:\n    result = await summarize(task='alpha')\nexcept RuntimeError as error:\n    result = str(error)\nresult"
+)
+
+
+@pytest.fixture
+def admin_workflow(dbos: DBOS, model_calls: list[str], tool_runs: list[str]) -> Callable[[], Awaitable[str]]:
+    # A class-level default is the role DBOS checks only when a step is called from workflow code.
+    @DBOS.default_required_roles(['admin'])
+    class AdminSteps:
+        @staticmethod
+        @DBOS.step(name='admin_record')
+        async def record(task: str) -> str:
+            tool_runs.append(task)
+            return f'recorded {task}'
+
+    orchestrator = build_orchestrator(
+        DBOSDurability, record_model(model_calls), script=CATCHING_SCRIPT, tools=[record_tool(AdminSteps.record)]
+    )
+    return dbos_workflow(orchestrator, 'dynamic_workflow_dbos_admin')
 
 
 async def test_sub_agent_step_tools_keep_their_role_checks(

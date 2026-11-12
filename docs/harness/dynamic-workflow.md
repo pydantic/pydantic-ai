@@ -213,9 +213,10 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
-- `asyncio.gather(...)` runs sub-agents concurrently (one at a time in a
-  [DBOS workflow](#running-under-other-durable-engines)) with positional awaitables but no keyword
-  arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
+- `asyncio.gather(...)` takes positional awaitables but no keyword arguments, including
+  `return_exceptions=True`. It runs sub-agents concurrently, except in a
+  [DBOS workflow](#running-under-other-durable-engines), where they run one at a time. Other task
+  creation and wait APIs are unavailable.
 
 Before a script runs it is statically type-checked against the sub-agent signatures. An ordinary, statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed argument costs one retry but no sub-agent budget or sandbox execution. Values typed as `Any` can reach runtime validation; they are still rejected before a sub-agent runs.
 
@@ -237,11 +238,13 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 sub-agents would interleave by timing and recovery could replay one sub-agent's results into another
 call. When a sub-agent carries it, the script runs its sub-agent calls one at a time inside a DBOS
 workflow, so an `asyncio.gather` over sub-agents takes the sum of their run times rather than the
-longest. Each call runs as ordinary workflow code: the sub-agent's model requests and tool calls keep
-their own checkpoints, and DBOS checks the roles its `@DBOS.step` tools require. Recovery replays a
-call's finished steps and runs on from there, so a tool step that already finished does not run
-again. Recording each call as one DBOS step would let the calls overlap, but DBOS runs a step called
-from inside another step as a plain function call, without its own checkpoint or role check.
+longest. Each call runs as ordinary workflow code, as it would outside `DynamicWorkflow`: the
+sub-agent's model requests, MCP tool calls, and tools decorated with `@DBOS.step` keep their own
+checkpoints, and DBOS checks the roles those `@DBOS.step` tools require. Recovery replays a call's
+finished steps and runs on from there. Other function tools run as workflow code and run again on
+recovery, so put side effects in `@DBOS.step` tools. Recording each call as one DBOS step would let
+the calls overlap, but DBOS runs a step called from inside another step as a plain function call,
+without its own checkpoint or role check.
 
 `AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,
 the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,
