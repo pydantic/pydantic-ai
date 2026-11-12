@@ -6,9 +6,6 @@ import base64
 
 from .display_fakes import FAKE_SCREENSHOT
 
-STARTED = 'pydantic-ai-display-started'
-"""What the harness's start script prints when it started a new X server."""
-
 
 class FakeDisplay:
     """Answers the start script and `xdotool` like a sandbox whose X server is up or down."""
@@ -23,10 +20,8 @@ class FakeDisplay:
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
             self.starts.append(command)
-            if self.up:
-                return '', '', 0
             self.up = True
-            return STARTED, '', 0
+            return '', '', 0
         elif 'xwininfo -root' in command:
             self.xdotool.append('xwininfo -root')
             # The backend reads the size only from a display it started.
