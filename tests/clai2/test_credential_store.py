@@ -250,7 +250,7 @@ def test_planted_staging_symlink_is_not_followed(
     target.write_text('untouched')
     staging = fallback.with_name(f'credentials.json.{"0" * 32}.tmp')
     staging.symlink_to(target)
-    monkeypatch.setattr('pydantic_clai2.config.credential_store.uuid4', lambda: UUID(int=0))
+    monkeypatch.setattr('pydantic_clai2.config.private_files.uuid4', lambda: UUID(int=0))
     save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert target.read_text() == 'untouched'
     assert not staging.is_symlink()

@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,8 +29,8 @@ from pydantic_ai_harness import HarnessDeprecationWarning, ToolGuardrail
 from pydantic_ai_harness.guardrails import GuardrailResult
 from pydantic_ai_harness.subagents import (
     MAX_EVENT_TEXT_CHARS,
-    DelegationEndEvent,
-    DelegationStartEvent,
+    DelegationFinishedEvent,
+    DelegationStartedEvent,
     SubAgent,
     SubAgents,
     SubAgentToolset,
@@ -44,8 +45,10 @@ class Listener(AbstractCapability[object]):
 
     events: list[CapabilityEvent] = field(default_factory=list[CapabilityEvent])
 
-    @on_event(DelegationStartEvent, DelegationEndEvent)
-    async def _on_delegation(self, ctx: RunContext[object], event: DelegationStartEvent | DelegationEndEvent) -> None:
+    @on_event(DelegationStartedEvent, DelegationFinishedEvent)
+    async def _on_delegation(
+        self, ctx: RunContext[object], event: DelegationStartedEvent | DelegationFinishedEvent
+    ) -> None:
         self.events.append(event)
 
 
@@ -85,20 +88,24 @@ async def _run(
     return listener, result.output
 
 
-def _pair(listener: Listener) -> tuple[DelegationStartEvent, DelegationEndEvent]:
+def _pair(listener: Listener) -> tuple[DelegationStartedEvent, DelegationFinishedEvent]:
     start, end = listener.events
-    assert isinstance(start, DelegationStartEvent)
-    assert isinstance(end, DelegationEndEvent)
+    assert isinstance(start, DelegationStartedEvent)
+    assert isinstance(end, DelegationFinishedEvent)
     return start, end
 
 
 class TestDelegationEvents:
-    async def test_start_then_end_for_one_delegation(self) -> None:
+    async def test_start_then_end_for_one_delegation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        ticks = iter((10.0, 11.5))
+        monkeypatch.setattr(
+            'pydantic_ai_harness.subagents._toolset.time', SimpleNamespace(perf_counter=lambda: next(ticks))
+        )
         listener, output = await _run(_delegate_once(), SubAgents(agents=[SubAgent(_worker())]))
 
         assert output == 'all done'
         start, end = _pair(listener)
-        assert start == DelegationStartEvent(
+        assert start == DelegationStartedEvent(
             agent_name='worker',
             task='do it',
             truncated=False,
@@ -113,7 +120,7 @@ class TestDelegationEvents:
         assert end.output == 'W'
         assert end.truncated is False
         assert end.usage is None  # shared with the parent, so not separable
-        assert end.duration_seconds >= 0
+        assert end.duration_ms == 1500
         assert end.tool_call_id == start.tool_call_id
 
     async def test_inherits_tools_and_menu_key_are_reported(self) -> None:
@@ -203,8 +210,8 @@ class TestDelegationEvents:
     async def test_listener_that_raises_aborts_the_parent_run(self) -> None:
         @dataclass
         class Boom(AbstractCapability[object]):
-            @on_event(DelegationStartEvent)
-            async def _boom(self, ctx: RunContext[object], event: DelegationStartEvent) -> None:
+            @on_event(DelegationStartedEvent)
+            async def _boom(self, ctx: RunContext[object], event: DelegationStartedEvent) -> None:
                 raise RuntimeError('listener blew up')
 
         parent = Agent(_delegate_once(), capabilities=[SubAgents(agents=[SubAgent(_worker())]), Boom()])
@@ -217,8 +224,8 @@ class TestDelegationEvents:
             SubAgents(agents=[SubAgent(_worker())]),
         )
 
-        starts = [event for event in listener.events if isinstance(event, DelegationStartEvent)]
-        ends = [event for event in listener.events if isinstance(event, DelegationEndEvent)]
+        starts = [event for event in listener.events if isinstance(event, DelegationStartedEvent)]
+        ends = [event for event in listener.events if isinstance(event, DelegationFinishedEvent)]
         assert {start.tool_call_id for start in starts} == {'c1_0', 'c1_1'}
         assert {end.tool_call_id for end in ends} == {'c1_0', 'c1_1'}
 
@@ -262,7 +269,7 @@ class TestOutcomes:
             await Agent(_delegate_once(), capabilities=[SubAgents(agents=[SubAgent(worker)]), listener]).run('go')
 
         # A crash from the child is not a soft timeout; with containment off it aborts.
-        assert [type(event) for event in listener.events] == [DelegationStartEvent]
+        assert [type(event) for event in listener.events] == [DelegationStartedEvent]
 
     async def test_budget(self) -> None:
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -347,7 +354,7 @@ class TestOutcomes:
         with pytest.raises(ModelAPIError):
             await Agent(_delegate_once(), capabilities=[SubAgents(agents=[SubAgent(worker)]), listener]).run('go')
 
-        assert [type(event) for event in listener.events] == [DelegationStartEvent]
+        assert [type(event) for event in listener.events] == [DelegationStartedEvent]
 
     async def test_shared_usage_limit_ends_without_an_end_event(self) -> None:
         listener = Listener()
@@ -357,7 +364,7 @@ class TestOutcomes:
         with pytest.raises(UsageLimitExceeded, match='request_limit of 50'):
             await parent.run('go', usage=RunUsage(requests=49))
 
-        assert [type(event) for event in listener.events] == [DelegationStartEvent]
+        assert [type(event) for event in listener.events] == [DelegationStartedEvent]
 
     async def test_cancellation_ends_without_an_end_event(self) -> None:
         child_requesting = asyncio.Event()
@@ -376,7 +383,7 @@ class TestOutcomes:
         with pytest.raises(asyncio.CancelledError):
             await run
 
-        assert [type(event) for event in listener.events] == [DelegationStartEvent]
+        assert [type(event) for event in listener.events] == [DelegationStartedEvent]
 
     async def test_run_cancelled_in_child_ends_without_an_end_event(self) -> None:
         def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -399,7 +406,7 @@ class TestOutcomes:
 
         assert result.output == 'all done'
         # A first-party cancellation ends the delegation without an end event.
-        assert [type(event) for event in listener.events] == [DelegationStartEvent]
+        assert [type(event) for event in listener.events] == [DelegationStartedEvent]
 
 
 class TestNothingEmitted:
@@ -423,7 +430,7 @@ class TestNothingEmitted:
         # The key off the menu, the key outside the delegate's restriction, the unknown
         # sub-agent, and the over-budget call never start; one delegation ran (third step,
         # which also resets the tool's retry count between the refusals).
-        assert [type(event) for event in listener.events] == [DelegationStartEvent, DelegationEndEvent]
+        assert [type(event) for event in listener.events] == [DelegationStartedEvent, DelegationFinishedEvent]
 
     async def test_directly_registered_toolset_emits_nothing(self) -> None:
         toolset: SubAgentToolset[object] = SubAgentToolset(

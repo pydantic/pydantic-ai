@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
@@ -136,7 +137,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_seconds` is per
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
@@ -169,7 +170,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     )
     """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
-    A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_secs`.
+    A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
     Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
     output stay in your process.
     """
@@ -237,6 +238,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
         self.monty_sandbox_url = None
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeMode')
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
