@@ -4,18 +4,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from publish_douwebot_review import ReviewResult
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 _EVENT = TypeAdapter(dict[str, object])
+# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
+# The last fenced block is the answer when it ends the text; text after it still fails.
+_OPENING_FENCE = re.compile(r'[ \t]*```[\w+-]*[ \t]*')
+_CLOSING_FENCE = re.compile(r'[ \t]*```')
 
 
-def review_result(path: Path) -> ReviewResult:
-    """Return the final assistant result only after a normal completed stream."""
-    events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').splitlines()]
+def final_text(path: Path) -> str:
+    """Return the final assistant text only after a normal completed stream.
+
+    The `ValueError`s it raises itself carry fixed messages, which `rejection_reason` prints to public job logs.
+    """
+    # Only LF ends an event: `JSON.stringify` leaves U+2028 and U+2029 raw, and `splitlines` would split at them.
+    events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').split('\n') if line]
     if not events or events[-1].get('type') != 'step_finish':
         raise ValueError('OpenCode review did not complete')
     finish = _EVENT.validate_python(events[-1].get('part'), strict=True)
@@ -34,8 +43,36 @@ def review_result(path: Path) -> ReviewResult:
             content = part.get('text')
             if not isinstance(content, str):
                 raise ValueError('Invalid OpenCode text event')
-            return ReviewResult.model_validate_json(content)
+            return content
     raise ValueError('OpenCode review did not return text')
+
+
+def unfenced(text: str) -> str:
+    """Return the fenced block that ends `text`, or `text` itself when no fence ends it.
+
+    One pass over the lines: the answer is model-controlled, and a backtracking regex over it is quadratic.
+    """
+    *lines, closing = text.rstrip().split('\n')
+    if _CLOSING_FENCE.fullmatch(closing):
+        # The block between the opening and the closing fence has at least one line, possibly empty.
+        for index in range(len(lines) - 2, -1, -1):
+            if _OPENING_FENCE.fullmatch(lines[index]):
+                return '\n'.join(lines[index + 1 :])
+    return text
+
+
+def rejection_reason(error: ValueError) -> str:
+    """Say why `final_text`, or validation of the text it returned, rejected a stream, without repeating the stream."""
+    if isinstance(error, ValidationError):
+        # A validation error's message repeats its input, which can be model text, and job logs are public.
+        return 'validation failed: ' + ', '.join(sorted({detail['type'] for detail in error.errors()}))
+    # A subclass, such as `UnicodeDecodeError`, can describe its input.
+    return str(error) if type(error) is ValueError else type(error).__name__
+
+
+def review_result(path: Path) -> ReviewResult:
+    """Return the final assistant result only after a normal completed stream."""
+    return ReviewResult.model_validate_json(unfenced(final_text(path)))
 
 
 def main() -> None:

@@ -133,6 +133,59 @@ async def test_count_tokens_server_tools_by_client(
     assert [(tool['name'], tool.get('type')) for tool in body['tools']] == tools
 
 
+@pytest.mark.parametrize(
+    'client,tools',
+    [
+        pytest.param(
+            lambda: AsyncAnthropic(api_key='x'),
+            [('get_exchange_rate', True), ('tool_search_tool_bm25', False)],
+            id='api',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicVertex(project_id='p', region='us-east5', access_token='x'),
+            [('get_exchange_rate', True)],
+            id='vertex',
+        ),
+    ],
+)
+async def test_count_tokens_with_every_function_tool_deferred_behind_tool_search(
+    allow_model_requests: None, client: Callable[[], AsyncAnthropicClient], tools: list[tuple[str, bool]]
+):
+    """`count_tokens` sends a request that tool search keeps legal, even where it leaves the search tool off.
+
+    The request's `tools` hold the search entry, so it doesn't raise the all-deferred `UserError`, and neither
+    does the count. Where the count leaves server tools off, the endpoint decides whether it takes the rest.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json={'input_tokens': 10})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        model = AnthropicModel(
+            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client().copy(http_client=http_client))
+        )
+        await model.count_tokens(
+            [ModelRequest.user_text_prompt('What is the USD to EUR rate?')],
+            None,
+            ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(
+                        name='get_exchange_rate',
+                        parameters_json_schema={'type': 'object'},
+                        defer_loading=True,
+                        with_native=ToolSearchTool.kind,
+                    )
+                ],
+                native_tools=[ToolSearchTool()],
+            ),
+        )
+
+    [body] = bodies
+    assert [(tool['name'], tool.get('defer_loading', False)) for tool in body['tools']] == tools
+
+
 def test_count_tokens_server_tools_provider_profile_wins():
     """A provider's own `model_profile()` value wins over the default `AnthropicModel` sets by client class.
 

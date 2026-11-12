@@ -173,9 +173,13 @@ async def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Fixture:
     )
 
 
-def make_session(tmp_path: Path, model: FunctionModel | TestModel | None = None) -> Session[None, str]:
+def make_session(
+    tmp_path: Path, model: FunctionModel | TestModel | None = None, *, workspace: Path | None = None
+) -> Session[None, str]:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
-    return Session(Agent(model or TestModel(call_tools=[])), deps=None, conversations=store, workspace=tmp_path)
+    return Session(
+        Agent(model or TestModel(call_tools=[])), deps=None, conversations=store, workspace=workspace or tmp_path
+    )
 
 
 @pytest.fixture
@@ -508,15 +512,77 @@ async def test_restarted_pane_resumes_its_conversation(env: Fixture, tmp_path: P
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 
-@pytest.mark.parametrize('saved', ['never-saved', 'not a valid id!'])
-async def test_unusable_mapping_starts_fresh(env: Fixture, tmp_path: Path, saved: str) -> None:
+async def test_restarted_pane_resumes_its_conversation_from_a_moved_directory(env: Fixture, tmp_path: Path) -> None:
+    # AoE renamed the worktree after the conversation was saved, so the pane now runs elsewhere.
+    renamed = tmp_path / 'renamed'
+    renamed.mkdir()
+    earlier = make_session(tmp_path, workspace=tmp_path / 'original')
+    await earlier.prompt('earlier work')
+    env.state.mkdir(parents=True)
+    (env.state / INSTANCE).write_text(earlier.conversation_id + '\n')
+
+    session = make_session(tmp_path, workspace=renamed)
+    output = io.StringIO()
+    loaded = await load(session, output=output)
+    await env.status('idle')
+    assert session.conversation_id == earlier.conversation_id
+    assert session.messages == earlier.messages
+    assert f'Resumed earlier work ({earlier.conversation_id}).' in Text.from_ansi(output.getvalue()).plain
+    # The plugin records the resumed conversation, not a fresh one.
+    await env.write('mapping', earlier.conversation_id)
+    assert (env.state / INSTANCE).read_text() == earlier.conversation_id + '\n'
+    await loaded.dispatch(SessionEnd(reason='exit'))
+
+
+async def test_restarted_shell_shows_the_resumed_history(env: Fixture, tmp_path: Path) -> None:
+    earlier = make_session(tmp_path)
+    await earlier.prompt('earlier work')
+    env.state.mkdir(parents=True)
+    (env.state / INSTANCE).write_text(earlier.conversation_id + '\n')
+
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(call_tools=[])),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, force_terminal=True, width=120),
+        settings=Settings(),
+        store=SettingsStore(tmp_path / 'settings.db'),
+        builtin_plugins=[PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe')],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    await shell.loader.load_all()
+    try:
+        await env.status('idle')
+        assert shell.session.conversation_id == earlier.conversation_id
+        shown = Text.from_ansi(output.getvalue()).plain
+        assert f'Resumed earlier work ({earlier.conversation_id}).' in shown
+        # The restored history is on screen, as `/resume ID` shows it, not only in the model's context.
+        assert 'earlier work' in shown.split('Resumed earlier work')[0]
+    finally:
+        await shell.loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('saved', 'shown'),
+    [
+        ('never-saved', 'Could not resume conversation never-saved of this AoE session: '),
+        ('not a valid id!', None),
+    ],
+)
+async def test_unusable_mapping_starts_fresh(env: Fixture, tmp_path: Path, saved: str, shown: str | None) -> None:
     env.state.mkdir(parents=True)
     (env.state / INSTANCE).write_text(saved)
     session = make_session(tmp_path)
     fresh = session.conversation_id
-    loaded = await load(session)
+    output = io.StringIO()
+    loaded = await load(session, output=output)
     await env.status('idle')
     assert session.conversation_id == fresh
+    printed = Text.from_ansi(output.getvalue()).plain
+    assert printed.startswith(shown) if shown is not None else printed == ''
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 

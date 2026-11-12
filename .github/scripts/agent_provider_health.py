@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -27,12 +27,13 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
-# The recheck, artifact-replacement and stop steps `shared/provider-health.md` adds to each agent job.
+# The recheck, artifact-replacement and two stop steps `shared/provider-health.md` adds to each agent job.
 # `agentic_workflow_guard.py` requires these names in every compiled lock.
 AGENT_START_HEALTH_STEPS = (
     'Recheck Z.AI provider health at agent start',
     'Replace health decision for the incident monitor',
     'Stop before inference on a blocked provider-health decision',
+    "Stop before inference when the health decision hides the run's account",
 )
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
@@ -74,6 +75,12 @@ QuotaDiagnostic = Literal[
     'missing_windows',
 ]
 FailureKind = Literal['authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other']
+# Two Z.ai Coding Plan accounts. Runs use the backup only when the primary is unusable and its key is configured.
+Account = Literal['primary', 'backup']
+# Each account's provider incident key and API key variable. The primary keeps the `zai` key of earlier incidents.
+_PROVIDER_KEYS: dict[Account, str] = {'primary': 'zai', 'backup': 'zai:backup'}
+_ACCOUNTS_BY_KEY: dict[str, Account] = {key: account for account, key in _PROVIDER_KEYS.items()}
+_API_KEY_VARIABLES: dict[Account, str] = {'primary': 'ZAI_API_KEY', 'backup': 'ZAI_BACKUP_API_KEY'}
 
 
 @dataclass(frozen=True)
@@ -91,8 +98,22 @@ class Quota:
 
 
 @dataclass(frozen=True)
+class AccountHealth:
+    """One Z.ai account's part of a gate decision that checked both accounts."""
+
+    account: Account
+    ready: bool
+    reason: str
+    quota: Quota
+
+
+@dataclass(frozen=True)
 class Health:
-    """The trusted gate decision written to the workflow artifact."""
+    """The trusted gate decision written to the workflow artifact.
+
+    `quota` is the primary account's. `account` names the account a ready decision runs on. `accounts` holds each
+    account's own decision when the gate also checked the backup, and is empty when it checked only the primary.
+    """
 
     workflow: str
     task_key: str
@@ -104,6 +125,8 @@ class Health:
     quota: Quota
     run_id: str | None = None
     recovery_issue: int | None = None
+    account: Account | None = None
+    accounts: tuple[AccountHealth, ...] = ()
 
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
@@ -176,6 +199,10 @@ class RunResult:
     trigger_event: str
     run_attempt: int
     failure: Failure | None
+    # Set only from the host-written record: a host-side Z.ai check observed the provider-wide failure itself.
+    provider_confirmed: bool = False
+    # The account the run's engine used, from the trusted health decision.
+    account: Account = 'primary'
 
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
@@ -252,23 +279,27 @@ def _iso_time(value: object) -> str | None:
     return _timestamp(parsed)
 
 
-def _write_health(path: Path, health: Health) -> None:
+def _quota_json(quota: Quota) -> dict[str, object]:
     quota_data: dict[str, object] = {
-        'status': health.quota.status,
-        'reset_at': health.quota.reset_at,
-        'interval_remaining_percent': health.quota.interval_remaining_percent,
-        'weekly_remaining_percent': health.quota.weekly_remaining_percent,
-        'interval_reset_at': health.quota.interval_reset_at,
-        'weekly_reset_at': health.quota.weekly_reset_at,
+        'status': quota.status,
+        'reset_at': quota.reset_at,
+        'interval_remaining_percent': quota.interval_remaining_percent,
+        'weekly_remaining_percent': quota.weekly_remaining_percent,
+        'interval_reset_at': quota.interval_reset_at,
+        'weekly_reset_at': quota.weekly_reset_at,
     }
-    if health.quota.status == 'unknown':
-        diagnostic_value = health.quota.diagnostic
+    if quota.status == 'unknown':
+        diagnostic_value = quota.diagnostic
         diagnostic = _QUOTA_DIAGNOSTICS.get(diagnostic_value) if isinstance(diagnostic_value, str) else None
-        http_status = _safe_http_status(health.quota.http_status)
+        http_status = _safe_http_status(quota.http_status)
         if diagnostic is not None:
             quota_data['diagnostic'] = diagnostic
         if http_status is not None:
             quota_data['http_status'] = http_status
+    return quota_data
+
+
+def _write_health(path: Path, health: Health) -> None:
     payload: dict[str, object] = {
         'version': 1,
         'workflow': health.workflow,
@@ -278,30 +309,28 @@ def _write_health(path: Path, health: Health) -> None:
         'ready': health.ready,
         'reason': health.reason,
         'checked_at': health.checked_at,
-        'quota': quota_data,
+        'quota': _quota_json(health.quota),
     }
     if health.run_id is not None:
         payload['run_id'] = health.run_id
     if health.recovery_issue is not None:
         payload['recovery_issue'] = health.recovery_issue
+    if health.account is not None:
+        payload['account'] = health.account
+    if health.accounts:
+        payload['accounts'] = [
+            {'account': item.account, 'ready': item.ready, 'reason': item.reason, 'quota': _quota_json(item.quota)}
+            for item in health.accounts
+        ]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
 
 
-def _health_from_json(value: object) -> Health:
-    data = _mapping(value)
-    quota_data = _mapping(data.get('quota')) if data else None
-    version = data.get('version') if data is not None else None
-    if data is None or quota_data is None or isinstance(version, bool) or not isinstance(version, int) or version != 1:
+def _quota_from_json(value: object) -> Quota:
+    quota_data = _mapping(value)
+    if quota_data is None:
         raise ValueError('provider-health artifact has an unsupported or invalid shape')
-    workflow = _object_string(data, 'workflow')
-    task_key = _object_string(data, 'task_key')
-    trigger_event = _object_string(data, 'trigger_event')
-    run_attempt = _positive_attempt(data.get('run_attempt'))
-    reason = _object_string(data, 'reason')
-    checked_at = _iso_time(data.get('checked_at'))
     status_value = quota_data.get('status')
-    ready = data.get('ready')
     if status_value == 'healthy':
         quota_status: QuotaStatus = 'healthy'
     elif status_value == 'exhausted':
@@ -310,25 +339,73 @@ def _health_from_json(value: object) -> Health:
         quota_status = 'unknown'
     else:
         raise ValueError('provider-health artifact has an invalid quota status')
-    reset_at = _iso_time(quota_data.get('reset_at')) if quota_data.get('reset_at') is not None else None
-    interval_reset_at = (
-        _iso_time(quota_data.get('interval_reset_at')) if quota_data.get('interval_reset_at') is not None else None
-    )
-    weekly_reset_at = (
-        _iso_time(quota_data.get('weekly_reset_at')) if quota_data.get('weekly_reset_at') is not None else None
-    )
-    interval_percent = _validated_percent(quota_data.get('interval_remaining_percent'))
-    weekly_percent = _validated_percent(quota_data.get('weekly_remaining_percent'))
+    resets: dict[str, str | None] = {}
+    for field in ('reset_at', 'interval_reset_at', 'weekly_reset_at'):
+        raw = quota_data.get(field)
+        resets[field] = _iso_time(raw) if raw is not None else None
+        if raw is not None and resets[field] is None:
+            raise ValueError('provider-health artifact is missing required validated fields')
     diagnostic_value = quota_data.get('diagnostic')
     diagnostic = _QUOTA_DIAGNOSTICS.get(diagnostic_value) if isinstance(diagnostic_value, str) else None
     http_status = _safe_http_status(quota_data.get('http_status'))
+    if quota_status != 'unknown':
+        diagnostic = None
+        http_status = None
+    return Quota(
+        quota_status,
+        resets['reset_at'],
+        _validated_percent(quota_data.get('interval_remaining_percent')),
+        _validated_percent(quota_data.get('weekly_remaining_percent')),
+        resets['interval_reset_at'],
+        resets['weekly_reset_at'],
+        diagnostic,
+        http_status,
+    )
+
+
+def _account_from_json(value: object) -> Account:
+    if value == 'primary':
+        return 'primary'
+    if value == 'backup':
+        return 'backup'
+    raise ValueError('provider-health artifact has an invalid account')
+
+
+def _accounts_from_json(value: object) -> tuple[AccountHealth, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError('provider-health artifact has invalid account decisions')
+    entries: list[object] = value  # pyright: ignore[reportUnknownVariableType]
+    accounts: list[AccountHealth] = []
+    for entry in entries:
+        data = _mapping(entry)
+        ready = data.get('ready') if data is not None else None
+        reason = _object_string(data, 'reason') if data is not None else None
+        if data is None or not isinstance(ready, bool) or reason is None:
+            raise ValueError('provider-health artifact has invalid account decisions')
+        account = _account_from_json(data.get('account'))
+        accounts.append(AccountHealth(account, ready, reason, _quota_from_json(data.get('quota'))))
+    return tuple(accounts)
+
+
+def _health_from_json(value: object) -> Health:
+    data = _mapping(value)
+    version = data.get('version') if data is not None else None
+    if data is None or isinstance(version, bool) or not isinstance(version, int) or version != 1:
+        raise ValueError('provider-health artifact has an unsupported or invalid shape')
+    quota = _quota_from_json(data.get('quota'))
+    workflow = _object_string(data, 'workflow')
+    task_key = _object_string(data, 'task_key')
+    trigger_event = _object_string(data, 'trigger_event')
+    run_attempt = _positive_attempt(data.get('run_attempt'))
+    reason = _object_string(data, 'reason')
+    checked_at = _iso_time(data.get('checked_at'))
+    ready = data.get('ready')
     run_id_value = data.get('run_id')
     recovery_issue_value = data.get('recovery_issue')
     run_id = _string(run_id_value)
     recovery_issue = _positive_attempt(recovery_issue_value) if recovery_issue_value is not None else None
-    if quota_status != 'unknown':
-        diagnostic = None
-        http_status = None
     if (
         workflow is None
         or task_key is None
@@ -339,11 +416,9 @@ def _health_from_json(value: object) -> Health:
         or not isinstance(ready, bool)
         or (run_id_value is not None and (run_id is None or _positive_int_string(run_id) is None))
         or (recovery_issue_value is not None and recovery_issue is None)
-        or (quota_data.get('reset_at') is not None and reset_at is None)
-        or (quota_data.get('interval_reset_at') is not None and interval_reset_at is None)
-        or (quota_data.get('weekly_reset_at') is not None and weekly_reset_at is None)
     ):
         raise ValueError('provider-health artifact is missing required validated fields')
+    account = _account_from_json(data.get('account')) if data.get('account') is not None else None
     return Health(
         workflow,
         task_key,
@@ -352,18 +427,11 @@ def _health_from_json(value: object) -> Health:
         ready,
         reason,
         checked_at,
-        Quota(
-            quota_status,
-            reset_at,
-            interval_percent,
-            weekly_percent,
-            interval_reset_at,
-            weekly_reset_at,
-            diagnostic,
-            http_status,
-        ),
+        quota,
         run_id,
         recovery_issue,
+        account,
+        _accounts_from_json(data.get('accounts')),
     )
 
 
@@ -692,13 +760,14 @@ def _marker_from_body(body: str) -> IncidentMarker | None:
     return IncidentMarker(scope, key, kind, run_id, reset_at, stage, run_attempt)
 
 
-def _matching_incident(health: Health, issues: list[Issue]) -> Issue | None:
+def _matching_incident(health: Health, issues: list[Issue], account: Account = 'primary') -> Issue | None:
+    """Return an open incident that blocks this run on `account`; a provider incident blocks only its own account."""
     task_scope_key = f'{health.workflow}:{health.task_key}'
     for issue in issues:
         marker = _marker_from_body(issue.body)
         if marker is None:
             continue
-        if marker.scope == 'provider' and marker.key == 'zai':
+        if marker.scope == 'provider' and marker.key == _PROVIDER_KEYS[account]:
             return issue
         if marker.scope == 'workflow' and marker.key == health.workflow:
             return issue
@@ -739,24 +808,30 @@ def _open_incidents_until(client: GitHubClient, found: Callable[[list[Issue]], b
     return list(issues.values())
 
 
-def _health_decision(health: Health, issues: list[Issue]) -> Health:
-    incident = _matching_incident(health, issues)
+def _blocking_incident(health: Health, issues: list[Issue], account: Account = 'primary') -> Issue | None:
+    """Return the open incident that blocks this run on `account`; a workflow incident spares its own recovery dispatch."""
+    incident = _matching_incident(health, issues, account)
     if incident is not None and health.recovery_issue == incident.number:
         marker = _marker_from_body(incident.body)
-        matching = [item for item in issues if _matching_incident(health, [item]) is not None]
+        matching = [item for item in issues if _matching_incident(health, [item], account) is not None]
         if (
             health.trigger_event == 'workflow_dispatch'
             and marker is not None
             and marker.scope == 'workflow'
             and len(matching) == 1
         ):
-            incident = None
+            return None
+    return incident
+
+
+def _health_decision(health: Health, issues: list[Issue], account: Account = 'primary') -> Health:
+    incident = _blocking_incident(health, issues, account)
     if incident is not None:
         return replace(health, ready=False, reason=f'Open operational incident #{incident.number} blocks inference')
     if health.quota.status != 'healthy':
         message = 'Z.ai quota is exhausted' if health.quota.status == 'exhausted' else 'Z.ai quota health is unknown'
         return replace(health, ready=False, reason=message)
-    return replace(health, ready=True, reason='Provider health check passed')
+    return replace(health, ready=True, reason='Provider health check passed', account=account)
 
 
 def check_health(
@@ -768,8 +843,13 @@ def check_health(
     issues: list[Issue],
     checked_at: dt.datetime | None = None,
     recovery_issue: int | None = None,
+    backup_quota: Callable[[], Quota] | None = None,
 ) -> Health:
-    """Return the inference gate decision from provider and incident state."""
+    """Return the inference gate decision from provider and incident state.
+
+    `quota` is the primary account's. When the primary is unusable, `backup_quota`, if given, supplies the
+    backup account's quota and the decision falls back to that account.
+    """
     if _positive_attempt(run_attempt) is None:
         raise ValueError('run_attempt must be a positive integer')
     base = Health(
@@ -783,7 +863,31 @@ def check_health(
         quota,
         recovery_issue=recovery_issue,
     )
-    return _health_decision(base, issues)
+    primary = _health_decision(base, issues)
+    # A workflow or task incident blocks every account: only the primary's own provider incident or quota
+    # can be avoided on the backup.
+    incident = _blocking_incident(base, issues)
+    marker = _marker_from_body(incident.body) if incident is not None else None
+    if primary.ready or backup_quota is None or (marker is not None and marker.scope != 'provider'):
+        return primary
+    backup = _health_decision(replace(base, quota=backup_quota()), issues, 'backup')
+    # The combined reason names each account's quota diagnostic next to that account's own reason.
+    primary_reason = primary.reason + _quota_diagnostic_suffix(primary.quota)
+    if backup.ready:
+        reason = f'Provider health check passed on the backup Z.ai account; primary account: {primary_reason}'
+    else:
+        backup_reason = backup.reason + _quota_diagnostic_suffix(backup.quota)
+        reason = f'Primary Z.ai account: {primary_reason}; backup Z.ai account: {backup_reason}'
+    return replace(
+        primary,
+        ready=backup.ready,
+        reason=reason,
+        account=backup.account,
+        accounts=(
+            AccountHealth('primary', primary.ready, primary.reason, primary.quota),
+            AccountHealth('backup', backup.ready, backup.reason, backup.quota),
+        ),
+    )
 
 
 def _failure_from(value: object) -> Failure | None:
@@ -804,11 +908,38 @@ def _failure_from(value: object) -> Failure | None:
 
 def _run_result_from(value: object) -> RunResult | None:
     data = _mapping(value)
-    if data is None or data.get('type') != 'result':
-        return None
-    data = _mapping(data.get('provider_health'))
     if data is None:
         return None
+    if data.get('type') == 'session.result':
+        terminal = _mapping(data.get('data'))
+        if terminal is None:
+            return None
+        data = _mapping(terminal.get('metadata'))
+        if data is None:
+            return None
+    elif data.get('type') != 'result':
+        return None
+    data = _mapping(data.get('provider_health'))
+    return _run_result_fields(data) if data is not None else None
+
+
+def _host_run_result(path: Path) -> RunResult | None:
+    """Return the terminal result the host-side record step wrote, with its provider confirmation."""
+    try:
+        data = _mapping(json.loads(path.read_text(encoding='utf-8')))
+    except (json.JSONDecodeError, RecursionError, UnicodeDecodeError):
+        return None
+    version = data.get('version') if data is not None else None
+    if data is None or isinstance(version, bool) or not isinstance(version, int) or version != 1:
+        return None
+    result = _run_result_fields(data)
+    confirmed = data.get('provider_confirmed')
+    if result is None or not isinstance(confirmed, bool):
+        return None
+    return replace(result, provider_confirmed=confirmed)
+
+
+def _run_result_fields(data: dict[str, object]) -> RunResult | None:
     workflow = _object_string(data, 'workflow')
     task_key = _object_string(data, 'task_key')
     trigger_event = _object_string(data, 'trigger_event')
@@ -853,14 +984,19 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
     """Return one unambiguous terminal record from downloaded agent artifacts."""
     if not path.exists():
         return None
-    if path.is_file() and path.name != 'agent-stdio.log':
+    if path.is_file() and path.name not in ('agent-stdio.log', 'agent-session.jsonl'):
         return None
     if path.is_dir():
-        eligible = sorted(
-            file
-            for file in path.rglob('agent-stdio.log')
+        directories = {
+            file.parent
+            for file in path.rglob('*')
             if file.is_file()
+            and file.name in ('agent-stdio.log', 'agent-session.jsonl')
             and (file.parent.name == 'agent' or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None)
+        }
+        eligible = sorted(
+            directory / ('agent-session.jsonl' if (directory / 'agent-session.jsonl').is_file() else 'agent-stdio.log')
+            for directory in directories
         )
         if expected_attempt is None:
             if len(eligible) != 1:
@@ -888,14 +1024,17 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
     return next(iter(results)) if len(results) == 1 else None
 
 
+def _claims_provider_scope(failure: Failure) -> bool:
+    return failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+
+
 def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
     failure = result.failure
     if failure is None:
         return 'workflow', result.workflow, 'execution'
-    if failure.kind == 'authentication' or failure.http_status in (401, 403):
-        return 'provider', 'zai', failure.kind
-    if failure.kind == 'plan_limit':
-        return 'provider', 'zai', failure.kind
+    # A provider incident needs the host's own Z.ai check to confirm the failure; otherwise the rules below apply.
+    if result.provider_confirmed and _claims_provider_scope(failure):
+        return 'provider', _PROVIDER_KEYS[result.account], failure.kind
     if result.trigger_event == 'schedule' and failure.kind not in ('timeout', 'time_limit'):
         return 'workflow', result.workflow, failure.kind
     return 'task', f'{result.workflow}:{result.task_key}', failure.kind
@@ -987,41 +1126,7 @@ def _monitor_workflow_outcome(
         return 0
     if result is None:
         if not health.ready:
-            if health.reason.startswith('Open operational incident #'):
-                print(
-                    f'Activation was blocked by an existing incident: {health.reason}{_quota_diagnostic_suffix(health.quota)}'
-                )
-                return 0
-            if health.quota.status == 'healthy':
-                print(f'Activation was blocked by existing state: {health.reason}')
-                return 0
-            if health.quota.diagnostic == 'missing_api_key' and health.trigger_event in _SECRETLESS_PR_EVENTS:
-                print('Activation had no Z.ai key for this pull request event; no operational incident was created')
-                return 0
-            kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
-            marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
-            result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
-            if triage:
-                return _defer_incident_reconciliation()
-            existing = next(
-                (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker), None
-            )
-            if existing is None:
-                _create_or_reuse_incident(
-                    client,
-                    result,
-                    str(args.run_id),
-                    repo,
-                    health.reason + _quota_diagnostic_suffix(health.quota),
-                    dry_run=args.dry_run,
-                    marker_override=marker,
-                    quota=health.quota,
-                )
-            else:
-                print(
-                    f'Reusing operational incident #{existing.number}: {existing.html_url}{_quota_diagnostic_suffix(health.quota)}'
-                )
-            return 0
+            return _reconcile_blocked_gate(client, args, health, run_attempt, repo, triage=triage)
         if failed_stage is None:
             print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
             return 0
@@ -1042,7 +1147,7 @@ def _monitor_workflow_outcome(
         return 0
     if triage:
         return _defer_incident_reconciliation()
-    reason = health.reason if not health.ready else _failure_reason(result.failure)
+    reason = health.reason if not health.ready else _failure_reason(result)
     marker_override = None
     if result.failure is None and failed_stage is not None:
         scope, key = (
@@ -1053,7 +1158,7 @@ def _monitor_workflow_outcome(
         marker_override = IncidentMarker(scope, key, failed_stage, str(args.run_id), None, failed_stage, run_attempt)
         reason = f'Agent workflow failed during the trusted {failed_stage} stage'
     if health.ready and result.failure is not None:
-        reason = _failure_reason(result.failure)
+        reason = _failure_reason(result)
     _create_or_reuse_incident(
         client,
         result,
@@ -1066,6 +1171,58 @@ def _monitor_workflow_outcome(
     return 0
 
 
+def _reconcile_blocked_gate(
+    client: GitHubClient,
+    args: argparse.Namespace,
+    health: Health,
+    run_attempt: int,
+    repo: str,
+    *,
+    triage: bool,
+) -> int:
+    """Open a quota incident for each account whose quota, not an incident, blocked a run that no account could serve."""
+    decisions = health.accounts or (AccountHealth('primary', health.ready, health.reason, health.quota),)
+    if any(decision.ready for decision in decisions):
+        print(f'Activation was blocked by existing state: {health.reason}')
+        return 0
+    markers: list[tuple[AccountHealth, IncidentMarker]] = []
+    for decision in decisions:
+        suffix = _quota_diagnostic_suffix(decision.quota)
+        if decision.reason.startswith('Open operational incident #'):
+            print(f'Activation was blocked by an existing incident: {decision.reason}{suffix}')
+        elif decision.quota.status == 'healthy':
+            print(f'Activation was blocked by existing state: {decision.reason}')
+        elif decision.quota.diagnostic == 'missing_api_key' and health.trigger_event in _SECRETLESS_PR_EVENTS:
+            print('Activation had no Z.ai key for this pull request event; no operational incident was created')
+        else:
+            kind = 'quota_unknown' if decision.quota.status == 'unknown' else 'quota_exhausted'
+            key = _PROVIDER_KEYS[decision.account]
+            markers.append((decision, IncidentMarker('provider', key, kind, str(args.run_id), decision.quota.reset_at)))
+    if not markers:
+        return 0
+    if triage:
+        return _defer_incident_reconciliation()
+    result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
+    issues = client.open_incidents()
+    for decision, marker in markers:
+        suffix = _quota_diagnostic_suffix(decision.quota)
+        existing = next((issue for issue in issues if _marker_from_body(issue.body) == marker), None)
+        if existing is not None:
+            print(f'Reusing operational incident #{existing.number}: {existing.html_url}{suffix}')
+            continue
+        _create_or_reuse_incident(
+            client,
+            result,
+            str(args.run_id),
+            repo,
+            decision.reason + suffix,
+            dry_run=args.dry_run,
+            marker_override=marker,
+            quota=decision.quota,
+        )
+    return 0
+
+
 def _defer_incident_reconciliation() -> int:
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a', encoding='utf-8') as handle:
@@ -1074,7 +1231,8 @@ def _defer_incident_reconciliation() -> int:
     return 0
 
 
-def _failure_reason(failure: Failure | None) -> str:
+def _failure_reason(result: RunResult) -> str:
+    failure = result.failure
     if failure is None:
         return 'Agent execution failed before a typed provider result was available'
     reasons: dict[FailureKind, str] = {
@@ -1087,7 +1245,11 @@ def _failure_reason(failure: Failure | None) -> str:
         'other': 'The provider request failed with a typed error',
     }
     reason = reasons[failure.kind]
-    return f'{reason} (HTTP {failure.http_status})' if failure.http_status is not None else reason
+    if failure.http_status is not None:
+        reason = f'{reason} (HTTP {failure.http_status})'
+    if _claims_provider_scope(failure) and not result.provider_confirmed:
+        reason += '; no host-side Z.ai check confirmed a provider-wide failure'
+    return reason
 
 
 def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id: str, repo: str, reason: str) -> str:
@@ -1104,6 +1266,8 @@ def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id:
     if marker.run_attempt is not None:
         marker_data['run_attempt'] = marker.run_attempt
     run_url = f'https://github.com/{repo}/actions/runs/{urllib.parse.quote(run_id)}'
+    account = _ACCOUNTS_BY_KEY.get(marker.key) if marker.scope == 'provider' else None
+    account_line = f'- Z.ai account: {account}\n' if account is not None else ''
     if marker.kind in ('request_limit', 'time_limit'):
         check = 'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
     elif marker.stage is not None:
@@ -1112,7 +1276,7 @@ def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id:
         check = 'Confirm provider credentials, configuration, and quota health.'
     return (
         f'## Operational failure\n\n{reason}\n\n'
-        f'- Workflow: `{workflow}`\n- Task: `{task_key}`\n- First failing run: {run_url}\n\n'
+        f'- Workflow: `{workflow}`\n- Task: `{task_key}`\n{account_line}- First failing run: {run_url}\n\n'
         f'{check} Close this incident after the cause is fixed and the required recovery check passes.\n\n'
         f'{MARKER_PREFIX}{json.dumps(marker_data, separators=(",", ":"))} -->\n'
     )
@@ -1146,7 +1310,7 @@ def _create_or_reuse_incident(
     find: Callable[[list[Issue]], Issue | None] = (
         functools.partial(_same_scope_incident, marker)
         if marker_override is not None
-        else functools.partial(_matching_incident, matching_key)
+        else functools.partial(_matching_incident, matching_key, account=result.account)
     )
     existing = find(_open_incidents_until(client, lambda issues: find(issues) is not None))
     if existing is not None:
@@ -1174,12 +1338,16 @@ def _health_from_artifact(path: Path) -> Health:
     raise ValueError('provider-health artifact contains no valid health DTO')
 
 
+def _account_quota(account: Account) -> Quota:
+    api_key = os.environ.get(_API_KEY_VARIABLES[account], '')
+    return _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
+
+
 def _check_command(args: argparse.Namespace) -> int:
     workflow = os.environ.get('GITHUB_WORKFLOW', '')
     task_key = os.environ.get('PYDANTIC_AI_TASK_KEY', '')
     trigger_event = os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', '')
     run_attempt = _run_attempt_from_env()
-    api_key = os.environ.get('ZAI_API_KEY', '')
     repo = os.environ.get('GITHUB_REPOSITORY', '')
     token = os.environ.get('GITHUB_TOKEN', '')
     if not repo or not token:
@@ -1197,7 +1365,14 @@ def _check_command(args: argparse.Namespace) -> int:
             Quota('unknown'),
         )
     else:
-        quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
+        quota = _account_quota('primary')
+        # Without a backup key the gate checks only the primary. The backup is checked at most once, and only
+        # when the primary is unusable.
+        backup_quota = (
+            functools.cache(functools.partial(_account_quota, 'backup'))
+            if os.environ.get(_API_KEY_VARIABLES['backup'])
+            else None
+        )
         client = GitHubClient(repo, token)
         recovery_issue = None
         raw_issue = os.environ.get('PYDANTIC_AI_RECOVERY_ISSUE')
@@ -1216,42 +1391,78 @@ def _check_command(args: argparse.Namespace) -> int:
             run_attempt,
             quota,
             recovery_issue=recovery_issue,
+            backup_quota=backup_quota,
         )
         health = decide(_open_incidents_until(client, lambda issues: not decide(issues).ready))
     if not workflow or not task_key or not trigger_event:
-        health = replace(health, ready=False, reason='Workflow task identity is unavailable')
+        health = replace(health, ready=False, reason='Workflow task identity is unavailable', account=None)
     health = replace(health, run_id=_string(os.environ.get('GITHUB_RUN_ID')))
     _write_health(args.output, health)
     if output := os.environ.get('GITHUB_OUTPUT'):
+        # `shared/engine-zai.md` selects the engine's API key from `account`.
         with open(output, 'a', encoding='utf-8') as handle:
-            handle.write(f'ready={str(health.ready).lower()}\nreason={health.reason}\n')
+            handle.write(f'ready={str(health.ready).lower()}\nreason={health.reason}\naccount={health.account or ""}\n')
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
-    displayed_reason = health.reason + _quota_diagnostic_suffix(health.quota)
+    displayed_reason = health.reason if health.accounts else health.reason + _quota_diagnostic_suffix(health.quota)
     if summary:
         quota_detail = ''
-        if health.quota.interval_reset_at is not None and health.quota.weekly_reset_at is not None:
+        account_quotas = [(item.account, item.quota) for item in health.accounts] or [('primary', health.quota)]
+        for account, checked in account_quotas:
+            if checked.interval_reset_at is None or checked.weekly_reset_at is None:
+                continue
             windows = (
-                (
-                    'interval',
-                    health.quota.interval_remaining_percent,
-                    health.quota.interval_reset_at,
-                ),
-                (
-                    'weekly',
-                    health.quota.weekly_remaining_percent,
-                    health.quota.weekly_reset_at,
-                ),
+                ('interval', checked.interval_remaining_percent, checked.interval_reset_at),
+                ('weekly', checked.weekly_remaining_percent, checked.weekly_reset_at),
             )
             details: list[str] = []
             for name, percent, reset_at in windows:
                 remaining = f'{percent:g}% remaining' if percent is not None else 'remaining percentage unknown'
                 details.append(f'{name}: {remaining}; resets at {reset_at}')
-            quota_detail = '\n\nPlan quota windows: ' + '; '.join(details) + '.'
+            label = 'Plan quota windows' if not health.accounts else f'{account.capitalize()} plan quota windows'
+            quota_detail += f'\n\n{label}: ' + '; '.join(details) + '.'
         with open(summary, 'a', encoding='utf-8') as handle:
             handle.write(
                 f'### Provider health: {"ready" if health.ready else "blocked"}\n\n{displayed_reason}.{quota_detail}\n'
             )
     print(f'{"ready" if health.ready else "blocked"}: {displayed_reason}')
+    return 0
+
+
+def _record_command(args: argparse.Namespace) -> int:
+    """Write the run's terminal result from the host, confirming any provider-wide failure with a Z.ai check."""
+    run_attempt = _run_attempt_from_env()
+    identity = (
+        os.environ.get('GITHUB_WORKFLOW', ''),
+        os.environ.get('PYDANTIC_AI_TASK_KEY', ''),
+        os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', ''),
+    )
+    result = parse_run_result(args.agent_session, run_attempt)
+    if result is None or (result.workflow, result.task_key, result.trigger_event) != identity:
+        print('No terminal agent result matches this run; recording none')
+        return 0
+    failure = result.failure
+    confirmed = False
+    if failure is not None and _claims_provider_scope(failure):
+        # Check the account whose key the engine used, from the decision the agent-start recheck uploaded.
+        account = _health_from_artifact(args.health_artifact).account if args.health_artifact is not None else None
+        quota = _account_quota(account or 'primary')
+        # Confirm only what this check observes itself: the same credential rejected, or the plan's quota exhausted.
+        if failure.kind == 'authentication' or failure.http_status in (401, 403):
+            confirmed = quota.http_status in (401, 403)
+        else:
+            confirmed = quota.status == 'exhausted'
+    payload: dict[str, object] = {
+        'version': 1,
+        'workflow': result.workflow,
+        'task_key': result.task_key,
+        'trigger_event': result.trigger_event,
+        'run_attempt': result.run_attempt,
+        'failure': asdict(failure) if failure is not None else None,
+        'provider_confirmed': confirmed,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+    print(f'Recorded terminal result: {failure.kind if failure else "no failure"}; provider confirmed: {confirmed}')
     return 0
 
 
@@ -1273,7 +1484,10 @@ def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
     if health.run_id is not None and health.run_id != str(args.run_id):
         raise ValueError('provider-health artifact run id does not match the triggering workflow_run')
-    result = parse_run_result(args.agent_artifact, run_attempt) if args.agent_artifact is not None else None
+    # Without a valid host record, fall back to the agent artifact, which never confirms a provider failure.
+    result = _host_run_result(args.run_result) if args.run_result is not None and args.run_result.is_file() else None
+    if result is None and args.agent_artifact is not None:
+        result = parse_run_result(args.agent_artifact, run_attempt)
     if result is not None and (
         result.workflow != health.workflow
         or result.task_key != health.task_key
@@ -1282,6 +1496,8 @@ def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
     ):
         print('Agent result identity did not match the trusted provider-health artifact; treating it as untyped')
         result = None
+    if result is not None and health.account is not None:
+        result = replace(result, account=health.account)
     if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
         print(f'Skipping retired provider configuration: {health.workflow}')
         return 0
@@ -1420,27 +1636,64 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
         marker = _marker_from_body(issue.body)
         if marker is None:
             raise ValueError(f'issue #{issue.number} is not a provider-health incident')
-        if marker.scope == 'provider' and marker.key != 'zai':
-            raise ValueError(f'issue #{issue.number} is not a Z.ai provider-health incident')
         if marker.scope in ('workflow', 'task'):
             print(
                 f'Incident #{issue.number} is a {marker.scope} incident; verify the affected workflow execution '
                 'and close it manually'
             )
             return 0
-        api_key = os.environ.get('ZAI_API_KEY', '')
-        quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
-        now = _now()
-        _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=False)
+        account = _ACCOUNTS_BY_KEY.get(marker.key)
+        if account is None:
+            raise ValueError(f'issue #{issue.number} is not a Z.ai provider-health incident')
+        # Only the incident's own account's health can recover it.
+        _recover_issue(client, issue, marker, _account_quota(account), _now(), dry_run=args.dry_run, automatic=False)
         return 0
     _retire_task_incidents(client, issues, dry_run=args.dry_run)
-    api_key = os.environ.get('ZAI_API_KEY', '')
-    quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
+    accounts: list[Account] = ['primary']
+    if os.environ.get(_API_KEY_VARIABLES['backup']):
+        accounts.append('backup')
+    quotas: dict[Account, Quota] = {account: _account_quota(account) for account in accounts}
     now = _now()
-    if quota.status != 'healthy':
+    # Accounts that keep an open provider incident after recovery cannot serve a run.
+    incident_accounts: dict[Account, Issue] = {}
+    for issue in issues:
+        marker = _marker_from_body(issue.body)
+        account = _ACCOUNTS_BY_KEY.get(marker.key) if marker is not None and marker.scope == 'provider' else None
+        if marker is None or account is None:
+            continue
+        if (
+            account in quotas
+            and marker.kind in ('rate_limit', 'plan_limit', 'quota_exhausted', 'quota_unknown')
+            and _recover_issue(client, issue, marker, quotas[account], now, dry_run=args.dry_run, automatic=True)
+        ):
+            continue
+        incident_accounts.setdefault(account, issue)
+    if not any(quota.status == 'healthy' and account not in incident_accounts for account, quota in quotas.items()):
+        _report_scheduled_quota_block(client, args, quotas, incident_accounts)
+    return 0
+
+
+def _report_scheduled_quota_block(
+    client: GitHubClient,
+    args: argparse.Namespace,
+    quotas: dict[Account, Quota],
+    incident_accounts: dict[Account, Issue],
+) -> None:
+    """Open or reuse a quota incident for each account whose quota is unhealthy, once no account can serve a run."""
+    for account, quota in quotas.items():
+        if quota.status == 'healthy':
+            continue
+        suffix = _quota_diagnostic_suffix(quota)
+        existing = incident_accounts.get(account)
+        if existing is not None:
+            print(f'Provider quota remains {quota.status}; incident #{existing.number} is open{suffix}')
+            continue
+        if args.dry_run:
+            print(f'DRY RUN: provider quota is {quota.status}; would open/reuse an incident{suffix}')
+            continue
         marker = IncidentMarker(
             'provider',
-            'zai',
+            _PROVIDER_KEYS[account],
             'quota_unknown' if quota.status == 'unknown' else 'quota_exhausted',
             None,
             quota.reset_at if quota.status == 'exhausted' else None,
@@ -1452,39 +1705,17 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             _run_attempt_from_env(),
             Failure('other', None, None),
         )
-        existing = _same_scope_incident(marker, issues)
-        if existing is not None:
-            print(
-                f'Provider quota remains {quota.status}; incident #{existing.number} is open{_quota_diagnostic_suffix(quota)}'
-            )
-        elif not args.dry_run:
-            _create_or_reuse_incident(
-                client,
-                result,
-                os.environ.get('GITHUB_RUN_ID', 'unknown'),
-                client.repo,
-                'Z.ai quota could not be confirmed healthy' + _quota_diagnostic_suffix(quota),
-                dry_run=False,
-                marker_override=marker,
-                quota=quota,
-            )
-            print(f'Provider quota remains {quota.status}{_quota_diagnostic_suffix(quota)}')
-        else:
-            print(
-                f'DRY RUN: provider quota is {quota.status}; would open/reuse an incident'
-                f'{_quota_diagnostic_suffix(quota)}'
-            )
-        return 0
-    for issue in issues:
-        marker = _marker_from_body(issue.body)
-        if marker is None or marker.scope != 'provider':
-            continue
-        if marker.key != 'zai':
-            continue
-        if marker.kind not in ('rate_limit', 'plan_limit', 'quota_exhausted', 'quota_unknown'):
-            continue
-        _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=True)
-    return 0
+        _create_or_reuse_incident(
+            client,
+            result,
+            os.environ.get('GITHUB_RUN_ID', 'unknown'),
+            client.repo,
+            'Z.ai quota could not be confirmed healthy' + suffix,
+            dry_run=False,
+            marker_override=marker,
+            quota=quota,
+        )
+        print(f'Provider quota remains {quota.status}{suffix}')
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1494,12 +1725,19 @@ def main(argv: list[str] | None = None) -> int:
     check = commands.add_parser('check', help='check incident state and provider quota before inference')
     check.add_argument('--output', type=Path, default=Path('provider-health.json'))
     check.set_defaults(handler=_check_command)
+    record = commands.add_parser('record', help='record the terminal agent result on the host after inference')
+    record.add_argument('--agent-session', type=Path, required=True)
+    record.add_argument('--output', type=Path, required=True)
+    # The health decision names the account whose key the engine used. Without it, the record checks the primary.
+    record.add_argument('--health-artifact', type=Path)
+    record.set_defaults(handler=_record_command)
     monitor = commands.add_parser('monitor', help='reconcile a completed agent workflow or provider recovery')
     monitor.add_argument('--repository')
     monitor.add_argument('--run-id', type=int)
     monitor.add_argument('--run-attempt', type=int)
     monitor.add_argument('--conclusion')
     monitor.add_argument('--health-artifact', type=Path)
+    monitor.add_argument('--run-result', type=Path)
     monitor.add_argument('--agent-artifact', type=Path)
     monitor.add_argument('--recover-issue', type=int)
     monitor.add_argument('--dry-run', action='store_true')
@@ -1512,6 +1750,7 @@ def main(argv: list[str] | None = None) -> int:
     triage.add_argument('--run-attempt', type=int, required=True)
     triage.add_argument('--conclusion')
     triage.add_argument('--health-artifact', type=Path, required=True)
+    triage.add_argument('--run-result', type=Path)
     triage.add_argument('--agent-artifact', type=Path)
     triage.set_defaults(handler=functools.partial(_monitor_command, triage=True))
     args = parser.parse_args(argv)
