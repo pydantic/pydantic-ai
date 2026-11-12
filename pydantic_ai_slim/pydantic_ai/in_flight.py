@@ -293,7 +293,7 @@ class InFlightRegistry:
         An error `fn` raises ends the run once the step that's running when it fails has finished, or while the
         run waits for the work to end, so catch the errors the model should hear about and enqueue them instead.
         The run's node error hooks don't see the error, and an error raised after the run's last step is not
-        raised at all.
+        raised at all. If several pieces of work fail, only the first error is raised.
 
         Args:
             fn: The work to run, called with no arguments.
