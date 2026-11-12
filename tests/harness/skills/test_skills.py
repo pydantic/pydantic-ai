@@ -460,6 +460,20 @@ class TestUntrustedWorkspaces:
         assert '- skills: Skill help.' in (requests[0].instructions or '')
         assert tools == ['load_capability', 'list_skills', 'load_skill']
 
+    async def test_a_skill_linked_from_outside_keeps_an_operator_librarys_level(self, tmp_path: Path) -> None:
+        # Sharing a skill between projects by linking its directory into the library is the operator's choice.
+        _write_skill(tmp_path / 'shared', 'review', description='Review help.')
+        (tmp_path / 'repo' / 'skills').mkdir(parents=True)
+        (tmp_path / 'repo' / 'skills' / 'review').symlink_to(tmp_path / 'shared' / 'review', target_is_directory=True)
+        model, requests, tools = _calling()
+
+        await Agent(model, capabilities=[Skills('skills')]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path / 'repo')
+        )
+
+        assert tools == ['load_capability']
+        assert '- review: Review help.' in (requests[0].instructions or '')
+
     async def test_each_skill_takes_its_own_files_authority(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'skills', 'own', description='Own help.')
         _write_skill(tmp_path / 'skills', 'vendored', description='Vendored help.')
