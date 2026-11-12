@@ -267,7 +267,13 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  with its outcome, steps, tokens, duration and the plan that served it, such as `the backup Coding Plan`.
+  on every outcome, a failed, rejected or cancelled review included. The span names the provider and
+  plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
+  review took. When the review's run completes or reaches its time budget, the span adds its steps,
+  tokens and duration. A validated answer adds the outcome and the number of findings. A review that
+  raised has the outcome `FAILED`, the exception's class name and an error status. When the last
+  run's process failed, the span adds the type, status and provider code of its stream's last
+  `error` event, and whether the stream holds a `step_finish`.
   OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
@@ -360,13 +366,24 @@ only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from 
 sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
-`type` and `status` of its stream's last `error` event. It prints a type only when the type is shaped like
-OpenCode's own, such as `provider.auth`. It never prints the error message or response body, which can repeat the
-provider's response. When `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
-the reason: a fixed message from `final_text` in `.github/scripts/douwebot_opencode_result.py`, the sorted validation
-error types, or the exception's class name. It never prints model text, because the answer can hold a private
-report. A Z.AI run sends Z.AI the same content a Go run sends Go, fork pull request content included. Start any new
-CI OpenCode run through `run_with_fallback`.
+`type` and `status` of its stream's last `error` event. It also names the provider's `error.code` from that event's
+response body, such as Z.AI's `1302` request-rate limit or `1305` overload, which OpenCode both types
+`provider.rate-limit`. It prints a type only when the type is shaped like OpenCode's own, such as `provider.auth`. It
+prints a code only when the code is all digits. It never prints the error message or the rest of the response body,
+which can repeat the provider's response. When `PR Review Checks` or threat detection rejects a run's stream or
+answer, the job log names the reason: a fixed message from `final_text` in
+`.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It
+never prints model text, because the answer can hold a private report. A Z.AI run sends Z.AI the same content a Go
+run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+
+With `LOGFIRE_TOKEN` set, `run_with_fallback` makes each run export OpenCode's spans and logs to Logfire over OTLP.
+douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and `PR Review Checks` set the token. Threat
+detection does not. Each run's resource attributes name the repository, `github.run_id`, `github.run_attempt` and
+`github.job`, then the caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place
+in the chain, counting from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute,
+and both Coding Plan accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart.
+Threat detection writes the provider and plan of its last run as the detector step's `provider` and `plan` outputs,
+which its `gh-aw.detector.result` span reports.
 
 The Coding Plan runs draw on the same accounts as the gh-aw agent workflows, and the primary also serves Pydanty; see
 [Shared Z.AI account limits](#shared-zai-account-limits). `PR Review Checks` starts several reviews per pull request
