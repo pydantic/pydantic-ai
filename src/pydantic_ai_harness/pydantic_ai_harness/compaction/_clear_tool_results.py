@@ -12,7 +12,6 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
-    answers_tool_call,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -23,7 +22,7 @@ from pydantic_ai_harness.compaction._shared import (
     rebuild_with_cleared,
     record_compaction_reclaim,
     resolve_token_trigger,
-    starts_user_turn,
+    user_turn_starts,
     validate_token_trigger,
 )
 
@@ -246,16 +245,10 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     def _kept_turns_start(messages: list[ModelMessage], keep_turns: int) -> int:
         """Index of the first message in the last `keep_turns` completed user turns and the current one.
 
-        A history without a user turn is all current turn, so nothing in it is cleared. A request that
-        answers a tool call continues the turn even when it carries a user prompt: core puts a
-        `ToolReturn`'s `content` there, and a prompt sent along with deferred tool results joins the
-        turn it resumes, which keeps more rather than less.
+        A history without a user turn is all current turn, so nothing in it is cleared. See
+        `user_turn_starts` for which requests start a turn.
         """
-        starts = [
-            index
-            for index, message in enumerate(messages)
-            if starts_user_turn(message) and not answers_tool_call(message)
-        ]
+        starts = user_turn_starts(messages)
         if len(starts) <= keep_turns:
             return 0
         return starts[-(keep_turns + 1)]

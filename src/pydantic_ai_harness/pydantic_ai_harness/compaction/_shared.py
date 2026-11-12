@@ -990,9 +990,33 @@ def starts_user_turn(message: ModelMessage) -> TypeIs[ModelRequest]:
     return isinstance(message, ModelRequest) and any(is_user_part(part) for part in message.parts)
 
 
-def answers_tool_call(message: ModelMessage) -> bool:
-    """Whether *message* is a `ModelRequest` carrying a reply to a tool call, so it continues the previous response."""
-    return isinstance(message, ModelRequest) and any(_is_tool_reply(part) for part in message.parts)
+def user_turn_starts(messages: Sequence[ModelMessage]) -> list[int]:
+    """Indices of the requests in *messages* that start a user turn.
+
+    A request carrying a user prompt starts one, unless it also answers a tool call within a run: core
+    sends a `ToolReturn`'s `content` as a user prompt next to the tool's result. A run that ends on an
+    output tool leaves that tool's return as a trailing request, and core merges the next run's prompt
+    into it, so a request that answers a tool call still starts a turn when the responses around it
+    belong to different runs. Without run ids to compare, it continues the turn, which keeps more
+    rather than less; so does a prompt sent along with deferred tool results in the run they resume.
+    """
+    starts: list[int] = []
+    previous_run_id: str | None = None
+    for index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            previous_run_id = message.run_id
+        elif starts_user_turn(message) and (
+            not any(_is_tool_reply(part) for part in message.parts)
+            or _starts_new_run(previous_run_id, messages[index + 1 :])
+        ):
+            starts.append(index)
+    return starts
+
+
+def _starts_new_run(previous_run_id: str | None, later: Sequence[ModelMessage]) -> bool:
+    """Whether the first response in *later* belongs to a different run than *previous_run_id*."""
+    following_run_id = next((message.run_id for message in later if isinstance(message, ModelResponse)), None)
+    return previous_run_id is not None and following_run_id is not None and previous_run_id != following_run_id
 
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:

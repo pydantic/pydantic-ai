@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ToolReturn
+from pydantic_ai import Agent, ToolOutput, ToolReturn
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -390,6 +390,48 @@ class TestClearToolResultsTargeting:
             'screenshot_2': 'captured',
             'search_3': 'found',
         }
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_keep_turns_counts_turns_after_runs_that_end_on_an_output_tool(self):
+        """Core merges a run's trailing output-tool return into the next run's prompt request: that request starts a turn."""
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(list(messages))
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            if any(isinstance(part, UserPromptPart) for part in last.parts):
+                return ModelResponse(parts=[ToolCallPart('search', {}, tool_call_id=f'search_{len(sent)}')])
+            return ModelResponse(
+                parts=[ToolCallPart('final_result', {'response': 'ok'}, tool_call_id=f'out_{len(sent)}')]
+            )
+
+        agent = Agent(
+            FunctionModel(respond),
+            output_type=ToolOutput(str),
+            capabilities=[ClearToolResults(max_tokens=1, keep_turns=1)],
+        )
+
+        @agent.tool_plain
+        def search() -> str:
+            return 'found'
+
+        history: list[ModelMessage] = []
+        for prompt in ['one', 'two', 'three', 'four']:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        # The fourth run keeps the third turn and its own; the first two turns' results are cleared.
+        assert _contents(sent[-1]) == snapshot(
+            {
+                'search_1': CLEARED,
+                'out_2': CLEARED,
+                'search_3': CLEARED,
+                'out_4': 'Final result processed.',
+                'search_5': 'found',
+                'out_6': 'Final result processed.',
+                'search_7': 'found',
+            }
+        )
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_keep_turns_on_a_resumed_history_counts_its_last_turn_as_current(self):
