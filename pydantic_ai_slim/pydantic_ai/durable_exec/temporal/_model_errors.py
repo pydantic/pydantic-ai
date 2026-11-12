@@ -152,19 +152,7 @@ def model_errors_as_application_errors(
     try:
         yield
     except ModelAPIError as error:
-        # Checked here, where the error's class is the same as in the workflow, so the workflow can
-        # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
-        # with only the non-retryable flag or the retry delay added if it has one.
-        try:
-            encoded = _encode(error)
-        except Exception:
-            encoded = None
-        details: tuple[dict[str, Any], ...] = ()
-        if encoded is not None and _decode(encoded) is not None:
-            detail: dict[str, Any] = {_DETAILS_KEY: encoded}
-            if (streamed := streamed_before_failing(error)) is not None:
-                detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
-            details = (detail,)
+        details = _crossing_details(error)
         retryable = not isinstance(error, non_retryable)
         next_retry_delay = _next_retry_delay(error.retry_after) if retryable and error.retry_after is not None else None
         if retryable and not details and next_retry_delay is None:
@@ -188,6 +176,25 @@ def model_errors_as_application_errors(
             type=UnsupportedSettingWarning.__name__,
             non_retryable=True,
         ) from warning
+
+
+def _crossing_details(error: ModelAPIError) -> tuple[dict[str, Any], ...]:
+    """The `ApplicationError` details the workflow rebuilds `error` from, or none if it can't cross.
+
+    Checked here, where the error's class is the same as in the workflow, so the workflow can count on rebuilding
+    whatever it receives. Anything that can't cross fails as it always did, with only the non-retryable flag or the
+    retry delay added if it has one.
+    """
+    try:
+        encoded = _encode(error)
+    except Exception:
+        return ()
+    if encoded is None or _decode(encoded) is None:
+        return ()
+    detail: dict[str, Any] = {_DETAILS_KEY: encoded}
+    if (streamed := streamed_before_failing(error)) is not None:
+        detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
+    return (detail,)
 
 
 def _next_retry_delay(retry_after: float) -> timedelta:

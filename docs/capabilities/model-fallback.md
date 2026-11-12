@@ -199,7 +199,7 @@ A model that doesn't support a setting the request relies on, such as `stop_sequ
 ```python {title="model_fallback_on_unsupported_setting.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, UnsupportedSettingWarning
 from pydantic_ai.capabilities import ModelFallback
-from pydantic_ai.exceptions import ContentFilterError, ModelAPIError
+from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, OutputTokenLimitExceeded
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
@@ -217,7 +217,7 @@ agent = Agent(
     capabilities=[
         ModelFallback(
             FunctionModel(answer, model_name='backup'),
-            fallback_on=(ModelAPIError, ContentFilterError, UnsupportedSettingWarning),
+            fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded, UnsupportedSettingWarning),
         )
     ],
 )

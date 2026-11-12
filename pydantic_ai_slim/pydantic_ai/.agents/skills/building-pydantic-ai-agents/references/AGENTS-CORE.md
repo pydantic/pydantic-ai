@@ -355,8 +355,9 @@ Good defaults:
 - `model_settings={'max_retries': 0}` on the agent, or on every candidate but the last, so the provider SDK's own
   retries (2 by default on OpenAI, Anthropic, Groq and Cohere) don't hold up the fallback; Bedrock and xAI ignore it
   with an `UnsupportedSettingWarning`, so with one of those in the chain set it on the other candidates' `settings`
-- `fallback_on=(ModelAPIError, ContentFilterError, UnsupportedSettingWarning)` to skip a candidate that would ignore a setting the request
-  relies on (like `stop_sequences`) instead of sending the request without it; settings on the agent or run reach
+- `fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded, UnsupportedSettingWarning)` (the default plus
+  the warning) to skip a candidate that would ignore a setting the request relies on (like `stop_sequences`) instead
+  of sending the request without it; settings on the agent or run reach
   every candidate, so put a guarantee setting only some candidates honor (like `max_retries` with Bedrock or xAI in
   the chain) on those candidates' own `settings`, or every request skips the others
 
