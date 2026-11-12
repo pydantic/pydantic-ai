@@ -262,10 +262,10 @@ retry. The reported total stays exact whether or not the list was cut, which is 
 model some calls are missing from what it can see. Nothing stops the model from calling those
 tools again.
 
-A nested tool's `ToolFailed` instead makes `run_code` return a failed tool result with the
-failure message and does not consume the `run_code` retry budget. Raise `ModelRetry` from the
-nested tool when the model should retry. If you relied on CodeMode retrying nested `ToolFailed`,
-handle the failed result or raise `ModelRetry` explicitly instead.
+A nested tool that raises `ToolFailed` the snippet does not catch ends `run_code` with a failed
+tool result instead of a retry, as when the model calls that tool directly. The result carries the
+tool's message and the same started-call summary, and does not spend `run_code`'s retries. A nested
+`ModelRetry` the snippet does not catch is still a retry.
 
 Override them with `resource_limits={'max_duration_seconds': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary

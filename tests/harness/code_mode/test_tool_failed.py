@@ -1,119 +1,97 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from inline_snapshot import snapshot
+
 from pydantic_ai import Agent, ModelRetry, ToolFailed
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import CodeMode
 
 
-def test_nested_tool_failed_returns_failed_result_without_retry() -> None:
-    model_calls = 0
+def _run_code_returns(*snippets: str) -> Sequence[ToolReturnPart]:
+    """Run each snippet as one `run_code` call, then finish, and return the `run_code` results."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal model_calls
-        model_calls += 1
-        if model_calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await fail()'})])
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step < len(snippets):
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': snippets[step]})])
         return ModelResponse(parts=[TextPart(content='done')])
 
     agent = Agent(FunctionModel(respond), capabilities=[CodeMode()], retries=1)
 
     @agent.tool_plain
-    def fail() -> None:
-        raise ToolFailed('nested failure')
-
-    result = agent.run_sync('run the code')
-    run_code_return = next(
-        part
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
-    )
-    assert model_calls == 2
-    assert run_code_return.outcome == 'failed'
-    assert run_code_return.content == 'nested failure'
-
-
-def test_nested_model_retry_still_retries() -> None:
-    model_calls = 0
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal model_calls
-        model_calls += 1
-        if model_calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await retry()'})])
-        return ModelResponse(parts=[TextPart(content='done')])
-
-    agent = Agent(FunctionModel(respond), capabilities=[CodeMode()], retries=1)
+    def read_calendar() -> str:
+        raise ToolFailed('No calendar is connected.')
 
     @agent.tool_plain
-    def retry() -> None:
-        raise ModelRetry('retry nested tool')
-
-    result = agent.run_sync('run the code')
-    run_code_return = next(
-        part
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
-    )
-    assert model_calls == 2
-    assert run_code_return.outcome == 'retried'
-    assert 'retry nested tool' in str(run_code_return.content)
-
-
-def test_repeated_nested_tool_failed_does_not_exhaust_run_code_retries() -> None:
-    failure_count = 4
-    model_calls = 0
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal model_calls
-        model_calls += 1
-        if model_calls <= failure_count:
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await fail()'})])
-        return ModelResponse(parts=[TextPart(content='done')])
-
-    agent = Agent(FunctionModel(respond), capabilities=[CodeMode()], retries=1)
+    def check_input() -> str:
+        raise ModelRetry('Pass a date.')
 
     @agent.tool_plain
-    def fail() -> None:
-        raise ToolFailed('repeated nested failure')
+    def ping() -> str:
+        return 'pong'
 
     result = agent.run_sync('run the code')
-    run_code_returns = [
+    return [
         part
         for message in result.all_messages()
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
-    assert model_calls == failure_count + 1
-    assert len(run_code_returns) == failure_count
-    assert all(part.outcome == 'failed' for part in run_code_returns)
 
 
-def test_native_tool_failed_remains_failed_without_retry() -> None:
-    model_calls = 0
+class TestCodeModeToolFailed:
+    def test_uncaught_tool_failed_is_a_failed_result_that_spends_no_retry(self) -> None:
+        # Four failures in a row with `retries=1`: a retry each would end the run after the second.
+        returns = _run_code_returns(*['await read_calendar()'] * 4)
+        assert [part.outcome for part in returns] == ['failed'] * 4
+        assert returns[0].content == snapshot("""\
+No calendar is connected.
 
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal model_calls
-        model_calls += 1
-        if model_calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='fail', args={})])
-        return ModelResponse(parts=[TextPart(content='done')])
+1 nested tool calls started before execution stopped:
+- read_calendar({}) did not finish, so it may have applied a partial change
+Account for all 1 before retrying; repeating a call repeats whatever it already did.\
+""")
 
-    agent = Agent(FunctionModel(respond), retries=1)
+    def test_uncaught_model_retry_is_still_a_retry(self) -> None:
+        (part,) = _run_code_returns('await check_input()')
+        assert part.outcome == 'retried'
+        assert 'Pass a date.' in str(part.content)
 
-    @agent.tool_plain
-    def fail() -> None:
-        raise ToolFailed('native failure')
+    def test_tool_failed_reraised_after_a_later_call_is_a_failed_result(self) -> None:
+        code = """\
+print('checking')
+try:
+    await read_calendar()
+except Exception as e:
+    error = e
+await ping()
+raise error
+"""
+        (part,) = _run_code_returns(code)
+        assert part.outcome == 'failed'
+        assert part.content == snapshot("""\
+[stdout before error]
+checking
+[/stdout before error]
+No calendar is connected.
 
-    result = agent.run_sync('call the tool')
-    tool_return = next(
-        part
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'fail'
-    )
-    assert model_calls == 2
-    assert tool_return.outcome == 'failed'
-    assert tool_return.content == 'native failure'
+2 nested tool calls started before execution stopped:
+- read_calendar({}) did not finish, so it may have applied a partial change
+- ping({}) returned 'pong'
+Account for all 2 before retrying; repeating a call repeats whatever it already did.\
+""")
+
+    def test_caught_tool_failed_then_another_error_is_a_retry(self) -> None:
+        code = """\
+try:
+    await read_calendar()
+except Exception:
+    pass
+undefined_name
+"""
+        (part,) = _run_code_returns(code)
+        assert part.outcome == 'retried'
+        assert 'undefined_name' in str(part.content)

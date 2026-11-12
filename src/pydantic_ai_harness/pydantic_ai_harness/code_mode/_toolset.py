@@ -705,7 +705,9 @@ class RunCodeExecution:
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
     user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
-    tool_failed_message: str | None = None
+    # Messages of the `ToolFailed` errors nested calls raised. Monty hands back only an uncaught
+    # error's text, so this is how the feed tells a `ToolFailed` that escaped the snippet.
+    tool_failed_messages: list[str] = field(default_factory=list[str])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -725,10 +727,11 @@ class RunCodeExecution:
 
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
-        self.tool_failed_message = outcome.tool_failed_message
         record_nested_call(
             call_part, outcome, calls=self.nested_calls, returns=self.nested_returns, user_content=self.user_content
         )
+        if isinstance(outcome.error, ToolFailed):
+            self.tool_failed_messages.append(outcome.error.message)
         if outcome.error is not None:
             if outcome.usage_limit_exceeded is not None:
                 self.usage_limit_exceeded = outcome.usage_limit_exceeded
@@ -772,6 +775,25 @@ def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
     """Re-raise the usage limit a nested call hit, which the snippet may have caught at its call site."""
     if execution.usage_limit_exceeded is not None:
         raise execution.usage_limit_exceeded
+
+
+def _escaped_tool_failed(
+    error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str
+) -> ToolFailed | None:
+    """The failure to report when the snippet ended on a nested call's uncaught `ToolFailed`, else `None`.
+
+    Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
+    tool directly does. Monty passes an uncaught error back as a plain `Exception` with the same
+    message, so the message is compared with the `ToolFailed` errors nested calls raised. A snippet
+    that caught one and then raised a different error with exactly the same text is read as a
+    failure too, which tells the model the same thing.
+    """
+    message = error.display(format='msg')
+    if message not in execution.tool_failed_messages:
+        return None
+    _raise_usage_limit_exceeded(execution)
+    # The started calls are listed, as for a retry, so the model does not repeat their side effects.
+    return ToolFailed(f'{execution.capture.prepend_to(message)}{_started_calls_note(execution)}{reset_advice}')
 
 
 def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
@@ -1364,7 +1386,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     async def _feed_failure_retry(
         self, error: BaseException, run_state: MontyRunState, execution: RunCodeExecution, *, fresh_repl: bool
     ) -> ModelRetry | ToolFailed | None:
-        """Reset the session a failed feed left unusable and build the retry to raise for it.
+        """Reset the session a failed feed left unusable and build the retry or failure to raise for it.
 
         Returns `None` for an interruption, which the caller re-raises unchanged.
         """
@@ -1382,12 +1404,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
                 run_state.has_executed_feed = True
-                failed_message = execution.tool_failed_message
-                if failed_message is not None and failed_message in error.display():
-                    # The host classified this before Monty erased the exception's identity.
-                    return ToolFailed(failed_message)
-                return _runtime_failure_retry(
-                    error, execution, reset_advice=await self._reset_for_runtime_error(error, run_state)
+                reset_advice = await self._reset_for_runtime_error(error, run_state)
+                return _escaped_tool_failed(error, execution, reset_advice=reset_advice) or _runtime_failure_retry(
+                    error, execution, reset_advice=reset_advice
                 )
             case MontyCrashedError() | MontyDisconnectError():
                 # The worker died mid-feed (e.g. the code exhausted its memory or hit the

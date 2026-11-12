@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     ToolCallPart,
@@ -135,9 +135,6 @@ class NestedCallOutcome:
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
 
-    tool_failed_message: str | None = None
-    """The terminal `ToolFailed` message, if the nested call failed terminally."""
-
     denied_message: str | None = None
     """Set when a handler denied the call, so the history records `outcome='denied'`."""
 
@@ -190,8 +187,6 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         )
         error.__cause__ = exc
         return NestedCallOutcome(error=error, tool_kind=tool_kind)
-    except ToolFailed as exc:
-        return NestedCallOutcome(error=exc, tool_failed_message=exc.message, tool_kind=tool_kind)
     except Exception as exc:
         return NestedCallOutcome(error=exc, tool_kind=tool_kind)
     finally:
