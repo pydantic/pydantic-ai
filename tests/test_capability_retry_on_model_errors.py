@@ -43,6 +43,7 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    OutputTokenLimitExceeded,
     RetryModelRequest,
     UsageLimitExceeded,
     UserError,
@@ -777,6 +778,26 @@ async def test_retry_on_content_filter_error_accepts_a_streamed_response_without
         warnings.simplefilter('error')
         async with agent.run_stream('x') as result:
             assert await result.get_output() == 'streamed'
+
+
+async def test_retry_on_output_token_limit_exceeded_retries_a_cut_off_response():
+    """`OutputTokenLimitExceeded` in `retry_on` stands for a response the output token limit cut off, as in `fallback_on`."""
+    answered: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answered.append('primary')
+        if len(answered) == 1:
+            return ModelResponse(parts=[TextPart('cut')], finish_reason='length')
+        return ModelResponse(parts=[TextPart('hello')])
+
+    agent = Agent(
+        FunctionModel(respond, model_name='primary'),
+        capabilities=[RetryOnModelErrors(retry_on=OutputTokenLimitExceeded)],
+    )
+    with _recorded_sleeps():
+        result = await agent.run('x')
+    assert result.output == 'hello'
+    assert [(a.outcome, a.kind) for a in result.response.failed_attempts or []] == snapshot([('rejected', 'retry')])
 
 
 # --- Streaming ---

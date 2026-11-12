@@ -65,7 +65,7 @@ By default, a request is retried when it fails with one of these [error categori
 
 Errors that fail the same way when the request is sent again aren't retried by default: a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (a bad request, bad credentials, an unknown model or an overflowing context window), a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], a [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] for a request that ran out its whole [`request_timeout`](../timeouts.md#model-request-deadlines), or a plain `ModelAPIError` that falls in no category.
 
-Nor is a [refusal](model-fallback.md#refusals), a response with a `finish_reason` of `'content_filter'`: the same model usually refuses the same request again, which is why `ModelFallback` moves on to another model when one refuses. To retry a refusal on the same model all the same, name [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] in `retry_on`. As in `fallback_on`, it then stands for any refused response, empty or with partial text, because the agent raises the error only after it has accepted a response, too late to retry it. Once the model's attempts are used up, the last refusal is accepted, and a `ModelFallback` can still move on from it.
+Nor is a [refusal](model-fallback.md#refusals), a response with a `finish_reason` of `'content_filter'`: the same model usually refuses the same request again, which is why `ModelFallback` moves on to another model when one refuses. To retry a refusal on the same model all the same, name [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] in `retry_on`. As in `fallback_on`, it then stands for any refused response, empty or with partial text, because the agent raises the error only after it has accepted a response, too late to retry it. Once the model's attempts are used up, the last refusal is accepted, and a `ModelFallback` can still move on from it. Likewise, naming [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] retries a response the output token limit cut off (`finish_reason='length'`).
 
 The `retry_on` parameter chooses differently. It takes the same forms as `ModelFallback`'s [`fallback_on`](model-fallback.md#when-to-fall-back):
 
@@ -131,7 +131,7 @@ A streamed request is retried when it fails before any of its output reaches you
 
 ## In agent specs {#agent-specs}
 
-`RetryOnModelErrors` can be declared in an [agent spec](../agent-spec.md). Its `retry_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], and `ContentFilterError`; exception and response handlers can only be passed in Python:
+`RetryOnModelErrors` can be declared in an [agent spec](../agent-spec.md). Its `retry_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], `ContentFilterError` and `OutputTokenLimitExceeded`; exception and response handlers can only be passed in Python:
 
 ```yaml {title="retry_agent.yaml" test="skip"}
 model: {{ openai:medium }}

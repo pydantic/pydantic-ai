@@ -148,7 +148,9 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 transient errors listed above, which leave a refusal, a response with
                 `finish_reason='content_filter'`, to a `ModelFallback`: the same model usually refuses again. Naming
                 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] retries a refusal, empty or with
-                partial text, as it falls back from one in `fallback_on`. Handler type is auto-detected by inspecting type
+                partial text, as it falls back from one in `fallback_on`, and naming
+                [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] likewise retries a
+                response the output token limit cut off. Handler type is auto-detected by inspecting type
                 hints on the first parameter: a handler whose first parameter is hinted as `ModelResponse` is a
                 response handler, and any other is an exception handler. Response handlers only apply to
                 non-streamed requests: a streamed response has already reached the consumer by the time it
@@ -254,7 +256,8 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        if not self._predicates.response_handlers and not self._predicates.content_filter:
+        predicates = self._predicates
+        if not predicates.response_handlers and not predicates.content_filter and not predicates.output_token_limit:
             return response
         if request_context.streaming:
             # A streamed response has already reached the consumer, so it's accepted without consulting the
