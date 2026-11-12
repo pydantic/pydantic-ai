@@ -80,9 +80,9 @@ class LazyDisplay:
         self._running = False
 
     async def start(self) -> None:
-        """Start the display now unless it's running, such as before handing out a link to watch it.
+        """Start the display now unless it runs, such as before handing out a link to watch it.
 
-        Unlike a call's own start, it checks a display already known to run: the environment may have restarted.
+        It checks even a display known to run, since the environment may have restarted.
         """
         async with self._scope():
             await self._start_unless_running(even_if_running=True)
