@@ -190,7 +190,7 @@ async def main():
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
 
-The first start installs whichever of Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid` the machine lacks with `apt-get`, as root or with passwordless `sudo`, which can take a minute; a machine or snapshot that already has them skips it.
+The first start installs [the programs the display needs](computer-use.md#what-the-display-needs), which can take a minute.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

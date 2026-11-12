@@ -404,8 +404,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             Nothing is read from the host environment.
         desktop: Give the machine a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
-            `(width, height)`. It starts on first use, driven with `xdotool` and `scrot`, which the first
-            start installs with `apt-get`, as root or with passwordless `sudo`, when they're missing.
+            `(width, height)`. The first start installs the programs it needs.
     """
 
     def __init__(
