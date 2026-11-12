@@ -17,6 +17,7 @@ from pydantic import BaseModel, TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import category_classify_opencode
 import douwebot_opencode_run
 from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks, read_only_config
 
@@ -33,6 +34,7 @@ FINISHED = [
     {'type': 'text', 'part': {'messageID': 'msg_1', 'text': '{}'}},
     {'type': 'step_finish', 'part': {'messageID': 'msg_1', 'reason': 'stop'}},
 ]
+WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 
 
 def test_internal_symlinks_are_allowed(tmp_path: Path) -> None:
@@ -84,8 +86,7 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (workspace / 'pr-head').mkdir()
     runner_temp = tmp_path / 'runner-temp'
     runner_temp.mkdir()
-    workflow_path = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
-    workflow = yaml.load(workflow_path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
     review_steps = workflow['jobs']['review']['steps']
     prompt = next(step['with']['prompt'] for step in review_steps if step.get('id') == 'review')
     github_output = tmp_path / 'github-output'
@@ -109,13 +110,14 @@ class OpenCodeConfig(BaseModel):
 
 @dataclass
 class Launch:
-    """One OpenCode launch: its command, config, environment, prompt and timeout."""
+    """One OpenCode launch: its command, config, environment, prompt, timeout and working directory."""
 
     args: list[str]
     config: OpenCodeConfig
     env: dict[str, str]
     input: str
     timeout: float | None
+    cwd: Path
 
 
 def fake_opencode(
@@ -129,7 +131,8 @@ def fake_opencode(
         config = (Path(env['XDG_CONFIG_HOME']) / 'opencode' / 'opencode.json').read_text(encoding='utf-8')
         prompt, timeout = kwargs['input'], TypeAdapter(float | None).validate_python(kwargs['timeout'])
         assert isinstance(prompt, str)
-        invoked.append(Launch(args, OpenCodeConfig.model_validate_json(config), env, prompt, timeout))
+        cwd = TypeAdapter(Path).validate_python(kwargs['cwd'])
+        invoked.append(Launch(args, OpenCodeConfig.model_validate_json(config), env, prompt, timeout, cwd))
         events, error = runs[len(invoked) - 1]
         stdout = kwargs['stdout']
         assert isinstance(stdout, io.TextIOBase)
@@ -336,3 +339,71 @@ def test_deepinfra_failure_names_its_error_type(
         'OpenCode Go refused the run before its first step; retrying on DeepInfra.\n'
         f'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with {described}.\n'
     )
+
+
+def classifier_answer(text: str) -> list[dict[str, object]]:
+    """The events of a completed OpenCode run whose final message is `text`."""
+    return [
+        {'type': 'text', 'part': {'messageID': 'msg_1', 'text': text}},
+        {'type': 'step_finish', 'part': {'messageID': 'msg_1', 'reason': 'stop'}},
+    ]
+
+
+@pytest.fixture
+def classify_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Stage the prefetched context and the `Category Classify (OpenCode)` environment; return the job's output file."""
+    runner_temp = tmp_path / 'runner-temp'
+    (runner_temp / 'category-context').mkdir(parents=True)
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    steps = workflow['jobs']['category-classify-opencode']['steps']
+    github_output = tmp_path / 'github-output'
+    github_output.touch()
+    monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setenv(
+        'CLASSIFY_PROMPT', next(step['env']['CLASSIFY_PROMPT'] for step in steps if step.get('id') == 'classify')
+    )
+    monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
+    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
+    return github_output
+
+
+def test_classifier_reads_only_the_prefetched_context(
+    classify_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OpenCode gets the Claude prompt, runs in the prefetched context without GitHub credentials, and sets the output."""
+    invoked = fake_opencode(monkeypatch, (classifier_answer('{"category": "chore"}'), None))
+    category_classify_opencode.main()
+    [call] = invoked
+    assert_runs_on(call, OPENCODE_GO)
+    assert call.args[call.args.index('--agent') + 1] == 'classifier'
+    assert call.cwd == tmp_path / 'runner-temp' / 'category-context'
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    claude = next(step for step in workflow['jobs']['category-classify']['steps'] if step.get('id') == 'classify')
+    assert call.input == claude['with']['prompt'] + category_classify_opencode.TOOL_GUIDANCE
+    assert classify_env.read_text(encoding='utf-8') == 'category=chore\n'
+
+
+@pytest.mark.parametrize(
+    ('events', 'reason'),
+    [
+        pytest.param(classifier_answer('{"category": "refactor"}'), 'validation failed: literal_error', id='unknown'),
+        pytest.param(
+            classifier_answer('{"category": "bug", "reason": "fixes a crash"}'),
+            'validation failed: extra_forbidden',
+            id='extra-field',
+        ),
+        pytest.param(classifier_answer('The category is bug.'), 'validation failed: json_invalid', id='prose'),
+        pytest.param(REFUSED[:1], 'OpenCode review did not complete', id='incomplete'),
+    ],
+)
+def test_classifier_rejects_any_other_answer(
+    classify_env: Path, monkeypatch: pytest.MonkeyPatch, events: list[dict[str, object]], reason: str
+) -> None:
+    """Only one allowed category and nothing else reaches `category-apply`; the job log names why, never the text."""
+    fake_opencode(monkeypatch, (events, None))
+    with pytest.raises(SystemExit) as raised:
+        category_classify_opencode.main()
+    assert raised.value.code == f'OpenCode returned an invalid category: {reason}'
+    assert classify_env.read_text(encoding='utf-8') == ''

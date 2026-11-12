@@ -293,10 +293,30 @@ To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its p
 fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
 PR cannot test its own change to this workflow or its scripts.
 
+# `Category Classify` falls back to OpenCode on a Claude usage limit
+
+`category-classify` in `bots.yml` asks Claude Code for the PR's category, and `category-apply` applies it.
+When the Claude subscription rejects a five-hour or seven-day window, `category-classify-opencode` reruns the
+classification with OpenCode and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra).
+`category-classify` detects that rejection with douwebot's step, `Detect Claude subscription limit`, which runs
+`.github/scripts/douwebot_usage_limit.py`. Every other Claude failure fails `category-classify`, a revoked or expired
+credential included.
+
+- `category-classify-opencode` runs on a fresh runner, so nothing the Claude run wrote reaches it.
+- Its `Prefetch PR context` step saves the output of the `gh` commands the Claude prompt names: `gh pr view`,
+  `gh pr diff --name-only`, and the full `gh pr diff` when a `pyproject.toml` changed.
+- OpenCode runs in that context directory with read, grep and glob only, and without a GitHub token. It receives
+  the Claude prompt, through the `category-prompt` YAML anchor, plus `TOOL_GUIDANCE` from
+  `.github/scripts/category_classify_opencode.py`, which names each prefetched file. Edit the classification rules
+  in the Claude step's prompt only.
+- The answer must be one JSON object whose only field is an allowed `category`. Any other answer fails the job, and
+  no label is applied. `category-apply` applies the category from whichever job set it.
+
 # OpenCode falls back from OpenCode Go to DeepInfra
 
 Every CI OpenCode run starts on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go
-workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and OpenCode threat detection.
+workspace: douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback, each `PR Review Checks` review and
+OpenCode threat detection.
 `run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` reruns it on
 `deepinfra/deepseek-ai/DeepSeek-V4.1-Flash` with `DEEPINFRA_API_KEY` only when all of these hold:
 
