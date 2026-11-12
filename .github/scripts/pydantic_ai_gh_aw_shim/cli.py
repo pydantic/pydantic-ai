@@ -53,6 +53,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, TypeAlias, cast
+from urllib.parse import urlparse
 
 import httpx2
 import logfire
@@ -147,7 +148,7 @@ def _anthropic_native_capabilities() -> list[NativeTool]:
     empty/unset means the Anthropic SDK default (real Anthropic).
     """
     base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
-    if not base_url or 'api.anthropic.com' in base_url:
+    if not base_url or urlparse(base_url).hostname == 'api.anthropic.com':
         return [NativeTool(WebFetchTool())]
     return []
 
@@ -320,7 +321,7 @@ ATTENTION_REQUEST_LIMIT = 50
 SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 CI_REVIEW_WORKFLOW = 'CI Review'
-REVIEW_WORKFLOWS = frozenset({CI_REVIEW_WORKFLOW, 'Pydantic AI UI Security Review'})
+REVIEW_WORKFLOWS = frozenset({CI_REVIEW_WORKFLOW})
 
 
 def _is_attention_run() -> bool:
@@ -624,6 +625,8 @@ TIME_BUDGET_NOTICE = (
     'the limit stops it with nothing posted. Stop investigating. Emit the safe output your '
     'task ends with now, from what you have already found.'
 )
+# What a tool call the time reserve refuses returns to the model.
+TIME_BUDGET_REFUSAL = 'error: the time budget is nearly spent; finish the task from what you already have'
 
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
 run_deadline: float | None = None
@@ -751,7 +754,7 @@ INSTRUCTIONS = (
     'request from inside the agent. Narrow per-item reads may still be used '
     'after the local corpus identifies a specific item. If required prefetched '
     'context is missing or unreadable, report the missing data instead of attempting '
-    'a list request through gh-proxy. CI Review and UI Security must submit a COMMENT '
+    'a list request through gh-proxy. CI Review must submit a COMMENT '
     'review explaining incomplete coverage; other workflows may use `mcp__safeoutputs__noop`.'
 )
 
@@ -1534,10 +1537,64 @@ class CIReviewToolPolicy(AbstractCapability[object]):
             return await handler(args)
         before_reserve = math.floor(seconds_left - RUN_TIME_RESERVE_SECS)
         if before_reserve <= 0:
-            return 'error: the time budget is nearly spent; finish the task from what you already have'
+            return TIME_BUDGET_REFUSAL
         requested = args.get('timeout')
         timeout = requested if isinstance(requested, int | float) and requested > 0 else MAX_FOREGROUND_WAIT
         return await handler({**args, 'timeout': min(timeout, before_reserve)})
+
+
+def _recorded_noops() -> int:
+    """How many `noop` entries the safe-outputs sink holds."""
+    path = os.environ.get('GH_AW_SAFE_OUTPUTS')
+    sink = pathlib.Path(path) if path else None
+    if sink is None or not sink.is_file():
+        return 0
+    return sum(entry.get('type') == 'noop' for entry in _safe_output_entries(sink.read_text(encoding='utf-8')))
+
+
+@dataclass
+class EndRunAfterReserveNoop(AbstractCapability[object]):
+    """Offer the model no tools once a `noop` it posts inside the time reserve leaves no safe output pending.
+
+    Still offered tools after that `noop`, a model can call safe outputs with no per-run limit, such as
+    `missing_data`, until the run's deadline. With no tools offered, its next text answer ends the run. A call it
+    still makes is answered without running, as `CIReviewToolPolicy` answers its withheld tools. A `noop` before
+    the reserve changes nothing: some runs post one early as a progress note, and some workflows record several
+    outputs.
+    """
+
+    _finished: bool = False
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        return EndRunAfterReserveNoop()
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if not self._finished:
+            return request_context
+        parameters = dataclasses.replace(request_context.model_request_parameters, function_tools=[])
+        return dataclasses.replace(request_context, model_request_parameters=parameters)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> object:
+        if self._finished:
+            return TIME_BUDGET_REFUSAL
+        if _safe_output_type(tool_def.name) != 'noop' or time_budget_notice() is None:
+            return await handler(args)
+        recorded = _recorded_noops()
+        result = await handler(args)
+        # Set, never cleared: a parallel `noop` that gh-aw rejects must not undo one that it recorded.
+        if _recorded_noops() > recorded and not safe_output_pending():
+            self._finished = True
+        return result
 
 
 async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
@@ -1550,7 +1607,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     timeout = _subagent_time_limit()
     if timeout <= 0:
         logger.info('Task refused, time budget nearly spent: %s', description[:120])
-        return 'error: the time budget is nearly spent; finish the task from what you already have'
+        return TIME_BUDGET_REFUSAL
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
@@ -1710,6 +1767,7 @@ async def run(
             MarkTimedOutSpans(),
             RecordRunTotals(),
             CIReviewToolPolicy(),
+            EndRunAfterReserveNoop(),
             PrepareTools(hold_time_reserve_for_safe_output),
         ],
     )

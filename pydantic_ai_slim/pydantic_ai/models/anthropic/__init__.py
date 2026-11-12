@@ -104,11 +104,12 @@ from .. import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
-    get_user_agent,
 )
+from .._anthropic_max_tokens import cap_max_tokens
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
@@ -157,6 +158,15 @@ def _revealed_deferred_tool_order(
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]
+
+
+def _validate_wire_tools_not_all_deferred(tools: list[BetaToolUnionParam]) -> None:
+    """Raise before sending a `tools` list in which every tool has `defer_loading=True`, which Anthropic rejects."""
+    if tools and all(tool.get('defer_loading') is True for tool in tools):
+        raise UserError(
+            'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
+            'Make at least one tool visible, or add a tool-search surface or capability catalog.'
+        )
 
 
 def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_order: list[str]) -> None:
@@ -244,10 +254,12 @@ try:
         BetaToolUseBlockParam,
         BetaWebFetchTool20250910Param,
         BetaWebFetchTool20260209Param,
+        BetaWebFetchTool20260318Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchTool20260209Param,
+        BetaWebSearchTool20260318Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
@@ -261,6 +273,7 @@ try:
 
     from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
+    from ._betas import extends_max_output
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
@@ -413,7 +426,9 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # * `AsyncAnthropicBedrockMantle` is the Bedrock Messages API. Verified live, it rejects `web_search_20250305`,
 #   `web_search_20260209`, `web_fetch_20250910` and `web_fetch_20260209` with a 400 ("tool type ... is not
 #   supported for this model") on every Claude model it serves. https://github.com/pydantic/pydantic-ai/issues/11481
-# * Vertex AI supports basic web search only.
+# * Vertex AI supports basic web search only. Checked live in November 2026: it rejected `web_search_20260209`,
+#   `web_search_20260318` and every web fetch version. The `20260318` versions that web tool `provider_settings`
+#   select are still sent there, so Vertex's API decides as soon as it accepts them.
 # * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass), and
 #   Microsoft Foundry support dynamic-filtering web tools on supported model profiles.
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
@@ -484,8 +499,8 @@ _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
 # Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
 # and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
-# Citations route the `20260209` web tools to direct calls on the direct API, where uncited sandbox results were
-# reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
+# Citations route the `20260209` and `20260318` web tools to direct calls on the direct API, where uncited sandbox
+# results were reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
 # `AsyncAnthropic` subclass) also send those versions but aren't verified to accept `allowed_callers` with citations,
 # so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
 _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
@@ -516,7 +531,7 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
 
 
 LatestAnthropicModelNames = Literal[
-    'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -660,7 +675,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Diagnostics are free and don't affect caching, but Anthropic retains a short-lived fingerprint (hashes and
     token counts, never prompt content) for each request that carries them, and HIPAA-enabled organizations have
     requests using them rejected. They are only available on the Claude API, so the setting is ignored on Amazon
-    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
+    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`. The ID comes from the message
+    history, which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so leave this off
+    with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -687,7 +704,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
     or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
-    `20260209` versions by default, unless citations route them to direct calls, which only happens
+    `20260209` and `20260318` versions by default, unless citations route them to direct calls, which only happens
     on the Anthropic API, and on any version when `anthropic_web_tools_allowed_callers` names a code
     execution caller. The Anthropic API rejects a container on any other request, so
     Pydantic AI doesn't send it there. Tools passed in `extra_body['tools']` aren't read, so a
@@ -703,6 +720,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
     `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
     Skills beta.
+
+    Reuse from history trusts the message history for the `container_id`, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, set a
+    container id you saved on your server, or `False`; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_code_execution_tool_version: AnthropicCodeExecutionToolVersion | Literal['auto']
@@ -719,12 +741,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
 
     By default the field is omitted and Anthropic picks the caller from the tool version. The
-    `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
+    `20260209` and `20260318` versions of web search and web fetch let the model call the tools from code
     execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
     filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
     enabled. Results the model reads from code execution come back without citations, so when a request
     asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] and text output or, for
-    web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
+    web fetch, [`enable_citations`][pydantic_ai.native_tools.AnthropicWebFetchToolSettings.enable_citations],
     Pydantic AI sends `['direct']` on those versions of the cited tools on the Anthropic API, unless the
     request needs code execution. See [Web Tool Callers](../models/anthropic.md#web-tool-callers).
 
@@ -753,17 +775,20 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. builtin tools) and any betas from
-    extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
+    Merged with auto-added betas (e.g. builtin tools), any betas from an `anthropic-beta` header in
+    `extra_headers`, however its name is capitalized, and those in the client's `default_headers`, except on
+    `AsyncAnthropicBedrock`, where Bedrock ignores them. See the Anthropic docs for available beta features.
     """
 
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8, and 5).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8,
+    5, and 5.5, Fable 5.2, and Mythos 5.2).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
-    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
-    see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
+    see [Fast mode](../../models/anthropic.md#fast-mode) for each model's availability.
+    A response that ran in fast mode records `'speed': 'fast'` in `provider_details`, which prices it at fast mode rates.
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
@@ -960,6 +985,18 @@ def _resolve_anthropic_service_tier(
     return OMIT
 
 
+def _code_execution_may_call_web_tools(
+    supports_dynamic_filtering: bool, model_settings: AnthropicModelSettings
+) -> bool:
+    """Whether code execution may call the web tools.
+
+    Models with dynamic filtering allow it by default. Without it, the web tools are called directly unless
+    `anthropic_web_tools_allowed_callers` names a code execution caller.
+    """
+    allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers') or []
+    return supports_dynamic_filtering or any(caller != 'direct' for caller in allowed_callers)
+
+
 @dataclass(init=False)
 class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
@@ -1100,6 +1137,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def _system_entries_follow_user_turn(self) -> bool:
+        # A request's mid-conversation system messages go in a `system` entry after its user turn.
+        return True
+
     @cached_property
     def profile(self) -> AnthropicModelProfile:
         """The model profile.
@@ -1147,9 +1189,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
                 supports_inline_system_prompts=supports_inline_system_prompts,
                 supports_mid_conversation_effort=supports_mid_conversation_effort,
-                # A request-scoped entry is a `{'role': 'system'}` entry, so it's only native where the role is.
+                # A request-scoped entry is a `{'role': 'system'}` entry, so it needs a transport that serves the
+                # role, but not a model whose other system messages use it: a sealed model's are `<system>` blocks.
                 supports_request_scoped_system_prompts=_profile.get('supports_request_scoped_system_prompts', False)
-                and supports_inline_system_prompts,
+                and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
@@ -1501,6 +1544,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
+        if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
+            prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
@@ -1762,11 +1807,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
         _append_revealed_tool_params(tools, revealed_tool_order)
-        if tools and all(tool.get('defer_loading') is True for tool in tools):
-            raise UserError(
-                'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
-                'Make at least one tool visible, or add a tool-search surface or capability catalog.'
-            )
+        _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
@@ -1884,6 +1925,37 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return context_management
 
+    @staticmethod
+    def _split_betas(header: str) -> set[str]:
+        """The betas a comma-separated `anthropic-beta` header value lists."""
+        return {stripped_beta for beta in header.split(',') if (stripped_beta := beta.strip())}
+
+    @staticmethod
+    def _pop_beta_headers(extra_headers: dict[str, str]) -> set[str]:
+        """Remove the `anthropic-beta` header from `extra_headers`, in any spelling, and return the betas it lists.
+
+        The SDK folds header names case-insensitively, so one left in `extra_headers` would replace the header it
+        builds from `betas`.
+        """
+        names = [name for name in extra_headers if name.lower() == 'anthropic-beta']
+        return {
+            beta
+            for name in names
+            # A falsy value, such as `None` from an unset environment variable or the SDK's `omit`, names no betas.
+            if (header := extra_headers.pop(name))
+            for beta in AnthropicModel._split_betas(header)
+        }
+
+    def _request_betas(self, model_settings: AnthropicModelSettings) -> set[str]:
+        """The betas a request sends regardless of its messages: the client's, `anthropic_betas` and `anthropic-beta`.
+
+        `_get_betas_and_extra_headers` starts from them, so the `max_tokens` cap sees the betas the request sends.
+        """
+        betas = self._client_default_betas()
+        betas.update(str(beta) for beta in model_settings.get('anthropic_betas') or ())
+        betas.update(self._pop_beta_headers(dict(model_settings.get('extra_headers', {}))))
+        return betas
+
     def _get_betas_and_extra_headers(
         self,
         model_settings: AnthropicModelSettings,
@@ -1894,14 +1966,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set,
-        auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
-        and ensuring `User-Agent` is set.
+        Starts from `_request_betas`: the client's `default_headers` betas, `anthropic_betas` and a custom
+        `anthropic-beta` header from `extra_headers`. Then it auto-attaches the Files API beta when messages contain an
+        Anthropic `UploadedFile`, and ensures `User-Agent` is set.
         """
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
+        # Its betas are already in `_request_betas`; the header is removed so it doesn't replace the one built from them.
+        self._pop_beta_headers(extra_headers)
 
-        betas: set[str] = set()
+        betas = self._request_betas(model_settings)
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
@@ -1919,14 +1992,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
 
-        if betas_from_setting := model_settings.get('anthropic_betas'):
-            betas.update(str(b) for b in betas_from_setting)
-
-        if beta_header := extra_headers.pop('anthropic-beta', None):
-            betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
-
         betas.update(self._message_betas(model_settings, anthropic_profile, messages, model_request_parameters))
         return betas, extra_headers
+
+    def _client_default_betas(self) -> set[str]:
+        """The betas in the client's `default_headers`, which a request's own `anthropic-beta` header replaces.
+
+        The legacy Bedrock API reads betas from the request body alone, and the SDK moves only a request's own betas
+        there, so a beta in that client's headers never applies and isn't added.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return set()
+        beta_header = ''
+        for name, value in self.client.default_headers.items():
+            # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
+            if name.lower() == 'anthropic-beta':
+                beta_header = value if isinstance(value, str) else ''
+        return self._split_betas(beta_header)
 
     def _message_betas(
         self,
@@ -2170,6 +2252,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
         _append_revealed_tool_params(tools, revealed_tool_order)
+        # Judged on the request's `tools`, which also hold any server tool the count leaves off. A native tool entry is
+        # never deferred, and without one the request's `tools` equal these.
+        if not any(_native_tool_is_a_tools_entry(tool) for tool in model_request_parameters.native_tools):
+            _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
@@ -2188,7 +2274,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = self._translate_thinking(model_settings, model_request_parameters)
         effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
+            model_settings, anthropic_profile, messages, map_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -2488,9 +2574,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_dynamic_filtering: bool
-    ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
+        tool: WebSearchTool, supports_dynamic_filtering: bool, code_execution_may_call: bool
+    ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        # `response_inclusion` only changes results consumed by code execution, so it selects the newer version only
+        # when code execution may call the tool.
+        if 'response_inclusion' in settings and code_execution_may_call:
+            web_search_tool = BetaWebSearchTool20260318Param(
+                name='web_search',
+                type='web_search_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                user_location=user_location,
+                response_inclusion=settings['response_inclusion'],
+            )
+            if not supports_dynamic_filtering:
+                web_search_tool['allowed_callers'] = ['direct']
+            return web_search_tool
         if supports_dynamic_filtering:
             return BetaWebSearchTool20260209Param(
                 name='web_search',
@@ -2511,10 +2613,33 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
-    ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        enable_citations = tool.enable_citations or include_citations
+        tool: WebFetchTool, supports_dynamic_filtering: bool, code_execution_may_call: bool, include_citations: bool
+    ) -> tuple[
+        BetaWebFetchTool20260318Param | BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param,
+        str | None,
+    ]:
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        enable_citations = settings.get('enable_citations', tool.enable_citations) or include_citations
         citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
+        max_content_tokens = settings.get('max_content_tokens', tool.max_content_tokens)
+        # `use_cache` affects every call, but `response_inclusion` only matters when code execution may call the tool.
+        if 'use_cache' in settings or ('response_inclusion' in settings and code_execution_may_call):
+            web_fetch_tool = BetaWebFetchTool20260318Param(
+                name='web_fetch',
+                type='web_fetch_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=max_content_tokens,
+            )
+            if 'use_cache' in settings:
+                web_fetch_tool['use_cache'] = settings['use_cache']
+            if 'response_inclusion' in settings:
+                web_fetch_tool['response_inclusion'] = settings['response_inclusion']
+            if not supports_dynamic_filtering:
+                web_fetch_tool['allowed_callers'] = ['direct']
+            return web_fetch_tool, None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -2524,7 +2649,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     allowed_domains=tool.allowed_domains,
                     blocked_domains=tool.blocked_domains,
                     citations=citations,
-                    max_content_tokens=tool.max_content_tokens,
+                    max_content_tokens=max_content_tokens,
                 ),
                 None,
             )
@@ -2536,7 +2661,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 allowed_domains=tool.allowed_domains,
                 blocked_domains=tool.blocked_domains,
                 citations=citations,
-                max_content_tokens=tool.max_content_tokens,
+                max_content_tokens=max_content_tokens,
             ),
             'web-fetch-2025-09-10',
         )
@@ -2552,11 +2677,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
+        code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
 
         for tool in model_request_parameters.native_tools:
             match tool:
                 case WebSearchTool():
-                    tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
+                    tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, code_execution_may_call))
                 case CodeExecutionTool():
                     tool_version = self._get_code_execution_tool_version(model_settings)
                     tools.append(map_code_execution_tool(tool_version))
@@ -2566,7 +2692,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         beta_features.add('files-api-2025-04-14')
                 case WebFetchTool():
                     web_fetch_tool, beta_feature = self._map_web_fetch_tool(
-                        tool, supports_dynamic_filtering, citations_included(model_settings, model_request_parameters)
+                        tool,
+                        supports_dynamic_filtering,
+                        code_execution_may_call,
+                        citations_included(model_settings, model_request_parameters),
                     )
                     tools.append(web_fetch_tool)
                     if beta_feature is not None:
@@ -2626,8 +2755,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     case {
                         'type': 'web_search_20250305'
                         | 'web_search_20260209'
+                        | 'web_search_20260318'
                         | 'web_fetch_20250910'
                         | 'web_fetch_20260209'
+                        | 'web_fetch_20260318'
                     }:
                         web_tool['allowed_callers'] = allowed_callers
                     case _:

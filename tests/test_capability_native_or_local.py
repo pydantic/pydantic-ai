@@ -1074,10 +1074,10 @@ class TestMCPCapability:
                     """\
 Be brief.
 
-<context id="toolset:docs">
+<pyai:context id="toolset:docs">
 Always search the docs first.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """
                 ]
             )
