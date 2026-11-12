@@ -846,20 +846,21 @@ class TestGoogleThinkingTranslation:
         result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
 
-    @pytest.mark.parametrize('effort', ['xhigh', 'max'])
-    def test_thinking_xhigh_snaps_to_high_without_a_level_set(
-        self, gemini_3_model: FunctionModel, effort: ThinkingEffort
+    @pytest.mark.parametrize(
+        ('model_name', 'effort', 'expected'),
+        [
+            ('gemini-3-flash-preview', 'xhigh', 'HIGH'),
+            ('gemini-3-flash-preview', 'max', 'HIGH'),
+            ('gemini-4-hydrogen', 'high', 'HIGH'),
+            ('gemini-4-hydrogen', 'xhigh', 'XHIGH'),
+            ('gemini-4-hydrogen', 'max', 'XHIGH'),
+        ],
+    )
+    def test_thinking_xhigh_reaches_only_models_that_list_it(
+        self, model_name: str, effort: ThinkingEffort, expected: str
     ):
-        """A model without a documented level set never gets `XHIGH`, which Gemini 3 models reject."""
-        params = ModelRequestParameters(thinking=effort)
-        settings: ModelSettings = {}
-        result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
-        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
-
-    @pytest.mark.parametrize(('effort', 'expected'), [('high', 'HIGH'), ('xhigh', 'XHIGH'), ('max', 'XHIGH')])
-    def test_thinking_xhigh_on_gemini_4_hydrogen(self, effort: ThinkingEffort, expected: str):
-        """`gemini-4-hydrogen` lists `XHIGH`, so `xhigh` and `max` reach it."""
-        model = FunctionModel(_echo, profile=google_model_profile('gemini-4-hydrogen'))
+        """Only a model that lists `XHIGH` gets it: Gemini 3 models reject it, so they snap to `HIGH`."""
+        model = FunctionModel(_echo, profile=google_model_profile(model_name))
         params = ModelRequestParameters(thinking=effort)
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(model, settings, params)

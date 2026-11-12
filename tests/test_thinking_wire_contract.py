@@ -305,6 +305,25 @@ CASES = [
         present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
         match_body=True,
     ),
+    WireCase(
+        id='google-gemini-3-flash-xhigh-snaps-to-high',
+        provider='google',
+        model_name='gemini-3-flash-preview',
+        thinking='xhigh',
+        # No documented level set, so `xhigh` snaps to `HIGH`; the Gemini API 400s on `XHIGH` here.
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-4-hydrogen-xhigh',
+        provider='google',
+        model_name='gemini-4-hydrogen',
+        thinking='xhigh',
+        present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
+        # `google-genai`'s `ThinkingLevel` enum doesn't list `XHIGH` yet; it warns and sends the value.
+        expect_warning='XHIGH is not a valid ThinkingLevel',
+        match_body=True,
+    ),
     # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
     # dated (always-on) magistral ids must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
