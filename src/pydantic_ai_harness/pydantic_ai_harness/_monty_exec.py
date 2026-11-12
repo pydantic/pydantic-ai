@@ -295,6 +295,9 @@ class MontyExecutor:
     sleep: Callable[[float], Coroutine[Any, Any, None]] = anyio.sleep
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
+    # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
+    # a host can run the calls it collected from them as one batch, in dispatch order.
+    flush: Callable[[], Awaitable[None]] | None = None
 
     _slept_seconds: float = field(default=0.0, init=False)
     # Parallel calls deferred but not yet resolved, keyed by Monty call id.
@@ -458,6 +461,8 @@ class MontyExecutor:
 
     async def _resolve_futures(self, snapshot: AsyncFutureSnapshot) -> AsyncSnapshot:
         """Resolve the deferred calls a `FutureSnapshot` is waiting on."""
+        if self.flush is not None:
+            await self.flush()
         pending_ids = snapshot.pending_call_ids
         results: dict[int, ExternalSettledResult] = {}
         for cid in pending_ids:

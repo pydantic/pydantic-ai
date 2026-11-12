@@ -64,7 +64,7 @@ class Researcher(CombinedCapability[AgentDepsT]):
             capabilities.append(RequireWorkspace[AgentDepsT]('Researcher'))
         if instructions is not None:
             # The id also names the capability's (empty) function toolset, which durable
-            # execution requires; mirrors `coder_instructions` (coder/_capability.py).
+            # execution requires.
             capabilities.append(Capability[AgentDepsT](id='researcher_instructions', instructions=instructions))
         capabilities.extend(
             [
