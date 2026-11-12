@@ -95,10 +95,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from tests.models.conftest import items_serialized_differently_inside_a_list
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
-from .models.conftest import items_serialized_differently_inside_a_list
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
