@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import sys
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
@@ -32,6 +33,7 @@ try:
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker, WorkflowRunner
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -58,14 +60,27 @@ ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60), retry_policy=RetryPolicy(maximum_attempts=1)
 )
 
-_tokens: list[str] = []
-_asked: list[list[str]] = []
-_deleted: list[str] = []
-_model_calls: list[int] = []
+
+@dataclass
+class Records:
+    """What the agents' functions did in the current test, as the worker's copy of this module saw it."""
+
+    asked: anyio.Event
+    tokens: list[str] = field(default_factory=list[str])
+    asked_about: list[list[str]] = field(default_factory=list[list[str]])
+    deleted: list[str] = field(default_factory=list[str])
+    model_calls: int = 0
+
+
+_records: list[Records] = []
+
+
+def _current() -> Records:
+    return _records[-1]
 
 
 def _delete_then_report(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    _model_calls.append(len(messages))
+    _current().model_calls += 1
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
     returned = next(part for part in messages[-1].parts if isinstance(part, ToolReturnPart))
@@ -73,12 +88,14 @@ def _delete_then_report(messages: list[ModelMessage], info: AgentInfo) -> ModelR
 
 
 async def _hand_on(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-    _tokens.append(token)
-    _asked.append([call.tool_call_id for call in requests.approvals])
+    records = _current()
+    records.tokens.append(token)
+    records.asked_about.append([call.tool_call_id for call in requests.approvals])
+    records.asked.set()
 
 
 def _delete(path: str) -> str:
-    _deleted.append(path)
+    _current().deleted.append(path)
     return f'deleted {path}'
 
 
@@ -147,10 +164,9 @@ async def env() -> AsyncIterator[WorkflowEnvironment]:
 
 
 @pytest.fixture(autouse=True)
-def reset_records() -> Iterator[None]:
-    yield
-    for records in (_tokens, _asked, _deleted, _model_calls):
-        records.clear()
+async def records() -> Records:
+    _records.append(Records(asked=anyio.Event()))
+    return _current()
 
 
 def _worker(
@@ -175,28 +191,27 @@ async def _start(client: Client, task_queue: str) -> WorkflowHandle[Any, str]:
     )
 
 
-async def _until_asked(handle: WorkflowHandle[Any, str]) -> str:
-    """Wait until the history records the local activity that called `ask`, so the run is waiting, and return the token."""
+async def _until_asked(handle: WorkflowHandle[Any, str], records: Records) -> str:
+    """Wait until `ask` handed the token on and the history recorded it, and return the token."""
     with anyio.fail_after(30):
-        while not any(
-            event.HasField('marker_recorded_event_attributes') for event in (await handle.fetch_history()).events
-        ):
-            await anyio.sleep(0.05)
-    [token] = _tokens
+        await records.asked.wait()
+    # Temporal answers a query once the workflow task in progress, which ran `ask`, has completed.
+    await handle.query('__stack_trace')
+    [token] = records.tokens
     return token
 
 
 async def test_the_run_waits_for_the_decision_and_a_new_worker_resumes_it_without_asking_again(
-    env: WorkflowEnvironment,
+    env: WorkflowEnvironment, records: Records
 ) -> None:
     client = env.client
     task_queue = f'approvals-{uuid.uuid4()}'
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
         handle = await _start(client, task_queue)
-        token = await _until_asked(handle)
+        token = await _until_asked(handle, records)
     assert token.startswith(f'{handle.id}:'), 'the token names the workflow'
-    assert _asked == [['call-1']]
-    assert _deleted == []
+    assert records.asked_about == [['call-1']]
+    assert records.deleted == []
 
     # The worker that asked is gone. The decision is signalled to the workflow, and a new worker replays it.
     decision = {'approvals': {'call-1': {'kind': 'tool-approved', 'override_args': {'path': 'b.txt'}}}}
@@ -204,44 +219,48 @@ async def test_the_run_waits_for_the_decision_and_a_new_worker_resumes_it_withou
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
         assert await handle.result() == 'success: deleted b.txt'
 
-    assert _deleted == ['b.txt']
-    assert _asked == [['call-1']], 'the replay does not ask again'
-    assert len(_model_calls) == 2, 'the first model response came from the history'
+    assert records.deleted == ['b.txt']
+    assert records.asked_about == [['call-1']], 'the replay does not ask again'
+    assert records.model_calls == 2, 'the first model response came from the history'
 
     await Replayer(
         workflows=[ApprovalsWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
         data_converter=pydantic_data_converter,
     ).replay_workflow(await handle.fetch_history())
-    assert _asked == [['call-1']]
-    assert _deleted == ['b.txt']
+    assert records.asked_about == [['call-1']]
+    assert records.deleted == ['b.txt']
 
 
-async def test_a_denial_reaches_the_model_without_running_the_tool(env: WorkflowEnvironment) -> None:
+async def test_a_denial_reaches_the_model_without_running_the_tool(env: WorkflowEnvironment, records: Records) -> None:
+    """In the workflow sandbox, with the module that defines `ask` passed through, so `ask` shares the worker's state."""
     client = env.client
     task_queue = f'approvals-{uuid.uuid4()}'
-    async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
+    runner = SandboxedWorkflowRunner(restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__))
+    async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent, runner):
         handle = await _start(client, task_queue)
-        token = await _until_asked(handle)
+        with anyio.fail_after(30):
+            await records.asked.wait()
+        [token] = records.tokens
         await resolve_external_event(client, token, DeferredToolResults(approvals={'call-1': ToolDenied('Not today.')}))
         assert await handle.result() == 'denied: Not today.'
 
-    assert _deleted == []
+    assert records.deleted == []
 
 
-async def test_a_failed_wait_denies_the_call(env: WorkflowEnvironment) -> None:
+async def test_a_failed_wait_denies_the_call(env: WorkflowEnvironment, records: Records) -> None:
     client = env.client
     task_queue = f'approvals-{uuid.uuid4()}'
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
         handle = await _start(client, task_queue)
-        token = await _until_asked(handle)
+        token = await _until_asked(handle, records)
         await fail_external_event(client, token, 'The approver is away.')
         assert await handle.result() == 'denied: No decision on this tool call arrived: The approver is away.'
 
-    assert _deleted == []
+    assert records.deleted == []
 
 
-async def test_a_wait_that_times_out_denies_the_call(env: WorkflowEnvironment) -> None:
+async def test_a_wait_that_times_out_denies_the_call(env: WorkflowEnvironment, records: Records) -> None:
     """Awaiting the result lets the time-skipping server jump over the 30-minute timeout."""
     client = env.client
     task_queue = f'approvals-{uuid.uuid4()}'
@@ -251,14 +270,14 @@ async def test_a_wait_that_times_out_denies_the_call(env: WorkflowEnvironment) -
             'denied: No decision on this tool call arrived: No resolution arrived within 0:30:00.'
         )
 
-    assert _asked == [['call-1']]
-    assert _deleted == []
+    assert records.asked_about == [['call-1']]
+    assert records.deleted == []
 
 
 async def test_answers_from_ask_are_recorded_and_the_run_continues_without_waiting(
-    env: WorkflowEnvironment,
+    env: WorkflowEnvironment, records: Records
 ) -> None:
-    """In the workflow sandbox, as a production worker runs it: each wait's `ask` answers in place, and a replay reuses the answers."""
+    """In the default workflow sandbox: each wait's `ask` answers in place, and a replay reuses the answers."""
     client = env.client
     task_queue = f'approval-policy-{uuid.uuid4()}'
     async with Worker(
@@ -273,14 +292,14 @@ async def test_answers_from_ask_are_recorded_and_the_run_continues_without_waiti
     # One local activity per wait called `ask`, and nothing was signalled.
     assert len([event for event in history.events if event.HasField('marker_recorded_event_attributes')]) == 2
     assert not any(event.HasField('workflow_execution_signaled_event_attributes') for event in history.events)
-    assert _deleted == ['a.txt', 'b.txt']
+    assert records.deleted == ['a.txt', 'b.txt']
 
     await Replayer(
         workflows=[ApprovalPolicyWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
         data_converter=pydantic_data_converter,
     ).replay_workflow(history)
-    assert _deleted == ['a.txt', 'b.txt']
+    assert records.deleted == ['a.txt', 'b.txt']
 
 
 async def test_a_token_from_elsewhere_is_refused(env: WorkflowEnvironment) -> None:

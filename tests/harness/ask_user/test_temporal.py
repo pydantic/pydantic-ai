@@ -44,6 +44,7 @@ TASK_QUEUE = 'pydantic-ai-harness-ask-user-queue'
 _QUESTIONS = [{'header': 'Scope', 'question': 'Which files?', 'options': [{'label': 'All'}, {'label': 'Some'}]}]
 
 _tokens: list[str] = []
+_handed_on: list[anyio.Event] = []
 
 
 def _ask_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -55,6 +56,7 @@ def _ask_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
 
 async def _hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> AskUserResponse | None:
     _tokens.append(token)
+    _handed_on[-1].set()
     return None
 
 
@@ -96,6 +98,7 @@ async def env() -> AsyncIterator[WorkflowEnvironment]:
 
 async def test_a_question_waits_for_the_answer_and_its_answerer_is_not_asked_again(env: WorkflowEnvironment) -> None:
     client = env.client
+    _handed_on.append(anyio.Event())
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -107,8 +110,7 @@ async def test_a_question_waits_for_the_answer_and_its_answerer_is_not_asked_aga
             AskUserWorkflow.run, args=['tidy up'], id=f'ask-user-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
         with anyio.fail_after(30):
-            while not _tokens:
-                await anyio.sleep(0.05)
+            await _handed_on[-1].wait()
         [token] = _tokens
 
         response = AskUserResponse(answers=(AskUserAnswer(header='Scope', selected=('All',)),))

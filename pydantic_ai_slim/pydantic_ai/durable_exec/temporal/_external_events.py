@@ -32,7 +32,10 @@ _SIGNAL_NAME = 'pydantic_ai__external_event'
 """The signal `resolve_external_event` and `fail_external_event` send, which the waiter handles on every workflow it waits in."""
 
 _EVENT_KEY = re.compile(r'[0-9a-f]{32}')
-"""An event key: the hex form of a UUID the workflow draws for each wait, so no two waits share one, even across executions."""
+"""An event key: the hex form of a UUID the workflow draws for each wait, so no two waits share one, even across executions.
+
+It is unique, not secret: the workflow draws it from its replay-safe random source, and the history records it.
+"""
 
 AskActivity = Callable[[str, str], Awaitable[JsonValue]]
 
@@ -56,12 +59,12 @@ class ExternalEventSignal:
 
 
 class _Inbox:
-    """The outcomes signalled to one workflow execution, by event key; its `receive` handles the workflow's signal."""
+    """The outcomes signalled to one workflow execution, by event key; registered as the workflow's handler for the signal."""
 
     def __init__(self) -> None:
         self.outcomes: dict[str, ExternalEventSignal] = {}
 
-    def receive(self, signal: ExternalEventSignal) -> None:
+    def __call__(self, signal: ExternalEventSignal) -> None:
         # The first outcome wins, as in process: the wait ends with it, and a later one changes nothing.
         self.outcomes.setdefault(signal.event_key, signal)
 
@@ -72,11 +75,10 @@ class _Inbox:
         Temporal delivers a signal that arrived before the handler was registered once it is, so
         registering on the first wait, before `ask` hands the token out, misses none.
         """
-        inbox = getattr(workflow.get_signal_handler(_SIGNAL_NAME), '__self__', None)
-        if isinstance(inbox, cls):
+        if isinstance(inbox := workflow.get_signal_handler(_SIGNAL_NAME), cls):
             return inbox
         inbox = cls()
-        workflow.set_signal_handler(_SIGNAL_NAME, inbox.receive)
+        workflow.set_signal_handler(_SIGNAL_NAME, inbox)
         return inbox
 
 
