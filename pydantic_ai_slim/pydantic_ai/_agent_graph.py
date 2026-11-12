@@ -1141,7 +1141,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 index = _last_response_index(messages)
                 assert index is not None  # `_answered_at_pause` found it.
                 response, _ = await self._adopt_resumed_response(ctx, messages, index)
-                return CallToolsNode[DepsT, NodeRunEndT](response, _answered_tool_call_ids=answered_at_pause)
+                return CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause)
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
@@ -1219,7 +1219,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     def _history_to_run(
         self, stored: list[_messages.ModelMessage]
-    ) -> tuple[list[_messages.ModelMessage], tuple[str, ...] | None]:
+    ) -> tuple[list[_messages.ModelMessage], tuple[_ToolCallKey, ...] | None]:
         """The history to run on, and the calls answered at the deferred pause it resumes, if it resumes one.
 
         A run given neither a new prompt nor results resumes a pause its history ends on. That history is kept as
@@ -1379,7 +1379,11 @@ def _repair_interrupted_tail(
     return messages
 
 
-def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[str, ...] | None:
+_ToolCallKey: TypeAlias = tuple[str, str]
+"""A tool call's tool name and ID, which together tell apart calls a model gave the same ID."""
+
+
+def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_ToolCallKey, ...] | None:
     """The tool calls answered after the final response, when a run that paused for deferred tools left the history.
 
     Such a run ends with its response's deferred calls unanswered, followed by what it wrote at the pause:
@@ -1396,14 +1400,14 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[str, 
     requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
     call_ids = {call.tool_call_id for call in response.tool_calls}
     answered = [
-        part.tool_call_id
+        (part.tool_name or '', part.tool_call_id)
         for request in requests
         for part in request.parts
         if _is_tool_result_part(part) and part.tool_call_id in call_ids
     ]
     if (
         response.state != 'complete'
-        or not Counter(call.tool_call_id for call in response.tool_calls) - Counter(answered)
+        or not Counter((call.tool_name, call.tool_call_id) for call in response.tool_calls) - Counter(answered)
         or not all(_written_at_pause(request, response, call_ids) for request in requests)
     ):
         return None
@@ -3874,10 +3878,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     If the `model_response` has final output instead, this user prompt is ignored.
     The user prompt will be appended after all tool return parts in the next model request.
     """
-    _answered_tool_call_ids: tuple[str, ...] = field(default=(), repr=False)
-    """IDs of the calls of `model_response` that requests already in the history answered, so they aren't run again.
+    _answered_calls: tuple[_ToolCallKey, ...] = field(default=(), repr=False)
+    """The calls of `model_response` that requests already in the history answered, so they aren't run again.
 
-    An ID that repeats in the response is listed once per answered call, matched to its calls in order.
+    Listed by tool name and ID, once per answered call. A model can give several calls the same ID; ones that
+    also share a tool name are matched to their results in order.
     """
 
     _wrapped_events_iterator: AsyncIterator[_messages.AgentStreamEvent] | None = field(
@@ -4149,11 +4154,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     def _unanswered(self, tool_calls: list[_messages.ToolCallPart]) -> list[_messages.ToolCallPart]:
         """The calls requests already in the history didn't answer, which are the ones to run."""
-        answered = Counter(self._answered_tool_call_ids)
+        answered = Counter(self._answered_calls)
         unanswered: list[_messages.ToolCallPart] = []
         for call in tool_calls:
-            if answered[call.tool_call_id]:
-                answered[call.tool_call_id] -= 1
+            if answered[key := (call.tool_name, call.tool_call_id)]:
+                answered[key] -= 1
             else:
                 unanswered.append(call)
         return unanswered

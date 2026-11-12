@@ -615,19 +615,21 @@ async def test_resuming_a_mixed_deferred_pause_runs_a_call_that_no_longer_defers
     assert sent_returns == [('call_data', 'data'), ('call_file', 'created')]
 
 
-async def test_resuming_a_mixed_deferred_pause_with_a_repeated_call_id_runs_only_the_waiting_call():
-    """When two calls share an ID, a result answers only the first of them, so the second still runs on resume."""
+@pytest.mark.parametrize('waiting_call_first', [False, True])
+async def test_resuming_a_mixed_deferred_pause_with_a_repeated_call_id_runs_only_the_waiting_call(
+    waiting_call_first: bool,
+):
+    """When two calls share an ID, the result answers the call of its tool, so only the other one runs on resume."""
     received: list[list[ModelMessage]] = []
     get_data_runs = 0
 
     def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         received.append(messages)
-        return ModelResponse(
-            parts=[
-                ToolCallPart('get_data', {}, tool_call_id='call_1'),
-                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_1'),
-            ]
-        )
+        calls = [
+            ToolCallPart('get_data', {}, tool_call_id='call_1'),
+            ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_1'),
+        ]
+        return ModelResponse(parts=calls[::-1] if waiting_call_first else calls)
 
     agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
 
