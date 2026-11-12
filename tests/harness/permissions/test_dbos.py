@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Generator
 from pathlib import Path
@@ -84,6 +85,10 @@ def test_remembered_approval_holds_on_replay_and_in_the_next_run(dbos: DBOS) -> 
         attempts.append(agent.run_sync('go', message_history=history).all_messages())
         if len(attempts) == 1:
             raise _Crash
+        if len(attempts) == 2:
+            # The resumed attempt runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing
+            # else closes.
+            asyncio.get_event_loop().close()
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_Crash):
