@@ -701,19 +701,62 @@ def _computer_history(
 _COMPUTER_ITEM = {'type': 'computer_call', 'id': 'cu_1', 'call_id': 'call_1', 'status': 'completed'}
 
 
-async def test_a_pixel_scroll_says_how_it_ran_as_wheel_clicks(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'scroll_x, metadata, summary, notes',
+    [
+        pytest.param(
+            0,
+            {'performed': 1},
+            'Ran 1 action.',
+            ' scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.',
+            id='ran',
+        ),
+        pytest.param(
+            0,
+            {'performed': 0, 'error': 'This workspace is read-only.'},
+            'Ran 0 of 1 actions. The next one failed: This workspace is read-only.',
+            '',
+            id='failed-before-it',
+        ),
+        pytest.param(
+            0,
+            {'performed': 1, 'changed': True},
+            'Before it ran, this call was changed to: [{"type":"screenshot"}]. Ran 1 action.',
+            '',
+            id='changed-before-it',
+        ),
+        pytest.param(
+            0,
+            None,
+            'Ran 1 action.',
+            '',
+            id='without-its-outcome',
+        ),
+        pytest.param(
+            150,
+            {'performed': 2, 'error': 'The display stopped.'},
+            'Ran 2 of 3 actions. The next one failed: The display stopped.',
+            ' scroll_x=150 ran as 2 wheel clicks of about 100 pixels each.',
+            id='only-its-first-axis-ran',
+        ),
+    ],
+)
+async def test_a_pixel_scroll_that_ran_says_how_it_ran_as_wheel_clicks(
+    allow_model_requests: None, scroll_x: int, metadata: dict[str, Any] | None, summary: str, notes: str
+) -> None:
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    scroll: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}
-    item = {**_COMPUTER_ITEM, 'actions': [scroll]}
-    result = ToolReturnPart(
-        'computer',
-        ['Ran 1 action.', _SCREEN],
-        tool_call_id='call_1',
-        metadata={'performed': 1},
-        tool_kind=COMPUTER_KIND.id,
+    scroll: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': scroll_x, 'scroll_y': 340}
+    # With two axes, a click first, so the scroll's actions aren't the call's first.
+    actions: list[dict[str, Any]] = (
+        [{'type': 'click', 'x': 1, 'y': 2, 'button': 'left'}, scroll] if scroll_x else [scroll]
     )
-    history = _computer_history({'actions': _map_computer_action(scroll)}, item, result)
+    item = {**_COMPUTER_ITEM, 'actions': actions}
+    result = ToolReturnPart(
+        'computer', [summary, _SCREEN], tool_call_id='call_1', metadata=metadata, tool_kind=COMPUTER_KIND.id
+    )
+    tool_actions = [mapped for action in actions for mapped in _map_computer_action(action)]
+    history = _computer_history({'actions': tool_actions}, item, result)
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     await model.request(
         history,
@@ -724,8 +767,7 @@ async def test_a_pixel_scroll_says_how_it_ran_as_wheel_clicks(allow_model_reques
     (request,) = get_mock_responses_kwargs(client)
     assert request['input'][-1] == {
         'role': 'user',
-        'content': '<tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action. '
-        'scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.</tool_result>',
+        'content': f'<tool_result tool_name="computer" tool_call_id="call_1">{summary}{notes}</tool_result>',
     }
 
 
