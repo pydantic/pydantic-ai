@@ -246,15 +246,15 @@ class TestReadFileLineFormat:
         (tmp_path / 'f.txt').write_text(''.join(f'line{i}\n' for i in range(1, 11)))
         toolset, ws = _unhashed_toolset(), LocalWorkspaceBackend(tmp_path)
         numbers: list[int] = []
-        offset = 1
-        for _ in range(10):
+        offset: int | None = 1
+        # The length bound turns a hint that never advances into a failure instead of a hang.
+        while offset is not None and len(numbers) <= 10:
             result = await toolset.read_file('f.txt', offset=offset, limit=3, workspace=ws)
             assert isinstance(result, str)
             body = result.splitlines()[1:]
             numbers += [int(line.split('\t')[0]) for line in body if '\t' in line]
-            if not body[-1].startswith('...'):
-                break
-            offset = int(body[-1].split('offset=')[1].split(' ')[0])
+            hint = body[-1]
+            offset = int(hint.split('offset=')[1].split(' ')[0]) if hint.startswith('...') else None
         assert numbers == list(range(1, 11))
 
     async def test_empty_file(self, tmp_path: Path) -> None:
