@@ -2704,7 +2704,7 @@ async def test_speech_finalized_by_a_tool_call_reaches_the_transcript_view() -> 
 
 
 async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
-    """A tool's file rides `ToolResult.content` framed with the call it came from.
+    """A tool's file rides `ToolResult.content` framed with its call; a dict beside it stays JSON in `output`.
 
     The realtime tool channel is text-only, so a tool's file travels the same user channel the end
     user speaks on. Seeding covers the other two realtime paths; this is the live send, and nothing
@@ -2719,8 +2719,8 @@ async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
         ]
     )
 
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> BinaryImage:
-        return BinaryImage(data=b'png', media_type='image/png', identifier='radar')
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> list[object]:
+        return [{'temp': 20}, BinaryImage(data=b'png', media_type='image/png', identifier='radar')]
 
     session = RealtimeSession(conn, runner, model_name='m')
     await collect_events(session)
@@ -2729,7 +2729,7 @@ async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
         [
             ToolResult(
                 tool_call_id='tc_1',
-                output='See file radar.',
+                output='[{"temp":20},"See file radar."]',
                 content=[
                     '<pyai:tool_result tool_name="get_weather" tool_call_id="tc_1" file_id="radar">',
                     BinaryImage(data=b'png', media_type='image/png', identifier='radar'),
