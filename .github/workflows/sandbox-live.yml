@@ -7,8 +7,9 @@ name: Sandbox live tests
 #
 # Adding a provider adds its name to `PRESENT` and its secret below. Docker is the exception:
 # it has no extra or secret, and its live tier runs a second time against Podman in a step of
-# its own. OpenSandbox needs no secret either: its tier runs against a server started on this
-# runner's Docker.
+# its own. Kubernetes and OpenSandbox have no secret either. Kubernetes's steps below first
+# create a kind cluster on the runner, with the newest agent-sandbox release and sandboxd from its
+# staging `latest-main`; OpenSandbox's tier runs against a server started on this runner's Docker.
 #
 # There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
 # the branch it started from (usually `main`), and checking out another ref there would run
@@ -50,7 +51,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxd", "docker", "opensandbox"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxd", "docker", "kubernetes", "opensandbox"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -69,8 +70,9 @@ jobs:
     needs: [plan]
     name: ${{ matrix.provider }} live tests
     runs-on: ubuntu-latest
-    # Sandbox creation goes through each provider's control plane; bound a wedged run.
-    timeout-minutes: 15
+    # Sandbox creation goes through each provider's control plane; bound a wedged run. Kubernetes
+    # also creates its cluster first.
+    timeout-minutes: ${{ matrix.provider == 'kubernetes' && 25 || 15 }}
     strategy:
       # One provider's outage must not cancel the others' results.
       fail-fast: false
@@ -80,6 +82,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Pinned rather than the runner image's copies, so the cluster is the one the tests were written against.
+      - name: Install kind and kubectl
+        if: matrix.provider == 'kubernetes'
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          echo "aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  $RUNNER_TEMP/kind" | sha256sum --check
+          curl -fsSLo "$RUNNER_TEMP/kubectl" https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+          echo "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f  $RUNNER_TEMP/kubectl" | sha256sum --check
+          sudo install "$RUNNER_TEMP/kind" "$RUNNER_TEMP/kubectl" /usr/local/bin/
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Create the kind cluster
+        if: matrix.provider == 'kubernetes'
+        run: tests/harness/kubernetes_sandbox/cluster/up.sh
+
+      # kind's pods are reachable from the host once their range routes through the node's
+      # container; the in-cluster connection tests need that.
+      - name: Route the pod network
+        if: matrix.provider == 'kubernetes'
+        run: |
+          node=pydantic-ai-live-control-plane
+          sudo ip route add "$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')" \
+            via "$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$node")"
+          echo KUBERNETES_POD_NETWORK=1 >> "$GITHUB_ENV"
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
@@ -92,11 +119,18 @@ jobs:
       # cloud provider's guide has a Temporal worker example, which the docs-example test runs;
       # `code-mode` and `coder` are what the provider test modules import at collection.
       # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
+      #
+      # Kubernetes upgrades its SDK past the lock: agent-sandbox ships breaking changes in patch
+      # releases, and users get them with `<2`. The upgrade still honours `exclude-newer`, and the
+      # test step below gives the Kubernetes leg none of the cloud providers' secrets.
       - run: |
           provider_extra=(--extra "$PROVIDER")
           [ "$PROVIDER" != docker ] || provider_extra=()
-          uv sync --locked --package pydantic-ai-harness --group dev \
+          resolution=(--locked)
+          [ "$PROVIDER" != kubernetes ] || resolution=(--upgrade-package k8s-agent-sandbox)
+          uv sync "${resolution[@]}" --package pydantic-ai-harness --group dev \
             "${provider_extra[@]}" --extra temporal --extra code-mode --extra coder
+          [ "$PROVIDER" != kubernetes ] || uv pip show k8s-agent-sandbox | grep '^Version'
         env:
           PROVIDER: ${{ matrix.provider }}
 
@@ -121,13 +155,14 @@ jobs:
           uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
         env:
           PROVIDER: ${{ matrix.provider }}
-          # Scoped to this step so checkout and setup never see the secrets.
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-          SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
-          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
+          # Scoped to this step so checkout and setup never see the secrets. The Kubernetes leg needs
+          # none and runs an SDK newer than the lock, so it gets none.
+          MODAL_TOKEN_ID: ${{ matrix.provider != 'kubernetes' && secrets.MODAL_TOKEN_ID || '' }}
+          MODAL_TOKEN_SECRET: ${{ matrix.provider != 'kubernetes' && secrets.MODAL_TOKEN_SECRET || '' }}
+          E2B_API_KEY: ${{ matrix.provider != 'kubernetes' && secrets.E2B_API_KEY || '' }}
+          SPRITE_TOKEN: ${{ matrix.provider != 'kubernetes' && secrets.SPRITE_TOKEN || '' }}
+          DAYTONA_API_KEY: ${{ matrix.provider != 'kubernetes' && secrets.DAYTONA_API_KEY || '' }}
+          BOXD_API_KEY: ${{ matrix.provider != 'kubernetes' && secrets.BOXD_API_KEY || '' }}
           # The server the OpenSandbox step started; other providers ignore it.
           OPEN_SANDBOX_DOMAIN: 127.0.0.1:8080
 

@@ -715,8 +715,20 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+)
+
+
+# Third-party functions that do only blocking setup, as (file, function): any blocking call below one
+# is allowed. Exempted whole rather than call by call, so a dependency changing which file call it
+# makes inside does not fail the suite.
+BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
+    # The agent-sandbox SDK loads the in-cluster or kubeconfig credentials once per client, on first
+    # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
+    # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
+    ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
 )
 
 
@@ -752,6 +764,9 @@ def _configure_blockbuster(
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    for path, setup_function in BLOCKBUSTER_LIBRARY_SETUP:
+        for function in bb.functions.values():
+            function.can_block_in(path, setup_function)
     local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
     local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
     for filename, functions in local_files:
