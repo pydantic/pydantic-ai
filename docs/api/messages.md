@@ -40,3 +40,7 @@ graph RL
 ::: pydantic_ai.messages.NativeToolSearchCallPart
 
 ::: pydantic_ai.messages.NativeToolSearchReturnPart
+
+::: pydantic_ai.messages.LoadCapabilityCallPart
+
+::: pydantic_ai.messages.LoadCapabilityReturnPart
