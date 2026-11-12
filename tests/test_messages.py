@@ -506,7 +506,16 @@ def test_image_url_invalid():
 _url_formats = [
     pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
     pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
-    pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
+    # On Windows, `read_windows_registry()` lets installed applications override the built-in
+    # extension mapping, so `.csv` resolves to whatever the machine's registry says (e.g.
+    # `application/vnd.ms-excel` with Office installed) instead of the stable `text/csv`.
+    pytest.param(
+        DocumentUrl('foobar.csv'),
+        'text/csv',
+        'csv',
+        id='csv',
+        marks=pytest.mark.skipif(sys.platform == 'win32', reason='the Windows registry overrides `.csv`'),
+    ),
     pytest.param(DocumentUrl('foobar.doc'), 'application/msword', 'doc', id='doc'),
     pytest.param(
         DocumentUrl('foobar.docx'),
@@ -1577,7 +1586,9 @@ def test_binary_content_from_path(tmp_path: Path):
 
     # test toml file
     test_toml_file = tmp_path / 'pyproject.toml'
-    test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
+    # Write bytes so the file's contents don't depend on the platform's text-mode newline translation
+    # (on Windows, `write_text` turns `\n` into `\r\n`, and `from_path` reads the raw bytes).
+    test_toml_file.write_bytes(b'[project]\nname = "test"')
     binary_content = BinaryContent.from_path(test_toml_file)
     assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
 
