@@ -417,6 +417,11 @@ class DelegationTasks:
         Once a settled task is saved, its history is kept in the file only: `history` reads it from there, and
         a resume loads it back first.
         """
+        await self._write(record)
+        self._release(record)
+
+    async def _write(self, record: DelegationTask) -> None:
+        """Save `record` with its history, loading that back first when it is in the saved file only."""
         if not _SAFE_ID.fullmatch(record.id):
             raise ValueError('Invalid task identity')
         if self.directory is not None:
@@ -428,9 +433,12 @@ class DelegationTasks:
                 self._history_on_disk.pop(record.id, None)
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
-                if record.status == 'finished':
-                    record.messages = []
-                    self._history_on_disk[record.id] = (Path(destination), _ADAPTER.dump_json(record))
+
+    def _release(self, record: DelegationTask) -> None:
+        """Keep a settled, saved task's history in its file only."""
+        if self.directory is not None and record.status == 'finished':
+            record.messages = []
+            self._history_on_disk[record.id] = (self.directory / f'{record.id}.json', _ADAPTER.dump_json(record))
 
     async def restore(self, record: DelegationTask) -> bool:
         """Add a finished task made elsewhere, such as one imported from another agent's session.
@@ -453,9 +461,11 @@ class DelegationTasks:
         if self.directory is not None:
             await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
         self.records[record.id] = record
-        await self.save(record)
+        # Observers are told with its history, which it then keeps in the file only.
+        await self._write(record)
         if self._open:
             await self.notify(record)
+        self._release(record)
         return True
 
     async def delegate(
@@ -628,11 +638,13 @@ class DelegationTasks:
                     if child.parent_id == record.id and child.status == 'running':
                         await self.cancel(child.id, user=record.user_stopped)
             with anyio.move_on_after(5, shield=True):
-                await self.save(record)
+                # Observers are told it settled with its history, which it then keeps in the file only.
+                await self._write(record)
                 try:
                     await self.notify(record)
                 except Exception:
                     logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
+                self._release(record)
                 self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         return f'Task {record.id} ({record.outcome}):\n{record.output}'
 

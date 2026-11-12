@@ -168,12 +168,12 @@ class TaskView:
         *,
         snapshot: Callable[[], Sequence[Row]],
         act: Callable[[Action, str, str], str],
-        history: Callable[[str], Sequence[ModelMessage]],
         size: Callable[[], tuple[int, int]] | None = None,
+        history: Callable[[str], Sequence[ModelMessage]] | None = None,
     ) -> None:
         """`snapshot` reads the tasks, `act` does an action on one, and `history` reads a settled one's history.
 
-        All three are called from the view's thread.
+        All three are called from the view's thread. Without `history`, a settled task shows the history it holds.
         """
         self.snapshot = snapshot
         self.act = act
@@ -279,7 +279,7 @@ class TaskView:
 
     def _settled_history(self, task: DelegationTask) -> Sequence[ModelMessage] | None:
         """`task`'s history when it is settled and its snapshot doesn't hold it, else `None`."""
-        if task.messages or task.status == 'running':
+        if task.messages or task.status == 'running' or self.history is None:
             return None
         key = (task.id, task.generation)
         if self._history is None or self._history[0] != key:

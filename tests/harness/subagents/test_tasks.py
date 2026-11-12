@@ -125,7 +125,13 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
 async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
     """An owner holds no settled task's history in memory, and closing it rewrites no task it didn't change."""
     child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')
-    owner = DelegationTasks(directory=tmp_path)
+    settled: list[list[ModelMessage]] = []
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.event is None and update.task.status == 'finished':
+            settled.append(list(update.task.messages))
+
+    owner = DelegationTasks(directory=tmp_path, observer=observe)
     with anyio.fail_after(WAIT):
         async with owner.opened():
             with owner.bind():
@@ -134,6 +140,7 @@ async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
     (record,) = owner.records.values()
     first_history = await saved_history(owner, record.id)
     assert first_history
+    assert settled == [first_history], 'an observer is told it settled with its history'
     path = tmp_path / f'{record.id}.json'
 
     async with DelegationTasks(directory=tmp_path).opened() as idle:

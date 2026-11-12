@@ -6,6 +6,7 @@ import time
 from itertools import count
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
 
@@ -64,9 +65,7 @@ class Driver:
         self.ui.owner.records = {record.id: record for record in records}
         self.acts: list[tuple[Action, str, str]] = []
         self.error = error
-        self.view = TaskView(
-            snapshot=lambda: task_rows(self.ui), act=self.act, history=self.ui.history, size=lambda: size
-        )
+        self.view = TaskView(snapshot=lambda: task_rows(self.ui), act=self.act, size=lambda: size)
         self.view.app.running = True
 
     def act(self, action: Action, task_id: str, text: str) -> str:
@@ -199,14 +198,20 @@ async def test_a_settled_task_shows_the_history_and_usage_its_owner_saved(tmp_pa
     async with ui.router.opened(view=ui):
         assert await ui.owner.restore(record)
         assert record.messages == []
-        (info,) = ui.listing()
+        # Saved by another owner, so its usage is read from the file, in a worker thread as async code does.
+        (info,) = await anyio.to_thread.run_sync(ui.listing)
         assert (info.usage.requests, info.usage.input_tokens) == (1, 7)
-        view = TaskView(snapshot=lambda: task_rows(ui), act=act, history=history, size=lambda: SIZE)
-        view.app.running = True
-        assert 'Found the registry.' in frame(view.app)
-        for _ in range(3):
-            frame(view.app, 0.1)
-        assert 'Found the registry.' in frame(view.app)
+
+        def show() -> None:
+            view = TaskView(snapshot=lambda: task_rows(ui), act=act, history=history, size=lambda: SIZE)
+            view.app.running = True
+            assert 'Found the registry.' in frame(view.app)
+            for _ in range(3):
+                frame(view.app, 0.1)
+            assert 'Found the registry.' in frame(view.app)
+
+        # The view runs on its own thread, as `open_tasks` runs it.
+        await anyio.to_thread.run_sync(show)
         assert reads == [record.id], 'read once while it stays selected'
 
 

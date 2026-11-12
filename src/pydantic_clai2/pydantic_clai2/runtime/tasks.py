@@ -555,10 +555,17 @@ class Tasks:
         )
 
     def _usage(self, record: DelegationTask) -> RunUsage:
-        """What `record`'s runs used, from the history it holds, or for a settled one, the history its owner saved."""
-        if record.messages or record.status == 'running':
-            return _usage(record.messages)
+        """What `record`'s runs used, from the history it holds, or for a settled one, the history its owner saved.
+
+        A settled task's usage is kept from when it was told it settled, still holding its history, so it isn't read
+        back from the saved file; only a task saved by an earlier process is.
+        """
         key = (record.id, record.generation)
+        if record.messages or record.status == 'running':
+            usage = _usage(record.messages)
+            if record.status == 'finished':
+                self._settled_usage[key] = usage
+            return usage
         if (usage := self._settled_usage.get(key)) is None:
             usage = self._settled_usage[key] = _usage(self.owner.history(record.id))
         return usage
