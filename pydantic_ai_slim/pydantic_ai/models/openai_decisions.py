@@ -72,6 +72,7 @@ from .decision import (
     ScoreQuestion,
     _probability_bounds,  # pyright: ignore[reportPrivateUsage]
     _score_fits,  # pyright: ignore[reportPrivateUsage]
+    _text,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -513,11 +514,6 @@ class _Conversation:
             raise _unconverted_speech_part_error()
         else:
             assert_never(part)
-
-
-def _text(value: JsonValue) -> str:
-    """A protocol value as the text the API takes: a string as it is, anything else as JSON."""
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
 def _api_error(e: APIError, model_name: str) -> ModelAPIError:
