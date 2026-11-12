@@ -48,9 +48,11 @@ def _stream(tmp_path: Path, text: str, *, finish: str = 'stop') -> Path:
     return stream
 
 
-def _result(*paths: str, outcome: str = 'COMPLETE') -> str:
+def _result(*paths: str, outcome: str = 'COMPLETE', indent: int | None = None) -> str:
     findings = [{'path': path, 'line': 3, 'side': 'RIGHT', 'severity': 'high', 'body': 'finding'} for path in paths]
-    return json.dumps({'outcome': outcome, 'findings': findings, 'coverage': 'Reviewed a.py.', 'private_report': ''})
+    return json.dumps(
+        {'outcome': outcome, 'findings': findings, 'coverage': 'Reviewed a.py.', 'private_report': ''}, indent=indent
+    )
 
 
 def test_head_checkout_loses_its_instruction_layer(tmp_path: Path) -> None:
@@ -229,7 +231,10 @@ def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]
 
 
 def _fake_opencode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str, deepinfra: str = f'printf "%s\\n" {shlex.quote(_step(10))}'
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    go: str,
+    deepinfra: str = f'printf "%s\\n" {shlex.quote(_step(10))}',
 ) -> Path:
     """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `deepinfra`, by default one step, on DeepInfra.
 
@@ -343,13 +348,22 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
         pytest.param('{"outcome": "COMPLETE"}', 'stop', 'validation failed: missing', id='not-the-schema'),
         pytest.param(_result('a.py'), 'tool-calls', 'OpenCode review did not stop normally', id='not-stopped'),
         pytest.param(
-            f"I've read the files.\n```json\n{_result('a.py')}\n```",
+            f'```json\n{_result("a.py")}\n```\nDone.',
             'stop',
             'validation failed: json_invalid',
-            id='text-before-the-fence',
+            id='text-after-the-fence',
         ),
         pytest.param(
-            f'```json\n{_result("a.py")}\n```\nDone.', 'stop', 'validation failed: json_invalid', id='text-after-the-fence'
+            f"I've read the files.\n\n```json\n{_result('a.py')}",
+            'stop',
+            'validation failed: json_invalid',
+            id='unterminated-fence',
+        ),
+        pytest.param(
+            f"I've read the files.\n\n{_result('a.py')}",
+            'stop',
+            'validation failed: json_invalid',
+            id='text-before-bare-json',
         ),
     ],
 )
@@ -365,15 +379,42 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
 @pytest.mark.parametrize(
     'text',
     [
-        f'```json\n{_result("a.py")}\n```',
-        f'```\n{_result("a.py")}\n```',
-        f'\n  ```json\n{json.dumps(json.loads(_result("a.py")), indent=2)}\n```\n',
+        pytest.param(_result('a.py'), id='bare-json'),
+        pytest.param(f'```json\n{_result("a.py")}\n```', id='fence-around-the-answer'),
+        pytest.param(f'```\n{_result("a.py")}\n```', id='fence-without-a-language'),
+        pytest.param(f'\n  ```json\n{_result("a.py", indent=2)}\n```\n', id='indented-fence'),
+        pytest.param(
+            f'**Summary**\n\n- Read `a.py`.\n- Traced its callers.\n\n```json\n{_result("a.py", indent=2)}\n```',
+            id='bulleted-prose-before-the-fence',
+        ),
+        pytest.param(
+            f'**Checks**\n\n1. Read `a.py`.\n\n2. Read its tests.\n\n```json\n{_result("a.py")}\n```',
+            id='numbered-prose-before-the-fence',
+        ),
+        pytest.param(
+            f'I read `a.py` and its callers.\n\n```json\n{_result("a.py", indent=2)}\n```',
+            id='paragraph-before-the-fence',
+        ),
+        pytest.param(
+            f'The caller:\n\n```python\nf()\n```\n\n```json\n{_result("a.py", indent=2)}\n```',
+            id='code-block-before-the-fence',
+        ),
     ],
 )
-def test_answer_in_one_code_fence_is_unwrapped(tmp_path: Path, text: str) -> None:
-    """A model that wraps its whole answer in one Markdown code fence still completes the review."""
+def test_answer_ending_in_a_code_fence_is_unwrapped(tmp_path: Path, text: str) -> None:
+    """A model that ends its answer with the JSON object in a Markdown code fence still completes the review."""
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
     assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
+
+
+@pytest.mark.parametrize('fenced', [pytest.param(False, id='bare-json'), pytest.param(True, id='fenced-json')])
+def test_code_fence_inside_a_json_string_stays_in_the_answer(tmp_path: Path, fenced: bool) -> None:
+    """Only a fence on its own lines delimits the answer, so a fence quoted in a JSON string stays in it."""
+    coverage = 'Reviewed a.py.\n```json\n{}\n```'
+    answer = json.dumps({'outcome': 'COMPLETE', 'findings': [], 'coverage': coverage, 'private_report': ''}, indent=2)
+    text = f'```json\n{answer}\n```' if fenced else answer
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
+    assert (result.outcome, result.coverage) == ('COMPLETE', coverage)
 
 
 def test_undecodable_stream_names_only_its_error_type(tmp_path: Path) -> None:
