@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
@@ -282,9 +283,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in self.before_stream():
             yield e
 
+        # Each generator this method forwards from is closed with `aclosing`, so a consumer that abandons the
+        # stream unwinds them here, before the source stream is closed, rather than leaving them to the event
+        # loop's async generator finalizer.
         try:
-            async for e in self._transform_events(stream, on_complete):
-                yield e
+            async with aclosing(self._transform_events(stream, on_complete)) as events:
+                async for e in events:
+                    yield e
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
             # Classify on the exception itself, not `from_cancellation()`: external cancellation is a
             # `CancelledError` (a `BaseException`) that never reaches this `except Exception` block, so
@@ -292,16 +297,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # misread an ordinary error raised while handling a nested `RunCancelled` (Python sets
             # `__context__` implicitly) as a cancellation, hiding the failure from the client.
             cancelled = exc if isinstance(exc, RunCancelled) else None
-            async for e in self._close_interrupted(cancelled=cancelled is not None):
-                yield e
+            async with aclosing(self._close_interrupted(cancelled=cancelled is not None)) as closeout:
+                async for e in closeout:
+                    yield e
 
-            if cancelled is not None:
-                self._cancelled = cancelled
-                closing_events = self._cancellation_events(cancelled, on_cancel)
-            else:
-                closing_events = self.on_error(exc)
-            async for e in closing_events:
-                yield e
+            async with aclosing(self._closing_events(exc, cancelled, on_cancel)) as closing_events:
+                async for e in closing_events:
+                    yield e
         finally:
             await _utils.aclose_if_supported(stream)
 
@@ -313,11 +315,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     async def _transform_events(
         self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None
-    ) -> AsyncIterator[EventT]:
+    ) -> AsyncGenerator[EventT, None]:
         """Forward each event to `handle_event`, keeping the state the error path in `transform_stream` closes."""
         async for event in stream:
-            async for e in self._before_handle_event(event, on_complete):
-                yield e
+            async with aclosing(self._before_handle_event(event, on_complete)) as before_events:
+                async for e in before_events:
+                    yield e
 
             delta_recorded = False
             async for e in self.handle_event(event):
@@ -333,7 +336,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     async def _before_handle_event(
         self, event: NativeEvent, on_complete: OnCompleteFunc[EventT] | None
-    ) -> AsyncIterator[EventT]:
+    ) -> AsyncGenerator[EventT, None]:
         """Fire the turn hooks `event` implies, and record what the error path needs, before `handle_event` sees it."""
         match event:
             case PartStartEvent():
@@ -385,7 +388,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             self._open_part_index = event.index
             self._open_part_deltas.clear()
 
-    async def _close_interrupted(self, *, cancelled: bool) -> AsyncIterator[EventT]:
+    async def _close_interrupted(self, *, cancelled: bool) -> AsyncGenerator[EventT, None]:
         """Close the open part and the pending tool calls that the stream's error interrupted."""
         # Close the open message part before emitting the error, so a client that aborts at the
         # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
@@ -455,10 +458,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             return self.handle_output_tool_result(OutputToolResultEvent(error_part))
         return self.handle_function_tool_result(FunctionToolResultEvent(error_part))
 
-    async def _cancellation_events(
-        self, cancelled: RunCancelled, on_cancel: OnCancelFunc[EventT] | None
-    ) -> AsyncIterator[EventT]:
-        """The events of the `on_cancel` callback, then of `on_cancelled`."""
+    async def _closing_events(
+        self, exc: Exception, cancelled: RunCancelled | None, on_cancel: OnCancelFunc[EventT] | None
+    ) -> AsyncGenerator[EventT, None]:
+        """The events that end a stream `exc` interrupted: `on_error`'s, or for a cancellation, `on_cancel`'s then `on_cancelled`'s."""
+        if cancelled is None:
+            async for e in self.on_error(exc):
+                yield e
+            return
+        self._cancelled = cancelled
         if on_cancel is not None:
             async for e in dispatch_callback(on_cancel, cancelled):
                 yield e
