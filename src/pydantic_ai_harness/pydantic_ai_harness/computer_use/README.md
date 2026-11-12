@@ -202,7 +202,7 @@ no telemetry spans; core already traces the tool call.
 I/O, and must return the same object every time.
 
 A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and `act()`, which runs one
-`ComputerAction` such as a click or a key press, in screenshot pixels. A display can also implement:
+`DisplayAction` such as a click or a key press, in screenshot pixels. A display can also implement:
 
 - `SupportsZoom`: capture part of the screen at full resolution.
 - `SupportsScaledScreenshot`: capture the whole screen smaller, for a model with a screenshot size limit.
@@ -214,7 +214,7 @@ from here:
 
 ```python {title="my_display.py"}
 from pydantic_ai.computer_use import Click
-from pydantic_ai_harness.computer_use import ComputerAction, Display, UnsupportedActionError
+from pydantic_ai_harness.computer_use import DisplayAction, Display, UnsupportedActionError
 
 
 class MyDisplay:
@@ -224,7 +224,7 @@ class MyDisplay:
     async def screenshot(self) -> bytes:
         raise NotImplementedError  # capture the screen as PNG bytes
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         if not isinstance(action, Click):
             raise UnsupportedActionError(f'this display cannot {action.type}')
         # click at (action.x, action.y), or at the pointer when they're `None`
