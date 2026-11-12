@@ -118,7 +118,18 @@ async def test_a_link_out_of_the_parents_root_keeps_its_cap(tmp_path: Path) -> N
     await _assert_delegate_levels(workspace, 'vendor/trusted', 'none')
 
 
-async def _assert_delegate_levels(workspace: Workspace, directory: str, expected: Authority) -> None:
+async def test_the_resolvers_own_lower_level_still_applies(tmp_path: Path) -> None:
+    # The parent gives `lib` `'operator'`, but the resolver's workspace is at `'none'`: wrapping only lowers.
+    (tmp_path / 'lib').mkdir()
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'vendor': 'none'}
+    )
+    await _assert_delegate_levels(workspace, 'lib', 'none', resolver_authority='none')
+
+
+async def _assert_delegate_levels(
+    workspace: Workspace, directory: str, expected: Authority, *, resolver_authority: Authority = 'operator'
+) -> None:
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
     levels: list[Authority] = []
 
@@ -129,7 +140,8 @@ async def _assert_delegate_levels(workspace: Workspace, directory: str, expected
         return 'inspected'
 
     async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
-        return Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(request.directory)))
+        resolved = Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(request.directory)))
+        return AuthorityWorkspace(resolved, authority=resolver_authority)
 
     toolset = SubAgents[object](agents=[SubAgent(child)], workspace_resolver=resolve).get_toolset()
     assert is_toolset(toolset)

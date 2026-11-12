@@ -209,7 +209,9 @@ class TestDiskLoading:
         with pytest.warns(UserWarning, match="below `'operator'` authority") as record:
             untrusted_run = await _listing(SubAgents(agent_folders='agents'), _untrusted(run))
             untrusted_own = await _listing(SubAgents(agent_folders='agents', workspace=_untrusted(app)), run)
-        assert len(_user_warnings(record)) == 2
+        messages = [str(warning.message) for warning in _user_warnings(record)]
+        assert len(messages) == 2
+        assert 'project.md' in messages[0] and 'packaged.md' in messages[1]
         assert untrusted_run is None
         assert untrusted_own is None
         # A workspace without definitions is not warned about.
@@ -232,8 +234,10 @@ class TestDiskLoading:
             Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'.agents': 'none'}
         )
 
-        with pytest.warns(UserWarning, match="below `'operator'` authority"):
+        with pytest.warns(UserWarning, match="below `'operator'` authority") as record:
             listing = await _listing(SubAgents(agent_folders='agents'), workspace)
+        [message] = [str(warning.message) for warning in _user_warnings(record)]
+        assert '.agents/agents/reviewer.md' in message
         assert listing is not None and 'Reviews code.' in listing and 'Planted.' not in listing
 
     def test_workspace_capability_is_refused(self) -> None:
