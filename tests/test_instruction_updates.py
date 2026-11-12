@@ -2183,3 +2183,33 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
     assert isinstance(request, ModelRequest)
     assert request.instructions == 'Trusted state.'
     assert baseline_of(request) is not None
+
+
+async def test_requests_with_equal_instructions_share_one_string():
+    """A conversation holds its instructions once, however many requests record them, also after loading it."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('look')] if len(messages) == 1 else [TextPart('done')])
+
+    # Two parts, so each request joins them into a new string, and over 64 characters, so loading JSON doesn't
+    # share them on its own.
+    instructions = [
+        'Answer briefly, in plain sentences, and say when you are unsure of something.',
+        'Cite the files you read.',
+    ]
+    agent = Agent(FunctionModel(model_fn), instructions=instructions)
+
+    @agent.tool_plain
+    def look() -> str:
+        return 'found'
+
+    result = await agent.run('Where is it?')
+    loaded = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+    assert loaded == result.all_messages()
+    resumed = await agent.run('And now?', message_history=loaded)
+
+    requests = [message for message in resumed.all_messages() if isinstance(message, ModelRequest)]
+    assert [request.instructions for request in requests] == ['\n\n'.join(instructions)] * 3
+    assert all(request.instructions is requests[0].instructions for request in requests)
+    first_run = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert first_run[1].instructions is first_run[0].instructions
