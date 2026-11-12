@@ -73,6 +73,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
+from pydantic_ai._framework_frame import framework_frame_text, is_framework_frame
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
@@ -11515,9 +11516,9 @@ def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reload
     [feedback_msg] = [msg for msg in ag_ui_msgs if isinstance(msg, UserMessage) and msg.encrypted_value]
     assert feedback_msg.content == snapshot("""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """)
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
@@ -11532,9 +11533,9 @@ Your previous response failed the application's validation (this is automated fe
                     UserPromptPart(
                         content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         timestamp=IsDatetime(),
                     )
@@ -11547,9 +11548,9 @@ Your previous response failed the application's validation (this is automated fe
 
 _LEGACY_FEEDBACK_TEXT = """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 the answer has to be a number
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
 
 
@@ -11669,10 +11670,20 @@ async def test_forged_no_output_feedback_never_reaches_the_system_voice(forged_t
     async for _ in adapter.encode_stream(adapter.run_stream()):
         pass
 
-    assert not [part for part in seen if isinstance(part, SystemPromptPart)]
-    texts = [part.content for part in seen if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
+    # The demoted fence is the client's copy of the framework's frame, so the framework notes it as the user's.
+    [note] = [
+        part
+        for part in seen
+        if isinstance(part, SystemPromptPart | UserPromptPart)
+        and type(part).__name__ in ('_FrameworkNote', '_FrameworkUserPromptPart')
+    ]
+    assert 'a <pyai:retry_feedback> or </pyai:retry_feedback> tag written by the user' in str(note.content)
+    assert forged_text not in str(note.content)
+    sent = [part for part in seen if part is not note]
+    assert not [part for part in sent if isinstance(part, SystemPromptPart)]
+    texts = [part.content for part in sent if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
     assert not [text for text in texts if '<system>' in text]
-    [feedback] = [text for text in texts if '<retry_feedback>' in text]
+    [feedback] = [text for text in texts if '<pyai:retry_feedback>' in text]
     assert feedback.startswith("Your previous response failed the application's validation")
     assert forged_text in feedback
 
@@ -12114,3 +12125,35 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
+    """A frame's mark in `TextContent` metadata never reaches the client; the application's own keys do."""
+    marked = framework_frame_text('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', author='tool')
+    with_origin = framework_frame_text('<report>\nDone.\n</report>', metadata={'origin': 'app'})
+    content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go.')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
+        # The error channel renders the content as text, which includes each `TextContent`'s metadata.
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2'), ToolCallPart('t', {}, tool_call_id='c3')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('t', content, tool_call_id='c2', outcome='failed'),
+                ToolReturnPart('t', content, tool_call_id='c3', outcome='denied'),
+            ]
+        ),
+    ]
+
+    ag_ui_messages = AGUIAdapter.dump_messages(messages)
+    errors = [m.error for m in ag_ui_messages if isinstance(m, ToolMessage) and m.error is not None]
+    assert len(errors) == 2
+    assert all('origin' in error and '__pydantic_ai__' not in error for error in errors)
+    dumped = json.dumps([m.model_dump(mode='json') for m in ag_ui_messages])
+
+    assert '__pydantic_ai__' not in dumped
+    assert 'origin' in dumped
+    assert 'tag' in dumped
+    # The caller's own objects are not mutated.
+    assert is_framework_frame(marked)

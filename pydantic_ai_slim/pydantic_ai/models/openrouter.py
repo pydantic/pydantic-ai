@@ -864,6 +864,15 @@ class OpenRouterModel(OpenAIChatModel):
     def _resolved_profile(self) -> OpenRouterModelProfile:
         return cast(OpenRouterModelProfile, self.profile)
 
+    @property
+    @override
+    def _system_entries_follow_user_turn(self) -> bool:
+        # `_map_messages` checks this to move them there (`_place_system_messages_before_generation`), so the
+        # lookalike note's "preceding" wording and the placement share one condition.
+        return self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
+            'openrouter_system_messages_precede_generation', False
+        )
+
     @override
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
@@ -1333,9 +1342,7 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         mapped = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
-        if self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
-            'openrouter_system_messages_precede_generation', False
-        ):
+        if self._system_entries_follow_user_turn:
             _place_system_messages_before_generation(mapped)
         # A `configuration_update` message has no content to carry a breakpoint, and an empty text block with one is
         # rejected, so breakpoints are placed as if it weren't there and it goes back in its place afterwards.
@@ -1464,6 +1471,12 @@ class OpenRouterModel(OpenAIChatModel):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         assert isinstance(response, _OpenRouterChatCompletion)
         return _map_openrouter_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        return not self.accepts_stateless_artifacts(message, part) and super()._carries_thinking_in_user_turn(
+            message, part
+        )
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
