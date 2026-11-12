@@ -14,6 +14,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
+from absurd_sdk import SuspendTask
+
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.durable_exec import JSON_CODEC, BaseDurabilityCapability, DurabilityEngineSpec
@@ -34,8 +36,9 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by checkpointing its I/O into Absurd steps.
 
     Run the agent inside an async Absurd task handler: every model request, MCP call, and function
-    tool call becomes a step, so a retried task resumes from the last completed step. Outside a task
-    the capability is transparent.
+    tool call becomes a step, so a retried task resumes from the last completed step. The waits
+    between polls of a background response or a `BatchModelRequests` batch are Absurd sleeps, which
+    suspend the task until they're over. Outside a task the capability is transparent.
 
     Example:
         ```python {test="skip"}
@@ -63,6 +66,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         wrapped_toolset_kinds=frozenset({'function', 'mcp'}),
         toolset_lifecycles={'function': 'enter-never', 'mcp': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        suspension_error_types=(SuspendTask,),
     )
     # Absurd has no non-retryable error type, so a serialization failure retries under the task's `RetryStrategy`.
 
@@ -95,6 +99,13 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return current_async_task_context() is not None
+
+    async def durable_sleep(self, seconds: float) -> None:
+        """Wait with an Absurd sleep, which suspends the task until it's over, so no worker holds it meanwhile."""
+        task_ctx = current_async_task_context()
+        # Only called in the durable context, which guarantees a task.
+        assert task_ctx is not None
+        await task_ctx.sleep_for(f'{self.name}__sleep', seconds)
 
     def get_durable_operation_backend(self) -> AbsurdOperationBackend:
         return AbsurdOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)

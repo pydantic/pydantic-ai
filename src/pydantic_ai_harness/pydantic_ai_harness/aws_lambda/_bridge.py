@@ -5,8 +5,9 @@ blocks until the step body returns. An agent run is async. The bridge connects t
 threads and a queue:
 
 - the handler thread runs `run_durable`, which drains a queue of step requests and calls
-  `context.step(...)` for each one (or creates a callback and waits for it), so every durable
-  operation is created on the handler's thread in one continuous sequence;
+  `context.step(...)` for each one (or creates a callback and waits for it, or waits with
+  `context.wait(...)`), so every durable operation is created on the handler's thread in one
+  continuous sequence;
 - a background thread runs a persistent event loop that hosts the agent run and the actual
   model and tool calls.
 
@@ -41,7 +42,7 @@ from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
+    from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, StepConfig
 
 T = TypeVar('T')
 
@@ -114,6 +115,9 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: CallbackConfig | None = None,
     ) -> DurableCallback: ...
+
+    # Structural declaration, never executed.
+    def wait(self, duration: Duration, name: str | None = None) -> None: ...  # pragma: no cover
 
 
 ContextT = TypeVar('ContextT', bound=DurableStepContext)
@@ -267,17 +271,28 @@ class _CallbackRequest:
 
 
 @dataclass
+class _WaitRequest:
+    name: str
+    duration: Duration
+    reply: Callable[[bool, Any], None]
+    context: contextvars.Context
+
+
+_Request = _StepRequest | _CallbackRequest | _WaitRequest
+
+
+@dataclass
 class _Finished(Generic[T]):
     result: T | None
     error: BaseException | None
 
 
-def _record(item: _StepRequest | _CallbackRequest, *, executed: bool) -> None:
+def _record(item: _Request, *, executed: bool) -> None:
     """Report a completed step in the requesting task's context, so it counts for the spans it ran under.
 
-    A callback wait runs no work of its own, so it says nothing about what was replayed.
+    A callback wait or a timed wait runs no work of its own, so it says nothing about what was replayed.
     """
-    if not isinstance(item, _CallbackRequest):
+    if isinstance(item, _StepRequest):
         item.context.run(record_durable_unit, executed=executed)
 
 
@@ -286,7 +301,7 @@ class StepBridge:
 
     def __init__(self, context: DurableStepContext) -> None:
         self._context = context
-        self._queue: Queue[_StepRequest | _CallbackRequest | _Finished[Any]] = Queue()
+        self._queue: Queue[_Request | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
@@ -346,7 +361,18 @@ class StepBridge:
             )
         )
 
-    async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _StepRequest | _CallbackRequest]) -> Any:
+    async def wait(self, name: str, duration: Duration) -> None:
+        """Wait `duration` with a durable Lambda wait. Runs on the agent loop.
+
+        A wait that isn't over raises `SuspendExecution`, which ends the invocation like a step retry
+        does, and no compute is billed until Lambda invokes the function again once it's over. The
+        replayed wait then returns straight away.
+        """
+        await self._submit(
+            lambda reply: _WaitRequest(name=name, duration=duration, reply=reply, context=contextvars.copy_context())
+        )
+
+    async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _Request]) -> Any:
         """Queue a request for the handler thread and wait for its reply."""
         loop = asyncio.get_running_loop()
         async with self._order:
@@ -411,9 +437,11 @@ class StepBridge:
                 _record(item, executed=executed)
                 item.reply(True, value)
 
-    def _run(self, item: _StepRequest | _CallbackRequest, body: Callable[[Any], Any]) -> Any:
+    def _run(self, item: _Request, body: Callable[[Any], Any]) -> Any:
         if isinstance(item, _CallbackRequest):
             return item.context.run(self._wait_for_callback, item)
+        if isinstance(item, _WaitRequest):
+            return item.context.run(self._context.wait, item.duration, name=item.name)
         return item.context.run(self._context.step, body, name=item.name, config=item.config)
 
     def _wait_for_callback(self, request: _CallbackRequest) -> str | None:

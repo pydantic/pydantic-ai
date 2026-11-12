@@ -17,7 +17,7 @@ from aws_durable_execution_sdk_python import (
     durable_execution,  # pyright: ignore[reportUnknownVariableType]
 )
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
-from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError
+from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError, SuspendExecution
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 from inline_snapshot import snapshot
@@ -26,7 +26,13 @@ from opentelemetry.sdk.metrics.export import ExponentialHistogramDataPoint, Hist
 
 from pydantic_ai import Agent, RunContext, RunUsage
 from pydantic_ai._run_context import get_current_run_context
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ModelFallback, durable_operation
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    Instrumentation,
+    ModelFallback,
+    durable_operation,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -52,6 +58,7 @@ from pydantic_ai_harness.aws_lambda import (
     run_durable,
 )
 
+from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
 
@@ -1805,3 +1812,67 @@ class TestReplayTelemetry:
         run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first.operations))
 
         assert _span_names(capfire) == snapshot(['execute_tool live', 'invoke_agent a'])
+
+
+def _run_until_done(agent: Agent[Any, Any]) -> tuple[Any, list[FakeDurableContext]]:
+    """Invoke the handler again after every suspension, with the waits it suspended on over, as Lambda does."""
+    contexts = [FakeDurableContext()]
+    while True:
+        try:
+            return run_durable(lambda: agent.run('go'), context=contexts[-1]).output, contexts
+        except SuspendExecution:
+            contexts[-1].elapse_waits()
+            contexts.append(FakeDurableContext(journal=contexts[-1].operations))
+
+
+class TestDurableSleep:
+    def test_batch_waits_suspend_the_invocation(self) -> None:
+        """Each wait between checks of a batch is a Lambda wait: the invocation ends, and the next one continues the batch.
+
+        The wait is rounded up to Lambda's one-second minimum, the batch is neither cancelled nor submitted again, and
+        no step a suspended invocation completed runs again.
+        """
+        model = SlowBatchTestModel(pending_checks=1)
+        agent = Agent(
+            model, name='batch', capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), AWSLambdaDurability()]
+        )
+
+        output, contexts = _run_until_done(agent)
+
+        assert output == 'success (no tool calls)'
+        assert (len(model.created), model.status_checks, model.canceled) == (1, 2, [])
+        assert [ctx.invoked for ctx in contexts] == [['batch__model.request']] * 3
+        assert [(operation.name, operation.wait_seconds) for operation in contexts[-1].operations] == [
+            ('batch__model.request', None),
+            ('batch__sleep', 1),
+            ('batch__model.request', None),
+            ('batch__sleep', 1),
+            ('batch__model.request', None),
+        ]
+
+    def test_wait_inside_a_step_is_not_durable(self) -> None:
+        """A nested run in a checkpointed tool waits in the step: a Lambda wait can't be made while a step runs."""
+
+        class Background(FunctionModel):
+            def continuation_delay(self, response: ModelResponse) -> float | None:
+                return 0.01
+
+        def background(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1], ModelResponse):
+                return ModelResponse(parts=[TextPart('ready')], provider_response_id='job')
+            return ModelResponse(parts=[], provider_response_id='job', state='suspended')
+
+        async def tool() -> str:
+            return (await Agent(Background(background)).run('go')).output
+
+        agent = build_agent(tool)
+
+        output, contexts = _run_until_done(agent)
+
+        assert output == 'done'
+        assert len(contexts) == 1
+        assert contexts[0].step_names == [
+            'a__model.request',
+            'a__function_toolset__<agent>.call_tool:act',
+            'a__model.request',
+        ]

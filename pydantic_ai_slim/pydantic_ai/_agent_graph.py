@@ -235,9 +235,9 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
     """Set a custom async sleep function for agent graph delays.
 
     By default, the agent graph uses `anyio.sleep` when it needs to wait during
-    a run. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
-    should use this context manager to register their own durable sleep so that
-    delays survive workflow replays and don't waste activity time.
+    a run. A durability capability registers its engine's durable sleep here for
+    its runs, from `BaseDurabilityCapability.durable_sleep`, so that delays survive
+    workflow replays and don't waste activity time.
 
     Example:
     ```python
@@ -1924,11 +1924,12 @@ async def model_request(  # noqa: C901
                 if (delay := model.continuation_delay(response)) and (requested or not return_pending):
                     try:
                         await _agent_graph_sleep(delay)
-                    except BaseException:
+                    except BaseException as error:
                         # A `CancelledError` (or any error) raised while parked in the inter-poll
                         # sleep sits outside the request's cancel guard below, so cancel the job
-                        # here too before propagating.
-                        await cancel_suspended_job(model, response)
+                        # here too before propagating, unless the sleep suspended a durable run that
+                        # continues the job later.
+                        await cancel_abandoned_job(model, response, error)
                         raise
                 messages = [*base_messages, response]
             else:

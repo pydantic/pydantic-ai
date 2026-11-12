@@ -92,6 +92,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
 | `{name}__model.request_stream` | a streamed model request |
 | `{name}__model.compact_messages` | a request asking the model to shorten the message history |
 | `{name}__model.cancel_suspended_response` | cancelling a response the model provider is still working on in the background |
+| `{name}__sleep` | a wait before checking again on a response the model provider is still working on, such as a batch |
 | `{name}__capability__{capability_id}.{operation}` | work added by another capability |
 | `{name}__function_toolset__{id}.validate_args` | checking a tool's arguments with its `args_validator` |
 | `{name}__function_toolset__{id}.call_tool:{tool}` | a function tool call |
@@ -129,10 +130,9 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   fine.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
-- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
-  saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
-  long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
-  it already did.
+- The waits between checks of a background response or a [`BatchModelRequests`](../batch.md#durable-execution) batch are
+  pgtask sleeps: the task is suspended until a wait is over, so no worker holds it while a batch is
+  processed, and the run pgtask wakes it for passes the waits it already did.
 
 ## Running tools at the same time
 

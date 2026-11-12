@@ -264,6 +264,7 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__model.request_stream` | one streamed model request segment |
 | `{name}__model.compact_messages` | one model message-compaction operation |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
+| `{name}__sleep` | a wait before checking again on a response the model provider is still working on, such as a batch |
 | `{name}__capability__{capability_id}.{operation}` | an operation contributed by another capability |
 | `{name}__function_toolset__{id}.validate_args` | validating a function tool call's arguments |
 | `{name}__function_toolset__{id}.call_tool:{tool}` | a function tool call |
@@ -345,10 +346,12 @@ execution's traces show only the work that invocation did, and costs are counted
   state. A turn costs one model step plus one step per tool call, so the operation budget is
   generous, but large tool results consume the state budget: return a reference (an S3 key, say)
   rather than a blob.
-- **Batched requests wait in the invocation.** Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a
-  request and each check on its batch are durable steps, but the waits between checks are plain
-  sleeps: the invocation has to stay up for as long as the batch takes, within its timeout, and a
-  recovered run sleeps again through the waits it already did.
+- **Waits between checks suspend the execution.** The waits between checks of a background
+  response or a [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution) batch are durable Lambda waits: the invocation returns,
+  no compute is billed until the wait is over, and the next invocation replays the checkpoints and
+  continues with the same job, so a batch can take longer than the 15-minute invocation timeout.
+  Lambda times waits in whole seconds, so a shorter wait takes one second, and each wait costs an
+  invocation that replays the run's checkpoints.
 
 ## Per-tool configuration
 

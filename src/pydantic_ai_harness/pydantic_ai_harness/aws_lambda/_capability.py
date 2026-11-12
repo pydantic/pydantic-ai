@@ -23,7 +23,7 @@ from datetime import timedelta
 from typing import Any, ClassVar
 
 from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, StepConfig
-from aws_durable_execution_sdk_python.exceptions import CallbackError, ExecutionError
+from aws_durable_execution_sdk_python.exceptions import CallbackError, ExecutionError, SuspendExecution
 from pydantic import JsonValue
 from pydantic_core import from_json, to_json
 
@@ -67,7 +67,9 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     `ApprovalRequired`, `CallDeferred`, `ToolFailed`) cross the boundary as values rather than
     exceptions, so approval and deferred-tool flows work inside a durable execution. With
     `RequestInput` or harness `AskUser` attached, a call that needs an answer from outside waits on
-    a Lambda callback instead of ending the run.
+    a Lambda callback instead of ending the run. The waits between polls of a background response or
+    a `BatchModelRequests` batch are durable Lambda waits, which suspend the invocation until they're
+    over.
 
     Example:
         ```python {test="skip"}
@@ -100,6 +102,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         sequential_tools_in_durable_context=True,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         tool_config_key=_TOOL_CONFIG_KEY,
+        suspension_error_types=(SuspendExecution,),
     )
 
     def __init__(
@@ -133,6 +136,16 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return in_durable_context()
+
+    async def durable_sleep(self, seconds: float) -> None:
+        """Wait with a durable Lambda wait, which suspends the invocation until it's over.
+
+        Lambda times waits in whole seconds, at least one, so `seconds` is rounded up.
+        """
+        bridge = current_bridge()
+        # Only called in the durable context, which guarantees a bridge.
+        assert bridge is not None
+        await bridge.wait(f'{self.name}__sleep', Duration(seconds=max(1, math.ceil(seconds))))
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[StepConfig | None]:
         return AWSLambdaOperationBackend(

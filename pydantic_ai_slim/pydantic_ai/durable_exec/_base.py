@@ -13,7 +13,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
@@ -25,6 +25,7 @@ from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
@@ -54,6 +55,7 @@ from pydantic_ai.models import (
     StreamedResponse,
     infer_model,
 )
+from pydantic_ai.models._continuation import mark_run_suspended
 from pydantic_ai.models._request_timeout import open_durable_unit_stream
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
@@ -1160,7 +1162,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Refuse external-event waits the engine can't record, and force sequential tool execution when required by a sequence-keyed durable engine.
+        """Refuse external-event waits the engine can't record, wait with `durable_sleep`, and force sequential tool execution when required by a sequence-keyed durable engine.
 
         An engine that supports waiting for external events installs its own waiter with
         `external_event_scope` before calling this, and that waiter is kept.
@@ -1168,11 +1170,42 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler()
         agent = self._agent
-        with _refuse_unsupported_external_events(self.engine_name):
+        # Without a durable timer, the waits stay as they are outside the durable context, including a sleep
+        # registered with `Agent.using_sleep`.
+        has_timer = type(self).durable_sleep is not BaseDurabilityCapability.durable_sleep
+        sleep_scope = set_agent_graph_sleep(self._sleep_in_container) if has_timer else nullcontext()
+        with _refuse_unsupported_external_events(self.engine_name), sleep_scope:
             if not self.engine_spec.sequential_tools_in_durable_context or agent is None:
                 return await handler()
             with agent.parallel_tool_call_execution_mode('sequential'):
                 return await handler()
+
+    async def durable_sleep(self, seconds: float) -> None:
+        """Wait `seconds` in the durable container, for a delay the agent graph makes during a run.
+
+        The agent graph waits between polls of a model's server-side job, such as an OpenAI background response or a
+        batch submitted by `BatchModelRequests`, which can take hours. Override this with the engine's durable timer,
+        so that the wait holds no process, and a recovered run doesn't wait again through time that already passed.
+        An engine whose timer suspends the container by raising lists that error in
+        `DurabilityEngineSpec.suspension_error_types`.
+
+        It's only called in container code: inside a durable unit, such as a nested agent run in a tool, the wait is a
+        plain `anyio.sleep`. An engine without a durable timer doesn't override it, and its waits stay plain sleeps in
+        the container's process: the process has to stay up for a wait, and a recovered run waits it again. The
+        default implementation is that plain sleep.
+        """
+        await anyio.sleep(max(seconds, 0))  # workflow-nondeterminism-ok: the default without a durable timer
+
+    async def _sleep_in_container(self, seconds: float) -> None:
+        """The agent graph's sleep in the durable context: `durable_sleep`, or a plain sleep inside a durable unit."""
+        if in_durable_unit():
+            await anyio.sleep(max(seconds, 0))  # workflow-nondeterminism-ok: a durable unit is not container code
+            return
+        try:
+            await self.durable_sleep(seconds)
+        except self.engine_spec.suspension_error_types as error:
+            mark_run_suspended(error)
+            raise
 
     def _normalize_unit_config(self, config: Any) -> Any:
         """Post-process a resolved config (e.g. Prefect/Temporal ensure non-retryable errors)."""

@@ -14,15 +14,16 @@
     "set_agent_graph_sleep": {
       "engines": [
         "dbos",
+        "durable_exec",
         "temporal"
       ],
       "kinds": [
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_utils.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._temporal_overrides",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._temporal_overrides"
       ]
     }
   },
@@ -5469,6 +5470,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.system",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::_CompactionModelPlaceholder.system",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::_CompactionModelPlaceholder.system"
+      ]
+    }
+  },
+  "pydantic_ai_slim/pydantic_ai/models/_continuation.py": {
+    "mark_run_suspended": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
       ]
     }
   },

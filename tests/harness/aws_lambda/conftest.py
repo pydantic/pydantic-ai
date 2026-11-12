@@ -8,7 +8,9 @@ reproduces the two behaviours this capability depends on:
 - a resumed execution serves a completed step from its checkpoint without running the body
   again, and a step whose body raised is recorded as failed;
 - a callback's result suspends the execution until a test resolves the callback, and a resumed
-  execution reads the resolution from the journal.
+  execution reads the resolution from the journal;
+- a wait suspends the execution until a test elapses it, and a resumed execution then passes it
+  straight away.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import pytest
 
 pytest.importorskip('aws_durable_execution_sdk_python')
 
-from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
+from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, StepConfig
 from aws_durable_execution_sdk_python.exceptions import CallbackError, SuspendExecution
 from aws_durable_execution_sdk_python.serdes import deserialize as _deserialize, serialize as _serialize
 
@@ -45,6 +47,7 @@ class Operation:
     thread_id: int = 0
     callback_id: str | None = None
     callback_config: CallbackConfig | None = None
+    wait_seconds: int | None = None
 
 
 class StepContext:
@@ -120,6 +123,20 @@ class FakeDurableContext:
         )
         self.operations.append(operation)
         return FakeCallback(operation)
+
+    def wait(self, duration: Duration, name: str | None = None) -> None:
+        recorded = self._replay(name)
+        if recorded is None:
+            self.operations.append(Operation(name=name, status='started', wait_seconds=duration.seconds))
+        elif recorded.status == 'succeeded':
+            return
+        raise SuspendExecution(f'Wait for {duration.seconds} seconds')
+
+    def elapse_waits(self) -> None:
+        """End every started wait, as Lambda does once its time has passed."""
+        for operation in self.operations:
+            if operation.wait_seconds is not None:
+                operation.status = 'succeeded'
 
     def _replay(self, name: str | None) -> Operation | None:
         """The journaled operation at the cursor, if this context is replaying one, after checking it is the same operation."""

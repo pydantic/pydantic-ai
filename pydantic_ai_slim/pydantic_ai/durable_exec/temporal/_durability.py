@@ -11,7 +11,6 @@ from temporalio import workflow
 from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._durable_replay import replay_scope
 from pydantic_ai._utils import aclose_if_supported, await_maybe
@@ -568,6 +567,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # `workflow.now()` is replay-safe: a replayed run computes the same deadline and timer.
         return workflow.now if self.in_durable_context else None
 
+    async def durable_sleep(self, seconds: float) -> None:
+        """Wait with a durable Temporal timer, which holds no worker slot and survives replays."""
+        await workflow.sleep(seconds)
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -578,7 +581,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler()
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+        with disable_threads(), replay_scope(is_replaying=_replaying_history):
             return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:

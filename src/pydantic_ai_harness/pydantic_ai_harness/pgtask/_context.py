@@ -29,12 +29,23 @@ class TaskSteps:
     occurrences: Counter[str]
 
     async def step(self, name: str, operation: Callable[[], Awaitable[StepT]]) -> StepT:
+        name, occurrence = self._next(name)
+        return await self.task.step(name, operation, occurrence=occurrence)
+
+    async def sleep(self, name: str, seconds: float) -> None:
+        """Sleep durably: pgtask suspends the task until the wake time, and a replayed sleep that's over returns."""
+        name, occurrence = self._next(name)
+        # pgtask rejects a negative delay.
+        await self.task.sleep_for(name, max(seconds, 0), occurrence=occurrence)
+
+    def _next(self, name: str) -> tuple[str, int]:
+        """The name pgtask accepts for `name`, and the occurrence of it this call is."""
         # Step names are built from the agent, toolset, and tool names, which can hold characters
         # pgtask rejects (the agent's own toolset has the id `<agent>`).
         name = _UNSUPPORTED_STEP_NAME_CHAR.sub('_', name)
         occurrence = self.occurrences[name]
         self.occurrences[name] += 1
-        return await self.task.step(name, operation, occurrence=occurrence)
+        return name, occurrence
 
 
 # The counters are shared by every step of an attempt, wherever it runs, so they are keyed by the task

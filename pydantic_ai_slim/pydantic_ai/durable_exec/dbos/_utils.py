@@ -48,7 +48,7 @@ def in_workflow_code() -> bool:
     return DBOS.workflow_id is not None and DBOS.step_id is None
 
 
-async def _durable_sleep(seconds: float) -> None:
+async def durable_sleep(seconds: float) -> None:
     # DBOS rejects its durable sleep inside a step, which a nested run can reach through the
     # inherited `ContextVar`, so only workflow code sleeps durably.
     if in_workflow_code():
@@ -67,5 +67,5 @@ def using_durable_sleep() -> Generator[None]:
     if not in_workflow_code():
         yield
         return
-    with set_agent_graph_sleep(_durable_sleep):
+    with set_agent_graph_sleep(durable_sleep):
         yield

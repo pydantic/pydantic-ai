@@ -24,7 +24,7 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ProcessEventStream
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -111,6 +111,7 @@ from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import Workspace
 
+from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..workspace_fakes import FakeWorkspace
 
 JOURNAL_OPERATION_NAMES = {
@@ -239,6 +240,142 @@ async def test_durability_forces_sequential_tools_inside_durable_context() -> No
         return cast(AgentRunResult[Any], object())
 
     await bound.wrap_run(ctx, handler=handler)
+
+
+class _Suspended(Exception):
+    """Stands in for the error an engine's durable sleep ends the container's attempt with until its timer fires."""
+
+
+class _DelayedContinuationModel(ScriptedContinuationModel):
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 0.01
+
+
+def _delayed_continuation_model() -> _DelayedContinuationModel:
+    return _DelayedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ],
+        segments=[
+            StreamSegment(
+                texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+            ),
+            StreamSegment(
+                texts=['is 42.'], state='complete', provider_response_id='cont2', input_tokens=3, output_tokens=4
+            ),
+        ],
+    )
+
+
+class SleepingJournalDurability(JournalDurability):
+    engine_spec = replace(JournalDurability.engine_spec, suspension_error_types=(_Suspended,))
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.sleeps: list[float] = []
+        self._error = error
+
+    async def durable_sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        if self._error is not None:
+            raise self._error
+
+
+async def _ignore_events(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+def _sleeping_agent(
+    model: _DelayedContinuationModel, durability: SleepingJournalDurability, *, stream: bool
+) -> Agent[None, str]:
+    """An agent whose model requests stream when `stream` is set, as an event stream handler makes them."""
+    capabilities: list[AbstractCapability[Any]] = [ProcessEventStream(_ignore_events)] if stream else []
+    return Agent(model, name='sleeping', capabilities=[*capabilities, durability])
+
+
+_RESUMED_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='go')]),
+    scripted_response(
+        texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+    ),
+]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_durable_sleep_waits_between_polls(stream: bool) -> None:
+    """In the durable context, the wait before polling a suspended response again is the capability's `durable_sleep`."""
+    durability = SleepingJournalDurability()
+    agent = _sleeping_agent(_delayed_continuation_model(), durability, stream=stream)
+
+    assert (await agent.run('go')).output == 'The answer is 42.'
+    assert durability.sleeps == [0.01]
+
+
+@pytest.mark.parametrize('resumed', [False, True])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_durable_sleep_suspension_leaves_job_running(stream: bool, resumed: bool) -> None:
+    """A suspension error from `durable_sleep` ends the run but leaves the job for the replayed run to continue.
+
+    An engine like AWS Lambda waits by ending the attempt and running the container again once its timer fires, so
+    cancelling the job would leave the replayed run nothing to continue. That holds for the wait before continuing a
+    suspended response the run was resumed with, too.
+    """
+    model = _delayed_continuation_model()
+    durability = SleepingJournalDurability(error=_Suspended())
+    agent = _sleeping_agent(model, durability, stream=stream)
+
+    with pytest.raises(_Suspended):
+        if resumed:
+            await agent.run(message_history=_RESUMED_HISTORY)
+        else:
+            await agent.run('go')
+    assert durability.sleeps == [0.01]
+    assert model.cancelled == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_durable_sleep_failure_cancels_job(stream: bool) -> None:
+    """Any other error from `durable_sleep` gives up on the job, so it's cancelled rather than left running."""
+    model = _delayed_continuation_model()
+    durability = SleepingJournalDurability(error=RuntimeError('timer failed'))
+    agent = _sleeping_agent(model, durability, stream=stream)
+
+    with pytest.raises(RuntimeError, match='timer failed'):
+        await agent.run('go')
+    assert [response.provider_response_id for response in model.cancelled] == ['cont1']
+
+
+async def test_engine_without_durable_timer_keeps_registered_sleep() -> None:
+    """An engine that doesn't override `durable_sleep` leaves the waits as they are, so `Agent.using_sleep` still applies."""
+    delays: list[float] = []
+
+    async def record(seconds: float) -> None:
+        delays.append(seconds)
+
+    agent = Agent(_delayed_continuation_model(), name='plain', capabilities=[JournalDurability()])
+    with Agent.using_sleep(record):
+        assert (await agent.run('go')).output == 'The answer is 42.'
+    assert delays == [0.01]
+
+    # The default an override can fall back on is a plain sleep.
+    await JournalDurability().durable_sleep(0)
+
+
+async def test_durable_sleep_is_plain_inside_durable_unit() -> None:
+    """A nested run in a tool, which runs in a durable unit, waits with a plain sleep rather than the container's timer."""
+    durability = SleepingJournalDurability()
+    outer = Agent(TestModel(call_tools=['delegate']), name='sleeping_outer', capabilities=[durability])
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return (await Agent(_delayed_continuation_model()).run('go')).output
+
+    assert (await outer.run('go')).output == snapshot('{"delegate":"The answer is 42."}')
+    assert durability.sleeps == []
 
 
 def test_prepare_run_context_without_agent() -> None:
