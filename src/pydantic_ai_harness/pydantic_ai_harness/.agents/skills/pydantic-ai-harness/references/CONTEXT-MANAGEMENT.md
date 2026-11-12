@@ -106,6 +106,13 @@ Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction` but m
 hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly one of
 `target_tokens` / `target_fraction` is required. Any object with
 `async def compact(messages, ctx) -> list[ModelMessage]` (`CompactionStrategy`) can be a tier.
+Each tier's kept messages set a floor under `target_tokens`: its `keep_tokens`/`keep_messages` tail
+with the current turn, the first user message under `preserve_first_user_message`, and pins. A target
+below that floor can't be reached. The outermost chain then logs a warning on each attempt and sets
+`compaction.target_unreached`, `compaction.target_tokens` and `compaction.estimate` on its span when
+the history changes; a no-op has no span, only the warning. The logger is
+`pydantic_ai_harness.compaction._tiered_compaction`. Use `preserve_first_user_message=False` on tiers
+that may drop or summarize the first user message.
 
 ## The individual strategies
 

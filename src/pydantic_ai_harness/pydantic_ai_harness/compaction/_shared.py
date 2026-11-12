@@ -6,7 +6,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
@@ -63,6 +63,8 @@ from pydantic_ai_harness.compaction._receipts import (
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
 
 if TYPE_CHECKING:
+    from opentelemetry.util.types import AttributeValue
+
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.tools import ToolDefinition
 
@@ -577,6 +579,19 @@ _SPAN_NAME = 'compact_messages'
 goes in the `compaction.strategy` attribute rather than the span name to keep cardinality low."""
 
 
+_pending_span_attributes: ContextVar[dict[str, AttributeValue] | None] = ContextVar(
+    'pydantic_ai_harness.compaction.pending_span_attributes', default=None
+)
+"""Attributes a strategy records during `compact_with_span`'s compaction, set on the span it emits."""
+
+
+def record_span_attributes(attributes: Mapping[str, AttributeValue]) -> None:
+    """Record *attributes* for the enclosing `compact_with_span`'s span; a no-op outside one."""
+    pending = _pending_span_attributes.get()
+    if pending is not None:
+        pending.update(attributes)
+
+
 def _history_changed(before: list[ModelMessage], after: list[ModelMessage]) -> bool:
     """Return True if *after* differs from *before*.
 
@@ -618,10 +633,13 @@ async def compact_with_span(
             when there was one.
     """
     token = open_receipt_scope()
+    recorded_attributes: dict[str, AttributeValue] = {}
+    attributes_token = _pending_span_attributes.set(recorded_attributes)
     try:
         compacted = await compact()
         receipts = drain_receipts()
     finally:
+        _pending_span_attributes.reset(attributes_token)
         reset_receipt_scope(token)
     if not _history_changed(messages, compacted):
         return messages
@@ -642,6 +660,7 @@ async def compact_with_span(
                 span.set_attribute('compaction.model_requested', True)
             if background is not None:
                 span.set_attribute('compaction.background', background)
+            span.set_attributes(recorded_attributes)
             for receipt in receipts:
                 attributes = {
                     'compaction.receipt.strategy': receipt.strategy,
