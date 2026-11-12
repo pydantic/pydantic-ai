@@ -227,6 +227,8 @@ result
 
 When a nested tool returns a [`ToolReturn`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
 
+A nested tool that raises [`ToolFailed`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-failed) the snippet does not catch ends `run_code` with a failed tool result instead of a retry, as when the model calls that tool directly. The result is the tool's message, after any printed output and followed by a summary of the other nested calls when the snippet made any, and does not spend `run_code`'s retries. A hook on the nested tool receives the exception the tool raised. The `ToolFailed` that `run_code` raises is a new one carrying that extra text, with the tool's exception as its `__cause__`. A hook around `run_code` that needs a `ToolFailed` subclass and its attributes should walk the `__cause__` chain, which is one step longer than for a direct call. A nested `ModelRetry` the snippet does not catch is still a retry.
+
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
 Sandbox execution is bounded by `resource_limits`, which defaults to 30 seconds of execution time

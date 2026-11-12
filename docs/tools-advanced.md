@@ -669,7 +669,7 @@ Rule of thumb: raise `ModelRetry` when you want the model to try again with corr
 
 You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
 
-`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
+`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. A tool that [Code Mode](harness/code-mode.md) calls from a snippet reports an uncaught `ToolFailed` the same way, as a failed `run_code` result. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
 
 ### Tool Timeout
 

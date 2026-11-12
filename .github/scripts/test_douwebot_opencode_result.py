@@ -13,67 +13,88 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from douwebot_opencode_result import review_result
 
+_RESULT = '{"verdict":"APPROVE","comments":[],"discussion":""}'
+_STOP: dict[str, object] = {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}}
+
+
+def _write_events(tmp_path: Path, events: list[dict[str, object]]) -> Path:
+    """Write an OpenCode event stream the way `opencode run --format json` does: one event per LF-ended line."""
+    stream = tmp_path / 'review.ndjson'
+    stream.write_text(''.join(json.dumps(event, ensure_ascii=False) + '\n' for event in events), encoding='utf-8')
+    return stream
+
+
+def _final_text(text: str) -> dict[str, object]:
+    return {'type': 'text', 'part': {'messageID': 'msg_final', 'text': text}}
+
+
+def _stream(tmp_path: Path, text: str) -> Path:
+    """A normally completed stream whose final assistant text is `text`."""
+    return _write_events(tmp_path, [_final_text(text), _STOP])
+
 
 def test_completed_review_result(tmp_path: Path) -> None:
     """Accept the final JSON only when the stream stopped normally."""
-    stream = tmp_path / 'review.ndjson'
-    events = [
-        {'type': 'text', 'part': {'messageID': 'msg_final', 'text': 'intermediate analysis'}},
-        {
-            'type': 'text',
-            'part': {'messageID': 'msg_final', 'text': '{"verdict":"APPROVE","comments":[],"discussion":""}'},
-        },
-        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
-    ]
-    stream.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+    stream = _write_events(tmp_path, [_final_text('intermediate analysis'), _final_text(_RESULT), _STOP])
     assert review_result(stream).verdict == 'APPROVE'
 
 
 def test_line_separator_in_model_text_stays_in_its_event(tmp_path: Path) -> None:
     """OpenCode's `JSON.stringify` leaves U+2028 raw, and only LF ends an event."""
-    stream = tmp_path / 'review.ndjson'
     discussion = 'First point.\u2028Second point.'
     result = json.dumps({'verdict': 'APPROVE', 'comments': [], 'discussion': discussion}, ensure_ascii=False)
-    events = [
-        {'type': 'text', 'part': {'messageID': 'msg_final', 'text': result}},
-        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
-    ]
-    stream.write_text('\n'.join(json.dumps(event, ensure_ascii=False) for event in events) + '\n', encoding='utf-8')
-    assert review_result(stream).discussion == discussion
+    assert review_result(_stream(tmp_path, result)).discussion == discussion
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        f'```json\n{_RESULT}\n```',
+        f'```\n{_RESULT}\n```',
+        f'\n  ```json\n{json.dumps(json.loads(_RESULT), indent=2)}\n```\n',
+        '```json\n{"verdict":"APPROVE","comments":[],"discussion":"Use:\\n```py\\nx = 1\\n```"}\n```',
+        f'Here is the review:\n```json\n{_RESULT}\n```',
+    ],
+)
+def test_code_fence_that_ends_the_answer_is_unwrapped(tmp_path: Path, text: str) -> None:
+    """Accept a final JSON object in the Markdown code fence that ends the answer."""
+    assert review_result(_stream(tmp_path, text)).verdict == 'APPROVE'
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        f'```json\n{_RESULT}\n```\nLet me know if you need more.',
+        f'```json\n```json\n{_RESULT}\n```\n```',
+        f'```json\n{_RESULT}',
+        f'```json {_RESULT} ```',
+    ],
+)
+def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
+    """Text after the fence, nested or unterminated fences stay invalid."""
+    with pytest.raises(ValidationError):
+        review_result(_stream(tmp_path, text))
+
+
+def test_fence_heavy_answer_is_rejected_in_linear_time(tmp_path: Path) -> None:
+    """A model-controlled answer of a million fence characters cannot stall validation."""
+    with pytest.raises(ValidationError):
+        review_result(_stream(tmp_path, '```\n' * 250_000 + 'x'))
 
 
 @pytest.mark.parametrize(
     'events',
     [
         [],
-        [
-            {
-                'type': 'text',
-                'part': {'messageID': 'msg_final', 'text': '{"verdict":"APPROVE","comments":[],"discussion":""}'},
-            }
-        ],
-        [{'type': 'error'}, {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}}],
-        [
-            {
-                'type': 'text',
-                'part': {'messageID': 'msg_old', 'text': '{"verdict":"APPROVE","comments":[],"discussion":""}'},
-            },
-            {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
-        ],
+        [_final_text(_RESULT)],
+        [{'type': 'error'}, _STOP],
+        [{'type': 'text', 'part': {'messageID': 'msg_old', 'text': _RESULT}}, _STOP],
         [{'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'error'}}],
-        [
-            {'type': 'text', 'part': {'messageID': 'msg_final', 'text': 'not json'}},
-            {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
-        ],
-        [
-            {'type': 'text', 'part': {'messageID': 'msg_final', 'text': '{"verdict":"APPROVE"}'}},
-            {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
-        ],
+        [_final_text('not json'), _STOP],
+        [_final_text('{"verdict":"APPROVE"}'), _STOP],
     ],
 )
 def test_incomplete_or_invalid_review_fails(tmp_path: Path, events: list[dict[str, object]]) -> None:
     """Never pass a partial stream, error, or invalid review to the publisher."""
-    stream = tmp_path / 'review.ndjson'
-    stream.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
     with pytest.raises((ValueError, ValidationError)):
-        review_result(stream)
+        review_result(_write_events(tmp_path, events))
