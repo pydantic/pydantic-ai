@@ -80,7 +80,7 @@ def test_specialist_owns_its_files_and_general_reviews_the_rest() -> None:
     }
 
 
-@pytest.mark.parametrize('backend', ['docker_container', 'smol_sandbox', 'boxlite_sandbox', 'e2b_sandbox'])
+@pytest.mark.parametrize('backend', ['docker_sandbox', 'smol_sandbox', 'boxlite_sandbox', 'e2b_sandbox'])
 def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
     """Every sandbox backend, local or cloud, gets the sandbox review."""
     path = f'src/pydantic_ai_harness/pydantic_ai_harness/{backend}/_sandbox.py'
