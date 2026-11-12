@@ -932,7 +932,8 @@ class TestRetryAfter:
         agent = Agent(_rate_limited_once(counter, 5.0), name='last', capabilities=[PGTaskDurability()])
 
         async def body(attempt: int) -> None:
-            with pytest.raises(ModelRateLimitError):
+            # pgtask raises a step's failure as a `RuntimeError` naming the error.
+            with pytest.raises(RuntimeError, match='ModelRateLimitError'):
                 await agent.run('hi')
 
         task_id = await run_in_task(pgtask_db, body, attempts=1)
