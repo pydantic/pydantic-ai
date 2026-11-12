@@ -256,10 +256,7 @@ _COMBINATION = re.compile(r'(?<=.)\+(?=.)')
 
 
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    normalized = tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key))
-    if len(normalized) > 8:
-        raise ValueError('at most 8 keys, counting each key of a combination such as `ctrl+s`')
-    return normalized
+    return tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key))
 
 
 def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
@@ -270,8 +267,8 @@ def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
     return normalized
 
 
-_Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1, max_length=8), AfterValidator(_normalize_keys)]
-_Modifiers: TypeAlias = Annotated[tuple[str, ...], Field(max_length=8), AfterValidator(_normalize_modifiers)]
+_Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1), AfterValidator(_normalize_keys)]
+_Modifiers: TypeAlias = Annotated[tuple[str, ...], AfterValidator(_normalize_modifiers)]
 
 _CONTROL_CHARACTER = re.compile('[\x00-\x08\x0b-\x1f\x7f-\x9f]')
 
@@ -352,7 +349,7 @@ class Drag:
     """Press the left button at the first point, move through the rest, and release at the last."""
 
     type: Literal['drag'] = 'drag'
-    path: Annotated[tuple[Point, ...], Field(min_length=2, max_length=50)]
+    path: Annotated[tuple[Point, ...], Field(min_length=2)]
     """The points to drag through: at least a start and an end."""
     modifiers: _Modifiers = ()
     """Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."""
@@ -381,7 +378,7 @@ class Scroll:
     type: Literal['scroll'] = 'scroll'
     direction: Literal['up', 'down', 'left', 'right']
     """Which way the content moves into view: `down` shows what is below."""
-    amount: Annotated[int, Field(ge=1, le=50)] = 3
+    amount: Annotated[int, Field(ge=1)] = 3
     """Mouse-wheel clicks; one click scrolls about three lines."""
     x: _Coordinate | None = None
     """From the left edge of the screenshot. Omit both `x` and `y` to scroll where the pointer is."""
@@ -406,8 +403,7 @@ class TypeText:
     """
 
     type: Literal['type'] = 'type'
-    text: Annotated[str, Field(min_length=1, max_length=2_000), AfterValidator(_check_text)]
-    """Up to 2,000 characters; type longer text in several actions."""
+    text: Annotated[str, Field(min_length=1), AfterValidator(_check_text)]
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
@@ -417,7 +413,7 @@ class PressKeys:
     type: Literal['keypress'] = 'keypress'
     keys: _Keys
     """One key per entry, pressed together: `["enter"]`, `["ctrl", "a"]`, `["super", "shift", "t"]`."""
-    repeat: Annotated[int, Field(ge=1, le=100)] = 1
+    repeat: Annotated[int, Field(ge=1)] = 1
     """How many times to press the combination."""
 
 
@@ -428,8 +424,8 @@ class HoldKeys:
     type: Literal['hold_key'] = 'hold_key'
     keys: _Keys
     """One key per entry, held together."""
-    seconds: Annotated[float, Field(gt=0, le=30)]
-    """How long to hold them, up to 30 seconds."""
+    seconds: Annotated[float, Field(gt=0)]
+    """How long to hold them."""
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
@@ -437,8 +433,8 @@ class Wait:
     """Pause, for example while a page or application loads."""
 
     type: Literal['wait'] = 'wait'
-    seconds: Annotated[float, Field(gt=0, le=30)] = 1
-    """How long to wait, up to 30 seconds."""
+    seconds: Annotated[float, Field(gt=0)] = 1
+    """How long to wait."""
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)

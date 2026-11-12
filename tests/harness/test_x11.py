@@ -61,6 +61,7 @@ class ScriptedCommands:
     def __init__(self, *results: CommandResult) -> None:
         self.results = list(results)
         self.calls: list[tuple[WorkspaceCommand, bool, Mapping[str, str] | None]] = []
+        self.timeouts: list[float | None] = []
 
     async def run(
         self,
@@ -71,6 +72,7 @@ class ScriptedCommands:
         timeout: float | None = None,
     ) -> CommandResult:
         self.calls.append((command, shell, env))
+        self.timeouts.append(timeout)
         return self.results.pop(0) if self.results else CommandResult(exit_code=0, stdout='', stderr='')
 
     @property
@@ -148,6 +150,32 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     assert commands.calls == [
         (['sh', '-c', INPUT, 'sh', 'xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1'})
     ]
+
+
+async def test_x11_computer_types_long_text_2000_characters_per_command() -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(TypeText(text='a' * 4_001))
+    typed = [argv[argv.index('--') + 1 :] for argv in commands.argvs]
+    assert [len(keysyms) for keysyms in typed] == [2_000, 2_000, 1]
+    assert {keysym for keysyms in typed for keysym in keysyms} == {'U0061'}
+
+
+@pytest.mark.parametrize(
+    'action, timeout',
+    [
+        (HoldKeys(keys=('shift',), seconds=200), 350),
+        (Scroll(direction='down', amount=1_000), 170),
+        (PressKeys(keys=('a',), repeat=1_000), 162),
+        (TypeText(text='a' * 1_000), 162),
+        # 0.1 s before the first move and after the last, and 0.05 s before each of the 2 moves.
+        (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.3),
+        (Click(x=1, y=1), 150),
+    ],
+)
+async def test_x11_computer_allows_for_the_pauses_an_action_asks_for(action: DisplayAction, timeout: float) -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(action)
+    assert commands.timeouts == [pytest.approx(timeout)]
 
 
 @pytest.mark.parametrize(
