@@ -1073,19 +1073,24 @@ def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
     """The `GraphAgentState.appended_messages` a serialized result's `conversation_messages` and `conversation_run_start` describe.
 
     An int in `conversation_messages` stands for the message at that index of `messages`; one out of range fails
-    validation.
+    validation, as does a `conversation_run_start` outside the conversation.
     """
     messages = data.get('messages')
     history = cast('list[Any]', messages) if isinstance(messages, list) else []
     full = data['conversation_messages']
     messages_data: list[Any] = []
     for item in cast('list[Any]', full) if isinstance(full, list) else []:
-        if isinstance(item, int) and not 0 <= item < len(history):
+        if type(item) is int and not 0 <= item < len(history):
             raise ValueError(
                 f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
             )
-        messages_data.append(history[item] if isinstance(item, int) else item)
-    return {'messages': messages_data, 'new_message_index': data.get('conversation_run_start', 0), 'full': True}
+        messages_data.append(history[item] if type(item) is int else item)
+    run_start = data.get('conversation_run_start', 0)
+    if type(run_start) is int and not 0 <= run_start <= len(messages_data):
+        raise ValueError(
+            f'`conversation_run_start` is {run_start}, but `conversation_messages` holds {len(messages_data)} messages.'
+        )
+    return {'messages': messages_data, 'new_message_index': run_start, 'full': True}
 
 
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:

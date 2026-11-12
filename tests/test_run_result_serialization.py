@@ -690,3 +690,30 @@ def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_va
                 'conversation_run_start': 1,
             }
         )
+
+
+@pytest.mark.parametrize('run_start', [-1, 2])
+def test_a_run_result_whose_whole_conversation_starts_outside_it_fails_validation(run_start: int) -> None:
+    with pytest.raises(
+        ValidationError, match=f'`conversation_run_start` is {run_start}, but `conversation_messages` holds 1'
+    ):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': [0],
+                'conversation_run_start': run_start,
+            }
+        )
+
+
+def test_a_run_result_whose_whole_conversation_holds_a_bool_does_not_read_it_as_an_index() -> None:
+    with pytest.raises(ValidationError):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}, {'kind': 'request', 'parts': []}],
+                'conversation_messages': [True],
+                'conversation_run_start': 0,
+            }
+        )
