@@ -435,8 +435,8 @@ jobs:
       # by tag and checksum, and used only when it ports the pyright version `uv.lock` installs, so a
       # pyright bump is never checked by an older port. When the install or the pyright-rs check
       # fails, pyright checks, and its result counts, so a pull request never fails on a pyright-rs
-      # mistake. A merge group and a push to `main` check with pyright alone, which catches a wrong
-      # pass before it reaches `main`.
+      # mistake. A merge group checks with pyright alone, so a wrong pyright-rs pass never reaches
+      # `main`; a push to `main` checks with pyright too.
       - name: Install pyright-rs
         id: pyright-rs
         if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
