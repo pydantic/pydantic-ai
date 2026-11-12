@@ -1813,6 +1813,7 @@ def test_openrouter_x_ai_grok_4_7():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
