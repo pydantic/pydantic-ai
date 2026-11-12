@@ -67,9 +67,9 @@ def _run(script: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess
 
 async def test_the_scripts_are_valid_shell(fake_e2b: FakeE2B) -> None:
     for script in await _scripts(fake_e2b):
-        if shutil.which('dash'):
+        if shutil.which('dash'):  # pragma: no branch - CI has it; a laptop may not
             assert subprocess.run(['dash', '-n', '-c', script], capture_output=True, text=True).stderr == ''
-        if shutil.which('shellcheck'):
+        if shutil.which('shellcheck'):  # pragma: no branch - CI has it; a laptop may not
             # SC2046 and SC2086 flag the unquoted `/proc/$(...)` and `/proc/$p` paths, which hold a PID or nothing.
             check = ['shellcheck', '-s', 'sh', '-e', 'SC2046,SC2086', '-']
             result = subprocess.run(check, input=script, capture_output=True, text=True)
