@@ -871,6 +871,19 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
             _IMAGE,
         ]
 
+    async def test_raw_bytes_beside_a_file_are_reduced_as_text(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, [b'R' * 5_000, _IMAGE]) == [
+            snapshot("""\
+
+
+[truncated: 5,000 chars omitted from the middle; showing first 0 + last 2 of 5,002 chars]
+
+R"\
+"""),
+            _IMAGE,
+        ]
+
     async def test_content_beside_a_file_is_still_reduced(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
         out = await _run(cap, ToolReturn(return_value=['image', _IMAGE], content='C' * 5_000))

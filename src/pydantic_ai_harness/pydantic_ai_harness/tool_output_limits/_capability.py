@@ -383,13 +383,16 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> tuple[list[object] | None, str | None, int]:
         """Reduce the data beside the files of a return value, which reach the model as files.
 
-        Like core, a lone data item is measured as itself and several as a list. When reduced, the result goes
-        ahead of the files. Returns `(new_items, handle, data_bytes)`, with `new_items` None when nothing was reduced.
+        Like core, a lone data item is measured as itself and several as a list. Core sends that data as text, so
+        a lone raw `bytes` item is measured as text too, not as a binary unit that `Truncate` would pass over.
+        When reduced, the result goes ahead of the files. Returns `(new_items, handle, data_bytes)`, with
+        `new_items` None when nothing was reduced.
         """
         data = [item for item in items if not is_multi_modal_content(item)]
         if not data:
             return None, None, 0
-        unit = self._make_unit(data[0] if len(data) == 1 else data, tool_name=call.tool_name, suffix='')
+        value = data[0] if len(data) == 1 else data
+        unit = self._make_unit(to_text(value) if is_binary(value) else value, tool_name=call.tool_name, suffix='')
         reduced, handle = await self._reduce(ctx, call, bands, unit)
         if reduced is None:
             return None, None, 0
