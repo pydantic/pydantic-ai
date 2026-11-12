@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
-from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
+from pydantic import SerializerFunctionWrapHandler, TypeAdapter, ValidationError, WrapSerializer
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
@@ -38,8 +38,8 @@ from pydantic_ai_harness.subagents._events import DelegationOutcome
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._toolset import SubAgent
 
-_CURRENT: ContextVar[DelegationTasks | None] = ContextVar('delegation_tasks', default=None)
-_CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
+_CURRENT: ContextVar[DelegationTasks | None] = ContextVar('pydantic_ai_harness.subagents.current', default=None)
+_CHILD: ContextVar[str | None] = ContextVar('pydantic_ai_harness.subagents.child', default=None)
 
 NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
 """Why a delegation can't run in the background."""
@@ -116,6 +116,24 @@ class DelegationTaskEvent:
     """That model's context window, when its profile knows one, so a UI can show the child's context usage."""
 
 
+@dataclass(kw_only=True)
+class SavedTaskProblem:
+    """A saved task file that discovery skipped. The file is left on disk for inspection."""
+
+    path: Path
+    reason: str
+
+
+@dataclass(kw_only=True)
+class SavedTasks:
+    """The tasks saved under a `DelegationTasks` directory, read without opening an owner or resuming any task."""
+
+    tasks: dict[str, DelegationTask]
+    """The tasks that loaded, by ID. Use `parent_id` to walk the tree; a parent that did not load is absent."""
+    problems: list[SavedTaskProblem]
+    """One entry per skipped file, so a damaged task does not hide its siblings."""
+
+
 Observer = Callable[[DelegationTaskEvent], Awaitable[None]]
 Runner = Callable[[DelegationTask], Awaitable[str]]
 Emitter = Callable[[CapabilityEvent], Awaitable[object]]
@@ -170,6 +188,30 @@ async def _read(path: anyio.Path) -> DelegationTask:
     return record
 
 
+def _ancestry_loops(record: DelegationTask, tasks: Mapping[str, DelegationTask]) -> bool:
+    """Whether following `parent_id` from `record` through `tasks` comes back to a task already passed."""
+    ancestors = {record.id}
+    parent = record.parent_id
+    while parent is not None and parent in tasks:
+        if parent in ancestors:
+            return True
+        ancestors.add(parent)
+        parent = tasks[parent].parent_id
+    return False
+
+
+def _validation_reason(exc: ValidationError) -> str:
+    """Describe `exc` by error type and saved-task field only.
+
+    Its message quotes the saved prompt and history, and a deeper location can hold a key from them.
+    """
+    reasons = dict.fromkeys(
+        f'{error["type"]} at {error["loc"][0]}' if error['loc'] else error['type']
+        for error in exc.errors(include_url=False, include_context=False, include_input=False)
+    )
+    return f'ValidationError: {"; ".join(reasons)}'
+
+
 class DelegationTasks:
     """Own detached children until `opened` exits; bind to runs with `bind`.
 
@@ -201,6 +243,8 @@ class DelegationTasks:
         self.one_shot = one_shot
         self.max_depth = max_depth
         self.records: dict[str, DelegationTask] = {}
+        self.problems: list[SavedTaskProblem] = []
+        """Saved task files that `opened()` skipped, from the most recent `opened()`."""
         self._workers: dict[str, asyncio.Task[str]] = {}
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
@@ -230,6 +274,35 @@ class DelegationTasks:
         """The child whose tools are currently executing, including permission tools."""
         return _CHILD.get()
 
+    @staticmethod
+    async def discover(directory: Path) -> SavedTasks:
+        """Read the task tree saved under `directory` without opening an owner or resuming any task.
+
+        Each file is checked on its own. An unreadable or invalid file, a file whose name does not match its
+        task ID, and a task whose saved ancestry loops are reported in `SavedTasks.problems`; the other tasks
+        still load. Nothing is written. A task saved as `running` is returned as saved, since the process that
+        owns it may still be running it.
+        """
+        tasks: dict[str, DelegationTask] = {}
+        problems: list[SavedTaskProblem] = []
+        paths = sorted([path async for path in anyio.Path(directory).glob('*.json')], key=lambda path: path.name)
+        for path in paths:
+            try:
+                record = await _read(path)
+            except ValidationError as exc:
+                problems.append(SavedTaskProblem(path=Path(path), reason=_validation_reason(exc)))
+            except OSError as exc:
+                problems.append(SavedTaskProblem(path=Path(path), reason=f'{type(exc).__name__}: {exc}'))
+            except ValueError:
+                problems.append(SavedTaskProblem(path=Path(path), reason='Invalid saved task identity'))
+            else:
+                tasks[record.id] = record
+
+        for task_id in [task_id for task_id, record in tasks.items() if _ancestry_loops(record, tasks)]:
+            del tasks[task_id]
+            problems.append(SavedTaskProblem(path=directory / f'{task_id}.json', reason='Cyclic saved task ancestry'))
+        return SavedTasks(tasks=tasks, problems=problems)
+
     @contextmanager
     def bind(self) -> Generator[None]:
         """Route this run's delegations to the owner without taking ownership of the run."""
@@ -247,20 +320,26 @@ class DelegationTasks:
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
-        """Restore saved children, then cancel and drain workers before releasing resources."""
+        """Restore saved children, then cancel and drain workers before releasing resources.
+
+        Saved files that `discover` reports as problems are skipped, logged, and kept in `problems`.
+        """
         if self._open:
             raise RuntimeError('Delegation task owner is already open')
         self._open = True
         try:
             if self.directory is not None:
-                directory = anyio.Path(self.directory)
-                await directory.mkdir(parents=True, exist_ok=True)
-                async for path in directory.glob('*.json'):
-                    record = await _read(path)
+                await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
+                saved = await self.discover(self.directory)
+                self.problems = saved.problems
+                for problem in saved.problems:
+                    logging.getLogger(__name__).warning(
+                        'Skipping saved delegation task %r: %r', str(problem.path), problem.reason
+                    )
+                for record in saved.tasks.values():
                     if record.status == 'running':
                         await self._settle_interrupted(record)
                     self.records[record.id] = record
-                self._check_ancestry()
             yield self
         finally:
             # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
@@ -292,17 +371,6 @@ class DelegationTasks:
         )
         record.pending_question = None
         record.finished_at = time.time()
-
-    def _check_ancestry(self) -> None:
-        """Refuse saved tasks whose parent chain loops."""
-        for record in self.records.values():
-            ancestors = {record.id}
-            parent = record.parent_id
-            while parent is not None and parent in self.records:
-                if parent in ancestors:
-                    raise ValueError('Cyclic saved task ancestry')
-                ancestors.add(parent)
-                parent = self.records[parent].parent_id
 
     def persistence_capabilities(self) -> list[AbstractCapability[object]]:
         """Capture child steps using the application's existing persistence store."""

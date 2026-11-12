@@ -581,7 +581,7 @@ def book(*, trip: Trip, travellers: int) -> str:
         # A cell that has not stopped within the real-clock interrupt grace gets its kernel replaced, and a loaded
         # runner can take longer than that to stop one. With the grace unbounded, only the cell stopping ends the wait, and
         # `slept` shows whether the interrupt stopped it before its sleep ran out.
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', math.inf)
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECONDS', math.inf)
         started = asyncio.Event()
 
         async def begin() -> None:
@@ -666,7 +666,7 @@ class TestIPythonCodeModeKernelLifecycle:
     async def test_a_cancelled_cell_that_ignores_the_interrupt_gets_its_kernel_stopped(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', 0.2)
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECONDS', 0.2)
         pids: list[int] = []
         started = anyio.Event()
 
@@ -713,7 +713,7 @@ class TestIPythonCodeModeKernelLifecycle:
         self, code: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Long enough for an interrupted cell to format its traceback and finish within the first escalation.
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 1.0)
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECONDS', 1.0)
         pids: list[int] = []
         started = anyio.Event()
 
@@ -734,7 +734,7 @@ class TestIPythonCodeModeKernelLifecycle:
         _assert_process_gone(pids[0])
 
     async def test_shutdown_returns_while_another_run_waits_on_a_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 0.2)
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECONDS', 0.2)
         pids: list[int] = []
         started = anyio.Event()
 
@@ -792,7 +792,7 @@ class TestIPythonCodeModeKernelLifecycle:
         jupyter-client fails the later of two overlapping `shutdown_kernel()` calls with `InvalidStateError`. The kill
         is held inside its call until the run starts stopping the kernel, the ordering CI reached by timing.
         """
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 0.2)
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECONDS', 0.2)
         # jupyter-client leaves its methods untyped.
         shutdown_kernel = AsyncKernelManager.shutdown_kernel  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         cleanup_resources = KernelManager._async_cleanup_resources  # pyright: ignore[reportPrivateUsage]

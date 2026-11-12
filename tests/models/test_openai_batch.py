@@ -47,8 +47,12 @@ with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.auth import WorkloadIdentity
 
-    from pydantic_ai.models import _openai_batch as openai_batch
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+        _batch as openai_batch,
+    )
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
@@ -401,7 +405,7 @@ async def test_batch_keeps_azure_ad_token_provider_support() -> None:
         provider=AzureProvider(openai_client=client),
         profile=OpenAIModelProfile(openai_supports_batch_api=True),
     )
-    assert openai_batch._batch_client(model) is client  # pyright: ignore[reportPrivateUsage]
+    assert openai_batch.batch_client(model) is client
     token.assert_not_called()
 
 
@@ -1003,7 +1007,7 @@ async def test_batch_forgets_the_oldest_uploaded_input_files(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a bounded number of uploads are remembered; a forgotten batch's input file is left for OpenAI to delete."""
-    monkeypatch.setattr('pydantic_ai.models._openai_batch._UPLOADED_INPUT_FILES_SIZE', 0)
+    monkeypatch.setattr('pydantic_ai.models.openai._batch._UPLOADED_INPUT_FILES_SIZE', 0)
     api = _FakeBatchAPI(batch=_batch_json('in_progress'))
     model = _fake_model(api)
     batch = await model.batch_create([await model.batch_encode(_request('ok'))])

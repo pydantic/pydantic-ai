@@ -881,19 +881,18 @@ class _RedactedPagePart(DataCapabilityPart, namespace='test_redaction', name='pa
 
 @dataclass
 class _CapabilityPartReporter(AbstractCapability[object]):
-    """Enqueues an operator-voice part, which renders on the system role, and a data part framed on the user channel."""
+    """Enqueues an operator-voice part, which renders on the system role, and a data part framed on the user channel.
 
-    enqueued: bool = False
+    The run it's in makes one request.
+    """
 
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        if not self.enqueued:
-            self.enqueued = True
-            ctx.enqueue(
-                _RedactedNudgePart(content=OperatorText(SECRETS['capability_instruction']), source=OperatorSource()),
-                _RedactedPagePart(content=SECRETS['capability_data'], source=ToolResultSource(tool_name='fetch')),
-            )
+        ctx.enqueue(
+            _RedactedNudgePart(content=OperatorText(SECRETS['capability_instruction']), source=OperatorSource()),
+            _RedactedPagePart(content=SECRETS['capability_data'], source=ToolResultSource(tool_name='fetch')),
+        )
         return request_context
 
 

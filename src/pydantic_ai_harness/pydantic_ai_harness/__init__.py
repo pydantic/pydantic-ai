@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
+    from .refine_output import DEFAULT_REFINE_OUTPUT_INSTRUCTIONS, RefineOutput
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
@@ -113,6 +114,7 @@ __all__ = [
     'Coder',
     'CompactOnRequest',
     'ConversationSearch',
+    'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
     'DaytonaSandbox',
@@ -160,6 +162,7 @@ __all__ = [
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RefineOutput',
     'RelevanceCompaction',
     'RenderSandbox',
     'RenderSandboxBackend',
@@ -221,6 +224,7 @@ _LAZY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
     'DockerSandbox': 'docker_sandbox',
@@ -262,6 +266,7 @@ _LAZY_EXPORTS = {
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'RefineOutput': 'refine_output',
     'RelevanceCompaction': 'compaction',
     'RenderSandbox': 'render_sandbox',
     'RenderSandboxBackend': 'render_sandbox',

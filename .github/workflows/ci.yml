@@ -62,7 +62,7 @@ jobs:
 
   classify:
     name: classify changes
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -259,7 +259,7 @@ jobs:
     name: quality checks
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
     # it keeps the step working on a private fork or mirror.
@@ -305,15 +305,18 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_pr_guard.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_douwebot_usage_limit.py
           .github/scripts/test_douwebot_opencode_run.py
           .github/scripts/test_douwebot_opencode_result.py
+          .github/scripts/test_pr_review_checks.py
+          .github/scripts/test_run_pr_review_check.py
+          .github/scripts/test_publish_pr_review_checks.py
           .github/scripts/test_gh_aw_opencode_detect.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
-          .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
@@ -501,7 +504,7 @@ jobs:
     name: cognitive complexity
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -525,7 +528,7 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -546,7 +549,7 @@ jobs:
   docs-assets:
     needs: classify
     if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -593,7 +596,7 @@ jobs:
     if: >-
       (needs.classify.outputs.content_only == 'true' || needs.classify.outputs.harness_only == 'true')
       && needs.classify.outputs.docs_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       CI: true
@@ -638,7 +641,7 @@ jobs:
     name: content checks
     needs: classify
     if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -655,7 +658,7 @@ jobs:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -856,7 +859,7 @@ jobs:
   # few API calls; don't add `needs: classify` to save them.
   test-durations-baseline:
     name: fetch test durations baseline
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -947,7 +950,7 @@ jobs:
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1206,7 +1209,7 @@ jobs:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1379,7 +1382,7 @@ jobs:
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1528,7 +1531,7 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1557,7 +1560,7 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -1595,7 +1598,7 @@ jobs:
     name: test harness browser-use
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       CI: true
@@ -1645,7 +1648,7 @@ jobs:
       github.ref_type != 'tag'
       && needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_changed == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_LINUX_RUNNER || matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1704,7 +1707,7 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       CI: true
@@ -1769,7 +1772,7 @@ jobs:
   harness-integration-changes:
     name: classify harness integration changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
       mongodb: ${{ steps.detect.outputs.mongodb }}
@@ -1827,7 +1830,7 @@ jobs:
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository
                   && github.actor != 'dependabot[bot]')) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     env:
       LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
@@ -1861,7 +1864,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.mongodb == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       mongodb:
@@ -1900,7 +1903,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.postgres == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       postgres:
@@ -1938,7 +1941,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.redis == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       redis:
@@ -1987,7 +1990,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.azure_durable_task == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       dts-emulator:
@@ -2024,7 +2027,7 @@ jobs:
     uses: ./.github/workflows/latest-versions-canary.yml
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
     # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
@@ -2104,7 +2107,7 @@ jobs:
       - harness-azure-durable-task-integration
       - latest-versions-canary
       - coverage
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
 
     steps:
       - name: Decide whether the needed jobs succeeded or failed
@@ -2144,10 +2147,12 @@ jobs:
 
   # `check` may succeed with intentionally skipped ancestors, so downstream jobs must override
   # GitHub's default success check and inspect the result of their direct dependency.
+  # Only pydantic/pydantic-ai deploys docs and publishes releases; a copy of the repository skips
+  # these jobs and the post-release jobs that need them.
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
@@ -2175,7 +2180,7 @@ jobs:
   release-build:
     name: build release artifacts
     needs: [check]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
@@ -2233,7 +2238,7 @@ jobs:
   release:
     name: publish to PyPI
     needs: [release-build]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
     runs-on: ubuntu-latest
 
     environment:

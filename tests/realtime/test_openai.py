@@ -136,7 +136,7 @@ with try_import() as imports_successful:
     )
     from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice, VoiceID
 
-    from pydantic_ai.models.openai import _map_usage as _map_standard_usage  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._response_fields import map_usage as _map_standard_usage
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider

@@ -178,24 +178,24 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
 
     def _strip_old_warnings(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         cleaned: list[ModelMessage] = []
-        for msg in messages:
-            if not isinstance(msg, ModelRequest):
-                cleaned.append(msg)
+        for message in messages:
+            if not isinstance(message, ModelRequest):
+                cleaned.append(message)
                 continue
             # An already-empty request has no warnings to strip; keep it. pydantic-ai's
             # empty-response retry appends a `ModelRequest` with no parts, and dropping it
             # would leave history ending on a `ModelResponse`, which fails the next
             # request's "must end with a ModelRequest" precondition.
-            if not msg.parts:
-                cleaned.append(msg)
+            if not message.parts:
+                cleaned.append(message)
                 continue
-            parts = [p for p in msg.parts if not self._is_warning_part(p)]
+            parts = [p for p in message.parts if not self._is_warning_part(p)]
             if not parts:
                 continue
-            if len(parts) == len(msg.parts):
-                cleaned.append(msg)
+            if len(parts) == len(message.parts):
+                cleaned.append(message)
             else:
-                cleaned.append(replace(msg, parts=parts))
+                cleaned.append(replace(message, parts=parts))
         return cleaned
 
     def _build_iteration_warning(self, ctx: RunContext[AgentDepsT]) -> _Warning | None:

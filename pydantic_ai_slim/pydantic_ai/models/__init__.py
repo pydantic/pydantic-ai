@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
+    Awaitable,
     Callable,
     Collection,
     Generator,
@@ -26,7 +27,8 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
+from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -41,6 +43,7 @@ from typing import (
     Generic,
     Literal,
     NamedTuple,
+    ParamSpec,
     Self,
     TypeAlias,
     TypeVar,
@@ -220,6 +223,47 @@ else:
 
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
+
+# Set at Vertex AI's documented 500 MiB request payload limit, the largest of OpenAI, Anthropic, the Gemini API and
+# Vertex AI. Files are sent base64-encoded, so the request body is about a third larger than the bytes counted here.
+_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES = 500 * 1024 * 1024
+"""Maximum total size of the [`FileUrl`][pydantic_ai.messages.FileUrl] downloads made for one model request."""
+
+
+@dataclass
+class _DownloadBudget:
+    """The bytes left for the file URLs one model request downloads."""
+
+    remaining: int
+
+
+# A mutable budget, so a download in a task the request spawned charges the same total.
+_request_download_budget: ContextVar[_DownloadBudget | None] = ContextVar('_request_download_budget', default=None)
+
+
+@contextmanager
+def _open_request_download_budget() -> Generator[None]:
+    """Give the file URLs downloaded until exit one total of `_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES`."""
+    token = _request_download_budget.set(_DownloadBudget(_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES))
+    try:
+        yield
+    finally:
+        _request_download_budget.reset(token)
+
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+def _within_request_download_budget(method: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+    """Wrap `method` so the file URLs each call downloads share one total."""
+
+    @wraps(method)
+    async def budgeted(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with _open_request_download_budget():
+            return await method(*args, **kwargs)
+
+    return budgeted
 
 
 ModelContextDepsT = TypeVar('ModelContextDepsT')
@@ -876,8 +920,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
     This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
-    enforced by Pydantic AI for every model, and `thinking`, `cache` and `tool_choice` are resolved through the model
-    profile, so they're not listed here.
+    enforced by Pydantic AI for every model, `framing_announcement` is applied by it, and `thinking`, `cache` and
+    `tool_choice` are resolved through the model profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -1129,6 +1173,35 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
             cls.batch_decode = restoring_batch_decode
 
+    @classmethod
+    def _budget_downloads_at_the_model_boundary(cls) -> None:
+        """Give each call of a method of `cls` that builds one request its own total for the file URLs it downloads.
+
+        Done here, for every model class, so a request that carries many file URLs can't download the per-file limit
+        once per URL. A model that calls another one, like `FallbackModel`, gives each inner request its own total.
+        """
+        for name in ('request', 'count_tokens', 'batch_encode', 'compact_messages'):
+            method = cls.__dict__.get(name)
+            if inspect.iscoroutinefunction(method):
+                setattr(cls, name, _within_request_download_budget(method))
+
+        request_stream = cls.__dict__.get('request_stream')
+        if inspect.isfunction(request_stream):
+
+            @wraps(request_stream)
+            @asynccontextmanager
+            async def budgeted_request_stream(
+                self: Model, *args: Any, **kwargs: Any
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                async with AsyncExitStack() as stack:
+                    # Files are downloaded while the request is built, before the stream opens. The budget ends there,
+                    # since a stream can be closed from a task other than the one that opened it.
+                    with _open_request_download_budget():
+                        stream = await stack.enter_async_context(request_stream(self, *args, **kwargs))
+                    yield stream
+
+            cls.request_stream = budgeted_request_stream
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
@@ -1151,6 +1224,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
         cls._restore_special_tokens_at_the_model_boundary()
+        cls._budget_downloads_at_the_model_boundary()
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by model settings.
@@ -2747,7 +2821,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         with the announcement after the operator's prompt, Gemini acted more often on requests quoted in a tool result
         that an operator instruction seemed to cover. The history alone decides whether it's needed, so once it's in,
         it's in the same place on every later request: the cached prefix changes once, at the request that first
-        needs it.
+        needs it, and stays stable as long as the history keeps what needed it. A UI adapter's frontend doesn't send
+        a mid-conversation system prompt back (AG-UI, Vercel AI), so UI apps should use `'always'`.
         """
         if framing_announcement == 'always':
             if not standing_prompt_count:
@@ -3001,10 +3076,12 @@ class StreamedResponse(ABC):
                         index=index,
                         part=part,
                         next_part_kind=next_part.part_kind if next_part else None,
+                        canonical_system=self._part_canonical_system(part),
                     )
 
                 async for event in iterator:
                     if isinstance(event, PartStartEvent):
+                        event.canonical_system = self._part_canonical_system(event.part)
                         if last_start_event:
                             end_event = part_end_event(event.part)
                             if end_event:
@@ -3061,6 +3138,12 @@ class StreamedResponse(ABC):
                 events = self._request_deadline.iterate(events)
             self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _part_canonical_system(self, part: ModelResponsePart) -> str | None:
+        """The `canonical_system` that applies to `part`: this response's, if `part` is from this response's provider."""
+        if part.provider_name is not None and part.provider_name == self.provider_name:
+            return self.canonical_system
+        return None
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
         """Pull each event under `deadline`, the deadlines this stream was opened under."""
@@ -3328,6 +3411,7 @@ class CompletedStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self.state = response.state
+        self.canonical_system = response.canonical_system
         self._replay_events = replay_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -3769,6 +3853,36 @@ class DownloadedItem(TypedDict, Generic[DataT]):
     """
 
 
+async def _download_within_request_budget(url: str, *, allow_local: bool) -> httpx2.Response:
+    """Download `url` within the per-file limit and what is left of the current model request's total."""
+    from .._ssrf import DownloadTooLargeError, safe_download
+
+    budget = _request_download_budget.get()
+    if budget is None:
+        return await safe_download(url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
+
+    # Reserved before the download and the unused part refunded after, so downloads running at the same time can't
+    # each claim what is left. Each reservation takes up to the per-file limit, so more downloads in flight at once
+    # than the total holds per-file limits are refused however small they are: no model downloads concurrently, and
+    # one that starts to needs a different scheme.
+    max_bytes = min(_MAX_FILE_URL_DOWNLOAD_BYTES, budget.remaining)
+    budget.remaining -= max_bytes
+    downloaded = 0
+    try:
+        response = await safe_download(url, allow_local=allow_local, max_bytes=max_bytes)
+        downloaded = len(response.content)
+    except DownloadTooLargeError as e:
+        if max_bytes == _MAX_FILE_URL_DOWNLOAD_BYTES:
+            raise
+        raise ValueError(
+            f'File URL downloads for one model request exceed the total of {_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES} bytes; '
+            'pass large files as `BinaryContent` instead.'
+        ) from e
+    finally:
+        budget.remaining += max_bytes - downloaded
+    return response
+
+
 @overload
 async def download_item(
     item: FileUrl,
@@ -3797,7 +3911,7 @@ async def download_item(
     - Private/internal IP addresses are blocked by default
     - Cloud metadata endpoints (169.254.169.254) are always blocked
     - Hostnames are resolved before requests to prevent DNS rebinding
-    - Response bodies are limited to 50 MiB
+    - Response bodies are limited to 50 MiB, and the files one model request downloads to 500 MiB in total
 
     Set `item.force_download='allow-local'` to allow private IP addresses.
 
@@ -3815,15 +3929,14 @@ async def download_item(
     Raises:
         UserError: If the URL points to a YouTube video.
         ValueError: If the URL uses an unsupported protocol or targets a private/internal
-            IP address (unless allow-local is set), or the body exceeds 50 MiB.
+            IP address (unless allow-local is set), the body exceeds 50 MiB, or the downloads of one model
+            request exceed 500 MiB in total.
     """
     if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
-    from .._ssrf import safe_download
-
     allow_local = item.force_download == 'allow-local'
-    response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
+    response = await _download_within_request_budget(item.url, allow_local=allow_local)
 
     # A media type the caller passed explicitly is the only way to correct a wrong server type, so it wins.
     media_type = item._media_type or None  # pyright: ignore[reportPrivateUsage]
