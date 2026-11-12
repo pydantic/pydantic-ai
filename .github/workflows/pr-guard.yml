@@ -102,6 +102,18 @@ jobs:
               ;;
           esac
 
+          # montybot is the Pydantic team's agent: it opens PRs on behalf of a maintainer
+          # who asked for the change, so its PRs skip the guard like that maintainer's own
+          # would. The role lookup above can't grant this, because a GitHub App's
+          # `role_name` on the repo is always empty (#13240 was closed as a duplicate for
+          # that reason). Match the exact login, not a `*[bot]` glob, so no other bot
+          # installed later gets the bypass. pydanty is handled separately below: it acts
+          # on external issue text and must still go through the duplicate checks.
+          if [ "$PR_AUTHOR" = "montybot-pydantic[bot]" ]; then
+            echo "Author is montybot, which opens PRs for maintainers; skipping checks."
+            exit 0
+          fi
+
           # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
           # relationship to the repo, so without this the guard re-closes a
           # contributor PR every time a maintainer acts on it: reopening it, or
