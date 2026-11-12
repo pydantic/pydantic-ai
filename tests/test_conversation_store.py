@@ -925,6 +925,8 @@ async def test_a_serialized_window_whose_conversation_is_deleted_while_more_of_i
     async def delete_on_the_next_read() -> None:
         store.race = lambda: store.delete('c')
 
+    # The save's first history read is the window it compares; the delete lands on the next one,
+    # which reads further back.
     store.race = delete_on_the_next_read
     with pytest.raises(ConversationConflict):
         await store.save(_round_trip(result.conversation))

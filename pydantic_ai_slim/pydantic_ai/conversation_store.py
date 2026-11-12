@@ -251,9 +251,9 @@ class ConversationStore(ABC):
         appended, and if it was rewritten, the messages from the first difference on branch off the
         last message both share, keeping the old branch stored. A run cleans the history it's sent
         before it sets that index, merging a stored output tool result with its new prompt, say, so
-        the messages before the index also match the stored ones they were cleaned from, however many
-        those are. Messages are matched with `==`, so a change only to a field message equality
-        ignores, like a file's `media_type` or `identifier`, isn't stored.
+        the messages before the index can also match the stored ones they were cleaned from, not only
+        as many stored ones. Messages are matched with `==`, so a change only to a field message
+        equality ignores, like a file's `media_type` or `identifier`, isn't stored.
 
         The save is checked against the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
@@ -361,9 +361,9 @@ class ConversationStore(ABC):
     ) -> bool:
         """Whether `sent` is the last stored messages as a run cleans the history it's sent, say merging adjacent requests.
 
-        `history` holds the last `len(sent)` stored entries. A history that starts earlier never cleans to
-        fewer messages, so the entries before them are read only until the stored ones clean to more
-        messages than `sent`, not the whole history.
+        `history` is the last `len(sent)` stored entries, as the save already read them. A history
+        that starts earlier never cleans to fewer messages, so the entries before them are read only
+        until the stored ones clean to more messages than `sent`, not the whole history.
         """
         new = 1
         while True:
