@@ -76,20 +76,20 @@ def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind |
 def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | None) -> bool:
     """Whether every tool of a `FunctionToolset` opts out of durable wrapping, so it needs no registration.
 
-    The engine's own `tool_config_key` decides when it's set on a tool, the engine-neutral `{'durable': False}` otherwise.
+    A tool opts out with `False` under the engine's own `tool_config_key`, or, when that isn't set, as an async tool
+    with the engine-neutral `{'durable': False}`.
     """
     from ..toolsets.function import FunctionToolset
     from ._toolset import durable_metadata_opts_out
 
     assert isinstance(toolset, FunctionToolset)
-
-    def opts_out(name: str, metadata: dict[str, Any] | None) -> bool:
-        engine_config = metadata.get(tool_config_key) if metadata is not None and tool_config_key is not None else None
-        if engine_config is not None:
-            return engine_config is False
-        return durable_metadata_opts_out(metadata, name)
-
-    return bool(toolset.tools) and all(opts_out(name, tool.metadata) for name, tool in toolset.tools.items())
+    return bool(toolset.tools) and all(
+        (tool_config_key is not None and (tool.metadata or {}).get(tool_config_key) is False)
+        or (
+            durable_metadata_opts_out(tool.metadata, name, engine_key=tool_config_key) and tool.function_schema.is_async
+        )
+        for name, tool in toolset.tools.items()
+    )
 
 
 def reject_unsupported_runtime_toolsets(

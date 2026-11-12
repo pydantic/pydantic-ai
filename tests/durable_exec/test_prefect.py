@@ -3608,12 +3608,6 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
     tool.tool_def.metadata = {'prefect': False}
     assert resolve_tool_task_config(tool, 'fn_tool', {}) is False
 
-    # The engine-neutral `{'durable': False}` applies when the `'prefect'` key isn't set, which wins when it is.
-    tool.tool_def.metadata = {'durable': False}
-    assert resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': TaskConfig(timeout_seconds=1.0)}) is False
-    tool.tool_def.metadata = {'durable': False, 'prefect': metadata_config}
-    assert resolve_tool_task_config(tool, 'fn_tool', {}) is metadata_config
-
     # No metadata: an explicit `None` in the fallback dict disables wrapping, a missing key uses the base config.
     tool.tool_def.metadata = None
     assert resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': None}) is False

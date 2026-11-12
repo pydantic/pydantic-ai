@@ -421,9 +421,9 @@ def test_runtime_function_toolset_opted_out_with_durable_metadata_is_allowed() -
     async def tool() -> str:
         return 'never called'  # pragma: no cover
 
-    def check(metadata: dict[str, Any]) -> None:
+    def check(metadata: dict[str, Any], function: Callable[[], Any] = tool) -> None:
         reject_unsupported_runtime_toolsets(
-            [FunctionToolset(tools=[Tool(tool, metadata=metadata)])],
+            [FunctionToolset(tools=[Tool(function, metadata=metadata)])],
             unsupported_kinds=frozenset({'function'}),
             engine='Journal',
             tool_config_key='journal',
@@ -431,10 +431,14 @@ def test_runtime_function_toolset_opted_out_with_durable_metadata_is_allowed() -
 
     check({'durable': False})
     check({'journal': False, 'durable': True})
-    with pytest.raises(UserError, match='cannot be added at runtime with Journal'):
+    check({'journal': False}, _sync_tool)
+    rejected = "cannot be added at runtime with Journal.*opt out with metadata=\\{'durable': False\\}"
+    with pytest.raises(UserError, match=rejected):
         check({'journal': {}, 'durable': False})
-    with pytest.raises(UserError, match='cannot be added at runtime with Journal'):
+    with pytest.raises(UserError, match=rejected):
         check({'durable': True})
+    with pytest.raises(UserError, match=rejected):
+        check({'durable': False}, _sync_tool)
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')

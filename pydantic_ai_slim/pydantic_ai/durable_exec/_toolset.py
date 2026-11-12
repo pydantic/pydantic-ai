@@ -643,12 +643,14 @@ DURABLE_METADATA_KEY = 'durable'
 """The engine-neutral tool metadata key: `{'durable': False}` runs the tool outside the durable unit on every engine."""
 
 
-def durable_metadata_opts_out(metadata: Mapping[str, Any] | None, tool_name: str) -> bool:
+def durable_metadata_opts_out(metadata: Mapping[str, Any] | None, tool_name: str, *, engine_key: str | None) -> bool:
     """Whether a tool's engine-neutral `{'durable': False}` metadata runs it outside the durable unit.
 
-    Callers consult it only when the engine's own metadata key isn't set, so that key keeps winning.
+    The engine's own `engine_key`, when set on the tool, wins, so the tool's `'durable'` metadata isn't consulted then.
     """
-    value = metadata.get(DURABLE_METADATA_KEY) if metadata is not None else None
+    if metadata is None or (engine_key is not None and metadata.get(engine_key) is not None):
+        return False
+    value = metadata.get(DURABLE_METADATA_KEY)
     if value is None or isinstance(value, bool):
         return value is False
     raise UserError(
@@ -677,7 +679,7 @@ def resolve_tool_durable_config(
                     f'(`{config_type_label}`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('DurableConfig', metadata_config)
-        if durable_metadata_opts_out(tool.tool_def.metadata, tool_name):
+        if durable_metadata_opts_out(tool.tool_def.metadata, tool_name, engine_key=metadata_key):
             return False
     return fallback_config.get(tool_name, {})
 

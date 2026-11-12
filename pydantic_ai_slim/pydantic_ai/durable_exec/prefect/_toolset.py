@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 from pydantic.errors import PydanticUserError
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.durable_exec._toolset import durable_metadata_opts_out, guard_run_context
+from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -65,8 +65,8 @@ def resolve_tool_task_config(
 ) -> TaskConfig | Literal[False]:
     """Resolve per-tool Prefect task config.
 
-    Reads `tool.tool_def.metadata['prefect']` first, then `{'durable': False}`, then falls back to the
-    explicit `tool_task_config` dict keyed by tool name. Returns a `TaskConfig` dict (possibly
+    Reads `tool.tool_def.metadata['prefect']` first, then falls back to the explicit
+    `tool_task_config` dict keyed by tool name. Returns a `TaskConfig` dict (possibly
     empty), or `False` to skip task wrapping.
     """
     # Metadata set on the tool (via @toolset.tool(metadata={'prefect': ...}), with_metadata, or
@@ -82,8 +82,6 @@ def resolve_tool_task_config(
                     f'(`TaskConfig`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('TaskConfig', metadata_config)
-        if durable_metadata_opts_out(tool.tool_def.metadata, tool_name):
-            return False
     # Fallback: per-tool dict passed to the deprecated `PrefectAgent`. An explicit `None`
     # disables wrapping; a missing key means "use the base config".
     if tool_name in tool_task_config:

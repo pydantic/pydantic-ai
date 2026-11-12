@@ -47,38 +47,34 @@ Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also r
 An engine runs each function tool call in a durable unit (an activity, step or task) so a restarted run reuses its recorded result. To run a tool in the workflow code itself instead, set `metadata={'durable': False}` on it. The tool then runs again on every replay, so keep it deterministic: no I/O, clock or randomness of its own. What it does through a [workspace](../workspace.md#durable-execution) call or a durable agent's run is still recorded, unit by unit. Use it for a tool that has to see live run state, or that starts work which should be recorded step by step rather than as one unit:
 
 ```python {title="durable_opt_out.py" test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.toolsets import FunctionToolset
 
-toolset = FunctionToolset(id='planning')
+toolset = FunctionToolset(id='files')
 
 
-@toolset.tool_plain(metadata={'durable': False})  # (1)!
-async def next_step(steps: list[str]) -> str:
-    return steps[0]
-
-
-@toolset.tool_plain
-async def first_step(steps: list[str]) -> str:
-    return steps[0]
+@toolset.tool(metadata={'durable': False})  # (1)!
+async def copy_file(ctx: RunContext, source: str, destination: str) -> str:
+    content = await ctx.workspace.read_bytes(source)  # (2)!
+    await ctx.workspace.write_bytes(destination, content)
+    return f'Copied {source} to {destination}.'
 
 
 agent = Agent(
     '{{ openai:medium }}',
-    name='planner',
+    name='files',
     toolsets=[toolset],
-    capabilities=[
-        SetToolMetadata(tools=['first_step'], durable=False),  # (2)!
-        TemporalDurability(),  # (3)!
-    ],
+    capabilities=[LocalWorkspace('.'), TemporalDurability()],  # (3)!
 )
 ```
 
 1. The same metadata keeps the tool out of its durable unit on every engine.
-2. [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] sets the metadata on selected tools, including ones you don't define yourself, such as a capability's. `durable=True` puts back the default.
-3. Swap in any other engine's durability capability; the tools' metadata stays the same.
+2. Each workspace call is recorded as a unit of its own, so a run that restarts after the read reuses its result and only writes.
+3. Swap in any other engine's durability capability; the tool's metadata stays the same.
+
+To set the metadata on tools you don't define yourself, such as a capability's, use [`SetToolMetadata(tools=[...], durable=False)`][pydantic_ai.capabilities.SetToolMetadata]. `durable=True` puts back the default.
 
 Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool that the engine runs in a durable unit, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool is called, because those run in a thread or perform I/O.
 
