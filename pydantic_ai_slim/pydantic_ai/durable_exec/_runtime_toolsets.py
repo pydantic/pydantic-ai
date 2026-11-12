@@ -92,6 +92,21 @@ def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | Non
     )
 
 
+def _opt_out_hint(tool_config_key: str | None, unsupported_kinds: frozenset[RuntimeToolsetKind]) -> str:
+    """How async function tools can opt out of durable wrapping to be allowed at runtime, if this engine has a way."""
+    if tool_config_key is None and 'function' not in unsupported_kinds:
+        return ''
+    engine_opt_out = (
+        f' (or metadata={{{tool_config_key!r}: False}}, which takes precedence when set)'
+        if tool_config_key is not None
+        else ''
+    )
+    return (
+        " Async tools that don't need durable wrapping can opt out with "
+        f"metadata={{'durable': False}}{engine_opt_out} to be allowed at runtime."
+    )
+
+
 def reject_unsupported_runtime_toolsets(
     toolsets: Sequence[AbstractToolset[Any]] | None,
     *,
@@ -135,12 +150,7 @@ def reject_unsupported_runtime_toolsets(
                 label = 'MCPToolset'
             offenders.append(label)
     offenders_text = ', '.join(offenders)
-    opt_out = (
-        " Async tools that don't need durable wrapping can opt out with "
-        "metadata={'durable': False} to be allowed at runtime."
-        if tool_config_key is not None or 'function' in unsupported_kinds
-        else ''
-    )
+    opt_out = _opt_out_hint(tool_config_key, unsupported_kinds)
     raise UserError(
         f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
         'that execute their own tools or resolve dynamically must be registered for durable execution '

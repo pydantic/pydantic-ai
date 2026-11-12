@@ -889,7 +889,7 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'durable': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'durable': False} (or metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
