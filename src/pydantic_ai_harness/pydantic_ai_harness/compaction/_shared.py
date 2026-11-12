@@ -1066,7 +1066,8 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
 
     Matching is an ordered walk: a return answers the oldest call it can, so the calls of one response
     pair with its returns in order, and a call is never answered by a return that precedes it. A return
-    is dropped when no call precedes it, and a call when no return answers it.
+    is dropped when no call precedes it, and a call when no return answers it before a later response
+    reuses its id.
 
     A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
     still answers its call -- the retry re-issues it -- so its call is consumed without emitting a pair.
@@ -1090,10 +1091,18 @@ def _queue_calls(
     message_index: int,
     open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]],
 ) -> None:
-    """Queue *response*'s calls by ID, oldest first, so a later return answers them in order."""
+    """Queue *response*'s calls by ID, oldest first, so a later return answers them in order.
+
+    A call is answered before the next response, so one still queued when *response* reuses its ID was
+    never answered (a run interrupted before its tools ran, say) and is dropped rather than left to pair
+    with this response's return.
+    """
     for part_index, part in enumerate(response.parts):
         if isinstance(part, ToolCallPart) and part.tool_call_id:
-            open_calls.setdefault(part.tool_call_id, deque()).append(((message_index, part_index), part))
+            pending = open_calls.setdefault(part.tool_call_id, deque())
+            if pending and pending[0][0][0] != message_index:
+                pending.clear()
+            pending.append(((message_index, part_index), part))
 
 
 def _settle_returns(

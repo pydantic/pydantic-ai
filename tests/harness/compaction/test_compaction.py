@@ -2461,6 +2461,23 @@ class TestIterToolPairs:
         assert [p.call_position for p in pairs] == [(2, 0), (4, 0)]
         assert [p.return_position for p in pairs] == [(3, 0), (5, 0)]
 
+    def test_unanswered_call_does_not_pair_with_a_later_reuse_of_its_id(self):
+        """A call no reply answered before the next response is dropped when that response reuses its id.
+
+        A reply comes before the next response, so the earlier call was never answered (a run interrupted
+        before its tools ran, say). Left queued, it would pair with the later turn's return instead.
+        """
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            ModelRequest(parts=[UserPromptPart(content='continue')]),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'b body'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['b.py']
+        assert [p.call_position for p in pairs] == [(2, 0)]
+        assert [p.return_position for p in pairs] == [(3, 0)]
+
 
 # ---------------------------------------------------------------------------
 # ClearToolResults
