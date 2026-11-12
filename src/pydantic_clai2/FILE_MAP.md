@@ -71,7 +71,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
-| `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key |
+| `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key or a saved per-model `base_url` |
 | `models/accounts.py` | accounts per provider for `/accounts` and `PROVIDER@*`: found from credential files or recorded at `/login`, ordered in the `accounts` table (no secrets) |
 | `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add`; adding, renaming, and signing out ask through `Dialogs`, so `accounts_settings_menu`, the `Command.menu` of `/accounts` and `/login`, runs the same steps in the web UI |
 | `ui/menus/key_menu.py` | `/keys`: the terminal list, its add/replace/rename/delete steps asking through `Dialogs`, and `keys_menu`, the same steps as `/keys`' `Command.menu`; secrets never leave it, only names |
@@ -91,7 +91,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, `handled_error`, the menu naming, and `conversation_selected`, which calls every sink's session `root` (a sink subscribed with `ui_events=False` gets only that and handled errors) once startup picks the conversation; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates. `handled_error` is for failures CLAI shows and recovers from, sent without `ui_events`; usage errors (`ValueError`, `UserError`) are not recorded |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `builtin_plugins/refinement.py` | the built-in `refinement` plugin: `/refine`, which submits harness `DEFAULT_REFINE_OUTPUT_INSTRUCTIONS` and any focus as the next prompt |
-| `commands.py` | `Command` (with `menu`, the settings menu its bare form opens), the registry (`Commands.get`), completion |
+| `commands.py` | `Command` (with `menu`, the settings menu its bare form opens), the registry (`Commands.get`), completion, and the `clai2 config`/`clai2 plugins` subcommands, which refuse a change that could let the agent do more (`refuse_widening`) |
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
@@ -101,7 +101,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, and the paste key bindings |
+| `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, paste key bindings, Linux clipboard guidance, and the 30-second paste-error lifetime |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
@@ -116,7 +116,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
-| `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings`, `SAFE_PROJECT_KEYS` (the display keys, applied at once) against the keys that wait for `/project approve` (`pending` until the store holds that value for the project root, or for `run.permissions`, until it is no wider than your own; `with_current_approvals` splits them again), and the `hooks` table as the unapproved `project_hooks` declaration |
+| `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings`, `SAFE_PROJECT_KEYS` (the display keys, applied at once) against the keys that wait for `/project approve` (`pending` until the store holds that value for the project root, or for `run.permissions`, until it is no wider than your own; `with_current_approvals` splits them again with `widens`), and the `hooks` table as the unapproved `project_hooks` declaration |
 | `runtime/project_instructions.py` | `ProjectInstructions`, the project file's unapproved `instructions` added to each run's first request as a `ProjectInstructionsPart` (`<project_instructions>` data naming the repository), once while the model can still see them |
 | `config/hooks.py` | the `hooks` table's schema (`HookCommand`, `HookTable`, `HooksSettings`), validated apart from the plugin that runs it |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
@@ -173,6 +173,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
 | `runtime/agent_instrumentation.py` | reads core's process-wide `Agent.instrument_all` setting (core has no getter) and its tracer; `claim`/`release` hand it between live `observability` instances, outside the plugin module so `/plugins reload` keeps the claims |
 | `runtime/permissions.py` | `run.permissions` and `/permissions`: harness `Permissions` bound to every run, the approval question the `ask_user` and `web` plugins ask, its decision, the proposed diff, `DenyUnanswered` for sessions no one can be asked in, and `KeepDelegatesChecked`, which refuses delegations the checks would not reach |
+| `runtime/strict_schemas.py` | `NON_STRICT_SCHEMAS`, bound to every run and to CLAI's own side agents (namer, PR drafter, specialists, reviewer, orchestrator): `strict=False` on every tool and output tool, so no provider turns strict mode on; `NativeOutput` keeps the provider's mode |
 | `runtime/speculation.py` | the `run.code_mode` (on by default; tests default it off in `conftest.py`) and `run.speculative_code_mode` switches, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (eager execution, native writes, read-only speculation allowlist, guidance for each), imported only when a run binds it |
 | `runtime/monty_cells.py` | `/monty`'s cells: `MontyCell`, a scripted model that calls `run_code` once with the user's code, run by `Session.run_in_monty` as the session's agent so the cell gets its tools and saved Monty state; marked with `MONTY_CELL` run metadata, and noted to the model on the next prompt |

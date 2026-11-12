@@ -4390,7 +4390,9 @@ class BaseToolCallPart(Generic[ArgsT_co]):
             return self.args
         try:
             args = pydantic_core.from_json(self.args)
-            assert isinstance(args, dict), 'args should be a dict'
+            # Not an `assert`: `python -O` strips those.
+            if not isinstance(args, dict):
+                raise AssertionError('args should be a dict')
             return cast(dict[str, Any], args)
         except (ValueError, AssertionError):
             if raise_if_invalid:

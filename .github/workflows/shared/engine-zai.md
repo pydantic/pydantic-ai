@@ -7,8 +7,10 @@
 # expression): gh-aw derives the api-proxy target host AND the
 # `--anthropic-api-base-path` from its parsed URL path at compile time. With a
 # vars expression the path can't be parsed, so the proxy drops the `/api/anthropic`
-# prefix and the upstream returns 404. The `ZAI_API_KEY` secret is injected as
-# `ANTHROPIC_API_KEY` by the AWF api-proxy and excluded from the agent container.
+# prefix and the upstream returns 404. The AWF api-proxy injects the selected Z.AI key
+# as `ANTHROPIC_API_KEY`, which AWF excludes from the agent container. GitHub resolves
+# the key expression before `awf` starts: `ZAI_BACKUP_API_KEY` when the agent-start
+# recheck in `shared/provider-health.md` reports `account=backup`, else `ZAI_API_KEY`.
 # Z.AI Coding Plan exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.
 #
 # The public definition installs its published runtime. The repository policy is
@@ -17,7 +19,9 @@
 # Required repo variable:
 #   GH_AW_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
 # Required secret:
-#   ZAI_API_KEY — API key injected by the AWF api-proxy.
+#   ZAI_API_KEY — primary Coding Plan API key injected by the AWF api-proxy.
+# Optional secret:
+#   ZAI_BACKUP_API_KEY — backup Coding Plan API key, used only when the primary is unusable.
 #
 # Usage:
 #   imports:
@@ -49,7 +53,7 @@ engine:
   version: '0.64.0'
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
     PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
     PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
     PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
@@ -161,8 +165,9 @@ safe-outputs:
         timeout-minutes: 15
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serves detection when OpenCode Go refuses it before its first step.
-          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          # Serve detection on both Coding Plan accounts when OpenCode Go refuses it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
           # Detection only reads, so a failed OpenCode run is retried. An invalid verdict is not.
           GH_AW_HARNESS_MAX_RETRIES: "3"

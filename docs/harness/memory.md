@@ -9,7 +9,23 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model gets four tools, write_memory, read_memory, delete_memory and search_memory, over a notebook of Markdown files kept in a store such as FileStore, SqliteMemoryStore or PostgresMemoryStore. Your code picks the namespace, such as the user ID from the run dependencies, so the model cannot reach another user's files, and writes are compare-and-swap. On the first request of a run, Memory adds a <memory> block with an excerpt of MEMORY.md and the names of the other files next to the user's prompt, only when memory changed, within max_tokens.](../img/harness/memory.svg)
+```mermaid
+flowchart TB
+    accTitle: Memory: a notebook the agent keeps across runs
+    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
+    model(["model"])
+    code["your code"]
+    memory["Memory()<br/>four tools, such as<br/>write_memory"]:::capability
+    store[("store, such as FileStore<br/>alice/main/MEMORY.md,<br/>auth-notes.md")]:::external
+    snapshot["&lt;memory&gt; block<br/>MEMORY.md excerpt,<br/>names of other files"]:::capability
+    code -->|"namespace, such as<br/>from ctx.deps"| memory
+    model <-->|"tool call, result"| memory
+    memory <-->|"reads,<br/>compare-and-swap<br/>writes"| store
+    memory -->|"first request of each run"| snapshot
+    snapshot -->|"with the user's prompt"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Notebook model
 
