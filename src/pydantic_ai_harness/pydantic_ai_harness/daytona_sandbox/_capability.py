@@ -13,6 +13,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -93,6 +94,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
 
     @classmethod

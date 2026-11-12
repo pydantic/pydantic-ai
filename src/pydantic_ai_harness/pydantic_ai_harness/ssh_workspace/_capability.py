@@ -8,7 +8,7 @@ from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import with_authority
-from pydantic_ai_harness._workspace_provider import reject_defer_loading
+from pydantic_ai_harness._workspace_provider import check_path_authority, reject_defer_loading
 from pydantic_ai_harness.ssh_workspace._backend import SSHWorkspaceBackend
 
 
@@ -62,6 +62,7 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         reject_defer_loading('SSHWorkspace', self.defer_loading)
+        check_path_authority(self.path_authority)
         # Surface an invalid destination, `env` or platform where the capability is written, not on the first run.
         self._configured()
 

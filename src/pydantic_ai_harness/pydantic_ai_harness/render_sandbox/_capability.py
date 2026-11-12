@@ -13,7 +13,12 @@ from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import with_authority
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace_provider import (
+    check_path_authority,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 
 from ._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
@@ -71,6 +76,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('RenderSandbox', self.defer_loading)
         check_sandbox_timeout(self.sandbox_timeout)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
 
     @classmethod
     def from_spec(

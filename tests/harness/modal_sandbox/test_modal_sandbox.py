@@ -23,6 +23,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -87,6 +88,20 @@ async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: Fake
     native = await backend.get_sandbox()
     assert native is fake_modal.sandboxes[0]
     assert backend.ref == WorkspaceRef(provider='modal', id=native.object_id)
+
+
+def test_authority_wraps_the_runs_workspace(fake_modal: FakeModal) -> None:
+    # Modal's own `__init__` takes both fields, and `get_workspace` builds no sandbox, so this needs no run.
+    sandbox = ModalSandbox[object](image='python:3.13-slim', authority='none', path_authority={'docs': 'user'})
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage())
+    workspace = sandbox.get_workspace(ctx, ref=None)
+    assert isinstance(workspace, AuthorityWorkspace)
+    assert workspace.durable_policy() == ('none', {'docs': 'user'})
+
+
+def test_a_home_relative_path_authority_fails_at_construction() -> None:
+    with pytest.raises(UserError, match='`~` is not expanded'):
+        ModalSandbox[object](path_authority={'~/.config/app': 'operator'})
 
 
 def test_root_package_exports_the_capability_and_backend() -> None:

@@ -10,7 +10,12 @@ from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import with_authority
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace_provider import (
+    check_path_authority,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
     DockerSandboxBackend,
@@ -79,6 +84,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         reject_defer_loading('DockerSandbox', self.defer_loading)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:

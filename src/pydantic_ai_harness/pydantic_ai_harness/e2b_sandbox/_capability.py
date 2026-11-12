@@ -15,6 +15,7 @@ from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env_types,
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -86,6 +87,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         try:
             check_env_types(self.env)
         except TypeError:

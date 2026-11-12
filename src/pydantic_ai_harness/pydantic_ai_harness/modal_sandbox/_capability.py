@@ -16,6 +16,7 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_r
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -270,6 +271,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
+        check_path_authority(path_authority)
         self.id = id
         self.description = description
         self.defer_loading = defer_loading

@@ -15,6 +15,7 @@ from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env,
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -105,6 +106,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         check_integer('auto_suspend_timeout', self.auto_suspend_timeout, minimum=0, optional=True)
         if self.vcpu is not None and (type(self.vcpu) is not int or self.vcpu not in _VCPUS):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')

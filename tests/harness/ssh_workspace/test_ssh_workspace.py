@@ -446,3 +446,8 @@ async def test_authority_reaches_the_runs_workspace(tools: FakeRemoteTools, tmp_
     assert result.workspace.read_only
     # The ref is the host's, so a later run attaches to it as before.
     assert result.workspace.ref == WorkspaceRef(provider='ssh', id=f'box:{tmp_path}')
+
+
+def test_a_home_relative_path_authority_fails_at_construction(tools: FakeRemoteTools) -> None:
+    with pytest.raises(UserError, match='`~` is not expanded'):
+        SSHWorkspace('box', path_authority={'~/.config/app': 'operator'})

@@ -1,4 +1,7 @@
-"""Every workspace-supplying harness capability takes `authority` and `path_authority`, in Python and in specs."""
+"""Every workspace-supplying harness capability takes `authority` and `path_authority`, in Python and in specs.
+
+Not a VCR test: it asserts constructor and `from_spec` signatures, which no provider request exercises.
+"""
 
 from __future__ import annotations
 
@@ -39,11 +42,3 @@ def test_constructor_and_spec_take_authority(name: str) -> None:
     for function in (capability.__init__, *explicit_spec):
         parameters = inspect.signature(function).parameters
         assert {'authority', 'path_authority'} <= parameters.keys(), function
-
-
-def test_modal_keeps_authority_through_its_own_init() -> None:
-    pytest.importorskip('modal')
-    from pydantic_ai_harness.modal_sandbox import ModalSandbox
-
-    sandbox = ModalSandbox[object](authority='none', path_authority={'docs': 'user'})
-    assert (sandbox.authority, sandbox.path_authority) == ('none', {'docs': 'user'})

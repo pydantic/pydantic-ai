@@ -14,6 +14,7 @@ from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env,
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -123,6 +124,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('OpenSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_env(self.env)
 
