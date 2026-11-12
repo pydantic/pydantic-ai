@@ -76,8 +76,7 @@ def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
         review_result(_stream(tmp_path, text))
 
 
-# The answers glm-5.3-flash returned in runs 43266067725 and 43265435601 began with this prose and ended with this
-# JSON, in `json.dumps`'s default separators; the job log kept only both ends.
+# glm-5.3-flash answers with prose, then a bare JSON object in `json.dumps`'s default separators.
 _PROSE = "I've completed a thorough review of the changed files."
 _FINDINGS = json.dumps(
     {
