@@ -152,11 +152,24 @@ async def test_commands_get_the_working_dir_and_layered_env(fake_smol: FakeSmol,
     assert options is not None and options.workdir == working_dir and options.timeout is None
 
 
-async def test_env_reaches_the_program_unchanged_by_the_launcher(fake_smol: FakeSmol, working_dir: str) -> None:
-    """The launcher script runs in the command's environment, so a variable it assigned would replace the caller's."""
-    backend = SmolSandboxBackend(working_dir=working_dir)
-    result = await backend.run(['sh', '-c', 'printf "%s %s" "$p" "$q"'], env={'p': 'first', 'q': 'second'})
-    assert result.stdout == 'first second'
+async def test_env_reaches_the_program_unchanged_by_the_launcher(
+    fake_smol: FakeSmol, working_dir: str, tmp_path: Path
+) -> None:
+    """The launcher script runs in the command's environment, so a variable it assigned would replace the caller's.
+
+    A program named like an option takes the script's other paths, which resolve the name first.
+    """
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / '-show').write_text('#!/bin/sh\nprintf "%s %s" "$p" "$q"\n')
+    (bin_dir / '-show').chmod(0o755)
+    backend = SmolSandboxBackend(working_dir=working_dir, env={'PATH': f'{bin_dir}:/usr/bin:/bin'})
+    env = {'p': 'first', 'q': 'second'}
+    assert (await backend.run(['sh', '-c', 'printf "%s %s" "$p" "$q"'], env=env)).stdout == 'first second'
+    assert (await backend.run(['-show'], env=env)).stdout == 'first second'
+    await backend.run(['mkdir', '--', '-d'])
+    await backend.run(['cp', '--', str(bin_dir / '-show'), '-d/show'])
+    assert (await backend.run(['-d/show'], env=env)).stdout == 'first second'
 
 
 async def test_no_working_dir_uses_the_vms_own(fake_smol: FakeSmol) -> None:
