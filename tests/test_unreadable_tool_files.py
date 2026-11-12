@@ -455,7 +455,7 @@ def _google() -> Model:
             _openrouter_claude,
             ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': False}),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
-            id='openrouter-claude',
+            id='openrouter_claude',
         ),
         pytest.param(
             _groq,
