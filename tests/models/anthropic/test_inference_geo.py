@@ -139,9 +139,10 @@ async def test_inference_geo_sent_and_reported(
 
 
 async def test_inference_geo_sent_to_models_without_data_residency(allow_model_requests: None):
-    """The setting isn't gated by model: a model without data residency gets it and answers with a 400.
+    """The setting isn't gated by model: a model without data residency still gets it.
 
-    Dropping it instead would quietly run a request the user asked to keep in one geography anywhere.
+    The real API answers such a request with a 400. Dropping the field instead would quietly run a request the user
+    asked to keep in one geography anywhere. This test only pins that the field is sent.
     """
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
