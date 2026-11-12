@@ -810,6 +810,48 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+### Deterministic domain bounds with output validators
+
+Some constraints on a model's output are deterministic: a probability is in [0.0, 1.0] by definition, a latency is positive, a count is a non-negative integer. Rather than hoping the model respects them, enforce them with an output validator that raises [`ModelRetry`], so the model gets precise feedback and can try again:
+
+```python {title="physics_bounds_validator.py"}
+from pydantic import BaseModel
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+class PerfReport(BaseModel):
+    service: str
+    p95_latency_ms: float
+    confidence: float  # how confident the model is in its estimate
+
+
+agent = Agent(
+    '{{ google:medium }}',
+    output_type=PerfReport,
+    instructions='Estimate performance metrics for the given service.',
+)
+
+
+@agent.output_validator
+def validate_bounds(ctx: RunContext, report: PerfReport) -> PerfReport:
+    # Deterministic checks — these hold by definition, regardless of what the model produced.
+    if not (0.0 <= report.confidence <= 1.0):
+        raise ModelRetry(
+            f'confidence must be a probability in [0.0, 1.0], got {report.confidence}. '
+            'A probability cannot be negative or exceed 1.'
+        )
+    if report.p95_latency_ms <= 0:
+        raise ModelRetry(
+            f'p95_latency_ms must be positive, got {report.p95_latency_ms}. '
+            'A latency cannot be zero or negative.'
+        )
+    return report
+```
+
+_(This example is complete, it can be run "as is")_
+
+Because these checks are explicit code, users can tell guarantees enforced by the application (deterministic and auditable) apart from behavior the model or provider does not guarantee.
+
 ## Image output
 
 Some models can generate images as part of their response, for example those that support the [Image Generation native tool](native-tools.md#image-generation-tool) and OpenAI models using the [Code Execution native tool](native-tools.md#code-execution-tool) when told to generate a chart.
