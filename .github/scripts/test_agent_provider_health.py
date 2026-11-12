@@ -4054,7 +4054,7 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
     if job == 'agent':
         trace = {'traceId': 'a' * 32, 'parentSpanId': 'b' * 16}
     else:
-        assert len(bytes.fromhex(trace_id)) == 16
+        assert len(trace_id) == 32 and set(trace_id) <= set('0123456789abcdef')
         trace = {'traceId': trace_id}
     span = {
         **trace,
