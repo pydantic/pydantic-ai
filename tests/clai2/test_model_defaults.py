@@ -137,7 +137,14 @@ async def test_cache_defaults_reach_anthropic_request(
     if saved:
         # A saved native setting takes precedence over the unified default.
         assert request['cache_control'] is OMIT
-        assert request['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+        # Claude Sonnet 4.6 gets the framing announcement from the first request by default, opening the
+        # instructions, ahead of their cache point.
+        assert 'cache_control' not in request['system'][0]
+        assert request['system'][-1] == {
+            'type': 'text',
+            'text': 'Static instructions',
+            'cache_control': {'type': 'ephemeral', 'ttl': '1h'},
+        }
     else:
         assert request['cache_control']['type'] == 'ephemeral'
     assert model.resolve_cache_retention(None) is None  # Library defaults remain opt-in.

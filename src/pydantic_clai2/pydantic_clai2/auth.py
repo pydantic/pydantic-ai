@@ -34,7 +34,7 @@ from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.menu_worker import menu_key, remote_dialogs, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -55,14 +55,19 @@ async def login_command(
     store: SettingsStore | None = None,
     runners: Runners = TERMINAL,
     dialogs: Dialogs | None = None,
+    select_default: Callable[[str], bool] = lambda model: False,
 ) -> str:
     """`/login NAME[@PROFILE]` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` asks which.
 
     `@PROFILE` signs in another account, used by models named `PROVIDER@PROFILE:MODEL`. Providers that
     take an API key or a connection (`openrouter`, `vllm`, `openai`, ...) sign in to a profile too.
-    A plugin sign-in that succeeds saves its `models` to `store`. `dialogs` asks wherever a menu was
-    opened, such as the web UI: subscriptions wait on their waiting screen and API keys come from `/keys`;
+    A plugin sign-in that succeeds saves its `models` to `store`. So does a GitHub Copilot sign-in, with every
+    model the account serves, and `select_default` decides whether its preferred one becomes current.
+    `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
+    screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
+    Without them, where CLAI has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
+    handler asks there through `line_input.read_line`.
     """
     plugins = plugins or {}
     if len(args) > 1:
@@ -83,7 +88,27 @@ async def login_command(
     # A plugin keeps its own tokens; for the rest, a saved login is what tells success from a cancelled prompt.
     if store is not None and (plugin is not None or has_credentials(account=account(name, profile))):
         remember(store, login=name, profile=profile, plugin=plugin)
+        if name == github_copilot.ACCOUNT and message != github_copilot.CANCELLED:
+            message += ' ' + await _add_copilot_models(store, profile=profile, select_default=select_default)
     return message
+
+
+async def _add_copilot_models(
+    store: SettingsStore, *, profile: str | None, select_default: Callable[[str], bool]
+) -> str:
+    """Save every model a Copilot login serves and offer the preferred one to `select_default`."""
+    try:
+        names = await github_copilot.discover(account=account(github_copilot.ACCOUNT, profile))
+    except UserError as exc:
+        return f'GitHub Copilot models were not added: {exc}'
+    models = {name: with_profile(f'{github_copilot.ACCOUNT}:{name}', profile) for name in names}
+    for model in models.values():
+        store.add_model(name=model)
+    added = f'Added {len(models)} GitHub Copilot models.'
+    preferred = models[github_copilot.default_model(names)]
+    if select_default(preferred):
+        return f'{added} Selected {preferred}.'
+    return added
 
 
 async def _sign_in(
@@ -96,8 +121,10 @@ async def _sign_in(
     dialogs: Dialogs | None,
 ) -> str:
     if name == CODEX:
-        return await codex.login([] if profile is None else [account(name, profile)], dialogs=dialogs)
-    if name == 'github-copilot':
+        return await codex.login(
+            [] if profile is None else [account(name, profile)], dialogs=dialogs or remote_dialogs()
+        )
+    if name == github_copilot.ACCOUNT:
         return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=dialogs)
     if (login := plugins.get(name)) is not None:
         if dialogs is not None:  # Its handler asks in the terminal, with no dialogs to ask through.

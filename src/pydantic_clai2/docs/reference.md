@@ -41,6 +41,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
+| `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
 | `/resume [ID\|claude\|codex]` | Browse or restore a saved session, or import one from Claude Code or Codex |
@@ -406,7 +407,7 @@ repository.
   "thinking": false,
   "request_limit": 50,
   "plugins": [
-    {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"num_results": 8}},
+    {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"max_results": 8}},
     {"id": "repo_context", "factory": "pydantic_clai2.builtin_plugins.repo_context", "settings": {"inventory_tool": true}}
   ]
 }
@@ -542,7 +543,7 @@ repository symlinks can select any readable file beneath it. See
 for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -927,8 +928,12 @@ an awaitable string.
 uv run clai2
 ```
 
-In CLAI, run `/login github-copilot`, then open `/model add` and choose
-`github-copilot`. The provider menu also starts login when no credentials exist.
+In CLAI, run `/login github-copilot`. Login adds every model your account's catalog
+lists to `/model` (`github-copilot@PROFILE:ID` for a profile) and, when you have not
+chosen a model, selects a recent strong one, such as Claude Opus 5.5 or Gemini 4 Argon.
+A model you chose stays selected. To switch, open `/model add` and choose `github-copilot`;
+the provider menu also starts login when no credentials exist. If listing the models
+fails, the login stays saved and CLAI reports why.
 You do not need to register an OAuth application or configure a client ID.
 CLAI supplies the same [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
@@ -944,8 +949,8 @@ own CLAI session. CLAI does not launch a browser, so a text browser cannot block
 login or take over your SSH terminal. Ctrl-C stops polling; GitHub controls the
 code's expiry. No localhost callback or pasted token is needed.
 
-GitHub authorization alone does not establish Copilot access. The model menu
-queries your account's catalog and lists only picker-enabled models with
+GitHub authorization alone does not establish Copilot access. Login and the model
+menu query your account's catalog and keep only picker-enabled models with
 `/chat/completions` support. The shared model menu includes details and `Ctrl+S`
 settings. Your subscription and organization policy still control inference access.
 You can also select a known ID with `/model github-copilot:claude-haiku-4.5`.
@@ -990,7 +995,10 @@ section, beside the saved `/keys`, with the same steps behind each account's but
 ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the link or code, an
 API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
 and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
-only in the terminal.
+only in the terminal. `/login NAME` typed in the page opens in the terminal that runs CLAI;
+when there is none, `/login openai-codex` waits in the page too, and a plugin's sign-in asks
+in a dialog for what it would have you paste. The link a plugin prints is not shown in the
+page: finish in the browser the plugin opens where CLAI runs, or run `/login NAME` in a terminal.
 
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
@@ -1234,13 +1242,25 @@ are read locally and converted to PNG (the first frame of animated images).
 Each image appears as `[image:...]`. Add your question and press Enter, or submit
 the image alone. Delete a marker before submitting to remove that attachment.
 Images in queued follow-ups belong to that follow-up, not the running turn.
-Paste errors appear in the footer without submitting a message or losing the draft.
+Paste errors appear in the footer without submitting a message. They clear after
+30 seconds, even without keyboard input, so the status row can return. Each new
+paste error starts its own 30-second lifetime. Expiry preserves your draft,
+attachments, and queued input; it does not clear a newer notice. Successful
+attachment feedback and unrelated notices do not use this timeout.
 
 Clipboard access uses Pillow's native Windows and macOS backends. On Linux,
-install `wl-clipboard` for Wayland or `xclip` for X11 and run inside that graphical
-session. SSH and headless sessions generally cannot read your local desktop
-clipboard; paste a path to an image accessible on the machine running CLAI instead.
-The clipboard is read only when you invoke the image shortcut.
+Pillow uses `wl-paste` (from `wl-clipboard`) for Wayland or `xclip` for X11.
+If the active desktop backend's binary is missing, CLAI names the package to
+install. It includes an installation command only when it recognizes your
+Linux distribution and finds its package manager; otherwise, use your
+distribution's package manager.
+
+If an installed backend cannot read the clipboard, check access to the graphical
+session or, over SSH, your remote clipboard bridge. Installing the package again
+does not restore that access. A working remote bridge can provide clipboard
+images in a headless session. Alternatively, paste a path to an image accessible
+on the machine running CLAI. The clipboard is read only when you invoke the
+image shortcut.
 
 Use a model that accepts images. CLAI sends the image bytes to the selected model;
 provider-specific size and format restrictions can still apply. Each source file
@@ -2871,7 +2891,8 @@ many sessions run at once.
   `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
   there is none, as for `clai2 --web` started from a script or service, the command
   fails with an error saying to enter it in a terminal, and names the page's
-  equivalent when there is one, such as `/model` or `/keys`.
+  equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
+  and a plugin's `read_line` prompt (see `PLUGINS.md`) ask in the page instead.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
@@ -2890,7 +2911,7 @@ export EXA_API_KEY=...
 ```
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 For anything beyond one capability, a plugin is a `Plugin` subclass. Like a
@@ -2910,7 +2931,7 @@ from pydantic_clai2.plugins import Plugin, TurnEnd
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8),)
+        return (ExaSearch(max_results=8),)
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         self.host.console.bell()
@@ -2972,9 +2993,18 @@ of the launch directory and its ancestors into the agent's
 instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-`coder` clears old tool results as the context fills. The built-in `compaction`
+`coder` clears old tool results as the context fills.
+CLAI sends every tool, MCP tool, and output tool with strict mode off, whatever the
+provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
+the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
+The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
+again, revised, as a turn of its own. Add words to say what to look at, such as
+`/refine check the error handling`. To have every answer reviewed without asking, add harness
+[Refine Output](../../../docs/harness/refine-output.md):
+`/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
+the first answer followed by the revised one.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a

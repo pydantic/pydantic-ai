@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -539,7 +540,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
-        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
         for func in ('os.stat', 'os.access', 'os.path.abspath')
         for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
     ),
@@ -894,6 +895,16 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         return module
 
     return run
+
+
+def with_native_system_role(profile: ModelProfile) -> ModelProfile:
+    """A `profile=` that gives a model the native mid-conversation `system` role its default profile leaves off.
+
+    Claude Haiku 5.5 honors the role but defaults to the sealed `<system>` rendering
+    (`needs_sealed_system_blocks`), which measured better. Tests of the native machinery that were recorded on
+    it keep it this way, as an application that opts back into the role would.
+    """
+    return {**profile, 'supports_inline_system_prompts': True, 'needs_sealed_system_blocks': False}
 
 
 @contextmanager

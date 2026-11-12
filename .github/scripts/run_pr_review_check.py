@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Literal, TextIO
 from urllib.parse import quote
 
-from douwebot_opencode_result import final_text
+from douwebot_opencode_result import final_text, rejection_reason, unfenced
 from douwebot_opencode_run import check_symlinks, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -34,7 +34,6 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
-
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 
@@ -228,11 +227,11 @@ def check_result(
         coverage = f'Review stopped at its time budget of {check.max_minutes} minutes.'
     else:
         try:
-            result = ModelResult.model_validate_json(final_text(stream))
-        except (ValueError, ValidationError):
+            result = ModelResult.model_validate_json(unfenced(final_text(stream)))
+        except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.
-                raise ValueError('The review answer does not match its schema') from None
+                raise ValueError(f'The review answer was rejected: {rejection_reason(error)}') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             # The result artifact is public, and a finding on a line the pull request did not change can describe a

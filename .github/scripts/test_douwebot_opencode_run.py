@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -16,8 +17,9 @@ from pydantic import BaseModel, TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import category_classify_opencode
 import douwebot_opencode_run
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks
+from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, check_symlinks
 
 # What OpenCode 2.2.5 writes when OpenCode Go's usage limit refuses the first request: a step starts, none finishes.
 LIMIT = 'OpenCode Go weekly usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page.'
@@ -32,6 +34,7 @@ FINISHED = [
     {'type': 'text', 'part': {'messageID': 'msg_1', 'text': '{}'}},
     {'type': 'step_finish', 'part': {'messageID': 'msg_1', 'reason': 'stop'}},
 ]
+WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 
 
 def test_internal_symlinks_are_allowed(tmp_path: Path) -> None:
@@ -83,8 +86,7 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (workspace / 'pr-head').mkdir()
     runner_temp = tmp_path / 'runner-temp'
     runner_temp.mkdir()
-    workflow_path = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
-    workflow = yaml.load(workflow_path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
     review_steps = workflow['jobs']['review']['steps']
     prompt = next(step['with']['prompt'] for step in review_steps if step.get('id') == 'review')
     github_output = tmp_path / 'github-output'
@@ -94,7 +96,8 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
     monkeypatch.setenv('REVIEW_PROMPT', prompt)
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return github_output
 
@@ -108,17 +111,18 @@ class OpenCodeConfig(BaseModel):
 
 @dataclass
 class Launch:
-    """One OpenCode launch: its command, config, environment, prompt and timeout."""
+    """One OpenCode launch: its command, config, environment, prompt, timeout and working directory."""
 
     args: list[str]
     config: OpenCodeConfig
     env: dict[str, str]
     input: str
     timeout: float | None
+    cwd: Path
 
 
 def fake_opencode(
-    monkeypatch: pytest.MonkeyPatch, *runs: tuple[Sequence[Mapping[str, object] | str], BaseException | None]
+    monkeypatch: pytest.MonkeyPatch, *runs: tuple[Sequence[Mapping[str, object] | str | bytes], BaseException | None]
 ) -> list[Launch]:
     """Make each OpenCode launch write its event lines and then raise its error, recording each launch."""
     invoked: list[Launch] = []
@@ -128,11 +132,17 @@ def fake_opencode(
         config = (Path(env['XDG_CONFIG_HOME']) / 'opencode' / 'opencode.json').read_text(encoding='utf-8')
         prompt, timeout = kwargs['input'], TypeAdapter(float | None).validate_python(kwargs['timeout'])
         assert isinstance(prompt, str)
-        invoked.append(Launch(args, OpenCodeConfig.model_validate_json(config), env, prompt, timeout))
+        cwd = TypeAdapter(Path).validate_python(kwargs['cwd'])
+        invoked.append(Launch(args, OpenCodeConfig.model_validate_json(config), env, prompt, timeout, cwd))
         events, error = runs[len(invoked) - 1]
         stdout = kwargs['stdout']
         assert isinstance(stdout, io.TextIOBase)
-        stdout.write(''.join((event if isinstance(event, str) else json.dumps(event)) + '\n' for event in events))
+        # OpenCode writes bytes to the stream's descriptor, so an event can be invalid UTF-8.
+        lines = [
+            event if isinstance(event, bytes) else (event if isinstance(event, str) else json.dumps(event)).encode()
+            for event in events
+        ]
+        os.write(stdout.fileno(), b''.join(line + b'\n' for line in lines))
         if error is not None:
             raise error
         return subprocess.CompletedProcess(args, 0)
@@ -146,13 +156,15 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
     assert launch.args[launch.args.index('--model') + 1] == provider.model
     assert launch.config.agents['title']['model'] == provider.model
     assert launch.config.agents['compaction']['model'] == provider.model
+    assert launch.config.agents['summary']['model'] == provider.model
     assert [policy for policy in launch.config.policies if policy['action'] == 'provider.use'] == [
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
     ]
-    keys = {OPENCODE_GO.key_variable: 'go-key', DEEPINFRA.key_variable: 'deepinfra-key'}
-    assert {name: value for name, value in launch.env.items() if name in keys} == {
-        provider.key_variable: keys[provider.key_variable]
+    secrets = {'OPENCODE_API_KEY': 'go-key', 'ZAI_API_KEY': 'zai-key', 'ZAI_BACKUP_API_KEY': 'zai-backup-key'}
+    names = {*secrets, OPENCODE_GO.key_variable, ZAI.key_variable}
+    assert {name: value for name, value in launch.env.items() if name in names} == {
+        provider.key_variable: secrets[provider.secret_variable]
     }
     assert 'GH_TOKEN' not in launch.env
 
@@ -181,14 +193,28 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert 'Before returning the structured result, run `gh pr view' not in call.input
     assert 'Use the `gh` CLI only when' not in call.input
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode\n'
-    assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash.\n'
+    assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash on OpenCode Go.\n'
+
+
+GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.go-limit, status 429.'
+NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type.'
+TO_ZAI_LOG = (
+    'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
+    'retrying on zai-coding-plan/glm-5.3-flash on the primary Coding Plan.'
+)
+ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan'
+# What OpenCode 2.2.5 writes when the Coding Plan's quota refuses the first request: Z.AI code 1308 or 1310.
+PLAN_REFUSED: list[dict[str, object]] = [
+    REFUSED[0],
+    {'type': 'error', 'error': {'type': 'provider.quota', 'message': 'Usage limit reached for 5 hour.', 'status': 429}},
+]
 
 
 @pytest.mark.parametrize('kind', ['provider.go-limit', 'provider.quota'])
-def test_go_refusal_reruns_the_review_on_deepinfra(
+def test_go_refusal_reruns_the_review_on_the_coding_plan(
     review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
 ) -> None:
-    """A run Go refused before its first step did no work, so DeepInfra reviews instead and the receipt says so."""
+    """A run Go refused before its first step did no work, so the primary Coding Plan reviews and the receipt says so."""
     refused: list[dict[str, object]] = [
         REFUSED[0],
         {'type': 'error', 'error': {'type': kind, 'message': LIMIT, 'status': 429}},
@@ -197,59 +223,265 @@ def test_go_refusal_reruns_the_review_on_deepinfra(
     douwebot_opencode_run.main()
     assert invoked[1].input == invoked[0].input
     assert_runs_on(invoked[0], OPENCODE_GO)
-    assert_runs_on(invoked[1], DEEPINFRA)
-    assert review_env.read_text(encoding='utf-8') == 'engine=opencode-deepinfra\n'
+    assert_runs_on(invoked[1], ZAI)
+    assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
     assert capsys.readouterr().out == (
-        f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.\n'
-        'OpenCode run served by deepinfra/deepseek-ai/DeepSeek-V4.1-Flash.\n'
+        f'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type {kind}, status 429.\n'
+        f'{TO_ZAI_LOG}\n'
+        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the primary Coding Plan.\n'
     )
 
 
+def test_coding_plan_quota_refusal_reruns_the_review_on_the_backup_account(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A primary Coding Plan whose quota refused the run hands it to the backup account's key."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (PLAN_REFUSED, refusal), (FINISHED, None))
+    douwebot_opencode_run.main()
+    assert [launch.input for launch in invoked] == [invoked[0].input] * 3
+    assert_runs_on(invoked[1], ZAI)
+    assert_runs_on(invoked[2], ZAI_BACKUP)
+    assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
+    assert capsys.readouterr().out == (
+        f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n'
+        f'{ZAI_LOG} failed with error type provider.quota, status 429.\n'
+        'zai-coding-plan/glm-5.3-flash refused the run before its first step; '
+        'retrying on zai-coding-plan/glm-5.3-flash on the backup Coding Plan.\n'
+        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the backup Coding Plan.\n'
+    )
+
+
+def test_go_refusal_skips_a_coding_plan_account_without_a_key(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The chain leaves out the primary account when only the backup key is set."""
+    monkeypatch.delenv('ZAI_API_KEY')
+    invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    douwebot_opencode_run.main()
+    assert_runs_on(invoked[1], ZAI_BACKUP)
+
+
 @pytest.mark.parametrize(
-    ('deepinfra_key', 'events', 'error'),
+    ('backup_key', 'events', 'described'),
     [
-        pytest.param(None, REFUSED, subprocess.CalledProcessError(1, 'opencode'), id='no-deepinfra-key'),
-        pytest.param('', REFUSED, subprocess.CalledProcessError(1, 'opencode'), id='empty-deepinfra-key'),
+        pytest.param(None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key'),
+        pytest.param('', PLAN_REFUSED, 'error type provider.quota, status 429', id='empty-backup-key'),
         pytest.param(
-            'deepinfra-key', [*FINISHED, REFUSED[1]], subprocess.CalledProcessError(1, 'opencode'), id='after-a-step'
+            'zai-backup-key',
+            [*FINISHED, PLAN_REFUSED[1]],
+            'error type provider.quota, status 429',
+            id='quota-after-a-step',
         ),
-        pytest.param('deepinfra-key', [], subprocess.CalledProcessError(1, 'opencode'), id='no-error-event'),
+        # Z.AI codes 1302 and 1305: OpenCode retried the 429 within the run before it failed.
         pytest.param(
-            'deepinfra-key',
+            'zai-backup-key',
+            [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
+            'error type provider.rate-limit, status 429',
+            id='rate-limit-or-overload',
+        ),
+    ],
+)
+def test_coding_plan_failure_stays_on_the_primary_account(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    backup_key: str | None,
+    events: list[dict[str, object]],
+    described: str,
+) -> None:
+    """Only a quota refusal before the first step reaches the backup, and only with its key; the job fails otherwise."""
+    if backup_key is None:
+        monkeypatch.delenv('ZAI_BACKUP_API_KEY')
+    else:
+        monkeypatch.setenv('ZAI_BACKUP_API_KEY', backup_key)
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (events, refusal))
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert len(invoked) == 2
+    assert review_env.read_text(encoding='utf-8') == ''
+    assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
+
+
+@pytest.mark.parametrize(
+    ('zai_key', 'events', 'error', 'log'),
+    [
+        pytest.param(None, REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='no-zai-key'),
+        pytest.param('', REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='empty-zai-key'),
+        pytest.param(
+            'zai-key',
+            [*FINISHED, REFUSED[1]],
+            subprocess.CalledProcessError(1, 'opencode'),
+            GO_LIMIT_LOG,
+            id='after-a-step',
+        ),
+        pytest.param('zai-key', [], subprocess.CalledProcessError(1, 'opencode'), NO_TYPE_LOG, id='no-error-event'),
+        pytest.param(
+            'zai-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.auth', 'message': 'Invalid', 'status': 401}}],
             subprocess.CalledProcessError(1, 'opencode'),
+            'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.auth, status 401.',
             id='rejected-key',
         ),
         pytest.param(
-            'deepinfra-key',
+            'zai-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': ['provider.go-limit'], 'status': 429}}],
             subprocess.CalledProcessError(1, 'opencode'),
+            'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type, status 429.',
             id='error-type-not-a-string',
         ),
         pytest.param(
-            'deepinfra-key',
+            'zai-key',
             [REFUSED[0], '{"type": "text", "part"'],
             subprocess.CalledProcessError(1, 'opencode'),
+            NO_TYPE_LOG,
             id='cut-off-event',
         ),
-        pytest.param('deepinfra-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), id='timeout'),
+        pytest.param(
+            'zai-key',
+            [REFUSED[0], b'\xff'],
+            subprocess.CalledProcessError(1, 'opencode'),
+            NO_TYPE_LOG,
+            id='undecodable',
+        ),
+        pytest.param('zai-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), None, id='timeout'),
     ],
 )
 def test_go_failure_stays_on_go(
     review_env: Path,
     monkeypatch: pytest.MonkeyPatch,
-    deepinfra_key: str | None,
-    events: Sequence[Mapping[str, object] | str],
+    capsys: pytest.CaptureFixture[str],
+    zai_key: str | None,
+    events: Sequence[Mapping[str, object] | str | bytes],
     error: BaseException,
+    log: str | None,
 ) -> None:
-    """Only a refusal before the first step falls back, and only with a DeepInfra key; the job fails as before."""
-    if deepinfra_key is None:
-        monkeypatch.delenv('DEEPINFRA_API_KEY')
+    """Only a refusal before the first step falls back, and only with a Coding Plan key; the job fails as before.
+
+    A failed process names its error type in the job log. A timeout is not a failed process.
+    """
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY')
+    if zai_key is None:
+        monkeypatch.delenv('ZAI_API_KEY')
     else:
-        monkeypatch.setenv('DEEPINFRA_API_KEY', deepinfra_key)
+        monkeypatch.setenv('ZAI_API_KEY', zai_key)
     invoked = fake_opencode(monkeypatch, (events, error))
     with pytest.raises(type(error)):
         douwebot_opencode_run.main()
     [call] = invoked
     assert_runs_on(call, OPENCODE_GO)
     assert review_env.read_text(encoding='utf-8') == ''
+    assert capsys.readouterr().out == ('' if log is None else log + '\n')
+
+
+@pytest.mark.parametrize(
+    ('error', 'described'),
+    [
+        pytest.param(
+            {'type': 'provider.auth', 'message': 'Invalid key', 'status': 401, 'response': {'body': 'Invalid key'}},
+            'error type provider.auth, status 401',
+            id='type-and-status',
+        ),
+        pytest.param({'type': 'unknown', 'message': 'Model not found'}, 'error type unknown', id='no-status'),
+        pytest.param(
+            {'type': 'provider.auth: Invalid key', 'status': 401},
+            'no error type, status 401',
+            id='type-not-shaped-like-opencodes',
+        ),
+    ],
+)
+def test_coding_plan_failure_names_its_error_type(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: dict[str, object],
+    described: str,
+) -> None:
+    """A failed Coding Plan run fails the job and names its error type and status, never its message or body."""
+    invoked = fake_opencode(
+        monkeypatch,
+        (REFUSED, subprocess.CalledProcessError(1, 'opencode')),
+        ([REFUSED[0], {'type': 'error', 'error': error}], subprocess.CalledProcessError(1, 'opencode')),
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert_runs_on(invoked[1], ZAI)
+    assert review_env.read_text(encoding='utf-8') == ''
+    assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
+
+
+def classifier_answer(text: str) -> list[dict[str, object]]:
+    """The events of a completed OpenCode run whose final message is `text`."""
+    return [
+        {'type': 'text', 'part': {'messageID': 'msg_1', 'text': text}},
+        {'type': 'step_finish', 'part': {'messageID': 'msg_1', 'reason': 'stop'}},
+    ]
+
+
+@pytest.fixture
+def classify_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Stage the prefetched context and the `Category Classify (OpenCode)` environment; return the job's output file."""
+    runner_temp = tmp_path / 'runner-temp'
+    (runner_temp / 'category-context').mkdir(parents=True)
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    steps = workflow['jobs']['category-classify-opencode']['steps']
+    github_output = tmp_path / 'github-output'
+    github_output.touch()
+    monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setenv(
+        'CLASSIFY_PROMPT', next(step['env']['CLASSIFY_PROMPT'] for step in steps if step.get('id') == 'classify')
+    )
+    monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
+    monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
+    return github_output
+
+
+def test_classifier_reads_only_the_prefetched_context(
+    classify_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OpenCode gets the Claude prompt, runs in the prefetched context without GitHub credentials, and sets the output."""
+    invoked = fake_opencode(monkeypatch, (classifier_answer('{"category": "chore"}'), None))
+    category_classify_opencode.main()
+    [call] = invoked
+    assert_runs_on(call, OPENCODE_GO)
+    assert call.args[call.args.index('--agent') + 1] == 'classifier'
+    assert call.cwd == tmp_path / 'runner-temp' / 'category-context'
+    workflow = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+    claude = next(step for step in workflow['jobs']['category-classify']['steps'] if step.get('id') == 'classify')
+    assert call.input == claude['with']['prompt'] + category_classify_opencode.TOOL_GUIDANCE
+    assert classify_env.read_text(encoding='utf-8') == 'category=chore\n'
+
+
+def test_classifier_reads_a_fenced_answer(classify_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An answer that ends in a fenced JSON object passes, as it does for `PR Review Checks`."""
+    fake_opencode(monkeypatch, (classifier_answer('The PR fixes a crash.\n```json\n{"category": "bug"}\n```'), None))
+    category_classify_opencode.main()
+    assert classify_env.read_text(encoding='utf-8') == 'category=bug\n'
+
+
+@pytest.mark.parametrize(
+    ('events', 'reason'),
+    [
+        pytest.param(classifier_answer('{"category": "refactor"}'), 'validation failed: literal_error', id='unknown'),
+        pytest.param(
+            classifier_answer('{"category": "bug", "reason": "fixes a crash"}'),
+            'validation failed: extra_forbidden',
+            id='extra-field',
+        ),
+        pytest.param(classifier_answer('The category is bug.'), 'validation failed: json_invalid', id='prose'),
+        pytest.param(REFUSED[:1], 'OpenCode review did not complete', id='incomplete'),
+    ],
+)
+def test_classifier_rejects_any_other_answer(
+    classify_env: Path, monkeypatch: pytest.MonkeyPatch, events: list[dict[str, object]], reason: str
+) -> None:
+    """Only one allowed category and nothing else reaches `category-apply`; the job log names why, never the text."""
+    fake_opencode(monkeypatch, (events, None))
+    with pytest.raises(SystemExit) as raised:
+        category_classify_opencode.main()
+    assert raised.value.code == f'OpenCode returned an invalid category: {reason}'
+    assert classify_env.read_text(encoding='utf-8') == ''

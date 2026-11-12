@@ -47,7 +47,7 @@ from pydantic_ai_harness.subagents import (
     SubAgent,
     SubAgents,
     TaskControl,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
     is_task_report,
 )
 from pydantic_clai2.app import create_stock_agent
@@ -255,7 +255,7 @@ async def test_task_ending_or_asking_before_its_model_gets_its_start_row_without
             task_id=record.id,
         )
         if first == 'end'
-        else TaskQuestionEvent(task_id=record.id, agent_name='worker', question_id='q', question='Which?')
+        else TaskQuestionAskedEvent(task_id=record.id, agent_name='worker', question_id='q', question='Which?')
     )
     await ui.observe(DelegationTaskEvent(task=record, event=released))
     lines = output.getvalue().splitlines()
@@ -454,7 +454,7 @@ async def test_a_question_shows_once() -> None:
     ui = Tasks(console=Console(file=output, width=200), conversation_id=lambda: 'root', directory=None)
     record = task()
     ui.owner.records[record.id] = record
-    question = TaskQuestionEvent(task_id=record.id, agent_name='self', question_id='q', question='Which?')
+    question = TaskQuestionAskedEvent(task_id=record.id, agent_name='self', question_id='q', question='Which?')
     received: list[object] = []
 
     async def sink(event: object) -> None:
@@ -465,7 +465,7 @@ async def test_a_question_shows_once() -> None:
     assert received == [question]
     child = task(task_id='b' * 32, parent_id=record.id)
     ui.owner.records[child.id] = child
-    nested = TaskQuestionEvent(task_id=child.id, agent_name='self', question_id='q', question='Which?')
+    nested = TaskQuestionAskedEvent(task_id=child.id, agent_name='self', question_id='q', question='Which?')
     await ui.observe(DelegationTaskEvent(task=record, event=nested))
     assert received == [question], 'not the copy in its parent task stream'
     await ui.observe(DelegationTaskEvent(task=child, event=nested))
@@ -476,7 +476,7 @@ async def test_a_question_shows_once() -> None:
 
 
 def test_question_row() -> None:
-    event = TaskQuestionEvent(task_id='a' * 32, agent_name='self', question_id='q', question='Which\nflavour?')
+    event = TaskQuestionAskedEvent(task_id='a' * 32, agent_name='self', question_id='q', question='Which\nflavour?')
     row = task_row(event)
     assert row is not None
     assert row.plain == '? general-purpose [aaaaaaaa] asks: Which flavour?'
@@ -805,6 +805,76 @@ async def test_background_completion_continues_parent_without_user_input(
     assert shell.tasks.wake is None
 
 
+async def test_cancelling_a_turn_leaves_its_background_child_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user's stop ends the turn; a child that turn started in the background runs on and still reports."""
+    child_started, parent_waiting, idle, release, continued = (asyncio.Event() for _ in range(5))
+    reads = 0
+    original_read = LivePrompt.read
+
+    async def read(live: LivePrompt) -> str:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            idle.set()
+        return await original_read(live)
+
+    monkeypatch.setattr(LivePrompt, 'read', read)
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        request = messages[0]
+        assert isinstance(request, ModelRequest)
+        first = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        if first == 'child':
+            child_started.set()
+            await release.wait()
+            yield 'Child finished.'
+        elif any(
+            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
+        ):
+            yield 'Report read.'
+            continued.set()
+        elif len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='delegate_task', json_args='{"agent_name":"self","task":"child","background":true}'
+                )
+            }
+        else:
+            parent_waiting.set()
+            await asyncio.Event().wait()
+
+    shell = create_shell(
+        create_stock_agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=[Coder(repo_context=False)],
+        usage_limits=None,
+        console=Console(file=io.StringIO(), force_terminal=True, width=100, height=24),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(shell.run)
+            pipe.send_text('launch\r')
+            await child_started.wait()
+            await parent_waiting.wait()
+            assert shell.interrupts.cancel(exit_on_repeat=False)
+            await idle.wait()
+            (record,) = shell.tasks.owner.records.values()
+            assert (record.status, record.outcome, record.user_stopped) == ('running', None, False)
+            release.set()
+            await continued.wait()
+            assert (record.status, record.outcome, record.output) == ('finished', 'ok', 'Child finished.')
+            assert record.delivered and not record.user_stopped
+            assert shell.editor is not None
+            shell.editor.submit('/exit')
+
+
 async def test_consumed_background_report_does_not_start_another_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -868,7 +938,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
 
     def counted(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
         nonlocal questions
-        questions += isinstance(event, TaskQuestionEvent)
+        questions += isinstance(event, TaskQuestionAskedEvent)
         return task_row(event, model_name=model_name, show_model=show_model)
 
     # The task panel's rows and the main run's stream both render through `Tasks.row`, which calls it.
@@ -922,7 +992,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
         await original_observer(update)
         activities.append(shell.tasks.info(update.task).activity)
         # The owner tells its observer once the question is pending.
-        if isinstance(update.event, TaskQuestionEvent):
+        if isinstance(update.event, TaskQuestionAskedEvent):
             asked.set()
 
     shell.tasks.owner.observer = observe
@@ -1077,7 +1147,7 @@ async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
     async def observe(update: DelegationTaskEvent) -> None:
         assert original_observer is not None
         await original_observer(update)
-        if isinstance(update.event, TaskQuestionEvent):
+        if isinstance(update.event, TaskQuestionAskedEvent):
             queued.set()
 
     shell.tasks.owner.observer = observe

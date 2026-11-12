@@ -371,6 +371,7 @@ These are on from the start:
 - `ask_user`: questions from the model
 - `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
+- `refinement`: `/refine`, which has the model review and revise its last answer
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
 - `notifications`: a desktop notification when a turn finishes
@@ -384,7 +385,7 @@ path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The second line adds web search from

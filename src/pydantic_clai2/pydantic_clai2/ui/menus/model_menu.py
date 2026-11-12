@@ -399,8 +399,11 @@ async def _connect(
 ) -> str | None:
     """Connect `provider` and pick one of its models; what `/model add` returns, or `None` to reopen the providers."""
     if provider == 'github-copilot':
-        await github_copilot.ensure_login(console=console)
+        signed_in = await github_copilot.ensure_login(console=console)
         models = await github_copilot_models()
+        if signed_in:
+            for model in models:
+                context.store.add_model(name=model.name)
         provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
         if await _browse(provider_menu, runners, messages):
             return '\n'.join(messages) or 'No changes.'
