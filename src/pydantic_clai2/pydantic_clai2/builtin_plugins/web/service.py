@@ -122,7 +122,9 @@ class WebService:
         )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
-        """Where the settings menus opened in this page ask their questions."""
+        """Where the settings menus opened in this page, and commands entered while CLAI has no terminal, ask."""
+        if isinstance(self.live, LiveRuntimes):
+            self.live.dialogs = self.dialogs
         self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
@@ -153,10 +155,13 @@ class WebService:
         self._unsubscribe = self.live.subscribe(self.live_changed)
 
     def close(self) -> None:
-        """Stop following the live sessions and stop counting browsers as their watchers."""
+        """Stop following the live sessions, counting browsers as their watchers, and asking for commands."""
         self._unsubscribe()
         for client in self.hub.connected():
             self.unwatch(client)
+        # A newer service's stay: a reload during a turn closes this one after building that.
+        if isinstance(self.live, LiveRuntimes) and self.live.dialogs is self.dialogs:
+            self.live.dialogs = None
 
     # Live sessions and their channels.
 
@@ -203,6 +208,7 @@ class WebService:
                 LiveEntry(
                     id=channel.id,
                     state=self._state(channel),
+                    busy=channel.session.busy,
                     title=channel.session.conversation.title,
                     workspace=str(channel.session.workspace),
                 )
