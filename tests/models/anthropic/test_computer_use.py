@@ -1126,3 +1126,60 @@ def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(name: s
         if 'unsupported_fields' in action:
             with pytest.raises(ValidationError):
                 _TOOL_ACTION.validate_python(action)
+
+
+async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests: None) -> None:
+    from pydantic_ai import RunContext
+    from pydantic_ai.capabilities import Hooks
+
+    hooks = Hooks()
+
+    @hooks.on.after_tool_execute(tools=['computer'])
+    async def redact(
+        ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+    ) -> Any:
+        return []  # such as a hook taking the screen out of the history
+
+    client = MockAnthropic.create_mock(
+        [
+            _turn(_tool_use('toolu_1', 'screenshot', {}), _tool_use('toolu_2', 'mouse_move', {'coordinate': [1, 2]})),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    result = await Agent(model, capabilities=[FakeComputer(), hooks]).run('Look.')
+    assert result.output == 'done'
+    sent = get_mock_chat_completion_kwargs(client)[1]['messages']
+    results = [block for message in sent for block in message['content'] if block['type'] == 'tool_result']
+    assert [block['tool_use_id'] for block in results] == ['toolu_1', 'toolu_2']
+
+
+@pytest.mark.parametrize(
+    'model_name, blocks',
+    [
+        (
+            'claude-sonnet-4-6',
+            [BetaToolUseBlock(id='toolu_long_1', type='tool_use', name='computer', input={'action': 'screenshot'})],
+        ),
+        (
+            'claude-sonnet-5-5',
+            [_tool_use('toolu_long_1', 'screenshot', {}), _tool_use('toolu_long_2', 'screenshot', {})],
+        ),
+    ],
+    ids=['computer-tool', 'toolset'],
+)
+async def test_a_replayed_call_and_its_results_pair_up_when_ids_are_fitted(
+    allow_model_requests: None, model_name: str, blocks: list[BetaToolUseBlock]
+) -> None:
+    client = MockAnthropic.create_mock([_turn(*blocks), _turn(BetaTextBlock(text='done', type='text'))])
+    model = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=client), profile={'tool_call_id_length': 9}
+    )
+    await Agent(model, capabilities=[FakeComputer()]).run('Look.')
+    sent = get_mock_chat_completion_kwargs(client)[1]['messages']
+    calls = [block['id'] for message in sent for block in message['content'] if block['type'] == 'tool_use']
+    results = [
+        block['tool_use_id'] for message in sent for block in message['content'] if block['type'] == 'tool_result'
+    ]
+    assert calls == results
+    assert len(calls[0]) == 9

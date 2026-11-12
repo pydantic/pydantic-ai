@@ -3220,9 +3220,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Calls of another computer use tool version go back as plain calls.
         if replay is not None and replay['computer_tool'] == map_context.computer_tool_sent:
             # Sent back as the calls they came as; toolset member calls each need their own result.
+            # The first call goes back under the part's ID as fitted for the request, as its result does.
+            part_id = _guard_tool_call_id(t=part)
+            first, *rest = replay['computer_blocks']
+            replay = ComputerReplay(
+                computer_blocks=[ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest],
+                computer_tool=replay['computer_tool'],
+                computer_action_counts=replay['computer_action_counts'],
+            )
             toolset: dict[str, Any] = {}
             if map_context.computer_tool_sent == 'computer_toolset_20260801':
-                map_context.computer_calls[_guard_tool_call_id(t=part)] = replay
+                map_context.computer_calls[part_id] = replay
                 toolset = {'toolset_name': 'computer'}
             assistant_content_params.extend(
                 BetaToolUseBlockParam(
@@ -3856,7 +3864,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return beta_tool_result_block_param.BetaToolResultBlockParam(
                 tool_use_id=block['id'],
                 type='tool_result',
-                content=list(content),
+                content=list(content) or '',
                 is_error=is_error,
                 toolset_name='computer',
             )
@@ -3878,10 +3886,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if metadata is None or metadata.get('changed'):
             # Not an outcome of these calls, such as text a guardrail returned instead, or a call changed before it
             # ran: each call gets the summary rather than `OK`, and the last one the rest.
-            summary = await self._map_tool_result_item(content[0], map_context)
-            rest = [await self._map_tool_result_item(item, map_context) for item in content[1:]]
+            # A hook may have left no content at all: each call still gets a result.
+            mapped = [await self._map_tool_result_item(item, map_context) for item in content]
             return [
-                result(block, False, summary, *(rest if index == len(blocks) - 1 else []))
+                result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
                 for index, block in enumerate(blocks)
             ]
         performed = metadata.get('performed', ends[-1])
