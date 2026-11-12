@@ -352,9 +352,9 @@ The Responses API has native tools that you can use instead of building your own
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
 Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability, which adds a
-[`ComputerTool`](../native-tools.md#computer-tool). GPT-5.4 and later, except GPT-5.4 nano, get its `computer` tool
-as OpenAI's own computer tool, through `OpenAIResponsesModel` on OpenAI, Azure OpenAI and Bedrock Mantle. Every other model, and every model with `ComputerUse(native=False)`, gets
-a function tool. On Azure, set `openai_supports_computer_tool` in the [profile](compatible-apis.md#model-profile) of
+[`ComputerTool`](../native-tools.md#computer-tool). GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer
+tool through `OpenAIResponsesModel` on OpenAI, Azure OpenAI and Bedrock Mantle. Other models, and any model with
+`ComputerUse(native=False)`, get a function tool. On Azure, set `openai_supports_computer_tool` in the [profile](compatible-apis.md#model-profile) of
 a deployment whose name differs from its model's.
 
 #### Referencing earlier responses

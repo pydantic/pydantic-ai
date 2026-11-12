@@ -1767,11 +1767,11 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
             content: The shape of the tool's result, typically a `TypedDict`. A tool of this kind must have a
                 return type that fits it, and its successful return parts are only promoted when their content
                 validates against it.
-            metadata: The shape of the `metadata` the tool returns alongside its result, through
+            metadata: The shape of the `metadata` the tool returns through
                 [`ToolReturn`][pydantic_ai.messages.ToolReturn], typically a `TypedDict`. It is never sent to the
-                model. Its typed return parts read it with
-                [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata]; metadata that doesn't fit
-                reads as `None` there, but doesn't stop a part from being promoted.
+                model. Typed return parts read it with
+                [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which gives `None` for
+                metadata that doesn't fit. It doesn't stop a part from being promoted.
         """
         if not namespace or not all(namespace.split('.')):
             raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
