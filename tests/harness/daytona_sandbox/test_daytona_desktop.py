@@ -27,7 +27,7 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai_harness.computer_use import ComputerAction, ComputerUse, UnsupportedActionError
+from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from ..display_fakes import screen
@@ -101,7 +101,7 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
     ],
 )
 async def test_each_action_maps_onto_daytona_calls(
-    fake_daytona: FakeDaytona, action: ComputerAction, calls: list[str]
+    fake_daytona: FakeDaytona, action: DisplayAction, calls: list[str]
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
 
@@ -123,7 +123,7 @@ async def test_each_action_maps_onto_daytona_calls(
     ],
 )
 async def test_what_daytona_cannot_do_is_refused_before_anything_runs(
-    fake_daytona: FakeDaytona, action: ComputerAction
+    fake_daytona: FakeDaytona, action: DisplayAction
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
 
