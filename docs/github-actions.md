@@ -46,13 +46,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # The merge commit and both its parents, so `git diff HEAD^1 HEAD` is the pull
+          # request's change. The default depth of 1 leaves the agent nothing to diff against.
+          fetch-depth: 2
           persist-credentials: false
 
       - id: agent
         uses: pydantic/pydantic-ai-action@v1
         with:
           model: {{ openai:medium }}
-          prompt: Summarize what changed in this pull request.
+          prompt: Summarize the pull request from git diff HEAD^1 HEAD.
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
@@ -201,7 +204,7 @@ before the run starts:
 - uses: pydantic/pydantic-ai-action@v1
   with:
     model: {{ openai:medium }}
-    prompt: Summarize what changed in this pull request.
+    prompt: Point out anything unclear in README.md.
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
