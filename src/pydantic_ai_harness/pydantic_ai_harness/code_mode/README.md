@@ -230,14 +230,14 @@ When a nested tool returns a [`ToolReturn`](https://pydantic.dev/docs/ai/tools-t
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
 Sandbox execution is bounded by `resource_limits`, which defaults to 30 seconds of execution time
-and a 256 MiB heap. `max_duration_secs` applies to each `run_code` snippet: each snippet gets at most that much
+and a 256 MiB heap. `max_duration_seconds` applies to each `run_code` snippet: each snippet gets at most that much
 sandbox time, which is what stops a runaway loop. Time spent awaiting a nested tool is
 excluded. A snippet that hits the limit is stopped and its session is reset, so any variables,
 imports, and definitions have to be recreated. The retry `run_code` returns says so and reports the
 nested calls the snippet already made.
 
 Sleeping is not execution time, so it has its own allowance of the same length: a snippet may sleep
-for at most `max_duration_secs` in total. A sleep that would go past it raises `TimeoutError` in the
+for at most `max_duration_seconds` in total. A sleep that would go past it raises `TimeoutError` in the
 sandbox without waiting, and the session is kept. The allowance still applies inside a Temporal
 workflow, where the execution-time limit is off; only `resource_limits='unlimited'` removes it.
 
@@ -262,10 +262,11 @@ retry. The reported total stays exact whether or not the list was cut, which is 
 model some calls are missing from what it can see. Nothing stops the model from calling those
 tools again.
 
-Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
+Override them with `resource_limits={'max_duration_seconds': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
 supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
 suspension budget in place; suspensions cannot be unlimited.
+`max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 Nested tool calls also count toward the run's
 [`tool_calls_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), together with the
@@ -273,7 +274,7 @@ Nested tool calls also count toward the run's
 pending, and one that would exceed the limit ends the run with `UsageLimitExceeded`, as a top-level tool
 call does. Catching the error inside the snippet does not prevent this.
 
-When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_secs`, including an
+When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_seconds`, including an
 explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
@@ -370,7 +371,7 @@ and one combined result. Hooks on `fetch_item` and other tools called by the cod
 Hooks around `run_code` itself run only after the model has finished writing the call, so
 they cannot approve or change lines that eager mode has already run.
 
-Configured Monty resource limits still apply, but `max_duration_secs` and the sleep allowance
+Configured Monty resource limits still apply, but `max_duration_seconds` and the sleep allowance
 count per fragment: each eager fragment and the remaining code get their own, so an eager
 call can run longer in total than the same code without eager mode. Memory is shared by the
 session.
@@ -566,7 +567,10 @@ boundary), `SpeculativeCallLaunchedEvent` (with the launching statement's line s
 `phase` of `streaming` or `execution`), `SpeculativeCallSettledEvent` (only while the stream
 is still flowing; a call that finishes later reports its state on its claimed or evicted
 event instead), and, once the snippet runs, `SpeculativeCallClaimedEvent`,
-`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`.
+`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`. `closed_statements` and
+`sandbox_function` are the deprecated names of the `closed_statement_count` and
+`sandbox_function_name` fields. They still read, with a warning, and a payload saved under them
+still loads.
 
 ### Why isn't a call speculating?
 
@@ -622,8 +626,12 @@ def sandbox_pool() -> AsyncMontyRemote:
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=sandbox_pool)])
 ```
 
-That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
-in place of `max_duration_secs`.
+That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
+The configured `max_duration_seconds` still applies outside Temporal. Inside a Temporal workflow,
+Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
+
+Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
+instructions or tool arguments.
 
 Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
@@ -633,6 +641,36 @@ output stay in your process, and REPL state persists across `run_code` calls as 
 
 Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
 client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+
+### Error handling
+
+Pool creation, connection, and session checkout errors propagate to the code calling the agent. These
+include missing or invalid credentials, an invalid server URL, and exceptions raised by a pool factory.
+They are not sent to the model as `ModelRetry`: the model cannot fix sandbox configuration. A checkout
+refused with `caller_cap`, `capacity`, or `worker_unavailable` is retried once after a short backoff;
+if it still fails, the error propagates to the caller.
+Inside a Temporal workflow, the exception reaches workflow code and follows the
+[workflow failure policy](#temporal-durability), not the model retry policy.
+
+Errors the model can act on are returned as model retries:
+
+- Syntax, type, and ordinary runtime errors include the sandbox's diagnostic.
+- Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
+  session and ask the model to do less work per call.
+- Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is lost.
+- A sandbox memory-limit error or a `MemoryError` without a traceback resets the session and asks
+  the model to use less memory, for example by processing smaller batches. Other `MemoryError`s
+  raised by the snippet or a nested tool keep the session. Errors that cannot be distinguished
+  from a sandbox memory-limit failure also reset it: Monty does not guarantee heap integrity after
+  a memory limit fires, even if the worker stays alive.
+  Exceeding the 10 MiB printed-output cap also resets the session: Monty exposes the same diagnostic
+  for this host-side limit and a sandbox heap limit.
+- A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
+  Remote host-side error details are omitted from model retries because they can contain pool URLs
+  or credentials. The original exception remains the retry's cause for application-side diagnostics.
+
+After a reset, the model must re-run imports and recreate state. The retry lists nested calls that
+already started so the model can avoid repeating their side effects; Code Mode does not replay them.
 
 ## Temporal durability
 
@@ -677,6 +715,14 @@ Model requests and, by default, nested tool calls cross Temporal activity bounda
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
 for one agent run, not durable storage. Replay reconstructs it by running the recorded snippets
 again against recorded activity results.
+
+Setup errors keep their original types in workflow code. `PydanticAIPlugin` treats `UserError` as a
+workflow failure. Other setup errors, such as `RuntimeError` and `MontyRefusedError`, follow Temporal's
+default: an uncaught error fails the workflow task, not the workflow. Temporal retries the task while
+the workflow remains running, so a client awaiting its result keeps waiting if setup keeps failing. The original
+error is available in the failed task's history and worker logs, not in a model retry.
+To end the workflow instead, catch the expected setup exceptions in your workflow and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 Keep workflow-side code deterministic. `mount` reads and writes, `os_access` callbacks, and
 host-clock calls happen again during replay; changing their results can change which activities the

@@ -79,9 +79,9 @@ Whether a file can travel inside the tool result depends on the model **and** th
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
 ```text
-<tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
+<pyai:tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
 [the image]
-</tool_result>
+</pyai:tool_result>
 ```
 
 The tool result itself carries `See file d9a13f.` in place of the file, and each file gets its own tags, so the model can match every file to the call that produced it even when several tools return media in the same step. A failed Gemini tool return is the one exception: its result is Gemini's native `error` string, which takes no file references, so there the tags alone carry the attribution. Realtime sessions frame tool-produced files the same way. This mirrors how a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is framed as `<system>...</system>` for a model whose API has no place to put one.
@@ -559,7 +559,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and 5.2, and Mythos 5.1 and 5.2; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Converse has no `'none'` mode, so `'none'` drops the tools. Once the history has a tool call, Converse requires them, so they stay: Claude gets its native `'none'`, while other models aren't prevented from calling them ([#10435](https://github.com/pydantic/pydantic-ai/issues/10435)). See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |

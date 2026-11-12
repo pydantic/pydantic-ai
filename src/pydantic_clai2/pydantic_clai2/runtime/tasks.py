@@ -40,14 +40,14 @@ from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (
-    DelegationEndEvent,
-    DelegationStartEvent,
+    DelegationFinishedEvent,
+    DelegationStartedEvent,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
     DelegationWorkspaceRequest,
     SubAgent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
 )
 from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
@@ -132,7 +132,7 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
 
 def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
-    if isinstance(event, DelegationStartEvent):
+    if isinstance(event, DelegationStartedEvent):
         name = _display_name(event.agent_name)
         prompt = ' '.join(terminal_text(event.task).split())
         # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
@@ -141,11 +141,11 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
         model = f' · {terminal_text(model_name, keep="")}' if show_model and model_name else ''
         row.append(f' [{(event.task_id or "")[:8]}]{model} {prompt}', style=theme.color(theme.MUTED))
         return row
-    if isinstance(event, TaskQuestionEvent):
+    if isinstance(event, TaskQuestionAskedEvent):
         return question_row(event)
-    if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
+    if isinstance(event, DelegationFinishedEvent) and event.outcome != 'ok':
         return Text(
-            f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
+            f'  └ {event.outcome} · {event.duration_ms / 1000:.1f}s · /tasks to inspect',
             style=theme.color(theme.WARNING),
         )
     return None
@@ -153,7 +153,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
 
 def question_row(event: AgentStreamEvent) -> Text | None:
     """A task's question to its parent, which a run shows even without the task panel."""
-    if not isinstance(event, TaskQuestionEvent):
+    if not isinstance(event, TaskQuestionAskedEvent):
         return None
     name = _display_name(event.agent_name)
     question = ' '.join(terminal_text(event.question).split())
@@ -243,23 +243,14 @@ class TaskRouter:
             if isinstance(message, ModelResponse) and message.usage.input_tokens:
                 progress.context_tokens = context_tokens(message)
                 break
-        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-            self.partial[record.id] = event.part.content
-        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-            self.partial[record.id] = self.partial.get(record.id, '') + event.delta.content_delta
-        elif isinstance(event, (PartEndEvent, DelegationEndEvent)) or record.status == 'finished':
-            self.partial.pop(record.id, None)
-            self.partial_truncated.discard(record.id)
-        if len(self.partial.get(record.id, '')) > 65536:
-            self.partial[record.id] = self.partial[record.id][-65536:]
-            self.partial_truncated.add(record.id)
+        self._observe_partial(record, event)
         if event is not None:
             progress.observe(event)
         view = self.view(record.conversation_id)
         # A child runs with its parent's plugins; a resumed task, with those of the session that resumed it.
         if record.parent_id is not None and (parent := self.started.get(record.parent_id)) is not None:
             self.started.setdefault(record.id, parent)
-        elif view is not None and isinstance(event, DelegationStartEvent):
+        elif view is not None and isinstance(event, DelegationStartedEvent):
             self.started[record.id] = view
         elif view is not None:
             self.started.setdefault(record.id, view)
@@ -268,6 +259,19 @@ class TaskRouter:
             self.started.pop(record.id, None)
         if view is not None:
             await view.deliver(update)
+
+    def _observe_partial(self, record: DelegationTask, event: AgentStreamEvent | None) -> None:
+        """Keep the last 64 KiB of the text `record` streams, until its part ends or it finishes."""
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            self.partial[record.id] = event.part.content
+        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+            self.partial[record.id] = self.partial.get(record.id, '') + event.delta.content_delta
+        elif isinstance(event, (PartEndEvent, DelegationFinishedEvent)) or record.status == 'finished':
+            self.partial.pop(record.id, None)
+            self.partial_truncated.discard(record.id)
+        if len(self.partial.get(record.id, '')) > 65536:
+            self.partial[record.id] = self.partial[record.id][-65536:]
+            self.partial_truncated.add(record.id)
 
 
 _CLOSED_BEFORE_START = 'This session closed before the task could start.'
@@ -308,7 +312,7 @@ class Tasks:
         self.send_input = send_input
         self.prompt_task = prompt_task
         self.show_task_models = show_task_models
-        self._pending_rows: dict[str, DelegationStartEvent] = {}
+        self._pending_rows: dict[str, DelegationStartedEvent] = {}
         """Start rows held until their child names its model, by task ID."""
         self._row_models: dict[str, str | None] = {}
         """The model that released each running task's start row, so a resumed task never shows an earlier run's."""
@@ -374,26 +378,26 @@ class Tasks:
             await self.fire(TaskProgress(task=self.info(record), event=event))
         if record.parent_id is None and self.wake is not None and self._for_main_run(record):
             self.wake()
-        if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
+        if isinstance(event, TaskQuestionAskedEvent) and event.task_id != record.id:
             # The copy in a parent task's stream: it shows once, as the asking task's own event.
             return
-        if isinstance(event, DelegationStartEvent) and self.show_task_models():
+        if isinstance(event, DelegationStartedEvent) and self.show_task_models():
             # Held until the child's own stream names its model; a child that ends or asks first gets its row without one.
             self._pending_rows[record.id] = event
             return
         held = self._pending_rows.get(record.id)
         if held is not None and (
-            update.model_name is not None or isinstance(event, (DelegationEndEvent, TaskQuestionEvent))
+            update.model_name is not None or isinstance(event, (DelegationFinishedEvent, TaskQuestionAskedEvent))
         ):
             del self._pending_rows[record.id]
             self._row_models[record.id] = update.model_name
             await self._show_row(held)
-        if isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
+        if isinstance(event, (DelegationStartedEvent, DelegationFinishedEvent, TaskQuestionAskedEvent)):
             await self._show_row(event)
-        if isinstance(event, DelegationEndEvent):
+        if isinstance(event, DelegationFinishedEvent):
             self._row_models.pop(record.id, None)
 
-    async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent | TaskQuestionEvent) -> None:
+    async def _show_row(self, event: DelegationStartedEvent | DelegationFinishedEvent | TaskQuestionAskedEvent) -> None:
         if self.sink is not None:
             await self.sink(event)
         elif (row := self.row(event)) is not None:
@@ -402,7 +406,7 @@ class Tasks:
     def row(self, event: AgentStreamEvent) -> Text | None:
         """Render a lifecycle row with the child's observed model, when available."""
         model_name = (
-            self._row_models.get(event.task_id) if isinstance(event, DelegationStartEvent) and event.task_id else None
+            self._row_models.get(event.task_id) if isinstance(event, DelegationStartedEvent) and event.task_id else None
         )
         return task_row(event, model_name=model_name, show_model=self.show_task_models())
 
@@ -467,30 +471,40 @@ class Tasks:
                 recent = True
                 if record.outcome == 'ok':
                     continue
-            descendants = sum(self._descends(child, record.id) for child in records)
-            activity = self.progress.get(record.id, Status(activity='starting')).activity
-            state = activity.removeprefix('running: ').removeprefix('tool: ')
-            state = state if record.status == 'running' else record.outcome
-            elapsed = (record.finished_at or now) - record.started_at
-            name = _display_name(record.agent_name)
-            mode = 'background' if record.background else 'foreground'
-            suffix = f' · {descendants} descendants' if descendants else ''
-            state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
-            if record.outcome in ('cancelled', 'interrupted'):
-                state_color = theme.WARNING
-            marker = glyph if record.status == 'running' else '!'
-            muted = theme.sgr(theme.MUTED)
-            rows.append(
-                f'{"  " * depth}{theme.sgr(state_color)}{marker} {theme.sgr(theme.INFO)}{name} '
-                f'{muted}[{record.id[:8]}] {elapsed:.0f}s · {mode} · '
-                f'{theme.sgr(state_color)}{terminal_text(state or "")}{muted}{suffix}\x1b[0m'
-            )
+            rows.append(self._panel_row(record, records, depth=depth, now=now, glyph=glyph))
         if rows or recent:
-            hint = f'{theme.sgr(theme.ACCENT)}/tasks{theme.sgr(theme.MUTED)} inspect'
-            if any(record.backgroundable for record in self._foreground_tasks()):
-                hint += f' · {theme.sgr(theme.ACCENT)}Ctrl+B{theme.sgr(theme.MUTED)} background'
-            rows.append(hint + '\x1b[0m')
+            rows.append(self._panel_hint())
         return tuple(rows)
+
+    def _panel_row(
+        self, record: DelegationTask, records: Sequence[DelegationTask], *, depth: int, now: float, glyph: str
+    ) -> str:
+        """One task's panel row, `depth` levels deep: its state, name, ID, age, mode, and descendants in `records`."""
+        descendants = sum(self._descends(child, record.id) for child in records)
+        activity = self.progress.get(record.id, Status(activity='starting')).activity
+        state = activity.removeprefix('running: ').removeprefix('tool: ')
+        state = state if record.status == 'running' else record.outcome
+        elapsed = (record.finished_at or now) - record.started_at
+        name = _display_name(record.agent_name)
+        mode = 'background' if record.background else 'foreground'
+        suffix = f' · {descendants} descendants' if descendants else ''
+        state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
+        if record.outcome in ('cancelled', 'interrupted'):
+            state_color = theme.WARNING
+        marker = glyph if record.status == 'running' else '!'
+        muted = theme.sgr(theme.MUTED)
+        return (
+            f'{"  " * depth}{theme.sgr(state_color)}{marker} {theme.sgr(theme.INFO)}{name} '
+            f'{muted}[{record.id[:8]}] {elapsed:.0f}s · {mode} · '
+            f'{theme.sgr(state_color)}{terminal_text(state or "")}{muted}{suffix}\x1b[0m'
+        )
+
+    def _panel_hint(self) -> str:
+        """The panel's last row: the keys that open `/tasks`, and that background tasks while one can be."""
+        hint = f'{theme.sgr(theme.ACCENT)}/tasks{theme.sgr(theme.MUTED)} inspect'
+        if any(record.backgroundable for record in self._foreground_tasks()):
+            hint += f' · {theme.sgr(theme.ACCENT)}Ctrl+B{theme.sgr(theme.MUTED)} background'
+        return hint + '\x1b[0m'
 
     def _descends(self, record: DelegationTask, ancestor: str) -> bool:
         parent = record.parent_id

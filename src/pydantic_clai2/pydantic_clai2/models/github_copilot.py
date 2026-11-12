@@ -1,8 +1,10 @@
 """GitHub device login and model discovery through Pydantic AI's Copilot provider."""
 
 import os
+import re
 import time
 from collections.abc import Callable
+from functools import partial
 
 import httpx2
 from anyio import to_thread
@@ -18,6 +20,16 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins.menus import Dialogs
 
 ACCOUNT = 'github-copilot'
+CANCELLED = 'GitHub Copilot sign-in cancelled.'
+_PREFERRED = (
+    r'claude-opus-5\.5',
+    r'gemini-4-argon',
+    r'claude-opus-',
+    r'gemini-[4-9]',
+    r'gpt-',
+    r'claude-sonnet-',
+)
+_SMALL = re.compile(r'\b(?:mini|nano|flash|lite|haiku|turbo|codex)\b')
 
 
 class Connection(BaseModel):
@@ -51,19 +63,19 @@ async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | 
 
         description = 'Approve only the code shown here. You can open the link on another device.'
         if not await dialogs.wait(title='Signing in to GitHub Copilot', description=description, task=authorize):
-            return 'GitHub Copilot sign-in cancelled.'
+            return CANCELLED
         credentials = authorized[0]
     connection = Connection(credentials=credentials, issued_at=time.time())
     await to_thread.run_sync(lambda: save_codex_credentials(account=account, value=connection.model_dump_json()))
     path = credentials_path(account=account)
     storage = (
         f'No OS keyring is available; credentials are saved in plaintext at {path}.'
-        if path.exists()
+        if await to_thread.run_sync(path.exists)
         else 'Credentials saved in the OS credential store.'
     )
     if account != ACCOUNT:
         return f'GitHub login saved as {account}. {storage} Use {account}:MODEL.'
-    return f'GitHub login saved. {storage} Use /model add > github-copilot to check Copilot access and choose a model.'
+    return f'GitHub login saved. {storage}'
 
 
 def token(account: str = ACCOUNT) -> str:
@@ -106,16 +118,16 @@ class ModelList(BaseModel):
     data: list[ServedModel]
 
 
-async def discover(*, transport: httpx2.AsyncBaseTransport | None = None) -> list[str]:
+async def discover(*, account: str = ACCOUNT, transport: httpx2.AsyncBaseTransport | None = None) -> list[str]:
     """Use core's endpoint, authentication and headers, without following redirects."""
     async with httpx2.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
-        copilot = GitHubCopilotProvider(api_key=await to_thread.run_sync(token), http_client=client)
+        copilot = GitHubCopilotProvider(api_key=await to_thread.run_sync(partial(token, account)), http_client=client)
         try:
             response = await copilot.client.with_options(max_retries=0).models.with_raw_response.list()
         except APIError:
             raise UserError(
                 'Copilot model discovery failed. Check connectivity, your subscription and organization policy, '
-                'or run /login github-copilot again.'
+                f'or run /login {account} again.'
             ) from None
         try:
             models = ModelList.model_validate_json(response.content)
@@ -133,9 +145,26 @@ async def discover(*, transport: httpx2.AsyncBaseTransport | None = None) -> lis
     return names
 
 
-async def ensure_login(*, console: Console) -> None:
-    """Request device authorization when saved or environment credentials cannot be used."""
+def default_model(names: list[str]) -> str:
+    """The newest of the first `_PREFERRED` family Copilot serves, passing over small models when it serves others."""
+    large = [name for name in names if not _SMALL.search(name)] or names
+    for family in _PREFERRED:
+        if matches := [name for name in large if re.match(family, name)]:
+            return max(matches, key=_version)
+    return max(large, key=_version)
+
+
+def _version(name: str) -> tuple[int, ...]:
+    """The first dotted version in a model id, else its first digit, as Copilot writes Opus 4.1 as `claude-opus-41`."""
+    found = re.search(r'\d+(?:\.\d+)+|\d', name)
+    return tuple(map(int, found.group().split('.'))) if found else ()
+
+
+async def ensure_login(*, console: Console) -> bool:
+    """Request device authorization when saved or environment credentials cannot be used; whether it signed in."""
     try:
         await to_thread.run_sync(token)
     except UserError:
         console.print(await login(console=console), markup=False)
+        return True
+    return False

@@ -51,7 +51,7 @@ reviewer = ApprovalReviewer(
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
 )
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     capabilities=[reviewer],
     output_type=[str, DeferredToolRequests],
 )
@@ -101,7 +101,7 @@ Approval requests for tools the selector does not match go to the person unrevie
 
 There is no setting for the failure case, because leaving a call for the person is what happens without a reviewer: a reviewer that is down, overloaded, or out of budget makes the run ask, and never makes it approve.
 
-A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. Otherwise the requests end the run as [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
+A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. The same holds for [`RequestInput`](https://pydantic.dev/docs/ai/capabilities/request-input/), which asks the person inside the run. Otherwise the requests end the run as [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
 
 ```python
 from pydantic_ai import Agent
@@ -119,7 +119,7 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     capabilities=[
         ApprovalReviewer('anthropic:claude-haiku-5-5', tools=['run_shell'], question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
@@ -139,7 +139,7 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     capabilities=[
         ToolCallJudge(
             'anthropic:claude-haiku-5-5',
@@ -201,7 +201,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ApprovalReviewer(
