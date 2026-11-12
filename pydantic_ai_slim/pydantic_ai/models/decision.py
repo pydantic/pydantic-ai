@@ -2515,10 +2515,11 @@ def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | 
 
 
 def _labelled_tool_return_text(part: BaseToolReturnPart, labelled: Iterable[object]) -> str:
-    """What `part.model_response_str()` gives once its files are replaced by the labels in `labelled`.
+    """The text of `part` with its files replaced by the labels in `labelled`, each item serialized as it is alone.
 
-    Each item is serialized as it is alone, as `_tool_return_items_json` says. An errored return is wrapped as
-    `model_response_str` wraps a list: a retry's array as it is, a failed return's text as a string.
+    An errored return is wrapped as `model_response_str` wraps a list: a retry's array as it is, a failed return's
+    array as a string. Calling `model_response_str()` on a relabelled copy instead would dump the list whole, a level
+    deeper, and put a retry's items through `dump_python`, which drops their own serializer settings.
     """
     text = _tool_return_items_json(labelled)
     if part.outcome not in ERROR_OUTCOMES:
