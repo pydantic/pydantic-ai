@@ -4,7 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -122,7 +122,6 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
-    _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
@@ -1118,6 +1117,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
+        # Read from the history as stored: cleaning merges the requests after the response, losing their run and state.
+        answered_at_pause = self._answered_at_resumed_pause(ctx.state.message_history)
         # Replace the `capture_run_messages` list with the message history
         messages[:] = _clean_message_history(ctx.state.message_history)
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
@@ -1135,16 +1136,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT] | None = None
 
         if messages and (last_message := messages[-1]):
-            if (
-                isinstance(last_message, _messages.ModelRequest)
-                and self.user_prompt is None
-                and (answered := _calls_answered_at_pause(messages))
-            ):
-                # A run that paused for deferred tool calls after the same step ran other calls left the
-                # history ending on a request with only those results. Run the response's other calls
-                # again, as a history ending on the response would, so deferred ones pause the run again.
+            if answered_at_pause is not None and isinstance(last_message, _messages.ModelRequest):
+                # The history ends on what a run that paused for deferred tool calls wrote after its response.
+                # Run the response's unanswered calls again, as a history ending on the response would, so
+                # deferred ones pause the run again.
                 response, _ = await self._adopt_resumed_response(ctx, messages, len(messages) - 2)
-                return CallToolsNode[DepsT, NodeRunEndT](response, _answered_tool_call_ids=answered)
+                return CallToolsNode[DepsT, NodeRunEndT](response, _answered_tool_call_ids=answered_at_pause)
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
@@ -1219,6 +1216,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
+
+    def _answered_at_resumed_pause(self, history: list[_messages.ModelMessage]) -> tuple[str, ...] | None:
+        """The calls answered at a deferred pause this run resumes with neither a new prompt nor results, if any."""
+        if self.user_prompt is not None or self.deferred_tool_results is not None:
+            return None
+        return _answered_at_pause(history)
 
     async def _adopt_resumed_response(
         self,
@@ -1367,28 +1370,44 @@ def _repair_interrupted_tail(
     return messages
 
 
-def _calls_answered_at_pause(messages: list[_messages.ModelMessage]) -> frozenset[str]:
-    """The tool calls a trailing request answered, when it answered only some of the final response's calls.
+def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[str, ...] | None:
+    """The tool calls answered after the final response, when a run that paused for deferred tools left the history.
 
-    A run paused for `DeferredToolRequests` leaves this history when the same step also executed other
-    calls: the trailing request holds their results, and the deferred calls are still waiting for theirs.
-    Returns an empty set for any other history, including a trailing request that answers none of the
-    calls, such as a new user message a UI adapter put in the history.
-    Calls of an interrupted request were already closed out by `_repair_interrupted_tail`.
+    Such a run ends with its response's deferred calls unanswered, followed by what it wrote at the pause:
+    the results of the step's other calls, and content queued at the pause, stamped with the run's `run_id`.
+    Returns `None` for any other history: one with a new message from elsewhere after the response, such as
+    a UI adapter's, which isn't a pause, or with an interrupted request, which `_repair_interrupted_tail`
+    closes out. Must be given the history as stored, before cleaning merges these requests.
     """
-    if not (
-        len(messages) >= 2
-        and isinstance(response := messages[-2], _messages.ModelResponse)
-        and isinstance(request := messages[-1], _messages.ModelRequest)
-        and _dangling_tool_calls_by_response(messages).get(len(messages) - 2)
-    ):
-        return frozenset()
+    index = next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
+    if index is None or index == len(history) - 1:
+        return None
+    response = history[index]
+    assert isinstance(response, _messages.ModelResponse)
+    requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
     call_ids = {call.tool_call_id for call in response.tool_calls}
-    return frozenset(
+    answered = [
         part.tool_call_id
+        for request in requests
         for part in request.parts
         if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids
-    )
+    ]
+    if (
+        response.state != 'complete'
+        or not Counter(call.tool_call_id for call in response.tool_calls) - Counter(answered)
+        or not all(_written_at_pause(request, response, call_ids) for request in requests)
+    ):
+        return None
+    return tuple(answered)
+
+
+def _written_at_pause(request: _messages.ModelRequest, response: _messages.ModelResponse, call_ids: set[str]) -> bool:
+    """Whether the run that made `response` wrote `request` when it paused: results of its calls, or queued content."""
+    if request.state != 'complete':
+        return False
+    if response.run_id is not None and request.run_id == response.run_id:
+        return True
+    return any(isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids for part in request.parts)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
@@ -3842,8 +3861,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     If the `model_response` has final output instead, this user prompt is ignored.
     The user prompt will be appended after all tool return parts in the next model request.
     """
-    _answered_tool_call_ids: frozenset[str] = field(default=frozenset[str](), repr=False)
-    """Calls of `model_response` that a request already in the history answered, so they aren't run again."""
+    _answered_tool_call_ids: tuple[str, ...] = field(default=(), repr=False)
+    """IDs of the calls of `model_response` that requests already in the history answered, so they aren't run again.
+
+    An ID that repeats in the response is listed once per answered call, matched to its calls in order.
+    """
 
     _wrapped_events_iterator: AsyncIterator[_messages.AgentStreamEvent] | None = field(
         default=None, init=False, repr=False
@@ -4113,8 +4135,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             raise
 
     def _unanswered(self, tool_calls: list[_messages.ToolCallPart]) -> list[_messages.ToolCallPart]:
-        """The calls a request already in the history didn't answer, which are the ones to run."""
-        return [call for call in tool_calls if call.tool_call_id not in self._answered_tool_call_ids]
+        """The calls requests already in the history didn't answer, which are the ones to run."""
+        answered = Counter(self._answered_tool_call_ids)
+        unanswered: list[_messages.ToolCallPart] = []
+        for call in tool_calls:
+            if answered[call.tool_call_id]:
+                answered[call.tool_call_id] -= 1
+            else:
+                unanswered.append(call)
+        return unanswered
 
     async def _handle_tool_calls(
         self,
@@ -4123,7 +4152,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
-        tool_calls = self._unanswered(tool_calls)
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
@@ -4198,7 +4226,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async with aclosing(
                 process_tool_calls(
                     tool_manager=ctx.deps.tool_manager,
-                    tool_calls=tool_calls,
+                    # Calls a request in the history answered are left out only here, so the checks above see
+                    # the whole response, as when it was first processed.
+                    tool_calls=self._unanswered(tool_calls),
                     tool_call_results=self.tool_call_results,
                     tool_call_metadata=self.tool_call_metadata,
                     final_result=final_result,
