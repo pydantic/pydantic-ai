@@ -65,6 +65,15 @@ def test_a_computer_call_without_complete_actions_or_safety_checks() -> None:
     assert ComputerCallPart('computer', {'actions': [{'type': 'screenshot'}]}).safety_checks == []
 
 
+@pytest.mark.parametrize('checks', ['flagged', ['flagged'], [{'id': 5}]], ids=['text', 'list-of-text', 'bad-id'])
+def test_safety_checks_a_history_garbled_still_flag_the_call(checks: object) -> None:
+    # A history can come back from storage or a UI: what it kept for the checks can't be read, but the call was flagged.
+    call = ComputerCallPart(
+        'computer', {'actions': [{'type': 'screenshot'}]}, provider_details={'safety_checks': checks}
+    )
+    assert call.safety_checks == [SafetyCheck()]
+
+
 def test_a_computer_result_reads_its_outcome_and_screenshot() -> None:
     request = ModelRequest(
         parts=[
