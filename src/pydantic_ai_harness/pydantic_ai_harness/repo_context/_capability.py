@@ -324,10 +324,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
-        # Known before `get_instructions`, which runs before `before_run`: files in a working directory below
-        # `'operator'` mustn't be ranked over the operator's by the precedence sentence.
-        workspace = ctx.workspace
-        run._lowered = workspace.attached and await workspace.authority_of(await workspace.working_dir()) != 'operator'
+        # Known before `get_instructions`, which runs before `before_run`: in a workspace below `'operator'`, the
+        # precedence sentence mustn't rank its files over the operator's. `before_run` also catches a walk-up file a
+        # `path_authority` entry lowers. The workspace's own level costs no I/O, unlike `authority_of`.
+        run._lowered = ctx.workspace.authority != 'operator'
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
