@@ -58,13 +58,15 @@ has_mcp = find_spec('mcp') is not None
 if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
     # Imported at collection, outside the event loop: first imported inside an async test, BlockBuster blocks the
     # `importlib.metadata` scans this import runs, and `importlib.metadata` caches the empty result for the process.
-    from fastmcp import Client, FastMCP
+    from fastmcp.client.transports import FastMCPTransport
 
     from pydantic_ai.mcp import MCPToolset
 
+    from .mcp_server import mcp as test_mcp_server
+
 T = TypeVar('T')
 
-# Guards the waits on the in-process MCP server against a hang, so it is far longer than any runner stall and never
+# Guards the waits on the in-process MCP server, and its handshake, against a hang, so it is far longer than any runner stall and never
 # decides a test's outcome.
 READINESS_WAIT_TIMEOUT = 300
 
@@ -753,21 +755,21 @@ async def test_comprehensive_toolset_composition():
     )
 
 
-def in_process_mcp_toolset() -> MCPToolset:
-    """An `MCPToolset` connected in-process to an empty server, with no handshake deadline of its own.
+def in_process_mcp_toolset(transport: FastMCPTransport | None = None) -> MCPToolset:
+    """An `MCPToolset` connected in-process to `tests.mcp_server`, with a handshake deadline no runner stall reaches.
 
-    A pre-built `Client` keeps fastmcp's default of no `initialize` deadline; letting `MCPToolset` build the
-    client would apply its 5-second `init_timeout`, which a stalled CI worker can exceed. These tests are about
-    how `CombinedToolset` enters and exits its members, not about the transport or the handshake timing, so
-    each bounds its waits with `READINESS_WAIT_TIMEOUT` instead.
+    The default 5-second `init_timeout` is shorter than a stalled CI worker can take to finish the `initialize`
+    handshake. These tests are about how `CombinedToolset` enters and exits its members, not about the transport or
+    the handshake timing, so the deadline is the module's hang guard instead.
     """
-    return MCPToolset(Client(FastMCP('toolsets')))
+    return MCPToolset(transport or FastMCPTransport(test_mcp_server), init_timeout=READINESS_WAIT_TIMEOUT)
 
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 async def test_context_manager():
-    server1 = in_process_mcp_toolset()
-    server2 = in_process_mcp_toolset()
+    transport = FastMCPTransport(test_mcp_server)
+    server1 = in_process_mcp_toolset(transport)
+    server2 = in_process_mcp_toolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
