@@ -10,7 +10,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.filesystem._events import (
     MAX_DIFF_SOURCE_CHARS,
     MAX_EVENT_DIFF_CHARS,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileOperation,
 )
@@ -121,7 +121,7 @@ class Change:
         Returns the tool result for the model when a listener cancelled the
         change, or `None` when it may proceed.
         """
-        event = FileChangeRequestEvent(
+        event = FileChangeRequestedEvent(
             path=self.path, root_dir=self.root_dir, operation=self.operation, diff=self.diff, truncated=self.truncated
         )
         await ctx.emit(event)

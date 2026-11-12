@@ -101,6 +101,31 @@ OnCancelFunc: TypeAlias = _CallbackFunc[RunCancelled, EventT]
 """Callback function type that receives the `RunCancelled` of the cancelled run. Can be sync, async, or an async generator of protocol-specific events."""
 
 
+async def dispatch_callback(
+    callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
+) -> AsyncIterator[EventT]:
+    """Call an `on_complete` or `on_cancel` callback, in whichever form it takes, and yield the events it produces."""
+    if inspect.isasyncgenfunction(callback):
+        # Fast path for the common `async def ... yield` form.
+        async for event in callback(arg):
+            yield event
+    elif _utils.is_async_callable(callback):
+        # `async def ... return None`, or a callable object with a coroutine `__call__`.
+        await callback(arg)
+    else:
+        # A plain callable can still return an async iterator or awaitable that neither
+        # `isasyncgenfunction` nor `is_async_callable` detects (a `def` that returns an async
+        # generator, or a callable instance whose `__call__` is an async generator). Run it
+        # off-thread in case it's blocking-sync, then honour whatever it returned so those
+        # `Callable[..., AsyncIterator]` / `Callable[..., Awaitable]` forms aren't silently dropped.
+        result = await _utils.run_in_executor(callback, arg)
+        if isinstance(result, AsyncIterator):
+            async for event in result:
+                yield event
+        elif inspect.isawaitable(result):
+            await result
+
+
 @dataclass
 class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """Base class for UI event stream transformers.
@@ -148,11 +173,26 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
     """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
+    _canonical_systems: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False)
+    """The `canonical_system` that applies to each provider's parts, from the last part event from that provider.
+
+    Kept after the part's end event, so the metadata a subclass emits for a part after it, such as a tool call's,
+    carries it too, as `dump_messages` writes it.
+    """
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
         self.message_id = str(uuid4())
         return self.message_id
+
+    def _record_canonical_system(self, event: PartStartEvent | PartEndEvent) -> None:
+        # An unstamped event is recorded too, so a later response without a stamp doesn't inherit an earlier one's.
+        if (provider_name := event.part.provider_name) is not None:
+            self._canonical_systems[provider_name] = event.canonical_system
+
+    def _canonical_system_for(self, provider_name: str | None) -> str | None:
+        """The `canonical_system` to emit beside a part from `provider_name`, if the part's response has one."""
+        return self._canonical_systems.get(provider_name) if provider_name is not None else None
 
     def _record_part_delta(self, event: PartDeltaEvent) -> None:
         if event.index != self._open_part_index:
@@ -247,7 +287,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
+                    self._record_canonical_system(event)
                 elif isinstance(event, PartEndEvent):
+                    self._record_canonical_system(event)
                     # Only one part is open at a time, so this end is for `_open_part` (or it's already
                     # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
                     self._open_part = None
@@ -368,7 +410,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             if cancelled is not None:
                 self._cancelled = cancelled
                 if on_cancel is not None:
-                    async for e in self._dispatch_callback(on_cancel, cancelled):
+                    async for e in dispatch_callback(on_cancel, cancelled):
                         yield e
                 async for e in self.on_cancelled(cancelled):
                     yield e
@@ -388,7 +430,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         self, on_complete: OnCompleteFunc[EventT], result: AgentRunResult[Any]
     ) -> AsyncIterator[EventT]:
         try:
-            async for event in self._dispatch_callback(on_complete, result):
+            async for event in dispatch_callback(on_complete, result):
                 yield event
         except Exception as complete_error:
             # The agent run's span has already ended, so record the failure on the span that's current now (the HTTP
@@ -397,29 +439,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # type is recorded.
             record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
             raise
-
-    async def _dispatch_callback(
-        self, callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
-    ) -> AsyncIterator[EventT]:
-        if inspect.isasyncgenfunction(callback):
-            # Fast path for the common `async def ... yield` form.
-            async for event in callback(arg):
-                yield event
-        elif _utils.is_async_callable(callback):
-            # `async def ... return None`, or a callable object with a coroutine `__call__`.
-            await callback(arg)
-        else:
-            # A plain callable can still return an async iterator or awaitable that neither
-            # `isasyncgenfunction` nor `is_async_callable` detects (a `def` that returns an async
-            # generator, or a callable instance whose `__call__` is an async generator). Run it
-            # off-thread in case it's blocking-sync, then honour whatever it returned so those
-            # `Callable[..., AsyncIterator]` / `Callable[..., Awaitable]` forms aren't silently dropped.
-            result = await _utils.run_in_executor(callback, arg)
-            if isinstance(result, AsyncIterator):
-                async for event in result:
-                    yield event
-            elif inspect.isawaitable(result):
-                await result
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
