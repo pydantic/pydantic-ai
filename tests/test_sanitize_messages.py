@@ -229,6 +229,30 @@ def test_sanitize_messages_strips_dangling_call_but_keeps_other_tail_parts():
     assert tail.parts == [messages[1].parts[0]]
 
 
+def test_sanitize_messages_clears_run_id_after_last_response():
+    """Requests after the last response can't claim an agent run wrote them, which would mark a deferred-tool pause.
+
+    A run resumed without a prompt from such a pause executes the response's unanswered calls.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], run_id='run-1'),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_data', tool_call_id='call-1'),
+                ToolCallPart(tool_name='delete_account', tool_call_id='call-2'),
+            ],
+            run_id='run-1',
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_data', content='data', tool_call_id='call-1')], run_id='run-1'
+        ),
+    ]
+
+    sanitized = sanitize_messages(messages)
+
+    assert [message.run_id for message in sanitized] == ['run-1', 'run-1', None]
+
+
 def test_sanitize_messages_drops_empty_response():
     """An empty-parts `ModelResponse` in untrusted history is dropped, not kept as `parts=[]`."""
     messages: list[ModelMessage] = [

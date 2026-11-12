@@ -1265,13 +1265,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not messages:
             raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
 
-        last_model_request: _messages.ModelRequest | None = None
+        # A resumed pause can leave several requests after the response, such as ones with different instructions.
+        requests_after_response: list[_messages.ModelRequest] = []
         last_model_response: _messages.ModelResponse | None = None
         response_index: int | None = None
         for index in range(len(messages) - 1, -1, -1):
             message = messages[index]
             if isinstance(message, _messages.ModelRequest):
-                last_model_request = message
+                requests_after_response.append(message)
             elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
                 last_model_response = message
                 response_index = index
@@ -1293,8 +1294,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         tool_call_results.update(deferred_tool_results.to_tool_call_results())
 
-        if last_model_request:
-            for part in last_model_request.parts:
+        for request in requests_after_response:
+            for part in request.parts:
                 if _is_tool_result_part(part):
                     if part.tool_call_id in tool_call_results:
                         raise exceptions.UserError(
@@ -1384,13 +1385,16 @@ _ToolCallKey: TypeAlias = tuple[str, str]
 
 
 def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_ToolCallKey, ...] | None:
-    """The tool calls answered after the final response, when a run that paused for deferred tools left the history.
+    """The calls answered after the last response, when the history ends at a pause for deferred tool calls.
 
-    Such a run ends with its response's deferred calls unanswered, followed by what it wrote at the pause:
-    the results of the step's other calls, and content queued at the pause, stamped with the run's `run_id`.
-    Returns `None` for any other history: one with a new message from elsewhere after the response, such as
-    a UI adapter's, which isn't a pause, or with an interrupted request, which `_repair_interrupted_tail`
-    closes out. Must be given the history as stored, before cleaning merges these requests.
+    That's when every request after the last response was written by an agent run, so carries a `run_id`, and
+    is complete, and some call of the response is still unanswered. A run that ends there made no model request
+    after writing them, so it paused: they hold the results of the step's other calls and content queued at the
+    pause, by that run or by a later one that paused again. Returns `None` for any other history. A new message
+    from elsewhere, such as a UI adapter's, has no `run_id` (`sanitize_messages` clears one a client sends after
+    the last response), and an interrupted request is closed out by `_repair_interrupted_tail`.
+
+    Must be given the history as stored: cleaning merges these requests and drops their `run_id`.
     """
     index = _last_response_index(history)
     if index is None or index == len(history) - 1:
@@ -1398,6 +1402,10 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     response = history[index]
     assert isinstance(response, _messages.ModelResponse)
     requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
+    if response.state != 'complete' or not all(
+        request.run_id is not None and request.state == 'complete' for request in requests
+    ):
+        return None
     call_ids = {call.tool_call_id for call in response.tool_calls}
     answered = [
         (part.tool_name or '', part.tool_call_id)
@@ -1405,22 +1413,9 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
         for part in request.parts
         if _is_tool_result_part(part) and part.tool_call_id in call_ids
     ]
-    if (
-        response.state != 'complete'
-        or not Counter((call.tool_name, call.tool_call_id) for call in response.tool_calls) - Counter(answered)
-        or not all(_written_at_pause(request, response, call_ids) for request in requests)
-    ):
+    if not Counter((call.tool_name, call.tool_call_id) for call in response.tool_calls) - Counter(answered):
         return None
     return tuple(answered)
-
-
-def _written_at_pause(request: _messages.ModelRequest, response: _messages.ModelResponse, call_ids: set[str]) -> bool:
-    """Whether the run that made `response` wrote `request` when it paused: results of its calls, or queued content."""
-    if request.state != 'complete':
-        return False
-    if response.run_id is not None and request.run_id == response.run_id:
-        return True
-    return any(_is_tool_result_part(part) and part.tool_call_id in call_ids for part in request.parts)
 
 
 def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:

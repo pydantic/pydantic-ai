@@ -5944,6 +5944,9 @@ def sanitize_messages(
       [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] in the same response, and the
       agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
       final response with no parts, the response is dropped from history entirely.
+    - The `run_id` of the requests after the last response. Requests there that an agent run wrote mark a
+      run paused for deferred tool calls, and a run resumed without a new prompt executes that response's
+      unanswered calls, so client-supplied ones must not claim it.
     - The compaction provenance stamp from [`CompactionPart.provider_details`][pydantic_ai.messages.CompactionPart.provider_details].
       This ensures a client-supplied OpenAI Responses compaction item is never trusted to already
       carry the leading [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s: they are
@@ -6053,6 +6056,7 @@ def _sanitize_messages(
     # This must stay the last step that drops or merges messages, here and in every caller: it can only
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
     _strip_dangling_tail_tool_calls(sanitized, resolved_ids, context.dangling_tool_call_names)
+    _clear_tail_request_run_ids(sanitized)
     # Stripping only drops or rewrites messages at the end, so the remaining sources still line up.
     del sources[len(sanitized) :]
     _warn_sanitized(context)
@@ -6277,6 +6281,21 @@ def _strip_dangling_tail_tool_calls(
             sanitized[-1] = replace(tail, parts=kept_parts)
             break
         sanitized.pop()
+
+
+def _clear_tail_request_run_ids(sanitized: list[ModelMessage]) -> None:
+    """Clear the `run_id` of the requests after the last response, so a client can't claim an agent run wrote them.
+
+    A promptless run treats a history whose requests after the last response all carry a `run_id` as paused
+    for deferred tool calls, and runs that response's unanswered calls, as it would for a trailing response's.
+    Without the `run_id`, the run continues instead, as it does for any new message.
+    """
+    for index in range(len(sanitized) - 1, -1, -1):
+        message = sanitized[index]
+        if not isinstance(message, ModelRequest):
+            break
+        if message.run_id is not None:
+            sanitized[index] = replace(message, run_id=None)
 
 
 def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
