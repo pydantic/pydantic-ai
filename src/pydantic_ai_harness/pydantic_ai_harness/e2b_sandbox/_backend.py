@@ -139,6 +139,10 @@ _VIEWER_PORT = 6080
 _START_VIEWER = (
     # Under the display's lock, else two calls at once could each write a password or start a viewer.
     f'{START_LOCK}d=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
+    # novnc_proxy takes this file as its certificate, and the viewer would serve its private key to anyone, password
+    # or not, from its web root.
+    "if [ -e /opt/noVNC/utils/self.pem ]; then echo '/opt/noVNC/utils/self.pem is in the viewer web root, which "
+    "anyone can download: move the certificate out of /opt/noVNC.' >&2; exit 1; fi; "
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
     # Only our own server and viewer count: one started without our password, such as `e2b_desktop`'s, holds the
     # port, so ours fails to start and says so.
@@ -156,8 +160,7 @@ _START_VIEWER = (
     # without the password, so ours starts instead and fails while that one holds the port.
     + f"fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
-    # Run from its own directory, as `e2b_desktop` does: novnc_proxy takes a `self.pem` in its working directory as
-    # its certificate. `--web`, else it serves its working directory's files.
+    # Run from its own directory, as `e2b_desktop` does. `--web`, else it serves its working directory's files.
     '(cd /opt/noVNC/utils/ && exec setsid ./novnc_proxy --vnc 127.0.0.1:5900 '
     f'--listen {_VIEWER_PORT} --web /opt/noVNC) >"$d/novnc.log" 2>&1 9>&- & '
     + wait_until_ready(

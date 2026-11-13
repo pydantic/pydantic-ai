@@ -110,6 +110,19 @@ async def test_the_viewer_starts_its_own_beside_a_foreign_one(fake_e2b: FakeE2B,
     assert [line.split()[0] for line in started] == ['x11vnc', 'websockify']
 
 
+async def test_the_viewer_refuses_to_serve_a_certificate_key(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    """A `self.pem` beside novnc_proxy is under the web root, so the viewer would hand its private key to anyone."""
+    _, viewer = await _scripts(fake_e2b)
+    _run('true', tmp_path)  # writes the stubs
+    (tmp_path / 'bin' / 'self.pem').write_text('-----BEGIN PRIVATE KEY-----\n')
+
+    result = _run(viewer, tmp_path)
+
+    assert result.returncode == 1
+    assert 'move the certificate out of /opt/noVNC' in result.stderr
+    assert not (tmp_path / 'bin' / 'starts').exists()
+
+
 @pytest.mark.parametrize(('session_display', 'starts'), [(':1', False), (':0', True)])
 async def test_xfce_starts_unless_its_session_runs_on_the_display(
     fake_e2b: FakeE2B, tmp_path: Path, session_display: str, starts: bool
