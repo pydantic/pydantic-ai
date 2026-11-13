@@ -334,23 +334,24 @@ class _ValidationDeferral(Exception):
         super().__init__()
 
 
-def _has_safety_checks(call: ToolCallPart) -> bool:
-    """Whether `call` is a `computer` call carrying a provider's safety checks."""
-    from .computer_use import COMPUTER_KIND, _safety_checks  # pyright: ignore[reportPrivateUsage]
-
-    return call.tool_kind == COMPUTER_KIND.id and bool(_safety_checks(call.provider_details))
-
-
 def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
     """Make a `computer` call carrying a provider's safety checks wait for a person's approval.
 
     Runs however the arguments were accepted (the schema, a hook's corrected arguments, or `SkipToolValidation`), so
     no route runs the call unseen. The model adapter acknowledges the checks once the call has a result.
+    Judged by the tool that will run, not the kind stored on the call, which resumed history can set to anything.
     """
-    if validated.ctx.tool_call_approved or not _has_safety_checks(validated.call):
-        return validated
+    from .computer_use import COMPUTER_KIND, _safety_checks  # pyright: ignore[reportPrivateUsage]
+
     tool = validated.tool
-    if isinstance(validated.deferral, CallDeferred) or (tool is not None and tool.tool_def.kind == 'external'):
+    if (
+        validated.ctx.tool_call_approved
+        or tool is None
+        or tool.tool_def.tool_kind != COMPUTER_KIND.id
+        or not _safety_checks(validated.call.provider_details)
+    ):
+        return validated
+    if isinstance(validated.deferral, CallDeferred) or tool.tool_def.kind == 'external':
         # An approved call runs here, which an external or deferred call can't.
         raise UserError(
             f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need a person'
