@@ -105,13 +105,14 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_ai.usage import UsageLimits
         from pydantic_clai2.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
-        from pydantic_clai2.cli.self_update import Relaunch
+        from pydantic_clai2.cli.self_update import Relaunch, hold_environment
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
         from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
     finally:
         if splash is not None:
             splash.stop()
+    _held = hold_environment()  # Open until exit, so `/update` elsewhere does not replace the code this one runs.
     relaunched = os.environ.pop(_RELAUNCH_WORKTREE, None)  # Popped so tools and later launches never see it.
     served = _web_handoff(os.environ.pop(_RELAUNCH_WEB, None))  # Likewise, and the model never reads the token.
     worktree = launched = None

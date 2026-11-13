@@ -312,6 +312,7 @@ def _updates(
         windows=False,
         hand_off=lambda script: pytest.fail('only Windows hands the install off'),
         locate=locate,
+        others=AsyncMock(return_value=[]),
     )
     return updates, ran
 
@@ -489,6 +490,55 @@ async def test_failed_install_removes_the_overrides_file() -> None:
     with pytest.raises(OSError):
         await updates.command([])
     assert not seen[0].exists()
+
+
+async def test_command_refuses_while_other_processes_run_from_the_install(tmp_path: Path) -> None:
+    """Replacing the `uv tool` environment breaks other `clai2` processes running from it (#13398)."""
+    import fcntl
+
+    uv = tmp_path / 'uv'
+    uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir" ] && echo {tmp_path}\n')
+    uv.chmod(0o755)
+    environment = tmp_path / 'pydantic-clai2'
+    environment.mkdir()
+    (environment / 'uv-receipt.toml').write_text('')
+    held = self_update.hold_environment(environment)
+    assert held is not None, 'this process holds its own file, which never refuses its own update'
+    running = environment / self_update.RUNNING
+    (running / '1.lock').mkdir()  # Unreadable as a file, like one removed as its process exited.
+    (running / '4242.lock').write_text('')  # Left by a process that crashed: nobody holds it.
+
+    def updates() -> tuple[Updates, list[Sequence[str]]]:
+        updates, ran = _updates(['main'], uv=str(uv))
+        updates.others = self_update.sibling_processes
+        updates.locate = AsyncMock(return_value=None)
+        return updates, ran
+
+    with (running / '4343.lock').open('wb') as sibling, (running / '4545.lock').open('wb') as other:
+        fcntl.flock(sibling, fcntl.LOCK_EX)
+        fcntl.flock(other, fcntl.LOCK_EX)
+        refused, ran = updates()
+        assert await refused.command([]) == (
+            'Not updating to 9e08a34ee: other clai2 processes run from the install it would replace, '
+            'and would break (PID 4343, 4545). Quit them, then update again.'
+        )
+        assert ran == [], 'nothing is installed under a running sibling'
+        assert (refused.failed, refused.restart_required) == (True, False)
+    # Once the siblings have exited, the kernel has released their locks and the install goes ahead.
+    updated, ran = updates()
+    assert await updated.command([]) == 'Updated CLAI to 9e08a34ee (main). Exiting; start clai2 again to use it.'
+    assert len(ran) == 1
+    held.close()
+    # uv cannot say where its tools live: nothing to check.
+    uv.write_text('#!/bin/sh\nexit 2\n')
+    assert await self_update.sibling_processes(str(uv)) == []
+
+
+def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path) -> None:
+    assert self_update.hold_environment(tmp_path) is None, 'not a `uv tool` environment'
+    (tmp_path / 'uv-receipt.toml').write_text('')
+    (tmp_path / self_update.RUNNING).write_text('')
+    assert self_update.hold_environment(tmp_path) is None, 'its folder cannot be made'
 
 
 def test_find_uv_skips_relative_path_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1054,7 +1104,8 @@ def test_update_flag_installs_and_exits_without_restarting(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(self_update, 'Updates', build)
-
+    held = Mock(return_value=None)
+    monkeypatch.setattr(self_update, 'hold_environment', held)
     monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
     monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
@@ -1063,6 +1114,7 @@ def test_update_flag_installs_and_exits_without_restarting(
     assert capsys.readouterr().out == f'{printed}\n'
     [installs] = ran
     assert len(installs) == 1
+    held.assert_called_once_with()  # So a `/update` elsewhere waits for this process too.
 
 
 def test_update_flag_refuses_windows_before_scheduling_an_install(
