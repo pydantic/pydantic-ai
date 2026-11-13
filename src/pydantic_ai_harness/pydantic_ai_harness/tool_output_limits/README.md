@@ -59,9 +59,6 @@ applies, the reduced text replaces that data, ahead of the files. Text `content`
 same way whatever the return value holds. Non-text `content` that overflows is left unreduced
 with a `warnings.warn`.
 
-An image or file in `return_value`, alone or in a list, reaches the model as it is; text
-beside it in the list warns rather than being reduced.
-
 ### `ToolReturn.metadata` is preserved
 
 Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
