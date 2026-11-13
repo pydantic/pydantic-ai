@@ -151,11 +151,12 @@ class LivePrompt:
         """Every text the editor may still send, whose image attachments must stay.
 
         That is the draft, the one Esc restores while a queued prompt is edited, the one Down restores during a
-        recall walk, and the queued prompts.
+        recall walk, the one a search hides, and the queued prompts.
         """
         shelved = (self._shelved_draft,) if self._editing is not None else ()
         walked = (self.buffer.saved_draft,) if self.buffer.history_index is not None else ()
-        return (self.buffer.text, *shelved, *walked, *self.queued_messages)
+        searched = (self.buffer.search_original,) if self.buffer.search is not None else ()
+        return (self.buffer.text, *shelved, *walked, *searched, *self.queued_messages)
 
     def queued_prompts(self) -> list[QueuedPrompt]:
         """The queued prompts, oldest first, without control signals.
@@ -576,6 +577,7 @@ class LivePrompt:
             self.accept()
             return
         # The steered text may be an edit of a queued prompt, which then no longer waits for its own turn.
+        edited = self._editing is not None
         self._drop_editing()
         # Steered text joins the running turn, so show its response, as submitting does.
         self.output.view.follow()
@@ -583,6 +585,10 @@ class LivePrompt:
         self.buffer.history.append(text)
         self.buffer.history_index = None
         self.buffer.reset()
+        if edited:
+            # As every other way out of an edit, steering it brings back the draft set aside by Up.
+            self.buffer.replace(self._shelved_draft)
+            self.refresh_completions()
         telemetry.record('prompt steer', steered=True, source='draft')
 
     def steer_queued(self) -> None:

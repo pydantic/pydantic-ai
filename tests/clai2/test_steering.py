@@ -991,3 +991,36 @@ async def test_enter_on_an_edited_queued_prompt_brings_back_the_draft(edit: str,
             # Saved, unchanged, or removed: the draft set aside by Up comes back, as Esc brings it back.
             assert (live.buffer.text, live.queued_messages) == ('draft', queued)
             live.feed('ctrl-c')
+
+
+async def test_steering_an_edited_queued_prompt_brings_back_the_draft() -> None:
+    accepted: list[str] = []
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        queue(live, 'b')
+        live.buffer.replace('x')
+        live.feed('up')
+        live.buffer.insert('2')
+        live.feed('alt-enter')
+        assert (accepted, live.buffer.text, live.queued_messages) == (['b2'], 'x', ())
+
+
+async def test_a_draft_a_search_hides_keeps_its_images() -> None:
+    image = BinaryContent(data=b'image', media_type='image/png')
+    async with editor() as (live, _, _):
+        live.buffer.history = ['old']
+        marker = live.images.attach([image])
+        live.buffer.replace(f'look {marker}')
+        for key in ('ctrl-r', 'o', 'l'):
+            live.feed(key)
+        assert live.buffer.text == 'old'
+        # As the session's read loop does before each read.
+        live.images.retain(live.drafts)
+        # Ctrl-G cancels the search, bringing back the draft it hid.
+        live.feed('ctrl-g')
+        assert live.images.resolve(live.buffer.text) == ('look', [image])
