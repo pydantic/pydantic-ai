@@ -529,14 +529,13 @@ _SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
 def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]:
     """The safety checks kept on a call.
 
-    Checks in a shape that can't be read, such as from a history a UI rebuilt, count as one empty check, so the call
-    still waits for approval.
+    Checks in a shape that can't be read, `None` included, such as from a history a UI rebuilt, count as one empty
+    check, so the call still waits for approval.
     """
-    checks = (provider_details or {}).get(_SAFETY_CHECKS)
-    if checks is None:
+    if provider_details is None or _SAFETY_CHECKS not in provider_details:
         return []
     try:
-        return _SAFETY_CHECKS_TA.validate_python(checks)
+        return _SAFETY_CHECKS_TA.validate_python(provider_details[_SAFETY_CHECKS])
     except pydantic.ValidationError:
         return [SafetyCheck()]
 
