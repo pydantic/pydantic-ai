@@ -12,7 +12,7 @@ independently run sessions), `DynamicWorkflow` (the model scripts sub-agent call
 | --- | --- |
 | Parent calls one specific agent from a tool it writes itself, full control over prompt and deps | Core agent delegation (`await other.run(..., usage=ctx.usage)` inside a tool; see the `building-pydantic-ai-agents` skill, ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Model picks among several named specialists, occasionally, judging each result before the next | `SubAgents` |
-| Independently run sessions discover or message each other without starting another run | `Peers` |
+| Independently run sessions discover or message each other without controlling each other's runs | `Peers` |
 | Fan-out, chaining, voting, or retry loops over sub-agents, where intermediate results should not enter the parent context | `DynamicWorkflow` |
 | A second opinion from another (often stronger) model, not a task hand-off | `Advisor` |
 | Keep a checklist across a long run, or hand a plan from a planner run to an executor run | `Planning` |
