@@ -3984,18 +3984,6 @@ def hidden_first(a: SkipJsonSchema[int] = 1, b: int = 2) -> dict[str, int]:
     return {'a': a, 'b': b}
 
 
-def text_alias(text: Annotated[str, Field(alias='theText')]) -> str:
-    return f'text={text}'
-
-
-def text_with_hidden_arg(text: str, b: SkipJsonSchema[int] = 1) -> str:
-    return f'text={text}'
-
-
-def text_with_var_kwargs(text: str, **kwargs: int) -> str:
-    return f'text={text}'
-
-
 class TestHookSemanticValue:
     """Output hooks see the **semantic value** (what the model was asked to produce), not the
     internal dict-wrapped form used by the validator pipeline.
@@ -4300,16 +4288,6 @@ class TestHookSemanticValue:
         output, log = await self._run_and_capture(output_type=output_function, model_fn=model_fn)
         assert output == expected
         assert log == [('after_validate', expected), ('before_process', expected)]
-
-    @pytest.mark.parametrize('output_function', [text_alias, text_with_hidden_arg, text_with_var_kwargs])
-    async def test_text_output_function_str_arg(self, output_function: Callable[..., str]):
-        """`TextOutput` calls the function with the text under the str arg's Python name, not its alias."""
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('hello')])
-
-        output, _ = await self._run_and_capture(output_type=TextOutput(output_function), model_fn=model_fn)
-        assert output == 'text=hello'
 
 
 class TestHookExceptionHandling:

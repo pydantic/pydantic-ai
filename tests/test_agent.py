@@ -7,12 +7,13 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
@@ -2252,6 +2253,29 @@ def test_output_type_text_output_function():
             ),
         ]
     )
+
+
+def text_alias(text: Annotated[str, Field(alias='theText')]) -> str:
+    return f'text={text}'
+
+
+def text_with_hidden_arg(text: str, b: SkipJsonSchema[int] = 1) -> str:
+    return f'text={text}'
+
+
+def text_with_var_kwargs(text: str, **kwargs: int) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('output_function', [text_alias, text_with_hidden_arg, text_with_var_kwargs])
+def test_output_type_text_output_function_str_arg(output_function: Callable[..., str]):
+    """`TextOutput` calls the function with the text under the str arg's Python name, not its alias."""
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
+    assert agent.run_sync('hi').output == 'text=hello'
 
 
 def test_output_type_handoff_to_agent():
