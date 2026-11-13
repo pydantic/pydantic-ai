@@ -48,6 +48,11 @@ def _user_line(launch: str) -> str:
     return args[3].split('; exec ', 1)[1]
 
 
+def _pwd_answer(command: str, directory: str) -> str:
+    """What the working directory probe prints: its marker (its last argument), then `directory`."""
+    return shlex.split(command)[-1] + directory
+
+
 async def _wait_for_exit(pid: int) -> None:
     """Wait for a killed host process to be gone."""
     # An orphaned child is reaped by init after the signal; the bound only guards a hang.
@@ -679,18 +684,34 @@ class TestKilledSandbox:
 
 class TestWorkingDir:
     async def test_a_configured_working_dir_is_resolved_and_initializes_ref(self, fake_e2b: FakeE2B) -> None:
-        fake_e2b.responder = lambda command, timeout: ('/real/work\n', '', 0)
+        fake_e2b.responder = lambda command, timeout: (_pwd_answer(command, '/real/work\n'), '', 0)
         backend = E2BSandboxBackend(working_dir='/work')
         assert await backend.working_dir() == '/real/work'
         assert backend.ref is not None
         assert fake_e2b.sandboxes[0].commands.calls[0].cwd == '/work'
 
     async def test_probed_once_and_cached(self, fake_e2b: FakeE2B) -> None:
-        fake_e2b.responder = lambda command, timeout: ('/home/user\n', '', 0)
+        fake_e2b.responder = lambda command, timeout: (_pwd_answer(command, '/home/user\n'), '', 0)
         backend = await started()
         assert await backend.working_dir() == '/home/user'
         assert await backend.working_dir() == '/home/user'
-        assert [_user_line(call.command) for call in fake_e2b.sandboxes[0].commands.calls] == ['pwd -P']
+        [call] = fake_e2b.sandboxes[0].commands.calls
+        assert 'pwd -P' in _user_line(call.command)
+
+    async def test_a_login_profile_that_prints_is_ignored(
+        self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # E2B's `bash -l` sources the template's profile before every command; the host fake's
+        # `bash -c` sources `BASH_ENV` the same way. A profile that `cd`s moves where commands
+        # start, so the probe reports that directory, not the one before the profile ran.
+        start = tmp_path / 'start'
+        start.mkdir()
+        profile = tmp_path / 'profile'
+        profile.write_text(f'cd {shlex.quote(str(start))}\necho "Welcome to my template"\n')
+        monkeypatch.setenv('BASH_ENV', str(profile))
+        fake_e2b.host_root = tmp_path.resolve()
+        backend = await started()
+        assert await backend.working_dir() == str(start.resolve())
 
     async def test_the_probe_carries_a_deadline(self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
         # The probe is a command like any other, so it is bounded and killed rather than left
@@ -704,24 +725,40 @@ class TestWorkingDir:
                 await backend.working_dir()
 
     @pytest.mark.parametrize(
-        ('stdout', 'exit_code'),
-        [('', 0), ('relative/dir\n', 0), ('/home/user\n', 1)],
+        ('stdout', 'exit_code', 'marked'),
+        [
+            ('', 0, True),
+            ('relative/dir\n', 0, True),
+            ('/home/user\n', 1, True),
+            # A login profile that prints a path and exits before the probe runs.
+            ('/home/user\n', 0, False),
+        ],
     )
-    async def test_an_unusable_answer_is_refused(self, fake_e2b: FakeE2B, stdout: str, exit_code: int) -> None:
+    async def test_an_unusable_answer_is_refused(
+        self, fake_e2b: FakeE2B, stdout: str, exit_code: int, marked: bool
+    ) -> None:
         # Caching anything but an absolute path would hand every later `resolve()` a working
         # directory that is not one, mis-resolving relative paths with no error.
-        fake_e2b.responder = lambda command, timeout: (stdout, '', exit_code)
+        fake_e2b.responder = lambda command, timeout: (
+            _pwd_answer(command, stdout) if marked else stdout,
+            '',
+            exit_code,
+        )
         backend = await started()
         with pytest.raises(WorkspaceError, match='Could not determine the working directory'):
             await backend.working_dir()
 
     async def test_the_facade_resolves_relative_paths_against_it(self, fake_e2b: FakeE2B) -> None:
-        fake_e2b.responder = lambda command, timeout: ('/home/user\n', '', 0)
+        fake_e2b.responder = lambda command, timeout: (_pwd_answer(command, '/home/user\n'), '', 0)
         workspace = Workspace(await started())
         assert await workspace.resolve('src/main.py') == '/home/user/src/main.py'
 
     async def test_the_facade_preserves_trailing_space_in_probed_working_dir(self, fake_e2b: FakeE2B) -> None:
-        fake_e2b.responder = lambda command, timeout: ('/srv/project \n' if command == 'pwd -P' else '', '', 0)
+        fake_e2b.responder = lambda command, timeout: (
+            _pwd_answer(command, '/srv/project \n') if 'pwd -P' in command else '',
+            '',
+            0,
+        )
         backend = await started()
         fake_e2b.sandboxes[0].files.files['/srv/project /marker.txt'] = b'found'
         workspace = Workspace(backend)
