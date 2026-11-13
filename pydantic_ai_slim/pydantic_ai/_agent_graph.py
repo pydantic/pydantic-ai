@@ -793,6 +793,13 @@ class GraphAgentState:
     """
     conversation_saved: bool = False
     """Whether a store saved this run's whole history, through its result, so none of it is unsaved."""
+    conversation_merged_tail: _messages.ModelRequest | None = None
+    """The last stored request of the conversation this run was given, when the run merged the unsaved requests after it into it.
+
+    Cleaning the history merges consecutive requests, like an output tool's result and the user prompt appended after
+    it. The result's `conversation` puts this request and the unsaved ones back in place of the merged request, so its
+    store doesn't get this one's parts again.
+    """
     appended_messages: AppendedMessages = dataclasses.field(default_factory=AppendedMessages)
     """Internal: the history this run was given and every message it appended, which the result's `conversation` holds
     when a capability dropped or replaced some of them in `message_history`."""
@@ -1121,8 +1128,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
+        given = ctx.state.message_history
+        cleaned = _clean_message_history(given)
+        ctx.state.conversation_merged_tail = _merged_stored_tail(given, cleaned, ctx.state.conversation_unsaved)
         # Replace the `capture_run_messages` list with the message history
-        messages[:] = _clean_message_history(ctx.state.message_history)
+        messages[:] = cleaned
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -5018,6 +5028,43 @@ def _set_resumed_history(
         resumed_request=ctx.deps.resumed_request,
         resumed_request_index=ctx.deps.resumed_request_index,
     )
+
+
+def leading_requests(messages: Sequence[_messages.ModelMessage]) -> list[_messages.ModelRequest]:
+    """The requests `messages` starts with, before its first response."""
+    requests: list[_messages.ModelRequest] = []
+    for message in messages:
+        if not isinstance(message, _messages.ModelRequest):
+            break
+        requests.append(message)
+    return requests
+
+
+def _merged_stored_tail(
+    given: list[_messages.ModelMessage],
+    cleaned: list[_messages.ModelMessage],
+    unsaved: list[_messages.ModelMessage] | None,
+) -> _messages.ModelRequest | None:
+    """The last stored request of `given` as cleaning merges it, if cleaning `given` into `cleaned` merged the requests `unsaved` starts with into it.
+
+    See `GraphAgentState.conversation_merged_tail`.
+    """
+    boundary = len(given) - len(unsaved or ())
+    appended = leading_requests(unsaved or ())
+    first = boundary
+    while first > 0 and isinstance(given[first - 1], _messages.ModelRequest):
+        first -= 1
+    if not appended or first == boundary:
+        return None
+    stored = _merge_consecutive_messages(given[first:boundary])
+    merged = _merge_consecutive_messages([*stored, *appended])
+    if len(merged) != len(stored):
+        return None
+    parts = merged[-1].parts
+    if not any(isinstance(message, _messages.ModelRequest) and message.parts == parts for message in cleaned):
+        return None
+    # The stored request itself, with all its fields, unless cleaning merged it with others the store has.
+    return cast(_messages.ModelRequest, given[boundary - 1] if boundary - first == 1 else stored[-1])
 
 
 def _first_new_message_index(

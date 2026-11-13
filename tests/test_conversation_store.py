@@ -1614,6 +1614,273 @@ async def test_a_serialized_window_of_output_tool_turns_appends_to_the_whole_con
     assert reads == [4, 1]
 
 
+def _carried(conversation: Conversation) -> Conversation:
+    return conversation
+
+
+def _prompt(turn: int) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart(f'turn {turn}')], metadata={'turn': turn})
+
+
+@pytest.mark.parametrize('carry', [_carried, _round_trip], ids=['in-process', 'serialized'])
+async def test_a_prompt_appended_after_an_output_tool_turn_is_stored_once_with_the_tool_result_before_it(
+    carry: Callable[[Conversation], Conversation],
+) -> None:
+    """The run merges the stored output tool result into the appended prompt it sends, and the store gets each once.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13276.
+    """
+    store = _HistoryReadsStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    results: list[AgentRunResult[_Answer]] = []
+    for turn in range(3):
+        loaded = carry(await store.load('c') or Conversation(conversation_id='c'))
+        loaded.messages.append(_prompt(turn))
+        results.append(result := await agent.run(conversation=loaded))
+        store.limits.clear()
+        await store.save(carry(result.conversation))
+        if carry is _carried:
+            # A marked save appends without reading the stored history.
+            assert store.limits == []
+
+    # What the model was sent, and `all_messages()`, still merge the two.
+    assert conversation_view(results[-1].all_messages()[-4:-2]) == snapshot(
+        [
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 2',
+        ]
+    )
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    assert [message.metadata for message in reloaded.messages if isinstance(message, ModelRequest)] == snapshot(
+        [{'turn': 0}, None, {'turn': 1}, None, {'turn': 2}, None]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+@pytest.mark.parametrize('carry', [_carried, _round_trip], ids=['in-process', 'serialized'])
+async def test_prompts_appended_after_an_output_tool_turn_are_stored_once_each_with_what_the_run_filled_in(
+    carry: Callable[[Conversation], Conversation],
+) -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer, instructions='Answer briefly.')
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded = carry(loaded)
+    loaded.messages += [_prompt(1), _prompt(2)]
+
+    result = await agent.run(conversation=loaded)
+    await store.save(carry(result.conversation))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    appended = reloaded.messages[3:5]
+    assert [
+        (message.metadata, message.instructions, message.conversation_id, message.run_id)
+        for message in appended
+        if isinstance(message, ModelRequest)
+    ] == [
+        ({'turn': 1}, 'Answer briefly.', 'c', result.run_id),
+        ({'turn': 2}, 'Answer briefly.', 'c', result.run_id),
+    ]
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+async def test_a_serialized_result_keeps_the_stored_tool_result_apart_from_the_appended_prompt() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    result = await agent.run(conversation=loaded)
+    adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
+
+    revived = adapter.validate_json(adapter.dump_json(result)).conversation
+
+    assert 'conversation_merged_tail' in adapter.dump_python(result)
+    assert revived.messages == result.conversation.messages
+    assert revived.new_message_index == result.conversation.new_message_index == len(loaded.messages) - 1
+
+
+async def test_an_edited_tool_result_before_an_appended_prompt_still_branches() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    stored_return = loaded.messages[-1]
+    tool_return = stored_return.parts[0]
+    assert isinstance(stored_return, ModelRequest) and isinstance(tool_return, ToolReturnPart)
+    loaded.messages[-1] = dataclasses.replace(stored_return, parts=[dataclasses.replace(tool_return, content='edited')])
+    loaded.messages.append(_prompt(1))
+
+    await store.save(await agent.run(conversation=loaded))
+
+    record = await store.read_record('c')
+    assert record is not None and len(record.branches) == 1
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: edited',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+
+
+async def test_a_prompt_appended_after_stored_requests_that_merge_is_stored_once() -> None:
+    """A prompt saved without a run follows the output tool result, so the run merges the stored requests too."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    await store.save(loaded)
+    loaded.messages.append(_prompt(2))
+
+    await store.save(await agent.run(conversation=loaded))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+@pytest.mark.moves_cache_prefix(reason='The appended request has other instructions than the stored one.')
+async def test_a_prompt_with_other_instructions_appended_after_an_output_tool_turn_is_stored_as_is() -> None:
+    """Requests with different instructions aren't merged, so there's nothing to take apart."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    messages = (await agent.run('turn 0')).all_messages()
+    messages[-1] = dataclasses.replace(messages[-1], instructions='Answer briefly.')
+    await store.save(Conversation(messages=messages, conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('turn 1')], instructions='Answer at length.'))
+
+    result = await agent.run(conversation=loaded)
+    await store.save(result)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == result.conversation.messages
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+
+
+async def test_a_prompt_appended_to_a_window_starting_at_an_output_tool_result_is_stored_once() -> None:
+    """The window's first message answers a call it doesn't hold, so the run drops it rather than merging it."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    window = await store.load('c', limit=1)
+    assert window is not None
+    window.messages.append(_prompt(1))
+
+    await store.save(await agent.run(conversation=window))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+async def test_a_merged_request_a_capability_edits_in_place_is_saved_as_the_run_sent_it() -> None:
+    """Which of its parts the store already has isn't known any more, so the conversation keeps it whole."""
+
+    def redact(messages: list[ModelMessage]) -> list[ModelMessage]:
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                message.parts = [
+                    dataclasses.replace(part, content='redacted') if isinstance(part, ToolReturnPart) else part
+                    for part in message.parts
+                ]
+        return messages
+
+    store = InMemoryConversationStore()
+    await store.save(
+        await Agent(TestModel(), output_type=_Answer).run('turn 0', conversation=Conversation(conversation_id='c'))
+    )
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    agent = Agent(TestModel(), output_type=_Answer, capabilities=[ProcessHistory(redact)])
+
+    conversation = (await agent.run(conversation=loaded)).conversation
+
+    assert conversation_view(conversation.messages[len(loaded.messages) - 2 :]) == snapshot(
+        [
+            'return pyd_ai_tool_call_id__final_result: redacted',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+
+
 def _look_up_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Calls the `look_up` tool, and once it returned, the output tool."""
     if any(isinstance(part, ToolReturnPart) and part.tool_name == 'look_up' for part in messages[-1].parts):

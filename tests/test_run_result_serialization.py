@@ -562,6 +562,7 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 },
                 'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
                 'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
+                'conversation_merged_tail': {'$ref': '#/$defs/ModelRequest'},
                 'conversation_messages': {
                     'items': {
                         'anyOf': [
