@@ -56,7 +56,7 @@ class NamedSpec(BaseModel):
 
     Supports three short forms:
     * `'MyClass'` — no arguments
-    * `{'MyClass': single_arg}` — a single positional argument
+    * `{'MyClass': single_arg}` — a single positional argument, unless it is a mapping with string keys
     * `{'MyClass': {k1: v1, k2: v2}}` — keyword arguments
     """
 
@@ -397,8 +397,7 @@ def _json_schema_accepts_object(schema: Mapping[str, Any], defs: Mapping[str, An
         return _json_schema_accepts_object(defs[ref.removeprefix('#/$defs/')], defs)
     if (members := schema.get('anyOf', schema.get('oneOf'))) is not None:
         return any(_json_schema_accepts_object(member, defs) for member in members)
-    json_type = schema.get('type', 'object')
-    return json_type == 'object' or (isinstance(json_type, list) and 'object' in json_type)
+    return schema.get('type', 'object') == 'object'
 
 
 def _make_typed_dict(cls_name_prefix: str, name: str, fields: dict[str, Any]) -> Any:
