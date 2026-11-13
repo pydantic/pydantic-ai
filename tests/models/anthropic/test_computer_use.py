@@ -31,7 +31,8 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 
 from ...computer_fakes import FAKE_DISPLAY_SIZE, FakeComputer
 from ...conftest import try_import
@@ -803,6 +804,40 @@ async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves
     assert (call.tool_name, call.args) == ('computer', {'action': 'left_click', 'coordinate': [5, 6]})
 
 
+async def test_a_tool_added_mid_run_is_declared_when_tool_choice_leaves_out_the_computer(
+    allow_model_requests: None,
+) -> None:
+    toolset = FunctionToolset[None]()
+
+    def new_tool() -> str:
+        return 'new tool ran'  # pragma: no cover
+
+    @toolset.tool_plain
+    def add_new_tool() -> str:
+        toolset.add_function(new_tool)
+        return 'new_tool is now available'
+
+    def settings(ctx: RunContext[None]) -> ModelSettings:
+        return {'tool_choice': ToolOrOutput(['new_tool'])} if 'new_tool' in toolset.tools else {}
+
+    client = MockAnthropic.create_mock(
+        [
+            _turn(BetaToolUseBlock(id='toolu_1', name='add_new_tool', input={}, type='tool_use')),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(
+        model, deps_type=type(None), toolsets=[toolset], capabilities=[FakeComputer()], model_settings=settings
+    )
+
+    # `tool_choice` leaves out the computer use tool, so the newcomer is the request's only tool and can't stay
+    # deferred: Anthropic rejects a request whose tools are all deferred.
+    assert (await agent.run('Add the new tool.')).output == 'done'
+    _, sent = get_mock_chat_completion_kwargs(client)
+    assert [(tool['name'], tool.get('defer_loading', False)) for tool in sent['tools']] == [('new_tool', False)]
+
+
 async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
@@ -1186,7 +1221,6 @@ def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(name: s
 
 
 async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests: None) -> None:
-    from pydantic_ai import RunContext
     from pydantic_ai.capabilities import Hooks
 
     hooks = Hooks()
