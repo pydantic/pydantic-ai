@@ -207,8 +207,8 @@ def _check_background_tools(merged: Any) -> None:
     assert callable(merged.tools)
 
 
-def _check_benchmark_instructions(merged: Any) -> None:
-    assert isinstance(merged, BenchmarkInstructions)
+def _check_benchmark_instructions(merged: BenchmarkInstructions[Any]) -> None:
+    assert merged.id == 'benchmark_instructions'
 
 
 def _check_sub_agents(merged: Any) -> None:

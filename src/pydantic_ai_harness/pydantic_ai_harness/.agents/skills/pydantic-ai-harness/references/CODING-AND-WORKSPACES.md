@@ -103,10 +103,6 @@ files as the agent reads, inlining up to 32,000 characters of them per conversat
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
 `strict=False`.
 
-For benchmark runs, bind `BenchmarkInstructions()` next to `Coder()`: it adds the benchmark-only guidance
-(self-contained deliverables checked from a clean directory, using every field of the provided data)
-that `Coder`'s defaults leave out.
-
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
   capabilities such as approval gates), up to 3 levels deep.
@@ -140,6 +136,12 @@ that `Coder`'s defaults leave out.
 ```bash
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
+
+### BenchmarkInstructions
+
+For benchmark runs, bind `BenchmarkInstructions()` next to `Coder()`: it adds the benchmark-only guidance
+(self-contained deliverables checked from a clean directory, using every field of the provided data)
+that `Coder`'s defaults leave out.
 
 ### Sharing a workspace across runs and agents
 
