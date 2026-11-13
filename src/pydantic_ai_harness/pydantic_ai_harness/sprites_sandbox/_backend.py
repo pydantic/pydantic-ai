@@ -715,10 +715,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # identifiers from the environment it passes on.
         args = _ending_with(marker, capture, self._command_args(command, shell, env))
 
-        # Acquiring the Sprite has its own bound; the command's deadline starts after it.
+        # Acquiring the Sprite has its own bound, and each exec handshake the websockets 10-second open timeout:
+        # the command's deadline starts once its socket is open, so a slow handshake or a retry does not use it up.
         if sandbox is None:
             sandbox = await self._get_sandbox()
-        deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
+        deadline = anyio.CancelScope()
         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
         code = -1
         interrupted = False
@@ -730,6 +731,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     if await _start_or_back_off(exec_command, delay):
                         break
                     exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+                if timeout is not None:
+                    deadline.deadline = anyio.current_time() + timeout
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
@@ -763,12 +766,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self, exec_command: _ExecCommand, marker: str, capture: str, timeout: float, *, capture_stderr: bool
     ) -> WorkspaceTimeoutError:
         """Close a command that ran past `timeout` and build its timeout error with the output it left."""
-        # A handshake that never opened started no command, so there is no capture to read.
-        started = exec_command.ws is not None
         await _close_command(exec_command)
         partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
         # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
-        stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
+        stderr = await self._collect_stderr(capture) if capture_stderr else ''
         return WorkspaceTimeoutError(
             f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
         )
