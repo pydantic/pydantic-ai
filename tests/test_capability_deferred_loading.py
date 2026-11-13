@@ -63,7 +63,9 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     RetryInfo,
     TextPart,
     ToolAvailabilityDeltaEvent,
@@ -4268,7 +4270,7 @@ async def test_a_callable_description_is_resolved_once_per_step():
     ]
 
 
-def _compaction_reload_agent(model_fn):
+def _compaction_reload_agent(model_fn: Callable[[list[ModelMessage], AgentInfo], ModelResponse]):
     """Agent with one deferred capability, driven by `model_fn`, for the compaction-reload scenario."""
     return Agent(
         model=FunctionModel(function=model_fn),
@@ -4283,7 +4285,7 @@ def test_deferred_capability_reload_after_compaction_part_in_same_response_is_ac
     already-active: the post-boundary request carries its load record.
     """
     calls: list[int] = []
-    final_parts: list = []
+    final_parts: list[ModelRequestPart | ModelResponsePart] = []
 
     def model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         calls.append(len(calls))
@@ -4315,7 +4317,7 @@ def test_deferred_capability_reload_after_compaction_part_in_same_response_is_ac
 def test_deferred_capability_instructions_delivered_after_compaction_boundary_reload():
     """The reloaded capability's instructions reach the first post-boundary model request."""
     calls: list[int] = []
-    final_parts: list = []
+    final_parts: list[ModelRequestPart | ModelResponsePart] = []
 
     def model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         calls.append(len(calls))
