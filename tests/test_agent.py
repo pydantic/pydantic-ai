@@ -2297,6 +2297,23 @@ def text_alias_path_with_hidden_arg(
     return f'text={text}'
 
 
+class TextOutputNode(BaseModel):
+    value: int
+    children: list['TextOutputNode'] = []
+
+
+class TextOutputLeaf(BaseModel):
+    value: int
+
+
+def text_alias_with_hidden_model_args(
+    text: Annotated[str, Field(alias='theText')],
+    node: SkipJsonSchema[Annotated[TextOutputNode | None, Field(alias='n')]] = None,
+    leaf: SkipJsonSchema[Annotated[TextOutputLeaf | None, Field(alias='l')]] = None,
+) -> str:
+    return f'text={text}'
+
+
 def text_alias_shared_with_hidden_arg(
     text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1
 ) -> str:
@@ -2324,6 +2341,7 @@ def text_alias_shared_with_hidden_arg_and_var_kwargs(
         text_alias_with_var_kwargs,
         text_alias_positional_only_with_hidden_arg,
         text_alias_path_with_hidden_arg,
+        text_alias_with_hidden_model_args,
         text_alias_shared_with_hidden_arg,
         text_alias_shared_with_hidden_arg_and_var_kwargs,
     ],
