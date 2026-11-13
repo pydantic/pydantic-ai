@@ -59,7 +59,10 @@ async def test_a_saved_key_replaces_the_environment_key(store: SettingsStore) ->
 
 async def test_a_deleted_key_fails_closed(store: SettingsStore) -> None:
     store.save_model_settings('openai:gpt-5', {'api_key': 'GONE_KEY'})
-    with pytest.raises(UserError, match='Saved API key GONE_KEY is missing'):
+    with pytest.raises(
+        UserError,
+        match=r'^Saved API key GONE_KEY is missing\. Restore it in /keys or reset api_key in /model settings\.$',
+    ):
         await resolver(store).resolve('openai:gpt-5')
 
 

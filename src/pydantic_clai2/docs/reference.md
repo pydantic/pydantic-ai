@@ -838,7 +838,9 @@ fails the turn until you pick another. The row
 shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
 The plain model's `api_key` also applies to its `@default` account, which uses the
 environment's key; a profile such as `openai@work` keeps its own sign-in unless its
-own model sets `api_key`. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
+own model sets `api_key`. While `accounts.pool` runs a plain model on every signed-in
+account, each keeps its own key, so its `api_key` reaches only the `@default` account,
+if that is one of them. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
 and plugin models take their keys elsewhere and have no API Key row. CLAI versions
 before this setting ignore it and use the environment's key, sending it to any saved
 `base_url`, so don't downgrade while a model relies on both.

@@ -22,7 +22,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.providers import Provider, infer_provider_class
-from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
+from pydantic_clai2.config.api_keys import KeyReference, load_keys, prompt_api_key, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials
 from pydantic_clai2.models.profiles import account, parse_model
 from pydantic_clai2.plugins.keys import choose_key
@@ -181,7 +181,7 @@ def model(name: str, *, base_url: str | None = None, api_key: str | None = None)
     `api_key` names the `/keys` entry saved for the model, which wins over the profile's own key.
     """
     ref = parse_model(name)
-    key = None if api_key is None else resolve_key(token=KeyReference(name=api_key))
+    key = None if api_key is None else _saved_key(api_key)
     if ref.profile is None:
         return infer_model(name, provider_factory=partial(build_provider, key=key, base_url=base_url))
     if keyed_provider(ref.provider) is None:
@@ -230,6 +230,14 @@ def takes_endpoint(provider: str) -> bool:
         return keyed_provider(provider, _url_argument(provider)) is not None
     except ImportError:  # A known provider; building it reports the missing extra.
         return True
+
+
+def _saved_key(name: str) -> str:
+    """The `/keys` entry a model's `api_key` names, failing closed with the model setting as the fix."""
+    keys = load_keys()
+    if name not in keys:
+        raise UserError(f'Saved API key {name} is missing. Restore it in /keys or reset api_key in /model settings.')
+    return keys[name].get_secret_value()
 
 
 def takes_key(provider: str) -> bool:
