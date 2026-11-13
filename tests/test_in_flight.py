@@ -14,7 +14,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunCancelled, RunContext
-from pydantic_ai._enqueue import EnqueueGuard, PendingMessageQueue
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.in_flight import (
     InFlightRegistry,
@@ -36,10 +36,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PendingModelResponse
-from pydantic_ai.result import FinalResult
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RunUsage
-from pydantic_graph import End
 
 from .conftest import no_leaked_tasks
 
@@ -357,37 +355,49 @@ async def test_drained_event_lists_work_started_while_waiting(emitted: _Emitted)
     )
 
 
-async def test_pending_model_response_pause_waits_for_all_work():
-    """Ending with a `PendingModelResponse`, the run waits for all `'drain'` work, as at a deferred tool pause.
+class _PendingFunctionModel(FunctionModel):
+    """A `FunctionModel` whose suspended responses are jobs to check on later, as a batch or background request is."""
 
-    Drives the end rule directly: what the run does with the queued content after this pause changes with #13054.
-    """
-    buffer: list[AgentStreamEvent] = []
-    registry = InFlightRegistry(buffer)
-    queue = PendingMessageQueue()
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue, _in_flight=registry)
-    first_queued = asyncio.Event()
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 0.0 if response.state == 'suspended' else None
 
-    async def first() -> None:
-        ctx.enqueue('first result')
-        first_queued.set()
 
-    async def second() -> None:
-        # Still running after `first` has queued its result, so the pause has to keep waiting.
-        await first_queued.wait()
-        await asyncio.sleep(0)
-        ctx.enqueue('second result')
+async def test_pending_model_response_pause_waits_for_all_work(emitted: _Emitted):
+    """Ending with a `PendingModelResponse`, the run waits for all `'drain'` work, as at a deferred tool pause."""
+    handles: dict[str, InFlightWork[None]] = {}
 
-    registry.start(first, kind='test', name='first', id='first')
-    registry.start(second, kind='test', name='second', id='second')
-    end = End(FinalResult(PendingModelResponse(response=ModelResponse(parts=[], state='suspended'))))
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='start', args={'name': 'a'}),
+                    ToolCallPart(tool_name='start', args={'name': 'b'}),
+                ]
+            )
+        return ModelResponse(parts=[], state='suspended', provider_response_id='job')
 
-    assert await registry._after_step(ctx, end) is end  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(_PendingFunctionModel(model_fn), output_type=[str, PendingModelResponse])
 
-    assert [_user_texts(pending.messages) for pending in queue] == [['first result'], ['second result']]
-    events = [event for event in buffer if isinstance(event, InFlightWorkEvent)]
-    assert [event.phase for event in events] == ['started', 'started', 'draining', 'settled', 'settled', 'drained']
-    assert events[-1].live == 0
+    @agent.tool
+    async def start(ctx: RunContext, name: str) -> str:
+        async def work() -> None:
+            await emitted.until('draining')
+            if name == 'b':
+                # Still running after `a` has settled, so the pause has to keep waiting.
+                await handles['a'].wait()
+            ctx.enqueue(f'result {name}')
+
+        handles[name] = ctx.in_flight.start(work, kind='test', name=name, id=name)
+        return 'started'
+
+    result = await agent.run('go')
+
+    # What the run does with the queued results after this pause changes with #13054, so only the wait is checked.
+    assert isinstance(result.output, PendingModelResponse)
+    assert {name: work.state for name, work in handles.items()} == {'a': 'succeeded', 'b': 'succeeded'}
+    assert emitted.phases[:6] == ['started', 'started', 'draining', 'settled', 'settled', 'drained']
+    assert emitted.events[2].phase == 'draining'
+    assert len(emitted.events[2].work) == 2
 
 
 async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitted):
