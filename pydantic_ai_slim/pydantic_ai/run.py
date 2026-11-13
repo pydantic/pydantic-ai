@@ -895,6 +895,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         no-op. Externally cancelling the task running the agent (`asyncio.Task.cancel()`) remains
         supported and keeps raising `asyncio.CancelledError` instead; when both happen, the external
         cancellation wins.
+
+        Raises:
+            UserError: If the run's event loop can't be reached from the calling thread or loop, as
+                with a run inside a Temporal workflow cancelled from outside it (see
+                [Temporal cancellation](../durable_execution/temporal.md#cancellation)). The run is
+                left untouched.
         """
         self.ctx.deps.cancellation.cancel()
 
@@ -1173,7 +1179,10 @@ class AgentRunResult(Generic[OutputDataT]):
             messages=list(self.all_messages()),
             deferred_tool_requests=(
                 DeferredToolRequests(
-                    calls=list(output.calls), approvals=list(output.approvals), metadata=dict(output.metadata)
+                    calls=list(output.calls),
+                    approvals=list(output.approvals),
+                    metadata=dict(output.metadata),
+                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
                 )
                 if isinstance(output, DeferredToolRequests)
                 else None

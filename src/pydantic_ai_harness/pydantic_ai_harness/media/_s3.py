@@ -55,8 +55,8 @@ def _hex_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _hmac_sha256(key: bytes, msg: str) -> bytes:
-    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+def _hmac_sha256(key: bytes, message: str) -> bytes:
+    return hmac.new(key, message.encode('utf-8'), hashlib.sha256).digest()
 
 
 def _canonical_uri(path: str) -> str:
