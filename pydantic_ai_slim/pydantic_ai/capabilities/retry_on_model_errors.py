@@ -307,8 +307,9 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         """Build from an agent spec, which names the exceptions to retry on.
 
         `retry_on` takes the names of exception classes in [`pydantic_ai.exceptions`][pydantic_ai.exceptions] that
-        subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], or `ContentFilterError`; exception and
-        response handlers can only be passed to `RetryOnModelErrors(...)` directly.
+        subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], `ContentFilterError` or
+        `OutputTokenLimitExceeded`; exception and response handlers can only be passed to `RetryOnModelErrors(...)`
+        directly.
 
         YAML form:
 
