@@ -272,13 +272,17 @@ _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode
 
 
 _START_DESKTOP = (
-    start_x_server(f'{_PID_DIR}/xvfb.log', then='setsid tint2 >/dev/null 2>&1 9>&- &')
-    + 'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
+    # A display this script starts is marked as ours, so it gets the panel.
+    start_x_server(f'{_PID_DIR}/xvfb.log', first=f': >{_PID_DIR}/panel; ')
+    # Started apart from the X server, so a start cancelled between the two still gets its panel on the next one.
+    + f'[ ! -e {_PID_DIR}/panel ] || kill -0 "$(cat {_PID_DIR}/panel)" 2>/dev/null '
+    f'|| {{ setsid tint2 >/dev/null 2>&1 9>&- & echo $! >{_PID_DIR}/panel; }}; '
+    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one runs, then a window
-manager. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then the panel of a display it
+started unless that runs, then a window manager. A second start waits for the first, then finds its X server.
 
 A second `fluxbox` exits when one runs, so starting it every time recovers one that died. It then waits up to 10
 seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on.

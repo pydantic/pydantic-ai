@@ -250,11 +250,11 @@ _X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
 _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 
-def start_x_server(log: str, *, then: str = '') -> str:
+def start_x_server(log: str, *, first: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It fails once the X server exits, or after 10 seconds, printing the end of `log`. `then` runs once a new X server
-    answers, such as to start a panel.
+    It fails once the X server exits, or after 10 seconds, printing the end of `log`. `first` runs just before a new X
+    server starts, such as to record that this script started it.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's X server. The lock is held until the
     script exits, so the rest of the script runs under it too; anything started in the background must close it with
@@ -270,9 +270,9 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # running: the pointer goes back to the middle and held buttons are let go.
         # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
         # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
+        f'{first}setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
-        + f'{then} fi; '
+        + 'fi; '
     )
 
 
