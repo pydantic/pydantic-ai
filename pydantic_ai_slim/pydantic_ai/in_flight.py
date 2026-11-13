@@ -414,7 +414,8 @@ class InFlightRegistry:
         Raises:
             UserError: If `work` was started with `start()`, which settles it when its coroutine finishes, or this
                 isn't called from the event loop running the agent. From another thread, schedule the call on that
-                loop, for example with `loop.call_soon_threadsafe()`.
+                loop: capture it with `asyncio.get_running_loop()` where you registered the work, and call
+                `loop.call_soon_threadsafe(ctx.in_flight.settle, work)`.
         """
         _check_on_loop('settle', self._loop)
         if work in self._started:
