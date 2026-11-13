@@ -4882,14 +4882,14 @@ def _later() -> str:
 
 thinking_level_handler_agent = Agent(
     FunctionModel(stream_function=_done_stream_fn),
-    name='thinking_level_handler',
+    name='durability_thinking_level_handler',
     model_settings={'thinking': 'low'},
     capabilities=[DBOSDurability(event_stream_handler=_delta_event_handler)],
 )
 
 population_change_handler_agent = Agent(
     FunctionModel(stream_function=_population_change_stream_fn),
-    name='population_change_handler',
+    name='durability_population_change_handler',
     toolsets=[
         FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
     ],
@@ -4905,7 +4905,12 @@ population_change_handler_agent = Agent(
     [
         pytest.param(
             thinking_level_handler_agent,
-            snapshot(['thinking_level_handler__event_stream_handler', 'thinking_level_handler__model.request_stream']),
+            snapshot(
+                [
+                    'durability_thinking_level_handler__event_stream_handler',
+                    'durability_thinking_level_handler__model.request_stream',
+                ]
+            ),
             snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
             id='thinking-level',
         ),
@@ -4913,14 +4918,14 @@ population_change_handler_agent = Agent(
             population_change_handler_agent,
             snapshot(
                 [
-                    'population_change_handler__model.request_stream',
-                    'population_change_handler__event_stream_handler',
-                    'population_change_handler__event_stream_handler',
-                    'population_change_handler__event_stream_handler',
-                    'population_change_handler__model.request_stream',
-                    'population_change_handler__event_stream_handler',
-                    'population_change_handler__event_stream_handler',
-                    'population_change_handler__model.request_stream',
+                    'durability_population_change_handler__model.request_stream',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__model.request_stream',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__model.request_stream',
                 ]
             ),
             snapshot(
