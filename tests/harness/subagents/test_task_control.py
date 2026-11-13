@@ -2628,7 +2628,27 @@ class TestTaskControlBoundaries:
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
 
-    async def test_durable_tasks_get_distinct_ids_when_a_tool_call_id_is_reused(self) -> None:
+    async def test_task_ids_derive_from_the_run_and_the_tool_call(self) -> None:
+        def delegate(tool_call_id: str) -> ToolCallPart:
+            args = {'agent_name': 'researcher', 'task': 'Find x.'}
+            return ToolCallPart('delegate_task', args, tool_call_id=tool_call_id)
+
+        parent = Agent(
+            scripted(ModelResponse(parts=[delegate('call_a'), delegate('call_b')]), text('Done.')),
+            capabilities=[controlled()],
+        )
+        runs: list[list[str]] = []
+        for _ in range(2):
+            with anyio.fail_after(WAIT):
+                result = await parent.run('Go.', run_id='run-1')
+            runs.append(sorted(task_id_in(receipt) for receipt in tool_returns(result.all_messages())))
+        # Outside durable execution too, a rerun with the same `run_id` gives its tasks the same IDs.
+        expected = sorted(uuid5(NAMESPACE_URL, f'run-1:{tool_call_id}').hex for tool_call_id in ('call_a', 'call_b'))
+        assert runs[0] == runs[1] == expected
+        assert expected[0] != expected[1]
+
+    @pytest.mark.parametrize('durable', [False, True])
+    async def test_tasks_get_distinct_ids_when_a_tool_call_id_is_reused(self, durable: bool) -> None:
         def delegate(task: str) -> ModelResponse:
             args = {'agent_name': 'researcher', 'task': task, 'background': True}
             return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id='call_0')])
@@ -2636,7 +2656,7 @@ class TestTaskControlBoundaries:
         parent = Agent(
             scripted(delegate('First.'), delegate('Second.'), text('Waiting.'), text('Done.')),
             name='durable',
-            capabilities=[controlled(), RecordingDurability()],
+            capabilities=[controlled(), *([RecordingDurability()] if durable else [])],
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
