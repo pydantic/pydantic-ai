@@ -8,7 +8,7 @@ import json
 import struct
 import zlib
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
@@ -147,7 +147,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
         assert computer.actions == []
 
 
-@pytest.mark.parametrize('checks', [{}, '', False, 0])
+@pytest.mark.parametrize('checks', [{}, '', False, 0, None])
 async def test_malformed_safety_checks_make_the_call_wait_for_approval(allow_model_requests: None, checks: Any) -> None:
     first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
     item = first.output[0]
@@ -566,9 +566,12 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     assert after == ([{'role': 'user', 'content': expected}] if note else [])
 
 
-async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('status', ['incomplete', 'in_progress'])
+async def test_an_unfinished_call_runs_nothing(
+    allow_model_requests: None, status: Literal['incomplete', 'in_progress']
+) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    cast(resp.ResponseComputerToolCall, response.output[0]).status = 'incomplete'
+    cast(resp.ResponseComputerToolCall, response.output[0]).status = status
     provider, computer = InMemoryProvider(), FakeComputer()
     client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))

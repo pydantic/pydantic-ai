@@ -165,10 +165,8 @@ printf '  Width: 1280\\n  Height: 800\\n'
 _FAKE_SCROT = """#!/bin/sh
 for last; do :; done
 cp "$(dirname "$0")/screen.png" "$last"
-[ "$1" != -t ] || cp "$(dirname "$0")/screen.png" "${last%.png}-thumb.png"
 """
-"""Stands in for `scrot`: writes the fake screenshot, whatever region or thumbnail it is asked for, to the path it is
-given, and with `-t` as the thumbnail beside it."""
+"""Stands in for `scrot`: writes the fake screenshot, whatever region it is asked for, to the path it is given."""
 
 _FAKE_XVFB = """#!/bin/sh
 bin=$(dirname "$0")

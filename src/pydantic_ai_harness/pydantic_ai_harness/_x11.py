@@ -156,7 +156,9 @@ turned on."""
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks; `xdotool`'s default is 100."""
 
-_SCROLL_TICK_SECONDS = int(_SCROLL_TICK_DELAY_MS) / 1000
+_SCROLL_TICK_SECONDS = (int(_SCROLL_TICK_DELAY_MS) + 12) / 1000
+"""Time per wheel click: the delay between clicks plus the 12 ms `xdotool click` pauses between press and release
+(xdotool(1): "a short delay between the two (currently 12ms)")."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
@@ -173,10 +175,11 @@ such as one a cancel left behind."""
 
 _CAPTURE = (
     f'd={_CAPTURES}; mkdir -p "$d" && find "$d" -type f -mmin +5 -exec rm -f {{}} + 2>/dev/null; f="$d/$$.png"; '
-    'scrot "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; exit $status'
+    'scrot --overwrite "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; exit $status'
 )
 """Captures to a file of its own (scrot picks the format from the `.png` name) and prints it as base64; arguments
-go to scrot, such as `-a x,y,width,height` for a region."""
+go to scrot, such as `-a x,y,width,height` for a region. `--overwrite` replaces a file a cancel left at a reused
+process id; without it scrot saves under another name and the old file would be printed."""
 
 _INPUT_PID = f'/tmp/.pydantic-ai-input-{DISPLAY_NUMBER}'
 """Holds the process id of the input command running on the display; `ComputerUse` runs one at a time."""
