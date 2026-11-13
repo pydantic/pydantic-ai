@@ -1155,8 +1155,10 @@ async def test_empty_sub_queries_are_real_conditions():
     assert not root.matches({'no_child_has': {}})
     assert root.matches({'some_descendant_has': {}})
     assert not grandchild.matches({'some_descendant_has': {}})
+    assert not root.matches({'no_descendant_has': {}})
     assert grandchild.matches({'some_ancestor_has': {}})
     assert not root.matches({'some_ancestor_has': {}})
+    assert not grandchild.matches({'no_ancestor_has': {}})
     assert not root.matches({'some_descendant_has': {'name_equals': 'grandchild'}, 'stop_recursing_when': {}})
     assert not grandchild.matches({'some_ancestor_has': {'name_equals': 'root'}, 'stop_recursing_when': {}})
 
