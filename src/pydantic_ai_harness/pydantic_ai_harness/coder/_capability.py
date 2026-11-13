@@ -160,7 +160,7 @@ class BenchmarkInstructions(AbstractCapability[AgentDepsT]):
 
     It says deliverables are checked in a clean directory with only the requested files, and that
     every field of the provided data matters. Neither holds for everyday work in a project, so
-    `Coder` leaves both out. Delegates re-run the same agent, so they get it too.
+    `Coder` leaves both out. `delegate_task`'s `self` delegate re-runs the same agent, so it gets it too.
     """
 
     _: KW_ONLY

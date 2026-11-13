@@ -57,7 +57,8 @@ BENCHMARK_INSTRUCTIONS = (
     'and check that they still work when run from a clean directory. '
     'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 )
-"""Added by `BenchmarkInstructions`: a verifier grades only the requested files, in a clean directory."""
+"""Added by `BenchmarkInstructions`: a verifier grades only the requested files, in a clean directory,
+and benchmark data is built so that every field matters."""
 
 _CONFIRM = (
     'Before finishing, go through each requirement and edge case the task states and confirm each one explicitly.'

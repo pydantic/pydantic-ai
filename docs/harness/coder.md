@@ -380,9 +380,9 @@ agent = Agent(
 )
 ```
 
-It adds two sentences: make deliverables self-contained and check them from a clean directory, and use
-every field the provided data supplies. Delegates re-run the same agent, so they get them too. Record
-whether a run used `BenchmarkInstructions` with its score.
+It tells the agent to make deliverables self-contained and check them from a clean directory, and to use
+every field the provided data supplies. `delegate_task`'s `self` delegate re-runs the same agent, so it
+gets this guidance too. Record whether a run used `BenchmarkInstructions` with its score.
 
 See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/TERMINAL_BENCH.md) for running Coder
 inside Harbor, pinning the adapter and harness, and inspecting trial results.
