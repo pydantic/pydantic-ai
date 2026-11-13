@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
-    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -48,7 +47,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -927,12 +926,6 @@ def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_
 
 _LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
 """The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
-
-
-def capability_part_text(part: CapabilityPart) -> str:
-    """The text of a capability part's content, as the model sees it, without a data kind's frame or note."""
-    content = part.model_content()
-    return ''.join(user_prompt_texts(UserPromptPart([content] if isinstance(content, StructuredContent) else content)))
 
 
 def harness_data_origin(part: UserPromptPart) -> str | None:

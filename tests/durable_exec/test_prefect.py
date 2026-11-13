@@ -2248,6 +2248,28 @@ def test_cache_policy_excludes_a_capability_parts_per_record_fields():
     assert key_for(capability_id='reporter') != key_for(capability_id='budget')
 
 
+def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
+    """A run's synthetic `capability_id` on a part's source doesn't fork the key, even when the part's own id is set.
+
+    An id the application chose on the source still does.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(source_capability_id: str) -> str | None:
+        part = _CachedPagePart(
+            content='Page text.',
+            source=CapabilitySource(source_capability_id, authority='none'),
+            capability_id='reporter',
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
+    assert key_for('fetcher') != key_for('crawler')
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
