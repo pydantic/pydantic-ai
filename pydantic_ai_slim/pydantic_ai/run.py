@@ -1177,16 +1177,7 @@ class AgentRunResult(Generic[OutputDataT]):
             self._state,
             self._new_message_index,
             messages=list(self.all_messages()),
-            deferred_tool_requests=(
-                DeferredToolRequests(
-                    calls=list(output.calls),
-                    approvals=list(output.approvals),
-                    metadata=dict(output.metadata),
-                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
-                )
-                if isinstance(output, DeferredToolRequests)
-                else None
-            ),
+            deferred_tool_requests=output if isinstance(output, DeferredToolRequests) else None,
         )
 
     def _conversation_saved(self, revision: str) -> None:

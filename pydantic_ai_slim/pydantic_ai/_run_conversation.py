@@ -47,12 +47,16 @@ def conversation_from_state(
     messages: list[_messages.ModelMessage],
     deferred_tool_requests: DeferredToolRequests | None,
 ) -> Conversation:
-    """The conversation a run's state holds, knowing which of its messages its store doesn't have yet."""
+    """The conversation a run's state holds, knowing which of its messages its store doesn't have yet.
+
+    The usage and the deferred tool requests are copies, so the conversation can be carried and mutated without
+    touching the run's own accounting or the conversation the run was given.
+    """
     conversation = Conversation(
         messages=messages,
         usage=copy(state.usage),
         conversation_id=state.conversation_id,
-        deferred_tool_requests=deferred_tool_requests,
+        deferred_tool_requests=None if deferred_tool_requests is None else _copy_requests(deferred_tool_requests),
         revision=state.conversation_revision,
     )
     index = unsaved_start(state, new_message_index)
@@ -62,6 +66,15 @@ def conversation_from_state(
     elif index is not None:
         mark_stored(conversation, conversation.messages[:index])
     return conversation
+
+
+def _copy_requests(requests: DeferredToolRequests) -> DeferredToolRequests:
+    return DeferredToolRequests(
+        calls=list(requests.calls),
+        approvals=list(requests.approvals),
+        metadata=dict(requests.metadata),
+        _kinds=dict(requests._kinds),  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 def unsaved_start(state: _agent_graph.GraphAgentState, new_message_index: int) -> int | None:

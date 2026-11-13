@@ -1285,6 +1285,28 @@ async def test_a_run_that_hits_a_usage_limit_can_still_store_what_it_did() -> No
     assert reloaded.messages == failed.messages
 
 
+async def test_a_failed_run_s_error_gets_its_conversation_once_it_leaves_the_run() -> None:
+    """Caught inside the run, the error has no conversation yet: the run sets it as the error leaves the run."""
+    agent = Agent(FunctionModel(_call_look_up))
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        async with agent.iter('Look it up', usage_limits=UsageLimits(request_limit=1)) as run:
+            try:
+                async for _ in run:
+                    pass
+            except UsageLimitExceeded as error:
+                assert error.conversation is None
+                raise
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.messages == run.all_messages()
+
+
 async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
     store = InMemoryConversationStore()
     agent = Agent(TestModel())
@@ -1379,6 +1401,8 @@ async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls
     failed = captured.conversation
     assert failed is not None
     assert failed.deferred_tool_requests == loaded.deferred_tool_requests
+    # A copy, so changing it doesn't change the conversation the run was given.
+    assert failed.deferred_tool_requests is not loaded.deferred_tool_requests
 
     await store.save(failed)
     reloaded = await store.load(paused.conversation_id)
