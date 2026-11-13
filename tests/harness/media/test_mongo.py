@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import struct
 from importlib.metadata import version
-from typing import Any, TypeIs
+from typing import cast
 
 import anyio.to_thread
 import pytest
@@ -20,6 +20,7 @@ from bson import BSON, encode
 from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
+from typing_extensions import TypeIs
 
 import pydantic_ai_harness.media as media
 from pydantic_ai_harness.media import (
@@ -37,8 +38,8 @@ _HARNESS_VERSION = version('pydantic-ai-harness')
 def _is_string_keyed_dict(value: object) -> TypeIs[dict[str, object]]:
     if not isinstance(value, dict):
         return False
-    keys: list[Any] = list(value.keys())
-    return all(isinstance(key, str) for key in keys)
+    entries = cast(dict[object, object], value)
+    return all(isinstance(key, str) for key in entries)
 
 
 def _fake_container_env_info() -> dict[str, object]:
