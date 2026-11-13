@@ -33,10 +33,10 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import UserContent
+from pydantic_ai.messages import ToolReturn, UserContent
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
@@ -458,25 +458,7 @@ def for_tool_result_text(
         if (verdict := _detect_content_list_result(detector, result)) is not None:
             return verdict
         if _is_checked_tool_return(result):
-            # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
-            value = cast('str | list[UserContent]', result.return_value)
-            value_verdict, return_value = _detect_return_value(detector, value)
-            if value_verdict is not None:
-                return value_verdict
-
-            content_verdict, content = _detect_tool_return_content(detector, result.content)
-            if content_verdict is not None:
-                return content_verdict
-
-            if return_value is None and content is None:
-                return GuardrailResult.allow()
-            return GuardrailResult.replace(
-                replace(
-                    result,
-                    return_value=result.return_value if return_value is None else return_value,
-                    content=result.content if content is None else content,
-                )
-            )
+            return _tool_return_verdict(detector, result)
         if on_other == 'allow':
             return GuardrailResult.allow()
         raise UserError(
@@ -485,3 +467,29 @@ def for_tool_result_text(
         )
 
     return guard
+
+
+def _tool_return_verdict(detector: TextDetector, result: ToolReturn[Any]) -> GuardrailResult:
+    """Run `detector` over a `ToolReturn`'s string or content-list `return_value` and its `content`.
+
+    The `ToolReturn` is rebuilt when either changed.
+    """
+    # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
+    value = cast('str | list[UserContent]', result.return_value)
+    value_verdict, return_value = _detect_return_value(detector, value)
+    if value_verdict is not None:
+        return value_verdict
+
+    content_verdict, content = _detect_tool_return_content(detector, result.content)
+    if content_verdict is not None:
+        return content_verdict
+
+    if return_value is None and content is None:
+        return GuardrailResult.allow()
+    return GuardrailResult.replace(
+        replace(
+            result,
+            return_value=result.return_value if return_value is None else return_value,
+            content=result.content if content is None else content,
+        )
+    )
