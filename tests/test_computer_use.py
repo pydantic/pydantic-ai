@@ -407,6 +407,40 @@ async def test_a_computer_call_with_safety_checks_refuses_an_external_executor(h
         await agent.run('Click.')
 
 
+@pytest.mark.parametrize(
+    'unfinished',
+    [
+        pytest.param({'finish_reason': 'length'}, id='cut-off'),
+        pytest.param({'finish_reason': 'content_filter'}, id='refused'),
+        pytest.param({'finish_reason': 'error'}, id='failed'),
+        pytest.param({'state': 'incomplete'}, id='stream-ended-early'),
+    ],
+)
+async def test_a_computer_call_in_a_response_that_did_not_finish_normally_does_nothing(
+    unfinished: dict[str, Any],
+) -> None:
+    ran: list[object] = []
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        ran.append(actions)
+        return ['Done.', SCREEN]
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(
+            parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 2}]})], **unfinished
+        )
+
+    agent = Agent(FunctionModel(respond), tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
+    result = await agent.run('Click.')
+    assert result.output == 'ok'
+    assert ran == []
+    [retry] = result.all_messages()[2].parts
+    assert isinstance(retry, ToolReturnPart) and retry.outcome == 'retried'
+    assert retry.content == 'The response this call came in did not finish normally, so the computer did nothing.'
+
+
 GRID_PROFILE = ModelProfile(computer_use_coordinate_grid=1000)
 GRID_SENTENCE = (
     'Positions are on a 0-999 grid over the latest screenshot: (0, 0) is the top left, (999, 999) the bottom right.'

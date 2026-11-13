@@ -67,7 +67,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...computer_use import COMPUTER_KIND
+from ...computer_use import COMPUTER_KIND, ComputerReturnPart
 from ...durable_exec._operation_backend import in_durable_unit
 from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
 from ...messages import (
@@ -1233,12 +1233,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
                 case responses.ResponseComputerToolCall():
-                    items.extend(
-                        # A response without a status, as some compatible APIs send, counts as completed.
-                        self._map_computer_call(
-                            item, response.id, response.status in (None, 'completed'), model_request_parameters
-                        )
-                    )
+                    items.extend(self._map_computer_call(item, response.id, model_request_parameters))
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
@@ -1310,14 +1305,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self,
         item: responses.ResponseComputerToolCall,
         response_id: str,
-        response_completed: bool,
         model_request_parameters: ModelRequestParameters,
     ) -> list[ModelResponsePart]:
         """The `computer` tool's call, or nothing when the request has no `computer` tool to run it."""
         if not (computer_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
             return []
         call_id = response_tool_call_id(item.call_id, self._call_id_scope(response_id))
-        return [map_computer_call(item, computer_name, call_id, self.system, response_completed)]
+        return [map_computer_call(item, computer_name, call_id, self.system)]
 
     def _map_code_interpreter_call(
         self, item: responses.ResponseCodeInterpreterToolCall
@@ -3427,7 +3421,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))
-
+        if isinstance(part, ComputerReturnPart) and self.profile.get('openai_supports_computer_tool'):
+            # As in a `computer_call_output`: `auto` may downscale the screenshot the model's positions are on.
+            for content in output:
+                if content['type'] == 'input_image':
+                    content['detail'] = 'original'
         return output
 
 

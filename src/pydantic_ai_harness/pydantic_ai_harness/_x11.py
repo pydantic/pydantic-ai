@@ -166,8 +166,6 @@ _DISPLAY_SIZE = ['xwininfo', '-root']
 """Prints the root window's size, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry` gives
 only the first monitor's, which would scale a click on a second monitor onto the first."""
 
-_ROOT_SIZE = re.compile(r'^\s*(Width|Height): (\d+)$', re.MULTILINE)
-
 _CAPTURES = '/tmp/pydantic-ai-captures'
 """Where screenshots are written before they are printed. Each capture removes files there older than five minutes,
 such as one a cancel left behind."""
@@ -323,16 +321,7 @@ class X11Computer:
             for command in commands:
                 stderr += (await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)).stderr
         except BaseException as error:
-            failures: list[str] = []
-            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
-                # Stopping comes before letting go, or the command could press again what was just released.
-                for cleanup in [['sh', '-c', _STOP_INPUT], *(['xdotool', *release] for release in releases if release)]:
-                    try:
-                        await self._run(cleanup)
-                    except WorkspaceUnavailableError:
-                        raise
-                    except Exception as e:
-                        failures.append(str(e))
+            failures = await self._release(releases)
             if failures and isinstance(error, WorkspaceError) and not isinstance(error, WorkspaceUnavailableError):
                 raise WorkspaceError(
                     f'{error}. Releasing what it pressed failed too, so a mouse button or key may still be held: '
@@ -343,17 +332,36 @@ class X11Computer:
         if 'No such key name' in stderr:
             raise UnsupportedActionError(f'The display cannot press that key: {stderr.strip()}')
 
+    async def _release(self, releases: list[list[str]]) -> list[str]:
+        """Stop the input command, then run each of `releases`; return what failed or didn't get to run in time."""
+        failures: list[str] = []
+        with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True) as releasing:
+            # Stopping comes before letting go, or the command could press again what was just released.
+            for cleanup in [['sh', '-c', _STOP_INPUT], *(['xdotool', *release] for release in releases if release)]:
+                try:
+                    await self._run(cleanup)
+                except WorkspaceUnavailableError:
+                    raise
+                except Exception as e:
+                    failures.append(str(e))
+        if releasing.cancelled_caught:
+            failures.append(f'releasing took longer than {_RELEASE_TIMEOUT} seconds')
+        return failures
+
     async def _capture(self, script: str, *args: str) -> bytes:
         """Run a capture script with `args` and read the PNG it prints as base64."""
         return png_from_base64((await self._run(['sh', '-c', script, 'sh', *args])).stdout, 'The screenshot command')
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(_DISPLAY_SIZE)).stdout
-        root = dict(_ROOT_SIZE.findall(output))
-        try:
-            return int(root['Width']), int(root['Height'])
-        except KeyError:
-            raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}') from None
+        # `[ \t]*` stays on one line; `\s*` would take time growing with the square of the output's length. X screen
+        # sizes are 16-bit, so at most 5 digits: a sandbox can't report one that splits a drag into millions of moves.
+        width, height = (
+            re.search(rf'^[ \t]*{name}: (\d{{1,5}})$', output, re.MULTILINE) for name in ('Width', 'Height')
+        )
+        if width is None or height is None:
+            raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}')
+        return int(width[1]), int(height[1])
 
     async def screenshot(self) -> bytes:
         return await self._capture(_CAPTURE)
@@ -364,11 +372,10 @@ class X11Computer:
 
     async def cursor_position(self) -> Point:
         output = (await self._run(['xdotool', 'getmouselocation', '--shell'])).stdout
-        fields = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
-        try:
-            return Point(x=int(fields['X']), y=int(fields['Y']))
-        except (KeyError, ValueError):
-            raise WorkspaceError(f'Unexpected `xdotool getmouselocation` output: {output.strip()!r}') from None
+        x, y = (re.search(rf'^{axis}=(\d{{1,5}})$', output, re.MULTILINE) for axis in 'XY')
+        if x is None or y is None:
+            raise WorkspaceError(f'Unexpected `xdotool getmouselocation` output: {output.strip()!r}')
+        return Point(x=int(x[1]), y=int(y[1]))
 
     async def act(self, action: DisplayAction) -> None:
         match action:
