@@ -11,7 +11,13 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_env,
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.boxd_sandbox._backend import BoxdSandboxBackend, destroy_machine
 
 if TYPE_CHECKING:
@@ -88,12 +94,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     `True` holds it at 1280x800, or pass its `(width, height)`."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            # Core picks the run's workspace from the always-on capabilities only.
-            raise UserError(
-                '`BoxdSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_integer('auto_suspend_timeout', self.auto_suspend_timeout, minimum=0, optional=True)
@@ -102,6 +103,38 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
         check_env(self.env)
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        org: str | None = None,
+        snapshot: str | None = None,
+        vcpu: Literal[1, 2, 4, 8] | None = None,
+        auto_suspend_timeout: int | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> BoxdSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the
+        variadic base `from_spec`, because `client`'s `AsyncBoxd` hint is a `TYPE_CHECKING` import, and
+        publishes only the bare `'BoxdSandbox'`.
+        """
+        return cls(
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            org=org,
+            snapshot=snapshot,
+            vcpu=vcpu,
+            auto_suspend_timeout=auto_suspend_timeout,
+            working_dir=working_dir,
+            env=env,
+        )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
         """Construct a lazy backend for an existing machine."""
@@ -115,8 +148,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         A machine that no longer exists is already gone, so destroying it returns quietly. A machine
         that is not isolated raises `ValueError` and is left alone: `BoxdSandbox` never created it.
         """
-        if ref.provider != 'boxd':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxd'")
+        check_provider(ref, 'boxd')
         await destroy_machine(self.client, ref.id)
 
     async def fork(self, ref: WorkspaceRef) -> WorkspaceRef:

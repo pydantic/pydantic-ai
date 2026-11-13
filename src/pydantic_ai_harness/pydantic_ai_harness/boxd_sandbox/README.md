@@ -6,7 +6,26 @@ Run your agent's commands and file edits in an isolated [boxd](https://boxd.sh) 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BoxdSandbox's get_workspace hook gives the run a boxd cloud machine as ctx.workspace, so each command and file operation goes over the boxd API, authenticated with BOXD_API_KEY, and runs in the machine as the boxd user; output comes back to the tool. The first use creates the machine, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. fork(ref) copies a machine, with its files and running processes, into a new isolated one.](https://pydantic.dev/docs/ai/img/harness/boxd-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: boxd Sandbox: your agent's commands run in a boxd cloud machine
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools like run_command. Via ctx.workspace, BoxdSandbox's get_workspace hands the run a boxd cloud machine over the boxd API with BOXD_API_KEY. Later runs reattach with the WorkspaceRef in the message history or result.workspace.ref, destroy(ref) deletes the machine and fork(ref) copies it with its files and processes.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        boxd["BoxdSandbox()<br/>get_workspace hands<br/>the run a boxd machine"]:::capability
+    end
+    sandbox["boxd cloud machine<br/>created on first use,<br/>deleted by destroy(ref)"]:::external
+    copy["copy of the machine<br/>starts with the same<br/>files and processes"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| boxd
+    ref -.->|"a later run reattaches"| boxd
+    boxd <-->|"boxd API,<br/>BOXD_API_KEY"| sandbox
+    sandbox -->|"fork(ref)"| copy
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install
 

@@ -261,26 +261,43 @@ async def _run_menu(
             menu.notice = await rename_account(store, value.account, dialogs) or None
             continue
         elif isinstance(value, _SignOut):
-            leaving = value.account
-            # A usage fetch may refresh this account's tokens; let it end before they are deleted.
-            await menu.usage.stop(leaving.login)
-            menu.notice = await sign_out_account(store, leaving, dialogs) or None
-            if menu.notice is not None:
-                forget(leaving.login)
-                messages.append(menu.notice)
+            await _sign_out(menu, store, value.account, dialogs=dialogs, forget=forget, messages=messages)
             continue
         else:
             return '\n'.join(messages) or 'No changes.'
-        if target is None:
-            menu.notice = None
-            continue
-        menu.focus = target
-        try:
-            menu.notice = await login([target])
-        except (UserError, ValueError) as exc:
-            menu.notice = str(exc)
-        menu.usage.forget(target)
+        await _sign_in(menu, target, login=login, messages=messages)
+
+
+async def _sign_out(
+    menu: AccountsMenu,
+    store: SettingsStore,
+    leaving: Account,
+    *,
+    dialogs: Dialogs,
+    forget: Callable[[str], None],
+    messages: list[str],
+) -> None:
+    """Sign out of `leaving` once the user confirms, and drop its cached provider."""
+    # A usage fetch may refresh this account's tokens; let it end before they are deleted.
+    await menu.usage.stop(leaving.login)
+    menu.notice = await sign_out_account(store, leaving, dialogs) or None
+    if menu.notice is not None:
+        forget(leaving.login)
         messages.append(menu.notice)
+
+
+async def _sign_in(menu: AccountsMenu, target: str | None, *, login: Login, messages: list[str]) -> None:
+    """Sign in to `target` through `/login`; a `None` target, a cancelled add, clears the notice."""
+    if target is None:
+        menu.notice = None
+        return
+    menu.focus = target
+    try:
+        menu.notice = await login([target])
+    except (UserError, ValueError) as exc:
+        menu.notice = str(exc)
+    menu.usage.forget(target)
+    messages.append(menu.notice)
 
 
 async def new_account(store: SettingsStore, plugins: Mapping[str, PluginLogin], dialogs: Dialogs) -> str | None:
