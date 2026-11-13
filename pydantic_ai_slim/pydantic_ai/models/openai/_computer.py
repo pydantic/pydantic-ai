@@ -220,7 +220,11 @@ def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
 
 
 def map_computer_call(
-    item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
+    item: responses.ResponseComputerToolCall,
+    tool_name: str,
+    tool_call_id: str,
+    provider_name: str,
+    response_completed: bool,
 ) -> ComputerCallPart:
     """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
@@ -232,9 +236,10 @@ def map_computer_call(
     if 'pending_safety_checks' in item.model_fields_set and (checks := dumped.get('pending_safety_checks')) != []:
         provider_details[_SAFETY_CHECKS] = checks
     args: dict[str, Any] | str
-    if item.status != 'completed':
-        # Cut off or still being generated: like a truncated function call, its arguments don't parse, so none of it
-        # runs. OpenAI says not to run a partially generated action.
+    if item.status != 'completed' or not response_completed:
+        # Cut off, still being generated, or in a response that stopped early: like a truncated function call, its
+        # arguments don't parse, so none of it runs. OpenAI says not to run a partially generated action, and to stop
+        # when a response is incomplete or failed, even when the call itself finished.
         args = '{"actions": ['
     else:
         args = _map_actions(dumped, provider_details)
