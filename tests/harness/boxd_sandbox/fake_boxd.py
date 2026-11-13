@@ -370,10 +370,6 @@ class FakeDesktop:
     errors: list[BaseException | None] = field(default_factory=list[BaseException | None])
 
 
-def _invalid(message: str) -> APIStatusError:
-    return APIStatusError(message, code='invalid_argument', grpc_code=3)
-
-
 class _Point(Protocol):
     x: int
     y: int
@@ -430,7 +426,7 @@ def _at(action: _Action) -> str:
 
 
 class _FakeComputerTransport:
-    """boxd's `ComputerAction` gRPC call, with the limits boxd's server enforces, under the SDK's own `AsyncComputer`."""
+    """boxd's `ComputerAction` gRPC call, under the SDK's own `AsyncComputer`."""
 
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
@@ -481,20 +477,12 @@ class _FakeComputerTransport:
         if which in ('mouse_down', 'mouse_up'):
             return f'{_at(action)} {action.button}'
         if which == 'drag':
-            if not 2 <= len(action.path) <= 100:
-                raise _invalid('a drag path has 2 to 100 points')
             return f'{" ".join(_point(point) for point in action.path)} modifiers={action.modifiers!r}'
         if which == 'scroll':
-            if max(abs(action.delta_x), abs(action.delta_y)) > 100:
-                raise _invalid('scroll at most 100 wheel clicks each way')
             return f'{_at(action)} dx={action.delta_x} dy={action.delta_y} modifiers={action.modifiers!r}'
         if which == 'type':
-            if len(action.text) > 10_000:
-                raise _invalid('type at most 10000 characters per call')
             return f'{len(action.text)} {action.text[:20]!r}'
         assert which == 'key'
-        if action.repeat > 100:
-            raise _invalid('repeat at most 100 times')
         return f'{action.keys!r} repeat={action.repeat} hold_ms={action.hold_ms}'
 
 
