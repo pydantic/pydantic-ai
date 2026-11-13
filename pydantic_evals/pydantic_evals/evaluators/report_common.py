@@ -149,6 +149,11 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
     title: str = 'Confusion Matrix'
 
     def evaluate(self, ctx: ReportEvaluatorContext[Any, Any, Any]) -> ConfusionMatrix:
+        # Checked before the loop, so the error is raised even when the report has no cases.
+        if (self.predicted_from == 'labels' and self.predicted_key is None) or (
+            self.expected_from == 'labels' and self.expected_key is None
+        ):
+            raise ValueError("'key' is required when from_='labels'")
         predicted: list[str] = []
         expected: list[str] = []
 
@@ -186,8 +191,7 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
         elif from_ == 'metadata':
             return ConfusionMatrixEvaluator._extract_metadata(case, key)
         elif from_ == 'labels':
-            if key is None:
-                raise ValueError("'key' is required when from_='labels'")
+            assert key is not None  # checked by `evaluate`
             label_result = case.labels.get(key)
             return label_result.value if label_result else None
         assert_never(from_)
