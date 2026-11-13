@@ -242,6 +242,13 @@ def _validation_reason(exc: ValidationError) -> str:
     return f'ValidationError: {"; ".join(reasons)}'
 
 
+def _log_failures(workers: Mapping[str, asyncio.Task[str]]) -> None:
+    """Retrieve, as `gather` did, each finished worker's error, so asyncio doesn't report it when collected."""
+    for task_id, worker in workers.items():
+        if not worker.cancelled() and (exc := worker.exception()) is not None:
+            logging.getLogger(__name__).error('Delegation task %s failed while closing', task_id, exc_info=exc)
+
+
 class DelegationTasks:
     """Own detached children until `opened` exits; bind to runs with `bind`.
 
@@ -285,9 +292,9 @@ class DelegationTasks:
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._holding: set[str] = set()
+        """Settling tasks whose history `save` keeps in memory until their observers have been told."""
         self._unsaved: set[str] = set()
         """Tasks whose last `save` failed or was cut short by its bound, so closing saves them again."""
-        """Settling tasks whose history `save` keeps in memory until their observers have been told."""
         self._history_on_disk: dict[str, Path] = {}
         """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory."""
         self._questions: dict[str, _Question] = {}
@@ -369,13 +376,12 @@ class DelegationTasks:
             # A worker whose run ended is saving its record, which a cancellation would cut short.
             if self.records[task_id].status == 'running':
                 worker.cancel()
-        if self._workers:
+        # Only these, so a worker whose error already reached its caller isn't reported again.
+        pending = {task_id: worker for task_id, worker in self._workers.items() if not worker.done()}
+        if pending:
             # Unlike `gather`, a timed-out `wait` doesn't wait for a child that ignores cancellation.
-            await asyncio.wait(self._workers.values())
-            for task_id, worker in self._workers.items():
-                # Retrieved, as `gather` did, so asyncio doesn't report it when the worker is collected.
-                if not worker.cancelled() and (exc := worker.exception()) is not None:
-                    logging.getLogger(__name__).error('Delegation task %s failed while closing', task_id, exc_info=exc)
+            await asyncio.wait(pending.values())
+            _log_failures(pending)
         # Every other record saved itself when it settled, unless that save failed or was cut short.
         for record in self.records.values():
             if record.status == 'running':
