@@ -454,7 +454,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import Budget, SpendLimitExceeded
 
 limits = SpendLimits(budgets=[Budget(tokens=1, window='total')])
 agent = Agent(TestModel(), capabilities=[limits])
@@ -473,7 +473,7 @@ from decimal import Decimal
 from redis.asyncio import Redis
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, RedisSpendStore
+from pydantic_ai_harness.spend_limits import Budget, RedisSpendStore
 
 limits = SpendLimits(
     budgets=[
@@ -585,7 +585,7 @@ print(agent.run_sync('Set up storage').output)
   `pydantic_ai_harness.ask_user`) first.
 - Each question is a deferred call marked `kind='question'` (`requests.kind(id) == 'question'`); `AskUser`
   answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
-  at a time, through core `wait_for_external_event` like `RequestInput`: in process by default, journaled
+  at a time, through core `wait_for_external_event` like a token-taking `HandleDeferredToolCalls` handler: in process by default, journaled
   and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect the engine refuses it with `UserError`
   (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
   tool body defers, so streaming doesn't stop on the call.
@@ -598,8 +598,8 @@ print(agent.run_sync('Set up storage').output)
   A thread cannot be cancelled: wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`,
   and read terminal input with an async prompt library, not `input()` in a thread.
 - Custom text has no length cap, so bound client input.
-- With `RequestInput` on the same agent, `AskUser` answers its questions first; with `answerer=None`,
-  `RequestInput`'s `ask` gets the question and answers it with `ask_user_result` in `calls`.
+- With a `HandleDeferredToolCalls` on the same agent, `AskUser` answers its questions first; with
+  `answerer=None`, the handler gets the question and answers it with `ask_user_result` in `calls`.
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.

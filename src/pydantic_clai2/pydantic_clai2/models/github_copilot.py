@@ -98,10 +98,10 @@ def token(account: str = ACCOUNT) -> str:
     raise UserError('Copilot is not connected. Run /login github-copilot or set GITHUB_COPILOT_API_KEY.')
 
 
-def model(name: str) -> GitHubCopilotModel:
+def model(name: str, *, base_url: str | None = None) -> GitHubCopilotModel:
     """Use core's Copilot model profiles and request semantics, with the profile's login."""
     ref = parse_model(name)
-    return GitHubCopilotModel(ref.name, provider=GitHubCopilotProvider(api_key=token(ref.account)))
+    return GitHubCopilotModel(ref.name, provider=GitHubCopilotProvider(api_key=token(ref.account), base_url=base_url))
 
 
 class ServedModel(BaseModel):

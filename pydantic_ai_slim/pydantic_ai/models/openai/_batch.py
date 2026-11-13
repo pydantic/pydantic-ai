@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Required, cast
 
+import httpx2
 from openai import APIError, APIStatusError, AsyncOpenAI, Omit
 from openai.types import Batch as OpenAIBatch, responses
 from pydantic import BaseModel, JsonValue, TypeAdapter
@@ -193,7 +194,8 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
         if error.status_code < 500:
             # OpenAI refused to create the batch, so nothing reads the file, which it would otherwise keep for 30 days.
             # After a server error or no response, the batch may have been created, so the file is left for it.
-            with suppress(APIError):
+            # `openai` lets a status a retrying transport gave up on through unwrapped.
+            with suppress(APIError, httpx2.HTTPStatusError):
                 await client.files.delete(file.id)
         raise
     _UPLOADED_INPUT_FILES[batch_credential(model), batch.id] = _UploadedInputFile(file.id)
@@ -223,16 +225,17 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
     details = _DETAILS_ADAPTER.validate_python(batch.provider_details)
     results: dict[str, BatchResult] = {}
     for file_id in (details.get('output_file_id'), details.get('error_file_id')):
-        if file_id:
-            for line in (await client.files.content(file_id)).text.splitlines():
-                result = to_result(_OutputLine.model_validate_json(line))
-                results[result.custom_id] = result
+        if not file_id:
+            continue
+        for line in (await client.files.content(file_id)).text.splitlines():
+            result = to_result(_OutputLine.model_validate_json(line))
+            results[result.custom_id] = result
     if details['status'] == 'completed':
         uploaded_key = (batch_credential(model), batch.id)
         if (uploaded := _UPLOADED_INPUT_FILES.get(uploaded_key)) is not None and uploaded.completed:
             del _UPLOADED_INPUT_FILES[uploaded_key]
             # Every request ran, so the input file isn't needed again; OpenAI would otherwise keep it for 30 days.
-            with suppress(APIError):
+            with suppress(APIError, httpx2.HTTPStatusError):
                 await client.files.delete(uploaded.file_id)
     else:
         # The output and error files have no line for a request the batch didn't run, so the input file lists them.

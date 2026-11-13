@@ -14,7 +14,7 @@ from openai import AsyncStream
 from openai.types import responses
 from openai.types.responses import ResponseCompactionItem
 from openai.types.responses.response_status import ResponseStatus
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from pydantic_core import to_json
 
 from ... import _utils, usage
@@ -23,7 +23,9 @@ from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from .._tool_call_ids import stored_tool_call_id
 from ._citations import (
+    jsonable_annotation,
     map_responses_citations,
     responses_citations_provider_details,
     responses_output_text_annotation_ta,
@@ -45,7 +47,6 @@ from ._response_fields import (
     map_logprobs,
     map_usage,
     response_status_to_state,
-    response_tool_call_id,
 )
 from ._settings import OpenAIResponsesModelSettings, echoed_store
 from ._tool_search import (
@@ -79,6 +80,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
+    # Text annotations by item ID and content index, collected until `output_text.done` maps them.
+    _annotations_by_item: dict[tuple[str, int], list[object]] = field(
+        default_factory=dict[tuple[str, int], list[object]], init=False
+    )
+    # `phase` (commentary | final_answer) on assistant message items, captured from the `output_item.added` event
+    # and merged into the corresponding `TextPart.provider_details` on the first `output_text.delta` (so consumers
+    # can filter commentary from final-answer text as it streams, rather than having to buffer the whole part), or
+    # on `output_text.done` if no delta was received.
+    _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = field(
+        default_factory=dict[str, Literal['commentary', 'final_answer']], init=False
+    )
+    _phase_started_content: set[tuple[str, int]] = field(default_factory=set[tuple[str, int]], init=False)
+    _mcp_list_tools_return_ids: set[str] = field(default_factory=set[str], init=False)
+    _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
+    _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
+    _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -140,622 +157,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         await self._response.source.close()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
-            # Track annotations by item_id and content_index
-            _annotations_by_item: dict[tuple[str, int], list[object]] = {}
-            # Track `phase` (commentary | final_answer) on assistant message items, captured
-            # from the `output_item.added` event and merged into the corresponding
-            # `TextPart.provider_details` on the first `output_text.delta` (so consumers can
-            # filter commentary from final-answer text as it streams, rather than having to
-            # buffer the whole part), or on `output_text.done` if no delta was received.
-            _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
-            _phase_started_content: set[tuple[str, int]] = set()
-            mcp_list_tools_return_ids: set[str] = set()
-            pending_tool_search_call_ids: deque[str] = deque()
-            function_call_args: dict[str, str] = {}
-            finalized_function_calls: set[str] = set()
-
-            def handle_function_call_part(
-                item: responses.ResponseFunctionToolCall,
-            ) -> ModelResponseStreamEvent:
-                item_id = item.id
-                if item_id is not None:  # pragma: no branch
-                    function_call_args[item_id] = item.arguments
-                # Preserve any namespace attached to a discovered deferred tool for replay.
-                provider_details: dict[str, Any] | None = None
-                if item.namespace:
-                    provider_details = {'namespace': item.namespace}
-                return self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=item_id,
-                    tool_name=item.name,
-                    args=item.arguments,
-                    tool_call_id=response_tool_call_id(
-                        item.call_id,
-                        self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
-                    ),
-                    id=item_id,
-                    provider_name=self.provider_name,
-                    provider_details=provider_details,
-                )
-
-            def finalize_function_call(item_id: str, final_args: str) -> Iterator[ModelResponseStreamEvent]:
-                if item_id in finalized_function_calls or not final_args:
-                    return
-                existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
-                if not isinstance(existing_part, ToolCallPart):
-                    # A stream resumed after `output_item.added` has no complete part yet;
-                    # `output_item.done` creates it from the full item.
-                    return
-
-                received_args = function_call_args.get(item_id, '')
-                if received_args == final_args:
-                    finalized_function_calls.add(item_id)
-                    return
-
-                if final_args.startswith(received_args):
-                    # The Codex backend can send arguments only in the done events.
-                    yield from self._parts_manager.handle_tool_call_delta_events(
-                        vendor_part_id=item_id,
-                        args=final_args[len(received_args) :],
-                    )
-                else:
-                    # Replacing the part would emit a second `PartStartEvent` for the same call,
-                    # which UI event streams render as a duplicate tool call, so keep what streamed.
-                    finalized_function_calls.add(item_id)
-                    warnings.warn(
-                        'The provider sent a `function_call_arguments.done`/`output_item.done` snapshot whose '
-                        f'arguments differ from the streamed argument deltas for function call item {item_id!r} '
-                        f'(tool {existing_part.tool_name!r}); the streamed arguments were kept. '
-                        'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
-                        UserWarning,
-                    )
-                    return
-
-                function_call_args[item_id] = final_args
-                finalized_function_calls.add(item_id)
-
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
 
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                self._last_sequence_number = chunk.sequence_number
-                if isinstance(
-                    chunk,
-                    (
-                        responses.ResponseCreatedEvent,
-                        responses.ResponseInProgressEvent,
-                        responses.ResponseQueuedEvent,
-                        responses.ResponseCompletedEvent,
-                        responses.ResponseFailedEvent,
-                        responses.ResponseIncompleteEvent,
-                    ),
-                ):
-                    # Stamp the background marker from any status event that carries it, so it survives a
-                    # stream that starts mid-way (a resumed `retrieve(stream=True)` whose first event is
-                    # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
-                    # relies on it to cancel the server-side job.
-                    self._track_background(chunk.response)
-                    if isinstance(
-                        chunk,
-                        (
-                            responses.ResponseCompletedEvent,
-                            responses.ResponseFailedEvent,
-                            responses.ResponseIncompleteEvent,
-                        ),
-                    ):
-                        self._handle_terminal_response(chunk.response)
-                # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
-                if isinstance(chunk, responses.ResponseCompletedEvent):
-                    # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
-                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see https://github.com/pydantic/pydantic-ai/issues/5419).
-                    for item in chunk.response.output:
-                        if (
-                            isinstance(item, responses.response_output_item.McpListTools)
-                            and item.id not in mcp_list_tools_return_ids
-                        ):
-                            _, return_part = map_mcp_list_tools(item, self.provider_name)
-                            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
-                            mcp_list_tools_return_ids.add(item.id)
-
-                    self._record_usage(chunk.response)
-                    self._store_conversation_id(chunk.response)
-                    self._set_state(chunk.response.status)
-
-                    raw_finish_reason = (
-                        details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
-                    )
-
-                    if raw_finish_reason:  # pragma: no branch
-                        if not self._has_refusal:
-                            self.provider_details = {
-                                **(self.provider_details or {}),
-                                'finish_reason': raw_finish_reason,
-                            }
-                            self.finish_reason = RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
-
-                    if chunk.response.moderation:
-                        self.provider_details = {
-                            **(self.provider_details or {}),
-                            'moderation': chunk.response.moderation.model_dump(),
-                        }
-
-                elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseContentPartDoneEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseCreatedEvent):
-                    self._set_state(chunk.response.status)
-                    if chunk.response.id:  # pragma: no branch
-                        self.provider_response_id = chunk.response.id
-                    self._store_conversation_id(chunk.response)
-
-                elif isinstance(chunk, responses.ResponseFailedEvent):
-                    self._record_usage(chunk.response)
-                    # Record the terminal state first, so a failed background job isn't cancelled after the raise.
-                    self._set_state(chunk.response.status)
-                    if error := chunk.response.error:
-                        raise response_error(
-                            self._model_name,
-                            error.code,
-                            error.message,
-                            error_type=response_error_type(error),
-                            in_stream=True,
-                        )
-                    # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
-                    if not self._has_refusal:
-                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
-                        self.finish_reason = RESPONSES_FINISH_REASON_MAP.get('failed')
-
-                elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                    # Without `output_item.added` (a resumed stream) the part has no tool name yet, so
-                    # skip its deltas and let `output_item.done` create it; never mutate finalized args.
-                    if chunk.item_id in function_call_args and chunk.item_id not in finalized_function_calls:
-                        function_call_args[chunk.item_id] += chunk.delta
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=chunk.item_id,
-                            args=chunk.delta,
-                        ):
-                            yield event
-
-                elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    for event in finalize_function_call(chunk.item_id, chunk.arguments):
-                        yield event
-
-                elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
-                    self._record_usage(chunk.response)
-                    self._set_state(chunk.response.status)
-
-                elif isinstance(chunk, responses.ResponseIncompleteEvent):
-                    self._record_usage(chunk.response)
-                    # Parity with the non-streaming `_process_response`: map the incomplete
-                    # reason when the provider sends one, leave the finish reason unset otherwise.
-                    raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
-                    if raw_finish_reason and not self._has_refusal:
-                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                        self.finish_reason = RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
-                    self._set_state(chunk.response.status)
-
-                elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
-                    if isinstance(chunk.item, responses.ResponseFunctionToolCall):
-                        yield handle_function_call_part(chunk.item)
-                    elif isinstance(chunk.item, responses.ResponseReasoningItem):
-                        pass
-                    elif isinstance(chunk.item, responses.ResponseOutputMessage):
-                        if chunk.item.phase is not None:
-                            _phase_by_item[chunk.item.id] = chunk.item.phase
-                    elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                        call_part, _ = map_web_search_tool_call(chunk.item, self.provider_name)
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                        )
-                    elif isinstance(chunk.item, responses.ResponseToolSearchCall):
-                        if chunk.item.execution == 'client':
-                            # Emit a regular function-tool call so the standard
-                            # tool-execution path runs our local `search_tools`.
-                            client_call_part = map_client_tool_search_call(chunk.item, self.provider_name)
-                            yield self._parts_manager.handle_tool_call_part(
-                                vendor_part_id=chunk.item.id,
-                                tool_name=client_call_part.tool_name,
-                                args=None,
-                                tool_call_id=client_call_part.tool_call_id,
-                                id=client_call_part.id,
-                                provider_name=self.provider_name,
-                            )
-                        else:
-                            call_part = map_tool_search_call(chunk.item, self.provider_name)
-                            if chunk.item.call_id is None:
-                                pending_tool_search_call_ids.append(call_part.tool_call_id)
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                            )
-                    elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
-                        call_part, _ = map_file_search_tool_call(chunk.item, self.provider_name)
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                        )
-                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        # The completed result is emitted from `output_item.done` below.
-                        pass
-                    elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                        call_part, _, _ = map_code_interpreter_tool_call(chunk.item, self.provider_name)
-
-                        args_json = call_part.args_as_json_str()
-                        # Drop the final `"}` so that we can add code deltas
-                        args_json_delta = args_json[:-2]
-
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                        )
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=f'{chunk.item.id}-call',
-                            args=args_json_delta,
-                        ):
-                            yield event
-                    elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
-                        call_part, _, _ = map_image_generation_tool_call(chunk.item, self.provider_name)
-                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
-                    elif isinstance(chunk.item, responses.response_output_item.McpCall):
-                        call_part, _ = map_mcp_call(chunk.item, self.provider_name)
-
-                        args_json = call_part.args_as_json_str()
-                        # Drop the final `{}}` so that we can add tool args deltas
-                        args_json_delta = args_json[:-3]
-                        assert args_json_delta.endswith('"tool_args":'), (
-                            f'Expected {args_json_delta!r} to end in `"tool_args":"`'
-                        )
-
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                        )
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=f'{chunk.item.id}-call',
-                            args=args_json_delta,
-                        ):
-                            yield event
-                    elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                        call_part, _ = map_mcp_list_tools(chunk.item, self.provider_name)
-                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
-                    elif isinstance(chunk.item, ResponseCompactionItem):
-                        # Emit a PartStartEvent so UIs can render compaction in progress.
-                        # The "done" event replaces this with the final encrypted_content.
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=chunk.item.id,
-                            part=map_compaction_item(chunk.item, self.provider_name),
-                        )
-                    else:
-                        warnings.warn(  # pragma: no cover
-                            f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
-                            UserWarning,
-                        )
-
-                elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                    if isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
-                        # The Codex backend can send a call's arguments only in the done events, without deltas.
-                        if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
-                            yield handle_function_call_part(chunk.item)
-                            finalized_function_calls.add(item_id)
-                        else:
-                            for event in finalize_function_call(item_id, chunk.item.arguments):
-                                yield event
-                    elif isinstance(chunk.item, responses.ResponseReasoningItem):
-                        if signature := chunk.item.encrypted_content:  # pragma: no branch
-                            # Add the signature to the part corresponding to the first summary/raw CoT
-                            for event in self._parts_manager.handle_thinking_delta(
-                                vendor_part_id=chunk.item.id,
-                                id=chunk.item.id,
-                                signature=signature,
-                                provider_name=self.provider_name,
-                            ):
-                                yield event
-                    elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                        _, return_part, file_parts = map_code_interpreter_tool_call(chunk.item, self.provider_name)
-                        for i, file_part in enumerate(file_parts):
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{chunk.item.id}-file-{i}', part=file_part
-                            )
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
-                    elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                        call_part, return_part = map_web_search_tool_call(chunk.item, self.provider_name)
-
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=f'{chunk.item.id}-call',
-                            args=call_part.args,
-                        ):
-                            yield event
-
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
-                    elif isinstance(chunk.item, responses.ResponseToolSearchCall):
-                        for event in self._handle_tool_search_call_done(chunk.item):
-                            yield event
-                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        if chunk.item.execution == 'server':
-                            call_id = match_tool_search_output_to_call(chunk.item.call_id, pending_tool_search_call_ids)
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{chunk.item.id}-return',
-                                part=build_tool_search_return_part(
-                                    call_id if call_id is not None else chunk.item.id,
-                                    chunk.item,
-                                    self.provider_name,
-                                ),
-                            )
-                    elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
-                        call_part, return_part = map_file_search_tool_call(chunk.item, self.provider_name)
-
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=f'{chunk.item.id}-call',
-                            args=call_part.args,
-                        ):
-                            yield event
-
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
-                    elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
-                        _, return_part, file_part = map_image_generation_tool_call(chunk.item, self.provider_name)
-                        if file_part:  # pragma: no branch
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{chunk.item.id}-file', part=file_part
-                            )
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
-
-                    elif isinstance(chunk.item, responses.response_output_item.McpCall):
-                        _, return_part = map_mcp_call(chunk.item, self.provider_name)
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
-                    elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                        _, return_part = map_mcp_list_tools(chunk.item, self.provider_name)
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
-                        mcp_list_tools_return_ids.add(chunk.item.id)
-                    elif isinstance(chunk.item, ResponseCompactionItem):
-                        # Replace the preliminary part from the "added" event with the
-                        # final encrypted_content for round-tripping.
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=chunk.item.id,
-                            part=map_compaction_item(chunk.item, self.provider_name),
-                        )
-
-                elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                    # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
-                    vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
-                    for event in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=vendor_id,
-                        content=chunk.part.text,
-                        id=chunk.item_id,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
-                    # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
-                    vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
-                    for event in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=vendor_id,
-                        content=chunk.delta,
-                        id=chunk.item_id,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
-                    # Handle raw CoT from gpt-oss models using callback pattern
-                    for event in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=chunk.item_id,
-                        id=chunk.item_id,
-                        provider_name=self.provider_name,
-                        provider_details=make_raw_content_updater(chunk.delta, chunk.content_index),
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
-                    pass  # content already accumulated via delta events
-
-                elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                    # The event's `annotation` uses look-alike classes from another SDK module, which
-                    # `responses_output_text_annotations_ta` rejects, so it's turned into a plain dict first.
-                    annotation = chunk.annotation
-                    _annotations_by_item.setdefault((chunk.item_id, chunk.content_index), []).append(
-                        annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
-                    )
-
-                elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                    # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
-                    if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                        # Attach the message-level phase once to each content part.
-                        delta_provider_details: dict[str, Any] | None = None
-                        content_key = (chunk.item_id, chunk.content_index)
-                        if (
-                            content_key not in _phase_started_content
-                            and (phase := _phase_by_item.get(chunk.item_id)) is not None
-                        ):
-                            delta_provider_details = {'phase': phase}
-                            _phase_started_content.add(content_key)
-                        for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=content_key,
-                            content=chunk.delta,
-                            id=chunk.item_id,
-                            provider_name=self.provider_name,
-                            provider_details=delta_provider_details,
-                        ):
-                            yield event
-
-                elif isinstance(chunk, responses.ResponseTextDoneEvent):
-                    # Add annotations to provider_details if available
-                    provider_details: dict[str, Any] = {}
-                    content_key = (chunk.item_id, chunk.content_index)
-                    raw_annotations = _annotations_by_item.pop(content_key, [])
-                    if raw_annotations and self._model_settings.get('openai_include_raw_annotations'):
-                        provider_details['annotations'] = raw_annotations
-                    annotations: list[responses.response_output_text.Annotation] = []
-                    for raw_annotation in raw_annotations:
-                        try:
-                            annotations.append(responses_output_text_annotation_ta.validate_python(raw_annotation))
-                        except ValidationError:
-                            pass  # an annotation type the SDK doesn't know
-                    if chunk.logprobs:
-                        provider_details['logprobs'] = map_logprobs(chunk.logprobs)
-                    if (
-                        content_key not in _phase_started_content
-                        and (phase := _phase_by_item.get(chunk.item_id)) is not None
-                    ):
-                        provider_details['phase'] = phase
-                        _phase_started_content.add(content_key)
-                    existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
-                    # Annotation positions count into the final text, so they can't go on streamed text that differs.
-                    citations = (
-                        map_responses_citations(annotations, chunk.text)
-                        if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
-                        else None
-                    )
-                    if citations:
-                        provider_details.update(responses_citations_provider_details(annotations))
-                    # Empty text makes no part, as in `_process_response`.
-                    if provider_details and chunk.text:
-                        for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=content_key,
-                            content='',
-                            provider_name=self.provider_name,
-                            provider_details=provider_details,
-                            citations=citations,
-                        ):
-                            yield event
-
-                elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
-                    # Accumulate refusal text from deltas as a fallback in case the done event is missing.
-                    self._has_refusal = True
-                    self.finish_reason = 'content_filter'
-                    self._refusal_text += chunk.delta
-
-                elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
-                    # The done event contains the full refusal text, replacing any accumulated deltas.
-                    self._has_refusal = True
-                    self.finish_reason = 'content_filter'
-                    self._refusal_text = chunk.refusal
-
-                elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseWebSearchCallSearchingEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
-                    json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
-                    for event in self._parts_manager.handle_tool_call_delta_events(
-                        vendor_part_id=f'{chunk.item_id}-call',
-                        args=json_args_delta,
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
-                    for event in self._parts_manager.handle_tool_call_delta_events(
-                        vendor_part_id=f'{chunk.item_id}-call',
-                        args='"}',
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseCodeInterpreterCallInProgressEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseImageGenCallInProgressEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseImageGenCallPartialImageEvent):
-                    # Not present on the type, but present on the actual object.
-                    # See https://github.com/openai/openai-python/issues/2649
-                    output_format = getattr(chunk, 'output_format', 'png')
-                    file_part = FilePart(
-                        content=BinaryImage(
-                            data=base64.b64decode(chunk.partial_image_b64),
-                            media_type=f'image/{output_format}',
-                        ),
-                        id=chunk.item_id,
-                    )
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
-
-                elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
-                    for event in self._parts_manager.handle_tool_call_delta_events(
-                        vendor_part_id=f'{chunk.item_id}-call',
-                        args='}',
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                    for event in self._parts_manager.handle_tool_call_delta_events(
-                        vendor_part_id=f'{chunk.item_id}-call',
-                        args=chunk.delta,
-                    ):
-                        yield event
-
-                elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseFileSearchCallCompletedEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseFileSearchCallSearchingEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseFileSearchCallInProgressEvent):
-                    pass  # there's nothing we need to do here
-
-                elif isinstance(chunk, responses.ResponseErrorEvent):
-                    raise response_error(self._model_name, chunk.code, chunk.message, in_stream=True)
-
-                else:  # pragma: no cover
-                    warnings.warn(
-                        f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
-                        UserWarning,
-                    )
+                for event in self._map_event(chunk):
+                    yield event
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
@@ -766,6 +175,604 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'last_sequence_number': self._last_sequence_number,
             }
+
+    def _map_event(self, chunk: responses.ResponseStreamEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
+        self._last_sequence_number = chunk.sequence_number
+        if isinstance(
+            chunk,
+            (
+                responses.ResponseCreatedEvent,
+                responses.ResponseInProgressEvent,
+                responses.ResponseQueuedEvent,
+                responses.ResponseCompletedEvent,
+                responses.ResponseFailedEvent,
+                responses.ResponseIncompleteEvent,
+            ),
+        ):
+            # Stamp the background marker from any status event that carries it, so it survives a
+            # stream that starts mid-way (a resumed `retrieve(stream=True)` whose first event is
+            # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
+            # relies on it to cancel the server-side job.
+            self._track_background(chunk.response)
+            if isinstance(
+                chunk,
+                (
+                    responses.ResponseCompletedEvent,
+                    responses.ResponseFailedEvent,
+                    responses.ResponseIncompleteEvent,
+                ),
+            ):
+                self._handle_terminal_response(chunk.response)
+        match chunk:
+            # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
+            case responses.ResponseCompletedEvent():
+                yield from self._map_completed(chunk)
+            case responses.ResponseCreatedEvent():
+                self._map_created(chunk)
+            case responses.ResponseFailedEvent():
+                self._map_failed(chunk)
+            case responses.ResponseFunctionCallArgumentsDeltaEvent():
+                yield from self._map_function_call_arguments_delta(chunk)
+            case responses.ResponseFunctionCallArgumentsDoneEvent():
+                yield from self._finalize_function_call(chunk.item_id, chunk.arguments)
+            case responses.ResponseInProgressEvent() | responses.ResponseQueuedEvent():
+                self._map_in_progress(chunk)
+            case responses.ResponseIncompleteEvent():
+                self._map_incomplete(chunk)
+            case responses.ResponseOutputItemAddedEvent():
+                yield from self._map_output_item_added(chunk)
+            case responses.ResponseOutputItemDoneEvent():
+                yield from self._map_output_item_done(chunk.item)
+            case responses.ResponseReasoningSummaryPartAddedEvent():
+                yield from self._map_reasoning_summary_delta(chunk.item_id, chunk.summary_index, chunk.part.text)
+            case responses.ResponseReasoningSummaryTextDeltaEvent():
+                yield from self._map_reasoning_summary_delta(chunk.item_id, chunk.summary_index, chunk.delta)
+            case responses.ResponseReasoningTextDeltaEvent():
+                # Handle raw CoT from gpt-oss models using callback pattern
+                yield from self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    id=chunk.item_id,
+                    provider_name=self.provider_name,
+                    provider_details=make_raw_content_updater(chunk.delta, chunk.content_index),
+                )
+            case responses.ResponseOutputTextAnnotationAddedEvent():
+                # The event's `annotation` uses look-alike classes from another SDK module, which
+                # `responses_output_text_annotations_ta` rejects, so it's turned into a plain dict first.
+                self._annotations_by_item.setdefault((chunk.item_id, chunk.content_index), []).append(
+                    jsonable_annotation(chunk.annotation)
+                )
+            case responses.ResponseTextDeltaEvent():
+                yield from self._map_text_delta(chunk)
+            case responses.ResponseTextDoneEvent():
+                yield from self._map_text_done(chunk)
+            case responses.ResponseRefusalDeltaEvent():
+                self._map_refusal_delta(chunk)
+            case responses.ResponseRefusalDoneEvent():
+                self._map_refusal_done(chunk)
+            case responses.ResponseCodeInterpreterCallCodeDeltaEvent():
+                yield from self._map_code_interpreter_code_delta(chunk)
+            case responses.ResponseCodeInterpreterCallCodeDoneEvent():
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args='"}',
+                )
+            case responses.ResponseImageGenCallPartialImageEvent():
+                yield self._map_partial_image(chunk)
+            case responses.ResponseMcpCallArgumentsDoneEvent():
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args='}',
+                )
+            case responses.ResponseMcpCallArgumentsDeltaEvent():
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args=chunk.delta,
+                )
+            case responses.ResponseErrorEvent():
+                raise response_error(self._model_name, chunk.code, chunk.message, in_stream=True)
+            case (
+                responses.ResponseContentPartAddedEvent()
+                | responses.ResponseContentPartDoneEvent()
+                | responses.ResponseReasoningSummaryPartDoneEvent()
+                | responses.ResponseReasoningSummaryTextDoneEvent()
+                # Raw CoT content is already accumulated via delta events.
+                | responses.ResponseReasoningTextDoneEvent()
+                | responses.ResponseWebSearchCallInProgressEvent()
+                | responses.ResponseWebSearchCallSearchingEvent()
+                | responses.ResponseWebSearchCallCompletedEvent()
+                | responses.ResponseAudioDeltaEvent()
+                | responses.ResponseCodeInterpreterCallCompletedEvent()
+                | responses.ResponseCodeInterpreterCallInProgressEvent()
+                | responses.ResponseCodeInterpreterCallInterpretingEvent()
+                | responses.ResponseImageGenCallCompletedEvent()
+                | responses.ResponseImageGenCallGeneratingEvent()
+                | responses.ResponseImageGenCallInProgressEvent()
+                | responses.ResponseMcpListToolsInProgressEvent()
+                | responses.ResponseMcpListToolsCompletedEvent()
+                | responses.ResponseMcpListToolsFailedEvent()
+                | responses.ResponseMcpCallInProgressEvent()
+                | responses.ResponseMcpCallFailedEvent()
+                | responses.ResponseMcpCallCompletedEvent()
+                | responses.ResponseFileSearchCallCompletedEvent()
+                | responses.ResponseFileSearchCallSearchingEvent()
+                | responses.ResponseFileSearchCallInProgressEvent()
+            ):
+                pass  # there's nothing we need to do here
+            case _:  # pragma: no cover
+                warnings.warn(
+                    f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
+                    UserWarning,
+                )
+
+    def _map_completed(self, chunk: responses.ResponseCompletedEvent) -> Iterator[ModelResponseStreamEvent]:
+        # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
+        # Backfill mcp_list_tools results missing from streamed output_item.done events (see https://github.com/pydantic/pydantic-ai/issues/5419).
+        for item in chunk.response.output:
+            if (
+                isinstance(item, responses.response_output_item.McpListTools)
+                and item.id not in self._mcp_list_tools_return_ids
+            ):
+                _, return_part = map_mcp_list_tools(item, self.provider_name)
+                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                self._mcp_list_tools_return_ids.add(item.id)
+
+        self._record_usage(chunk.response)
+        self._store_conversation_id(chunk.response)
+        self._set_state(chunk.response.status)
+
+        raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
+
+        if raw_finish_reason:  # pragma: no branch
+            if not self._has_refusal:
+                self.provider_details = {
+                    **(self.provider_details or {}),
+                    'finish_reason': raw_finish_reason,
+                }
+                self.finish_reason = RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if chunk.response.moderation:
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'moderation': chunk.response.moderation.model_dump(),
+            }
+
+    def _map_created(self, chunk: responses.ResponseCreatedEvent) -> None:
+        self._set_state(chunk.response.status)
+        if chunk.response.id:  # pragma: no branch
+            self.provider_response_id = chunk.response.id
+        self._store_conversation_id(chunk.response)
+
+    def _map_failed(self, chunk: responses.ResponseFailedEvent) -> None:
+        self._record_usage(chunk.response)
+        # Record the terminal state first, so a failed background job isn't cancelled after the raise.
+        self._set_state(chunk.response.status)
+        if error := chunk.response.error:
+            raise response_error(
+                self._model_name,
+                error.code,
+                error.message,
+                error_type=response_error_type(error),
+                in_stream=True,
+            )
+        # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
+        if not self._has_refusal:
+            self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
+            self.finish_reason = RESPONSES_FINISH_REASON_MAP.get('failed')
+
+    def _map_incomplete(self, chunk: responses.ResponseIncompleteEvent) -> None:
+        self._record_usage(chunk.response)
+        # Parity with the non-streaming `_process_response`: map the incomplete
+        # reason when the provider sends one, leave the finish reason unset otherwise.
+        raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
+        if raw_finish_reason and not self._has_refusal:
+            self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+            self.finish_reason = RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+        self._set_state(chunk.response.status)
+
+    def _map_in_progress(self, chunk: responses.ResponseInProgressEvent | responses.ResponseQueuedEvent) -> None:
+        self._record_usage(chunk.response)
+        self._set_state(chunk.response.status)
+
+    def _map_function_call_arguments_delta(
+        self, chunk: responses.ResponseFunctionCallArgumentsDeltaEvent
+    ) -> Iterator[ModelResponseStreamEvent]:
+        # Without `output_item.added` (a resumed stream) the part has no tool name yet, so
+        # skip its deltas and let `output_item.done` create it; never mutate finalized args.
+        if chunk.item_id in self._function_call_args and chunk.item_id not in self._finalized_function_calls:
+            self._function_call_args[chunk.item_id] += chunk.delta
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=chunk.item_id,
+                args=chunk.delta,
+            )
+
+    def _handle_function_call_part(self, item: responses.ResponseFunctionToolCall) -> ModelResponseStreamEvent:
+        item_id = item.id
+        if item_id is not None:  # pragma: no branch
+            self._function_call_args[item_id] = item.arguments
+        # Preserve any namespace attached to a discovered deferred tool for replay.
+        provider_details: dict[str, Any] | None = None
+        if item.namespace:
+            provider_details = {'namespace': item.namespace}
+        return self._parts_manager.handle_tool_call_part(
+            vendor_part_id=item_id,
+            tool_name=item.name,
+            args=item.arguments,
+            tool_call_id=stored_tool_call_id(
+                item.call_id,
+                # Without the response ID yet, the ID is kept as sent rather than scoped by the timestamp:
+                # a request continuing this response by `previous_response_id` no longer holds it, so
+                # only the response ID can restore the IDs its results carry.
+                response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
+                provider_response_id=self.provider_response_id,
+                timestamp=self.timestamp,
+            ),
+            id=item_id,
+            provider_name=self.provider_name,
+            provider_details=provider_details,
+        )
+
+    def _finalize_function_call(self, item_id: str, final_args: str) -> Iterator[ModelResponseStreamEvent]:
+        if item_id in self._finalized_function_calls or not final_args:
+            return
+        existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
+        if not isinstance(existing_part, ToolCallPart):
+            # A stream resumed after `output_item.added` has no complete part yet;
+            # `output_item.done` creates it from the full item.
+            return
+
+        received_args = self._function_call_args.get(item_id, '')
+        if received_args == final_args:
+            self._finalized_function_calls.add(item_id)
+            return
+
+        if final_args.startswith(received_args):
+            # The Codex backend can send arguments only in the done events.
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=item_id,
+                args=final_args[len(received_args) :],
+            )
+        else:
+            # Replacing the part would emit a second `PartStartEvent` for the same call,
+            # which UI event streams render as a duplicate tool call, so keep what streamed.
+            self._finalized_function_calls.add(item_id)
+            warnings.warn(
+                'The provider sent a `function_call_arguments.done`/`output_item.done` snapshot whose '
+                f'arguments differ from the streamed argument deltas for function call item {item_id!r} '
+                f'(tool {existing_part.tool_name!r}); the streamed arguments were kept. '
+                'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                UserWarning,
+            )
+            return
+
+        self._function_call_args[item_id] = final_args
+        self._finalized_function_calls.add(item_id)
+
+    def _map_output_item_added(
+        self, chunk: responses.ResponseOutputItemAddedEvent
+    ) -> Iterator[ModelResponseStreamEvent]:
+        item = chunk.item
+        match item:
+            case responses.ResponseFunctionToolCall():
+                yield self._handle_function_call_part(item)
+            case responses.ResponseReasoningItem():
+                pass
+            case responses.ResponseOutputMessage():
+                if item.phase is not None:
+                    self._phase_by_item[item.id] = item.phase
+            case responses.ResponseFunctionWebSearch():
+                yield self._map_web_search_call_added(item)
+            case responses.ResponseToolSearchCall():
+                yield self._map_tool_search_call_added(item)
+            case responses.ResponseFileSearchToolCall():
+                yield self._map_file_search_call_added(item)
+            case responses.ResponseToolSearchOutputItem():
+                # The completed result is emitted from `output_item.done`.
+                pass
+            case responses.ResponseCodeInterpreterToolCall():
+                yield from self._map_code_interpreter_call_added(item)
+            case responses.response_output_item.ImageGenerationCall():
+                yield self._map_image_generation_call_added(item)
+            case responses.response_output_item.McpCall():
+                yield from self._map_mcp_call_added(item)
+            case responses.response_output_item.McpListTools():
+                yield self._map_mcp_list_tools_added(item)
+            case ResponseCompactionItem():
+                # Emit a PartStartEvent so UIs can render compaction in progress.
+                # The "done" event replaces this with the final encrypted_content.
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=item.id,
+                    part=map_compaction_item(item, self.provider_name),
+                )
+            case _:  # pragma: no cover
+                warnings.warn(
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
+                    UserWarning,
+                )
+
+    def _map_web_search_call_added(self, item: responses.ResponseFunctionWebSearch) -> ModelResponseStreamEvent:
+        call_part, _ = map_web_search_tool_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+
+    def _map_tool_search_call_added(self, item: responses.ResponseToolSearchCall) -> ModelResponseStreamEvent:
+        """Start the tool search call part, with its arguments left for `output_item.done` to fill in."""
+        if item.execution == 'client':
+            # Emit a regular function-tool call so the standard
+            # tool-execution path runs our local `search_tools`.
+            client_call_part = map_client_tool_search_call(item, self.provider_name)
+            return self._parts_manager.handle_tool_call_part(
+                vendor_part_id=item.id,
+                tool_name=client_call_part.tool_name,
+                args=None,
+                tool_call_id=client_call_part.tool_call_id,
+                id=client_call_part.id,
+                provider_name=self.provider_name,
+            )
+        call_part = map_tool_search_call(item, self.provider_name)
+        if item.call_id is None:
+            self._pending_tool_search_call_ids.append(call_part.tool_call_id)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+
+    def _map_file_search_call_added(self, item: responses.ResponseFileSearchToolCall) -> ModelResponseStreamEvent:
+        call_part, _ = map_file_search_tool_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+
+    def _map_code_interpreter_call_added(
+        self, item: responses.ResponseCodeInterpreterToolCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        call_part, _, _ = map_code_interpreter_tool_call(item, self.provider_name)
+
+        args_json = call_part.args_as_json_str()
+        # Drop the final `"}` so that we can add code deltas
+        args_json_delta = args_json[:-2]
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=args_json_delta,
+        )
+
+    def _map_image_generation_call_added(
+        self, item: responses.response_output_item.ImageGenerationCall
+    ) -> ModelResponseStreamEvent:
+        call_part, _, _ = map_image_generation_tool_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+
+    def _map_mcp_call_added(self, item: responses.response_output_item.McpCall) -> Iterator[ModelResponseStreamEvent]:
+        call_part, _ = map_mcp_call(item, self.provider_name)
+
+        args_json = call_part.args_as_json_str()
+        # Drop the final `{}}` so that we can add tool args deltas
+        args_json_delta = args_json[:-3]
+        assert args_json_delta.endswith('"tool_args":'), f'Expected {args_json_delta!r} to end in `"tool_args":"`'
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=args_json_delta,
+        )
+
+    def _map_mcp_list_tools_added(self, item: responses.response_output_item.McpListTools) -> ModelResponseStreamEvent:
+        call_part, _ = map_mcp_list_tools(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+
+    def _map_output_item_done(self, item: responses.ResponseOutputItem) -> Iterator[ModelResponseStreamEvent]:
+        match item:
+            case responses.ResponseFunctionToolCall(id=str(item_id)) if item_id:
+                yield from self._map_function_call_done(item, item_id)
+            case responses.ResponseReasoningItem():
+                if signature := item.encrypted_content:  # pragma: no branch
+                    # Add the signature to the part corresponding to the first summary/raw CoT
+                    yield from self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=item.id,
+                        id=item.id,
+                        signature=signature,
+                        provider_name=self.provider_name,
+                    )
+            case responses.ResponseCodeInterpreterToolCall():
+                yield from self._map_code_interpreter_call_done(item)
+            case responses.ResponseFunctionWebSearch():
+                yield from self._map_web_search_call_done(item)
+            case responses.ResponseToolSearchCall():
+                yield from self._handle_tool_search_call_done(item)
+            case responses.ResponseToolSearchOutputItem():
+                if item.execution == 'server':
+                    yield self._map_tool_search_output_done(item)
+            case responses.ResponseFileSearchToolCall():
+                yield from self._map_file_search_call_done(item)
+            case responses.response_output_item.ImageGenerationCall():
+                yield from self._map_image_generation_call_done(item)
+            case responses.response_output_item.McpCall():
+                yield self._map_mcp_call_done(item)
+            case responses.response_output_item.McpListTools():
+                yield from self._map_mcp_list_tools_done(item)
+            case ResponseCompactionItem():
+                # Replace the preliminary part from the "added" event with the
+                # final encrypted_content for round-tripping.
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=item.id,
+                    part=map_compaction_item(item, self.provider_name),
+                )
+            case _:
+                pass
+
+    def _map_function_call_done(
+        self, item: responses.ResponseFunctionToolCall, item_id: str
+    ) -> Iterator[ModelResponseStreamEvent]:
+        # The Codex backend can send a call's arguments only in the done events, without deltas.
+        if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
+            yield self._handle_function_call_part(item)
+            self._finalized_function_calls.add(item_id)
+        else:
+            yield from self._finalize_function_call(item_id, item.arguments)
+
+    def _map_code_interpreter_call_done(
+        self, item: responses.ResponseCodeInterpreterToolCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        _, return_part, file_parts = map_code_interpreter_tool_call(item, self.provider_name)
+        for i, file_part in enumerate(file_parts):
+            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-file-{i}', part=file_part)
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_web_search_call_done(
+        self, item: responses.ResponseFunctionWebSearch
+    ) -> Iterator[ModelResponseStreamEvent]:
+        call_part, return_part = map_web_search_tool_call(item, self.provider_name)
+
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=call_part.args,
+        )
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_tool_search_output_done(self, item: responses.ResponseToolSearchOutputItem) -> ModelResponseStreamEvent:
+        """Return a server-executed tool search's result, paired with the call it answers."""
+        call_id = match_tool_search_output_to_call(item.call_id, self._pending_tool_search_call_ids)
+        return self._parts_manager.handle_part(
+            vendor_part_id=f'{item.id}-return',
+            part=build_tool_search_return_part(
+                call_id if call_id is not None else item.id,
+                item,
+                self.provider_name,
+            ),
+        )
+
+    def _map_file_search_call_done(
+        self, item: responses.ResponseFileSearchToolCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        call_part, return_part = map_file_search_tool_call(item, self.provider_name)
+
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=call_part.args,
+        )
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_image_generation_call_done(
+        self, item: responses.response_output_item.ImageGenerationCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        _, return_part, file_part = map_image_generation_tool_call(item, self.provider_name)
+        if file_part:  # pragma: no branch
+            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-file', part=file_part)
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_mcp_call_done(self, item: responses.response_output_item.McpCall) -> ModelResponseStreamEvent:
+        _, return_part = map_mcp_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_mcp_list_tools_done(
+        self, item: responses.response_output_item.McpListTools
+    ) -> Iterator[ModelResponseStreamEvent]:
+        _, return_part = map_mcp_list_tools(item, self.provider_name)
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+        self._mcp_list_tools_return_ids.add(item.id)
+
+    def _map_reasoning_summary_delta(
+        self, item_id: str, summary_index: int, content: str
+    ) -> Iterator[ModelResponseStreamEvent]:
+        # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+        vendor_id = item_id if summary_index == 0 else f'{item_id}-{summary_index}'
+        yield from self._parts_manager.handle_thinking_delta(
+            vendor_part_id=vendor_id,
+            content=content,
+            id=item_id,
+            provider_name=self.provider_name,
+        )
+
+    def _map_refusal_delta(self, chunk: responses.ResponseRefusalDeltaEvent) -> None:
+        # Accumulate refusal text from deltas as a fallback in case the done event is missing.
+        self._has_refusal = True
+        self.finish_reason = 'content_filter'
+        self._refusal_text += chunk.delta
+
+    def _map_refusal_done(self, chunk: responses.ResponseRefusalDoneEvent) -> None:
+        # The done event contains the full refusal text, replacing any accumulated deltas.
+        self._has_refusal = True
+        self.finish_reason = 'content_filter'
+        self._refusal_text = chunk.refusal
+
+    def _map_code_interpreter_code_delta(
+        self, chunk: responses.ResponseCodeInterpreterCallCodeDeltaEvent
+    ) -> Iterator[ModelResponseStreamEvent]:
+        json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{chunk.item_id}-call',
+            args=json_args_delta,
+        )
+
+    def _map_partial_image(self, chunk: responses.ResponseImageGenCallPartialImageEvent) -> ModelResponseStreamEvent:
+        # Not present on the type, but present on the actual object.
+        # See https://github.com/openai/openai-python/issues/2649
+        output_format = getattr(chunk, 'output_format', 'png')
+        file_part = FilePart(
+            content=BinaryImage(
+                data=base64.b64decode(chunk.partial_image_b64),
+                media_type=f'image/{output_format}',
+            ),
+            id=chunk.item_id,
+        )
+        return self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
+
+    def _map_text_delta(self, chunk: responses.ResponseTextDeltaEvent) -> Iterator[ModelResponseStreamEvent]:
+        # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
+        if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            # Attach the message-level phase once to each content part.
+            delta_provider_details: dict[str, Any] | None = None
+            content_key = (chunk.item_id, chunk.content_index)
+            if (
+                content_key not in self._phase_started_content
+                and (phase := self._phase_by_item.get(chunk.item_id)) is not None
+            ):
+                delta_provider_details = {'phase': phase}
+                self._phase_started_content.add(content_key)
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id=content_key,
+                content=chunk.delta,
+                id=chunk.item_id,
+                provider_name=self.provider_name,
+                provider_details=delta_provider_details,
+            )
+
+    def _map_text_done(self, chunk: responses.ResponseTextDoneEvent) -> Iterator[ModelResponseStreamEvent]:
+        # Add annotations to provider_details if available
+        provider_details: dict[str, Any] = {}
+        content_key = (chunk.item_id, chunk.content_index)
+        raw_annotations = self._annotations_by_item.pop(content_key, [])
+        if raw_annotations and self._model_settings.get('openai_include_raw_annotations'):
+            provider_details['annotations'] = raw_annotations
+        annotations: list[responses.response_output_text.Annotation] = []
+        for raw_annotation in raw_annotations:
+            try:
+                annotations.append(responses_output_text_annotation_ta.validate_python(raw_annotation))
+            except ValidationError:
+                pass  # an annotation type the SDK doesn't know
+        if chunk.logprobs:
+            provider_details['logprobs'] = map_logprobs(chunk.logprobs)
+        if (
+            content_key not in self._phase_started_content
+            and (phase := self._phase_by_item.get(chunk.item_id)) is not None
+        ):
+            provider_details['phase'] = phase
+            self._phase_started_content.add(content_key)
+        existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
+        # Annotation positions count into the final text, so they can't go on streamed text that differs.
+        citations = (
+            map_responses_citations(annotations, chunk.text)
+            if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
+            else None
+        )
+        if citations:
+            provider_details.update(responses_citations_provider_details(annotations))
+        # Empty text makes no part, as in `_process_response`.
+        if provider_details and chunk.text:
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id=content_key,
+                content='',
+                provider_name=self.provider_name,
+                provider_details=provider_details,
+                citations=citations,
+            )
 
     def _handle_tool_search_call_done(
         self, item: responses.ResponseToolSearchCall

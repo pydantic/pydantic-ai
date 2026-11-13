@@ -281,7 +281,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
     assert body['service_tier'] == 'standard_only'
     assert body['diagnostics'] == {'previous_message_id': None}
     assert body['temperature'] == 0.5
-    assert body['system'][0]['text'] == 'Answer briefly'
+    assert body['system'][-1]['text'] == 'Answer briefly'
     assert body['tools'][0]['name'] == 'weather'
 
 
@@ -396,8 +396,11 @@ def _fake_model(api: _FakeBatchAPI, model_name: str = 'claude-sonnet-4-5') -> An
     return AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
 
 
-def _errored(error_type: str, message: str) -> BatchResult:
-    error = {'type': 'error', 'error': {'type': error_type, 'message': message}, 'request_id': 'req_1'}
+def _errored(error_type: str, message: str, *, details: dict[str, str] | None = None) -> BatchResult:
+    inner: dict[str, object] = {'type': error_type, 'message': message}
+    if details is not None:
+        inner['details'] = details
+    error = {'type': 'error', 'error': inner, 'request_id': 'req_1'}
     return BatchResult(custom_id='item', status='errored', body=json.dumps({'type': 'errored', 'error': error}))
 
 
@@ -417,11 +420,17 @@ def _errored(error_type: str, message: str) -> BatchResult:
             ModelQuotaExceededError,
             400,
         ),
+        (
+            'invalid_request_error',
+            'You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.',
+            ModelQuotaExceededError,
+            400,
+        ),
         ('authentication_error', 'invalid x-api-key', ModelAuthenticationError, 401),
         ('billing_error', 'Billing issue.', ModelQuotaExceededError, 402),
         ('permission_error', 'Not allowed.', ModelAuthenticationError, 403),
         ('not_found_error', 'Not found.', ModelNotFoundError, 404),
-        ('request_too_large', 'Request too large.', ModelHTTPError, 413),
+        ('request_too_large', 'Request too large.', ModelRequestRejectedError, 413),
         ('rate_limit_error', 'Rate limited.', ModelRateLimitError, 429),
         ('api_error', 'Internal server error.', ModelServerError, 500),
         ('timeout_error', 'Timed out.', ModelServerError, 504),
@@ -438,10 +447,23 @@ def test_anthropic_batch_errors_raise_the_category_of_the_same_error_outside_a_b
         model.batch_decode(_errored(error_type, message), _request())
     error = exc_info.value
     assert isinstance(error, ModelHTTPError)
-    if error_class is ModelHTTPError:
-        assert type(error) is ModelHTTPError
     assert (error.status_code, error.provider_error_type) == (status_code, error_type)
     assert error.body == {'type': 'error', 'error': {'type': error_type, 'message': message}, 'request_id': 'req_1'}
+
+
+def test_anthropic_batch_spend_cap_raises_quota_exceeded() -> None:
+    """An errored result's `details.error_code` reaches the classifier, so the tier spend cap isn't a rate limit."""
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+    result = _errored(
+        'rate_limit_error',
+        'You have reached your API usage limits.',
+        details={'error_code': 'enforced_spend_limit_reached'},
+    )
+    with pytest.raises(ModelQuotaExceededError) as exc_info:
+        model.batch_decode(result, _request())
+    error = exc_info.value
+    assert isinstance(error, ModelHTTPError)
+    assert (error.status_code, error.provider_error_type) == (429, 'rate_limit_error')
 
 
 def test_anthropic_batch_error_suggests_a_known_model_for_an_unknown_one() -> None:
