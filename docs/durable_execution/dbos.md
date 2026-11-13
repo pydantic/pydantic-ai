@@ -313,13 +313,18 @@ import asyncio
 
 from dbos import DBOS, Queue, SetWorkflowID, SetWorkflowTimeout
 
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+researcher = Agent('{{ openai:medium }}', name='researcher', capabilities=[DBOSDurability()])
+
 parent_queue = Queue('runs', worker_concurrency=2)  # parents wait on children
 child_queue = Queue('lanes', worker_concurrency=4)  # children: always higher
 
 
 @DBOS.workflow()
 async def run_lane(lane: str) -> str:
-    result = await researcher.run(f'Research: {lane}')  # `researcher` as above
+    result = await researcher.run(f'Research: {lane}')
     return result.output
 
 
