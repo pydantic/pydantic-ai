@@ -551,6 +551,7 @@ def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, 
     [
         ('claude-haiku-5-5', 'computer_toolset_20260801'),
         ('claude-opus-4-8', 'computer_toolset_20260801'),
+        ('claude-mythos-preview', 'computer_toolset_20260801'),
         ('claude-opus-4-7', 'computer_20251124'),
         ('claude-haiku-4-5', 'computer_20250124'),
         ('claude-3-5-haiku-latest', None),
@@ -1152,6 +1153,32 @@ async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_r
     cut = [index for index, event in enumerate(events) if isinstance(event, BetaRawContentBlockDeltaEvent)][-1]
     with pytest.raises(UnexpectedModelBehavior, match='ended before Claude finished its computer use calls'):
         await _streamed(events[: cut + 1])
+
+
+@pytest.mark.parametrize('stop_reason', ['refusal', 'max_tokens'])
+@pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
+async def test_a_call_in_a_response_that_did_not_finish_normally_runs_nothing(
+    allow_model_requests: None, stop_reason: Literal['refusal', 'max_tokens'], stream: bool
+) -> None:
+    """Anthropic says not to run the calls of a response that stopped for a refusal or the token limit."""
+    click = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
+    done = BetaTextBlock(text='done', type='text')
+    if stream:
+        first = _stream(click)
+        (end,) = [event for event in first if isinstance(event, BetaRawMessageDeltaEvent)]
+        end.delta = Delta(stop_reason=stop_reason)
+        client = MockAnthropic.create_stream_mock([first, _stream(done)])
+    else:
+        client = MockAnthropic.create_mock([_turn(click).model_copy(update={'stop_reason': stop_reason}), _turn(done)])
+    computer = FakeComputer()
+    agent = _agent(AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client)), computer)
+    if stream:
+        async with agent.run_stream_events('Go.') as events:
+            async for _ in events:
+                pass
+    else:
+        await agent.run('Go.')
+    assert computer.actions == []
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
