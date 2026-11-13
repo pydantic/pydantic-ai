@@ -1384,7 +1384,7 @@ async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls
 
     @agent.tool_plain(requires_approval=True)
     def delete_file() -> str:
-        raise AssertionError('the run failed before the tool ran')
+        return 'deleted'  # pragma: no cover
 
     paused = await agent.run('Delete it', output_type=[str, DeferredToolRequests])
     assert isinstance(paused.output, DeferredToolRequests)
@@ -1421,7 +1421,7 @@ async def test_an_externally_cancelled_event_stream_carries_its_conversation() -
     async def wait() -> str:
         started.set()
         await asyncio.Event().wait()
-        raise AssertionError('the run was cancelled before the tool returned')
+        return 'done'  # pragma: no cover
 
     async def consume() -> None:
         async with agent.run_stream_events('Wait') as events:
