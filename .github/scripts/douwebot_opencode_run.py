@@ -146,7 +146,7 @@ def otlp_span(
     }
 
 
-def export_spans(token: str, service: str, spans: list[dict[str, object]]) -> None:
+def export_spans(token: str, service: str, spans: list[dict[str, object]], *, timeout: float = 30) -> None:
     """Send `spans` to Logfire over OTLP/HTTP as `service`; a failed export only warns."""
     resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': service}}]}
     body = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'scope': {'name': service}, 'spans': spans}]}]}
@@ -156,8 +156,7 @@ def export_spans(token: str, service: str, spans: list[dict[str, object]]) -> No
         headers={'Content-Type': 'application/json', 'Authorization': token},
     )
     try:
-        # A run's export waits between the runs of its chain, inside the time budget of the run after it.
-        with urllib.request.urlopen(request, timeout=5):
+        with urllib.request.urlopen(request, timeout=timeout):
             pass
     # Callers export while a failed run's own exception propagates, so a failed export must not replace it.
     except (OSError, ValueError, http.client.HTTPException) as error:
@@ -222,7 +221,7 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
 
 
 def _export_run(
-    token: str, attempt: Attempt, resource: Mapping[str, str], *, trace_id: str, parent_id: str | None
+    token: str, attempt: Attempt, resource: Mapping[str, str], *, trace_id: str, parent_id: str | None, served: bool
 ) -> None:
     """Export the `OpenCode run` span of one ended run, with its provider and how it failed, if `token` is set."""
     if not token:
@@ -246,9 +245,10 @@ def _export_run(
         trace_id=trace_id,
         span_id=secrets.token_hex(8),
         parent_id=parent_id,
-        failed=attempt.finished is not None,
+        failed=not served,
     )
-    export_spans(token, 'opencode-fallback', [span])
+    # The export waits between the runs of its chain, inside the time budget of the run after it.
+    export_spans(token, 'opencode-fallback', [span], timeout=5)
 
 
 def run_with_fallback(
@@ -302,6 +302,7 @@ def run_with_fallback(
             if token
             else {}
         )
+        served = False
         try:
             with (
                 tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp,
@@ -341,13 +342,14 @@ def run_with_fallback(
                     'json',
                 ]
                 result = launch(command, env, stream)
+                served = True
         except subprocess.CalledProcessError:
             report_failure(attempt)
             raise
         finally:
             attempt.ended = time.time_ns()
             # Each run exports its span as it ends, so neither a later run's failure nor a cancellation drops it.
-            _export_run(token, attempt, resource, trace_id=trace_id, parent_id=parent_id)
+            _export_run(token, attempt, resource, trace_id=trace_id, parent_id=parent_id, served=served)
         print(f'OpenCode run served by {provider.model} on {provider.plan}.')
         return result, provider
 

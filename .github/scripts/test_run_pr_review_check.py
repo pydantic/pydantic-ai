@@ -572,7 +572,7 @@ def test_interrupted_review_exports_its_span(
         run_pr_review_check.main()
     run, span = exported
     assert _runs_of(span, [run]) == [_run(OPENCODE_GO, 1, {})]
-    assert 'status' not in run
+    assert run['status'] == {'code': 2}
     assert _span_attributes(span) == {
         **REVIEW_ATTRIBUTES,
         'pr_review_checks.outcome': 'FAILED',

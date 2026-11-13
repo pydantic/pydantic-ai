@@ -283,9 +283,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
   ends, a run the chain moved past included, it exports a child
   [`OpenCode run` span](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan) with the same
-  failure fields. A job that Actions cancels exports no review span: the step's bash does not pass
-  the interrupt on to `run_pr_review_check.py`. The spans of its runs that ended before the
-  cancellation remain.
+  failure fields. A job that Actions cancels exports no review span; the spans of its runs that
+  ended before the cancellation remain.
   OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
@@ -403,9 +402,10 @@ attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` wh
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
-`opencode_fallback.provider`. When the run's process failed, the span has an error status and adds the error type,
-status and provider code the job log names, as `opencode_fallback.error_type`, `opencode_fallback.error_status` and
-`opencode_fallback.error_code`, and whether the stream holds a `step_finish`, as `opencode_fallback.step_finish`.
+`opencode_fallback.provider`. A run that did not serve, an interrupted one included, has an error status. When the
+run's process failed, the span adds the error type, status and provider code the job log names, as
+`opencode_fallback.error_type`, `opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the
+stream holds a `step_finish`, as `opencode_fallback.step_finish`.
 Outside the job log, these spans are the only record of how a run the chain moved past failed. A `PR Review Checks`
 review's run spans are children of its review span; every other chain's runs share a trace of their own.
 
