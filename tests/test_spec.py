@@ -1,11 +1,19 @@
 """Tests for the shared _spec.py module."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability
+
+from .conftest import try_import
+
+with try_import() as jsonschema_imports_successful:
+    from jsonschema.validators import validator_for
 
 
 class TestNamedSpec:
@@ -220,6 +228,36 @@ class TestLoadFromRegistry:
 
 
 class TestBuildSchemaTypes:
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_variadic_keyword_capability_schema(self):
+        """Arbitrary keyword metadata remains valid when the constructor also has keyword-only parameters."""
+        spec = {'model': 'test', 'capabilities': [{'SetToolMetadata': {'code_mode': True}}]}
+        Agent.from_spec(spec)
+        schema = AgentSpec.model_json_schema_with_capabilities()
+        assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_keyword_only_capability_schema(self):
+        """Capability schemas agree with the keyword-only arguments accepted by Agent.from_spec."""
+
+        @dataclass
+        class KeywordCapability(AbstractCapability[None]):
+            minimum: int = 0
+
+            @classmethod
+            def from_spec(cls, *, minimum: int) -> Self:
+                return cls(minimum=minimum)
+
+        spec = {'model': 'test', 'capabilities': [{'KeywordCapability': {'minimum': 4}}]}
+        Agent.from_spec(spec, custom_capability_types=[KeywordCapability])
+        schema = AgentSpec.model_json_schema_with_capabilities([KeywordCapability])
+        validator = validator_for(schema)(schema)
+        assert list(validator.iter_errors(spec)) == []
+        scalar_spec = {'model': 'test', 'capabilities': [{'KeywordCapability': 4}]}
+        assert list(validator.iter_errors(scalar_spec))
+        with pytest.raises(ValueError, match='positional argument'):
+            Agent.from_spec(scalar_spec, custom_capability_types=[KeywordCapability])
+
     def test_no_params_class(self):
         class NoParams:
             def __init__(self): ...  # pragma: no cover

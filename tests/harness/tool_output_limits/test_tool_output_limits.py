@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
@@ -816,6 +817,87 @@ class _BrokenStore:
 # ---------------------------------------------------------------------------
 
 
+class TestFilesInReturnValue:
+    image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+
+    async def test_file_alone_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, self.image) is self.image
+
+    async def test_short_text_beside_a_file_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=95))])
+        value = ['header', self.image]
+        assert await _run(cap, value) is value
+
+    async def test_data_beside_files_is_reduced_and_the_files_kept(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, ['A' * 300, self.image, 'B' * 300]) == [
+            snapshot("""\
+["
+
+[truncated: 601 chars omitted from the middle; showing first 2 + last 4 of 607 chars]
+
+BB"]\
+"""),
+            self.image,
+        ]
+
+    async def test_data_beside_a_file_spills(self, tmp_path: Path):
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=store)
+        assert await _run(cap, ToolReturn(return_value=['A' * 300, self.image], metadata={'k': 'v'})) == ToolReturn(
+            return_value=[
+                snapshot("""\
+[Tool output too large (300 chars); stored to handle 'run-1/call-1.0'. Read it with read_tool_result(handle='run-1/call-1.0', offset=0, limit=200, from_end=False, pattern=None).]
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
+"""),
+                self.image,
+            ],
+            metadata=snapshot({'k': 'v', 'overflow_handle': 'run-1/call-1.0', 'overflow_bytes': 300}),
+        )
+        assert await store.read('run-1/call-1.0') == ('A' * 300).encode('utf-8')
+
+    async def test_structured_data_beside_a_file_is_reduced_and_the_file_kept(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, [{'rows': list(range(1_000))}, self.image, b'raw bytes']) == [
+            snapshot("""\
+
+
+[truncated: 3,912 chars omitted from the middle; showing first 0 + last 2 of 3,914 chars]
+
+"]\
+"""),
+            self.image,
+        ]
+
+    async def test_raw_bytes_beside_a_file_are_reduced_as_text(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, [b'R' * 5_000, self.image]) == [
+            snapshot("""\
+
+
+[truncated: 5,000 chars omitted from the middle; showing first 0 + last 2 of 5,002 chars]
+
+R"\
+"""),
+            self.image,
+        ]
+
+    async def test_content_beside_a_file_is_still_reduced(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        out = await _run(cap, ToolReturn(return_value=['image', self.image], content='C' * 5_000))
+        assert out == ToolReturn(
+            return_value=['image', self.image],
+            content=snapshot("""\
+
+
+[truncated: 4,998 chars omitted from the middle; showing first 0 + last 2 of 5,000 chars]
+
+CC\
+"""),
+        )
+
+
 class TestContentReduction:
     async def test_large_content_spilled(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
@@ -1287,6 +1369,33 @@ class TestAgentIntegration:
         returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         assert returns == ['{"blob":"____"}']
 
+    async def test_file_return_reaches_the_model_untruncated(self):
+        image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+        requests: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='read_image', args='{}')])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])],
+        )
+
+        @agent.tool_plain
+        def read_image() -> BinaryContent:
+            return image
+
+        result = await agent.run('read image')
+
+        # The follow-up request is what the model receives; history is what later requests replay.
+        for messages in (requests[1], result.all_messages()):
+            tool_return = messages[2].parts[0]
+            assert isinstance(tool_return, ToolReturnPart)
+            assert tool_return.content == image
+
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=10_000, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
@@ -1350,26 +1459,3 @@ class TestAgentIntegration:
         assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
         assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
         assert returns[1].content == 'Order A1: refunded'
-
-
-_LARGE_IMAGE = BinaryContent(data=b'\x89PNG' + b'\x00' * 100_000, media_type='image/png')
-
-
-class TestMediaReturnValues:
-    @pytest.mark.parametrize(
-        'original',
-        [
-            pytest.param(_LARGE_IMAGE, id='bare'),
-            pytest.param(['Screenshot attached.', _LARGE_IMAGE], id='list'),
-            pytest.param(ToolReturn(return_value=['done', _LARGE_IMAGE]), id='tool-return'),
-        ],
-    )
-    async def test_an_image_in_the_return_value_reaches_the_model_unchanged(self, original: object):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Truncate())])
-        assert await _run(cap, original) is original
-
-    async def test_large_text_beside_an_image_warns_and_passes_through(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate())])
-        original = ['x' * 5000, BinaryContent(data=b'\x00', media_type='image/png')]
-        with pytest.warns(UserWarning, match='non-text content'):
-            assert await _run(cap, original) is original
