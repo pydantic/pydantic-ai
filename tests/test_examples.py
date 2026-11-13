@@ -1860,7 +1860,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, SystemPromptPart) and m.content == (
-        '<context id="capability:refunds">\nConfirm the order ID before issuing a refund.\n</context>'
+        '<pyai:context id="capability:refunds">\nConfirm the order ID before issuing a refund.\n</pyai:context>'
     ):
         # docs/models/decision.md: with `refunds` loaded, the decision model picks its tool
         return ModelResponse(
