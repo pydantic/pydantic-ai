@@ -5795,25 +5795,52 @@ def _append_request(clean_messages: list[ModelMessage], message: ModelRequest) -
     ):
         parts = [*last_message.parts, *message.parts]
         parts.sort(key=_tool_results_first_sort_key)
-        metadata: dict[str, Any] | None = None
-        last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-        namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-        if _utils.is_str_dict(last_namespace) or _utils.is_str_dict(namespace):
-            metadata = {
-                _PYDANTIC_AI_METADATA_KEY: {
-                    **(last_namespace if _utils.is_str_dict(last_namespace) else {}),
-                    **(namespace if _utils.is_str_dict(namespace) else {}),
-                }
-            }
         merged_message = ModelRequest(
             parts=parts,
             instructions=last_message.instructions or message.instructions,
             timestamp=message.timestamp or last_message.timestamp,
-            metadata=metadata,
+            metadata=_merged_reserved_metadata(last_message, message),
         )
         clean_messages[-1] = merged_message
     else:
         clean_messages.append(_move_parts_from_between_tool_results(message))
+
+
+def _merged_reserved_metadata(first: ModelRequest, second: ModelRequest) -> dict[str, Any] | None:
+    """The metadata of the request merging `first` and `second`: their combined reserved namespaces.
+
+    The merged request records a deferred pause only if both did, so content added after a pause, such as a new
+    user message, still continues the run once merged into it.
+    """
+    first_namespace = (first.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    second_namespace = (second.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if not _utils.is_str_dict(first_namespace) and not _utils.is_str_dict(second_namespace):
+        return None
+    namespace = {
+        **(first_namespace if _utils.is_str_dict(first_namespace) else {}),
+        **(second_namespace if _utils.is_str_dict(second_namespace) else {}),
+    }
+    if not (_is_deferred_pause_record(first) and _is_deferred_pause_record(second)):
+        namespace.pop(_DEFERRED_PAUSE_KEY, None)
+    return {_PYDANTIC_AI_METADATA_KEY: namespace}
+
+
+_DEFERRED_PAUSE_KEY = 'deferred_pause'
+"""Marks a request an agent run wrote when it paused for deferred tool calls, in the reserved namespace.
+
+Set on the request holding the results of the step's other calls and on content recorded at the pause. A run
+resumed with no new prompt or results whose history ends on such requests after a response with unanswered calls
+runs only those calls, so deferred ones pause it again. Any other request after the response, such as a new user
+message or a request whose model call failed, continues the run instead.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops the reserved namespace, so a client can't
+claim a pause.
+"""
+
+
+def _is_deferred_pause_record(request: ModelRequest) -> bool:
+    """Whether `request` was written at a pause for deferred tool calls. See `_DEFERRED_PAUSE_KEY`."""
+    namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    return _utils.is_str_dict(namespace) and namespace.get(_DEFERRED_PAUSE_KEY) is True
 
 
 def _append_response(clean_messages: list[ModelMessage], message: ModelResponse) -> None:
@@ -6267,10 +6294,20 @@ def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessag
     metadata = message.metadata
     if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
         return metadata
-    # History sanitized before carries only `sanitize_messages`' own mark, which it sets again where it applies.
-    if metadata[_PYDANTIC_AI_METADATA_KEY] != {_UNSTATED_LOADS_KEY: True}:
+    # Dropping the framework's own marks loses nothing a client should keep: `sanitize_messages` sets its mark again
+    # where it applies, and a client's history can't hold a run's pause.
+    if not _holds_only_framework_marks(metadata[_PYDANTIC_AI_METADATA_KEY]):
         stripped.append(message)
     return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
+
+
+def _holds_only_framework_marks(namespace: object) -> bool:
+    """Whether a reserved namespace holds nothing but the marks `sanitize_messages` and paused runs set."""
+    return (
+        _utils.is_str_dict(namespace)
+        and bool(namespace)
+        and all(key in (_UNSTATED_LOADS_KEY, _DEFERRED_PAUSE_KEY) and value is True for key, value in namespace.items())
+    )
 
 
 def _strip_dangling_tail_tool_calls(

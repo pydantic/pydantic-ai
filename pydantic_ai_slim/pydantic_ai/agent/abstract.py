@@ -1159,11 +1159,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # append a new ModelRequest using the tool returns and retries
                                 if parts:
                                     messages.append(
-                                        _messages.ModelRequest(
-                                            parts,
-                                            run_id=graph_ctx.state.run_id,
-                                            conversation_id=graph_ctx.state.conversation_id,
-                                            timestamp=_utils.now_utc(),
+                                        _agent_graph.final_tool_results_request(
+                                            parts, graph_ctx.state, final_result.output
                                         )
                                     )
 

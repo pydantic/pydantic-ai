@@ -2280,6 +2280,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
                 ModelRequest(
                     parts=[
@@ -2744,6 +2745,7 @@ def test_parallel_tool_return_with_deferred():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -2847,6 +2849,7 @@ def test_parallel_tool_return_with_deferred():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -3041,6 +3044,7 @@ def test_parallel_tool_return_with_deferred():
                     ),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {}},
             ),
         ]
     )
@@ -3195,6 +3199,7 @@ async def test_approval_required_toolset():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -3254,6 +3259,7 @@ async def test_approval_required_toolset():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[

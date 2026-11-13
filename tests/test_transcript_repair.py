@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent, ApprovalRequired, CallDeferred, RunContext, capture_run_messages
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -41,12 +41,15 @@ from pydantic_ai.messages import (
     repair_messages,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
 
 TS = datetime(2024, 1, 1, tzinfo=UTC)
+
+PAUSE_RECORD = {'__pydantic_ai__': {'deferred_pause': True}}
+"""The metadata a run puts on the requests it writes when it pauses for deferred tool calls."""
 
 
 def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
@@ -516,6 +519,612 @@ async def test_deferred_run_history_not_silently_repaired():
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
+
+
+async def test_resuming_a_mixed_deferred_pause_pauses_again():
+    """Resuming a mixed deferred pause without results runs only the waiting calls again, so it pauses again (#7537).
+
+    The trailing request holds the results of the calls the step already ran. Like a history that ends on the
+    response, the resume goes back through the tool calls instead of sending the request to the model, and the
+    waiting call asks for approval again, so no model request is made and the history is unchanged.
+    """
+    received: list[list[ModelMessage]] = []
+    get_data_runs = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                    ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        nonlocal get_data_runs
+        get_data_runs += 1
+        return 'data'
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:
+        return 'created'
+
+    result = await agent.run('Do it.')
+    assert isinstance(result.output, DeferredToolRequests)
+    message_history = result.all_messages()
+
+    resumed = await agent.run(message_history=message_history)
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call_file']
+    assert resumed.all_messages() == message_history
+    assert len(received) == 1
+    assert get_data_runs == 1
+
+    # The pause still stands, so the call can still be answered.
+    approved = await agent.run(
+        message_history=resumed.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'call_file': True}),
+    )
+    assert approved.output == 'All done.'
+    assert get_data_runs == 1
+
+
+async def test_resuming_a_mixed_deferred_pause_from_run_stream_pauses_again():
+    """`run_stream()` records its pause like `run()` does, so a plain resume of its history pauses again (#7537).
+
+    `run_stream()` writes its own request with the results of the calls it ran, so it marks that request too.
+    """
+    received: list[list[ModelMessage]] = []
+    get_data_runs = 0
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        received.append(messages)
+        if len(messages) == 1:
+            yield {0: DeltaToolCall('get_data', '{}', tool_call_id='call_data')}
+            yield {1: DeltaToolCall('create_file', '{"path": "x"}', tool_call_id='call_file')}
+        else:  # pragma: no cover
+            yield 'All done.'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        nonlocal get_data_runs
+        get_data_runs += 1
+        return 'data'
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:  # pragma: no cover
+        return 'created'
+
+    async with agent.run_stream('Do it.') as result:
+        output = await result.get_output()
+    assert isinstance(output, DeferredToolRequests)
+    message_history = result.all_messages()
+    assert message_history[-1].metadata == PAUSE_RECORD
+    assert get_data_runs == 1
+
+    resumed = await agent.run(message_history=message_history)
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call_file']
+    assert len(received) == 1
+    assert get_data_runs == 1
+
+
+async def test_resuming_a_mixed_deferred_pause_runs_a_call_that_no_longer_defers():
+    """A waiting call that doesn't defer when it runs again sends its result, after the earlier ones, to the model."""
+    received: list[list[ModelMessage]] = []
+    needs_approval = True
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                    ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        return 'data'
+
+    @agent.tool
+    def create_file(ctx: RunContext[object], path: str) -> str:
+        if needs_approval and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'created'
+
+    result = await agent.run('Do it.')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    needs_approval = False
+    resumed = await agent.run(message_history=result.all_messages())
+    assert resumed.output == 'All done.'
+    sent_returns = [
+        (part.tool_call_id, part.content)
+        for message in received[1]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert sent_returns == [('call_data', 'data'), ('call_file', 'created')]
+
+
+@pytest.mark.parametrize('waiting_call_first', [False, True])
+async def test_resuming_a_mixed_deferred_pause_with_a_repeated_call_id_runs_only_the_waiting_call(
+    waiting_call_first: bool,
+):
+    """When two calls share an ID, the result answers the call of its tool, so only the other one runs on resume."""
+    received: list[list[ModelMessage]] = []
+    get_data_runs = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        calls = [
+            ToolCallPart('get_data', {}, tool_call_id='call_1'),
+            ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_1'),
+        ]
+        return ModelResponse(parts=calls[::-1] if waiting_call_first else calls)
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        nonlocal get_data_runs
+        get_data_runs += 1
+        return 'data'
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:
+        return 'created'  # pragma: no cover
+
+    result = await agent.run('Do it.')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    resumed = await agent.run(message_history=result.all_messages())
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_name for call in resumed.output.approvals] == ['create_file']
+    assert len(received) == 1
+    assert get_data_runs == 1
+
+
+async def test_resuming_after_content_recorded_at_an_all_deferred_pause_pauses_again():
+    """Content the paused run recorded after its response is part of the pause."""
+    received: list[list[ModelMessage]] = []
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:
+        return 'created'  # pragma: no cover
+
+    result = await agent.run('Do it.')
+    assert isinstance(result.output, DeferredToolRequests)
+    message_history = [
+        *result.all_messages(),
+        ModelRequest(parts=[UserPromptPart('Queued at the pause.')], metadata=PAUSE_RECORD),
+    ]
+
+    resumed = await agent.run(message_history=message_history)
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call_file']
+    assert len(received) == 1
+
+
+def _two_call_agent(received: list[list[ModelMessage]]) -> Agent[None, str | DeferredToolRequests]:
+    """An agent whose `get_data` call has a result and whose `create_file` call needs approval."""
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        # Already answered in the history.
+        return 'data'  # pragma: no cover
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:
+        return 'created'  # pragma: no cover
+
+    return agent
+
+
+async def test_resuming_a_pause_with_several_recorded_requests_keeps_pausing():
+    """Every request the pause wrote records it, whether cleaning merges them or keeps them apart for their instructions."""
+    received: list[list[ModelMessage]] = []
+    agent = _two_call_agent(received)
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Do it.', timestamp=TS)], timestamp=TS, run_id='run_1'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ],
+            timestamp=TS,
+            run_id='run_1',
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS)],
+            timestamp=TS,
+            instructions='A',
+            run_id='run_1',
+            metadata=PAUSE_RECORD,
+        ),
+        ModelRequest(
+            parts=[UserPromptPart('Queued.', timestamp=TS)],
+            timestamp=TS,
+            instructions='B',
+            run_id='run_1',
+            metadata=PAUSE_RECORD,
+        ),
+        ModelRequest(
+            parts=[UserPromptPart('Queued too.', timestamp=TS)], timestamp=TS, run_id='run_1', metadata=PAUSE_RECORD
+        ),
+    ]
+
+    resumed = await agent.run(message_history=message_history)
+    assert isinstance(resumed.output, DeferredToolRequests)
+
+    resumed_again = await agent.run(message_history=resumed.all_messages())
+    assert isinstance(resumed_again.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed_again.output.approvals] == ['call_file']
+    assert received == []
+
+
+async def test_a_legacy_retry_prompt_answers_its_call_at_a_pause():
+    """A `RetryPromptPart` answering a call counts as its result, so a resume with every call answered isn't a pause."""
+    received: list[list[ModelMessage]] = []
+    agent = _two_call_agent(received)
+    retry = legacy_retry_prompt_part('Bad path.', tool_name='create_file', tool_call_id='call_file', timestamp=TS)
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Do it.', timestamp=TS)], timestamp=TS, run_id='run_1'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ],
+            timestamp=TS,
+            run_id='run_1',
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS), retry],
+            timestamp=TS,
+            run_id='run_1',
+            metadata=PAUSE_RECORD,
+        ),
+    ]
+
+    result = await agent.run(message_history=message_history)
+
+    assert result.output == 'All done.'
+    assert len(received) == 1
+
+
+async def test_new_message_in_the_request_after_a_mixed_deferred_pause_continues_the_run():
+    """A UI adapter can put the user's new message in the same request as the results.
+
+    No paused run wrote that request, so it isn't a pause: the waiting call isn't run, and the model gets the message.
+    """
+    agent, received = capture_agent()
+
+    @agent.tool_plain
+    def create_file(path: str) -> str:
+        raise AssertionError('The model never asked for this call again.')  # pragma: no cover
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Do it.', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS),
+                UserPromptPart('Never mind.', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+    ]
+
+    result = await agent.run(message_history=message_history)
+
+    assert result.output == 'All done.'
+    assert len(received) == 1
+
+
+async def test_content_queued_at_a_second_pause_keeps_the_pause():
+    """What a resumed run that pauses again records is part of the pause, though another run wrote the response."""
+    received: list[list[ModelMessage]] = []
+    create_file_runs = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        return 'data'
+
+    @agent.tool
+    def create_file(ctx: RunContext[object], path: str) -> str:
+        nonlocal create_file_runs
+        create_file_runs += 1
+        if create_file_runs == 2:
+            ctx.enqueue('Noted while waiting again.')
+        raise ApprovalRequired
+
+    first = await agent.run('Do it.')
+    second = await agent.run(message_history=first.all_messages())
+    assert isinstance(second.output, DeferredToolRequests)
+    recorded = second.all_messages()[-1]
+    assert isinstance(recorded, ModelRequest)
+    assert recorded.run_id == second.run_id != first.run_id
+    assert recorded.metadata == PAUSE_RECORD
+
+    third = await agent.run(message_history=second.all_messages())
+    assert isinstance(third.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in third.output.approvals] == ['call_file']
+    assert len(received) == 1
+
+
+def _mixed_pause_agent(received: list[list[ModelMessage]]) -> Agent[None, str | DeferredToolRequests]:
+    """An agent whose first response calls `get_data`, which runs, and `create_file`, which waits for approval.
+
+    `create_file` queues a note, so the pause records a request after the step's results. Later model requests
+    reply with text, except that one with the prompt 'Fail.' fails.
+    """
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(received) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                    ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+                ]
+            )
+        if len(received) == 2:
+            raise RuntimeError('The model is down.')
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        return 'data'
+
+    @agent.tool
+    def create_file(ctx: RunContext[object], path: str) -> str:
+        if ctx.tool_call_approved:
+            return 'created'  # pragma: no cover
+        ctx.enqueue('Noted while waiting.')
+        raise ApprovalRequired
+
+    return agent
+
+
+async def test_resuming_after_a_new_prompt_failed_at_a_mixed_deferred_pause_retries_the_prompt():
+    """A new prompt whose model request failed isn't part of the pause, though the run that sent it wrote it.
+
+    Resuming the history captured from the failed run sends the prompt again, as it would without the pause.
+    """
+    received: list[list[ModelMessage]] = []
+    agent = _mixed_pause_agent(received)
+    paused = await agent.run('Do it.')
+    assert isinstance(paused.output, DeferredToolRequests)
+
+    with capture_run_messages() as captured, pytest.raises(RuntimeError, match='The model is down'):
+        await agent.run('Something else.', message_history=paused.all_messages())
+    failed_prompt = captured[-1]
+    assert isinstance(failed_prompt, ModelRequest)
+    assert failed_prompt.run_id is not None
+
+    result = await agent.run(message_history=captured)
+
+    assert result.output == 'All done.'
+    assert 'Something else.' in [part.content for part in received[-1][-1].parts if isinstance(part, UserPromptPart)]
+
+
+async def test_a_paused_history_repaired_without_closing_its_last_response_keeps_the_pause():
+    """`repair_messages` merges the requests the pause wrote, and the merged request still records the pause."""
+    received: list[list[ModelMessage]] = []
+    agent = _mixed_pause_agent(received)
+    paused = await agent.run('Do it.')
+    assert isinstance(paused.output, DeferredToolRequests)
+
+    repaired = repair_messages(paused.all_messages(), repair_last_response=False)
+    assert len(repaired) == len(paused.all_messages()) - 1
+
+    resumed = await agent.run(message_history=repaired)
+
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call_file']
+    assert len(received) == 1
+
+
+@pytest.mark.moves_cache_prefix(reason='The requests recorded at the pause carry their own instructions.')
+async def test_approving_after_a_resume_ran_another_call_skips_every_answered_call():
+    """Results the history holds after the response, in any of its requests, aren't run again or asked for."""
+    received: list[list[ModelMessage]] = []
+    send_ready = False
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(received) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                    ToolCallPart('send', {}, tool_call_id='call_send'),
+                    ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        return 'data'
+
+    @agent.tool_plain
+    def send() -> str:
+        if not send_ready:
+            raise CallDeferred
+        return 'sent'
+
+    @agent.tool_plain(requires_approval=True)
+    def create_file(path: str) -> str:
+        return 'created'
+
+    first = await agent.run('Do it.')
+    assert isinstance(first.output, DeferredToolRequests)
+    response = first.all_messages()[-2]
+    # Requests with different instructions stay separate when the history is cleaned.
+    message_history = [
+        *first.all_messages(),
+        ModelRequest(
+            parts=[UserPromptPart('Queued.')], instructions='A', run_id=response.run_id, metadata=PAUSE_RECORD
+        ),
+        ModelRequest(
+            parts=[UserPromptPart('Queued too.')], instructions='B', run_id=response.run_id, metadata=PAUSE_RECORD
+        ),
+    ]
+    send_ready = True
+    second = await agent.run(message_history=message_history)
+    assert isinstance(second.output, DeferredToolRequests)
+
+    approved = await agent.run(
+        message_history=second.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'call_file': True}),
+    )
+    assert approved.output == 'All done.'
+
+
+async def test_new_message_after_a_mixed_deferred_pause_continues_the_run():
+    """A new message from elsewhere after a mixed pause, as a UI adapter sends it, isn't part of the pause.
+
+    The run continues as it did before, with the waiting call closed by a synthesized return.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Do it.', timestamp=TS)], timestamp=TS, run_id='run_1'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ],
+            timestamp=TS,
+            run_id='run_1',
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS)],
+            timestamp=TS,
+            run_id='run_1',
+            metadata=PAUSE_RECORD,
+        ),
+        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run(message_history=message_history)
+
+    assert len(received) == 1
+    synthesized = [
+        part.tool_call_id
+        for message in received[0]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
+    ]
+    assert synthesized == ['call_file']
+
+
+async def test_resuming_an_interrupted_step_with_an_unanswered_call_does_not_run_it():
+    """A step interrupted before all its calls finished isn't a deferred pause: its calls aren't run again."""
+    agent, received = capture_agent()
+    create_file_runs = 0
+
+    @agent.tool_plain
+    def create_file(path: str) -> str:  # pragma: no cover
+        nonlocal create_file_runs
+        create_file_runs += 1
+        return 'created'
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Do it.', timestamp=TS)], timestamp=TS, run_id='run_1'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ],
+            timestamp=TS,
+            run_id='run_1',
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS)],
+            timestamp=TS,
+            run_id='run_1',
+            state='interrupted',
+        ),
+    ]
+
+    await agent.run(message_history=message_history)
+
+    assert len(received) == 1
+    assert create_file_runs == 0
+
+
+async def test_new_message_after_unanswered_call_in_history_is_repaired():
+    """A trailing request that answers none of the final response's calls isn't a pause, so it's repaired, not rejected.
+
+    UI adapters run the agent this way: the user's new message is the last entry of `message_history`
+    and there's no `user_prompt`, so the call the user moved on from is closed with a synthesized return.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Create a file.', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file')], timestamp=TS),
+        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run(message_history=message_history)
+
+    synthesized = [
+        part
+        for message in received[0]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
+    ]
+    assert [part.tool_call_id for part in synthesized] == ['call_file']
 
 
 async def test_result_before_call_dropped_as_orphan_and_call_synthesized():
