@@ -151,7 +151,7 @@ def approval_handler(approve: Approver) -> ApprovalHandler[AgentDepsT]:
 def unattended_only(
     permissions: Sequence[AgentCapability[AgentDepsT]], supplied: Sequence[AgentCapability[AgentDepsT]]
 ) -> tuple[AgentCapability[AgentDepsT], ...]:
-    """`permissions` without the session's `DenyUnansweredInSession` when `supplied` has an `ApprovalHandler` to ask someone.
+    """`permissions` without the session's `DenyUnansweredInSession` when `supplied` has an `ApprovalHandler`.
 
     An `ApprovalHandler` inside a `WrapperCapability`, such as the `PluginGuard` around a settings-built plugin
     capability, counts too. An attended session leaves calls nobody handles, and questions, as they were,
