@@ -8,7 +8,7 @@ the public detectors that use it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeGuard, cast
+from typing import TypeGuard
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent, is_multi_modal_content
@@ -16,14 +16,19 @@ from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
-def _is_content_list(value: object) -> TypeGuard[list[UserContent]]:
-    """Whether `value` is a list of strings and media, such as text beside a screenshot, as a tool can return.
+def content_list(value: object) -> list[UserContent] | None:
+    """`value` if it is a list of strings and media, such as text beside a screenshot, as a tool can return.
 
     `TextContent` is left out: the model also sees its `metadata`, which a detector does not read.
     """
     if not isinstance(value, list):
-        return False
-    return all(isinstance(part, str | CachePoint) or is_multi_modal_content(part) for part in cast(list[Any], value))
+        return None
+    parts: list[UserContent] = []
+    for part in value:  # pyright: ignore[reportUnknownVariableType]
+        if not (isinstance(part, str | CachePoint) or is_multi_modal_content(part)):
+            return None
+        parts.append(part)
+    return parts
 
 
 def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailResult | None, str | None]:
@@ -163,11 +168,14 @@ def detect_tool_return_content(
     return None, rewritten if replaced else None
 
 
-def is_checked_tool_return(value: object) -> TypeGuard[ToolReturn[Any]]:
-    """Whether `value` is a `ToolReturn` whose `return_value` is a string or a list of content parts."""
-    return isinstance(value, ToolReturn) and (
-        isinstance(value.return_value, str) or _is_content_list(cast(ToolReturn[Any], value).return_value)
-    )
+def is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
+    """Whether `value` is a `ToolReturn`."""
+    return isinstance(value, ToolReturn)
+
+
+def checked_value(value: object) -> str | list[UserContent] | None:
+    """`value` if it is a string or a list of content parts, the `ToolReturn.return_value`s a detector reads."""
+    return value if isinstance(value, str) else content_list(value)
 
 
 def detect_return_value(
@@ -190,13 +198,8 @@ def detect_return_value(
     return verdict, None if rewritten is None else list(rewritten)
 
 
-def detect_content_list_result(detector: TextDetector, result: object) -> GuardrailResult | None:
-    """Run `detector` over a result made of content parts, such as text beside a screenshot, keeping the images.
-
-    Returns `None` for any other result.
-    """
-    if not _is_content_list(result):
-        return None
+def detect_content_list_result(detector: TextDetector, result: list[UserContent]) -> GuardrailResult:
+    """Run `detector` over a result made of content parts, such as text beside a screenshot, keeping the images."""
     verdict, rewritten = detect_return_value(detector, result)
     if verdict is not None:
         return verdict

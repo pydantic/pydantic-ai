@@ -2053,13 +2053,16 @@ class TestCodeMode:
         """`ComputerUse`'s `computer` tool stays native: the model itself has to see the screenshot it returns."""
         td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind=COMPUTER_KIND)
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_computer])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
 
         description = tools['run_code'].tool_def.description
         assert description is not None
+        # Ordinary tools are still sandboxed, with their signatures in `run_code`'s description...
+        assert 'async def get_user' in description
+        # ...but `computer` isn't among them: it stays a tool of its own.
         assert 'async def computer' not in description
         assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
 

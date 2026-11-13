@@ -16,10 +16,7 @@ def png_size(png: bytes) -> tuple[int, int]:
 
 
 async def check_display_contract(display: Display) -> None:
-    """Check that screenshots match the display size, zoom gives the size asked for, and the pointer moves.
-
-    The display must be running, with a screenshot taken since it started.
-    """
+    """Check that screenshots match the display size, zoom gives the size asked for, and the pointer moves."""
     width, height = await display.display_size()
     assert png_size(await display.screenshot()) == (width, height)
     if isinstance(display, SupportsZoom):
