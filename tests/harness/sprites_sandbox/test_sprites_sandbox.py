@@ -594,7 +594,7 @@ class TestSpritesSandbox:
         assert ('connection' if attach else 'creation') in str(caught.value)
         assert transport.execs == []
 
-    async def test_run_deadline_starts_once_the_sprite_is_acquired(
+    async def test_only_the_handshake_bound_applies_while_the_exec_socket_opens(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         transport.names.add('remote')
@@ -617,7 +617,9 @@ class TestSpritesSandbox:
         backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'))
 
         assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
-        assert deadlines[-1] >= acquired_at[0] + 60
+        # Only the handshake's bound, taken after acquisition, applies; the command's 60 s start once the socket opens.
+        handshake_timeout = _backend._HANDSHAKE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
+        assert acquired_at[0] + handshake_timeout <= deadlines[-1] < acquired_at[0] + 60
 
     async def test_a_created_sprite_gets_its_working_directory(self, transport: SpriteTransport) -> None:
         directory = transport.root / 'new' / 'nested'
