@@ -33,7 +33,7 @@ class KeyReference(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    name: str = Field(pattern=KEY_NAME)
+    name: str = Field(pattern=r'^[A-Z_][A-Z0-9_]*$')  # `KEY_NAME`, spelled out for API compatibility.
 
 
 def resolve_key(*, token: SecretStr | KeyReference) -> str:

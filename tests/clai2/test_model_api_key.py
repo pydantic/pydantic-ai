@@ -14,11 +14,12 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers import Provider
-from pydantic_clai2.config.api_keys import save_key
+from pydantic_clai2.config.api_keys import KeyReference, save_key
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import key_profiles
 from pydantic_clai2.models.model_settings import ModelSettingsForm
+from pydantic_clai2.models.profiles import KEY_NAME
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
@@ -103,6 +104,11 @@ def test_the_row_offers_saved_keys_and_names_the_environment_key(
     assert unset is not None and unset.note == ''
     for name, settings_as in (('openrouter:openai/gpt-5', None), ('single:x', None), ('chain:both', 'openai:gpt-5')):
         assert FieldMenu(ModelSettingsSource(store, name, settings_as=settings_as)).row_for('api_key') is None
+
+
+def test_model_and_key_names_share_one_pattern() -> None:
+    assert KeyReference.model_fields['name'].metadata[0].pattern == KEY_NAME
+    assert ModelSettingsForm.model_fields['api_key'].metadata[0].pattern == KEY_NAME
 
 
 def test_each_provider_names_its_key_variable(monkeypatch: pytest.MonkeyPatch) -> None:
