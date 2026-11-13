@@ -67,6 +67,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment  # pyright: ignore[reportPrivateUsage]
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import agent_run_names
 
@@ -1509,6 +1510,7 @@ class TestAgentIntegration:
         assert await store.read(handles[0]) == b'first payload\n' * 100
         assert await store.read(handles[1]) == b'second payload\n' * 100
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_a_reused_tool_call_id_survives_a_compaction_between_the_responses(
         self, tmp_path: Path, anyio_backend: str
     ):

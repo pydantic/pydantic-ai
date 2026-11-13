@@ -406,7 +406,8 @@ replay.
   the first call to spill keeps the plain handle, and a later call that would land on the same
   one moves under the run step that produced it, so each call gets its own spill. The step comes
   from the run context rather than the history, so a compaction rewriting `ctx.messages` between
-  the two responses cannot make them collide.
+  the two responses cannot make them collide. Every other handle keeps the documented shape, so
+  code that builds or globs it, such as a cleanup job, still matches.
 
 ## Relationship to other capabilities
 
