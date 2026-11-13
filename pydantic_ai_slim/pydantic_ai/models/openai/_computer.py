@@ -227,10 +227,9 @@ def map_computer_call(
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     provider_details: dict[str, Any] = {'computer_call': dumped}
     # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved. A value that
-    # isn't a list of checks, even a falsy one like `{}` or an explicit `null` (dropped from `dumped`), is kept so the
-    # call still waits for approval.
-    checks = dumped.get('pending_safety_checks', 'null')
-    if 'pending_safety_checks' in item.model_fields_set and checks != []:
+    # isn't a list of checks, even a falsy one like `{}` or an explicit `null`, is kept so the call still waits for
+    # approval.
+    if 'pending_safety_checks' in item.model_fields_set and (checks := dumped.get('pending_safety_checks')) != []:
         provider_details[_SAFETY_CHECKS] = checks
     args: dict[str, Any] | str
     if item.status != 'completed':
