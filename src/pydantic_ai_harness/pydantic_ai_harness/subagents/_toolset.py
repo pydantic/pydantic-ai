@@ -1637,20 +1637,20 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     ]
     for _, path_authority in layers:
         for path, level in path_authority.items():
-            levels.extend(await _entry_levels(parent, path, level, directory, in_parent=in_parent))
+            levels.extend(await _entry_levels(parent, parent_root, path, level, directory, in_parent=in_parent))
     lowest = lowest_authority(levels)
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
 
 
 async def _entry_levels(
-    parent: Workspace, path: str, level: Authority, directory: str, *, in_parent: bool
+    parent: Workspace, parent_root: str, path: str, level: Authority, directory: str, *, in_parent: bool
 ) -> list[Authority]:
     """The levels a parent `path_authority` entry gives a delegate rooted at `directory`, if it's inside or contains it.
 
     Checked where the entry is written and where it leads. A link entry leading out of the parent's root also adds
     the level core caps its target at, which `authority_of` gives.
     """
-    written = await parent.resolve(path, base=await parent.working_dir())
+    written = await parent.resolve(path, base=parent_root)
     levels: list[Authority] = []
     inside = _folded_dir(directory)
     for location in {written, await parent.realpath(written)}:
