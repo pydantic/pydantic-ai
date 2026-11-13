@@ -1256,12 +1256,19 @@ def _collect_tool_results_by_response(messages: Sequence[ModelMessage]) -> dict[
     A response's results ride in the `ModelRequest` right after it, so they are collected per response rather
     than by id across the whole history: `tool_call_id` is unique within a response, not within a conversation,
     and a provider that reuses one would otherwise show a later turn's result on an earlier call.
+
+    A turn can hold consecutive `ModelRequest`s, each carrying some of the returns, so a request's results are
+    added to the response it answers rather than to the message before it.
     """
     tool_results_by_response: dict[int, dict[str, ToolReturnPart]] = {}
+    response_index: int | None = None
     for index, msg in enumerate(messages):
-        if not isinstance(msg, ModelRequest) or index == 0:
+        if isinstance(msg, ModelResponse):
+            response_index = index
             continue
-        tool_results: dict[str, ToolReturnPart] = {}
+        if not isinstance(msg, ModelRequest) or response_index is None:
+            continue
+        tool_results = tool_results_by_response.setdefault(response_index, {})
         for part in msg.parts:
             if isinstance(part, ToolReturnPart):
                 tool_results[part.tool_call_id] = part
@@ -1270,7 +1277,6 @@ def _collect_tool_results_by_response(messages: Sequence[ModelMessage]) -> dict[
                 translated := _translate_legacy_retry_part(part), ToolReturnPart
             ):
                 tool_results[part.tool_call_id] = translated
-        tool_results_by_response[index - 1] = tool_results
     return tool_results_by_response
 
 
