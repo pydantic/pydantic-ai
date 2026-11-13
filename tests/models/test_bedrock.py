@@ -7847,6 +7847,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     provider_name='bedrock',
                 ),
+                canonical_system='bedrock',
             ),
             PartDeltaEvent(
                 index=0,
@@ -7863,6 +7864,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_name='bedrock',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='bedrock',
             ),
             PartStartEvent(
                 index=1,
@@ -7875,6 +7877,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_details={'status': 'success'},
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='bedrock',
             ),
             PartStartEvent(
                 index=2,
