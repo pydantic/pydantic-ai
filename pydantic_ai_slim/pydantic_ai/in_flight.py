@@ -132,8 +132,7 @@ class InFlightWork(Generic[T]):
         """The kind of work, such as `'background_tool'`, to tell different producers' work apart."""
         self.name = name
         """A name for the work, for display."""
-        self.on_end: InFlightOnEnd = on_end
-        """What happens to the work when the run ends."""
+        self._on_end: InFlightOnEnd = on_end
         self.durable = durable
         """Whether a durable execution engine records the work's result on its own, as an activity, step or task.
 
@@ -148,6 +147,11 @@ class InFlightWork(Generic[T]):
         self._error: BaseException | None = None
         if task is not None:
             task.add_done_callback(self._task_done)
+
+    @property
+    def on_end(self) -> InFlightOnEnd:
+        """What happens to the work when the run ends, fixed when it was started or registered."""
+        return self._on_end
 
     @property
     def state(self) -> InFlightWorkState:
