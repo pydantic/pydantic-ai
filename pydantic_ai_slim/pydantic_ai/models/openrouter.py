@@ -1423,9 +1423,13 @@ class OpenRouterModel(OpenAIChatModel):
         if previous_tail is not None:
             self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
         # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
-        # and the next request won't send it, so the breakpoint goes on the message before it.
+        # and the next request won't send it, so the breakpoint goes on the message before it. So does a downgraded
+        # capability part's frame, with any `system` message that a route takes after the user turn behind it.
         end, _ = _request_scoped_suffix_start(
-            openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
+            openai_messages,
+            _request_scoped_tail_texts(messages),
+            _request_scoped_message_text,
+            is_after_tail=lambda message: message['role'] == 'system',
         )
         if end:
             self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)

@@ -27,11 +27,12 @@ from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelRequestPart,
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
-from pydantic_ai_harness._task_report import make_task_output, make_task_question
+from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
 
@@ -87,14 +88,13 @@ class DelegationTask:
     generation: int = 1
     run_id: str = field(default_factory=lambda: uuid4().hex)
 
-    def report(self) -> UserPromptPart:
-        """The settled task's report: the child's output, framed as `<task_output>` data on the user channel.
+    def report(self) -> TaskOutputPart:
+        """The settled task's report: the child's output, as `<task_output>` data on the user channel.
 
         The output was written by a model and may carry instructions from whatever the child read, so it
-        never enters system voice. The frame's escaped attributes identify the task (its id, agent name,
-        and an `outcome` other than `ok`). The acceptance receipt the parent got when the task started
-        already says a report will follow, so nothing precedes the frame. The `TextContent` metadata
-        identifies the report without matching its text.
+        never enters system voice. The frame's attributes identify the task (its id, agent name, and an
+        `outcome` other than `ok`), and a note says the sub-agent wrote it. The acceptance receipt the parent
+        got when the task started already says a report will follow. Find it in history by its type.
         """
         return make_task_output(
             self.output,
@@ -159,7 +159,7 @@ class _Question:
     queued: bool = False
 
 
-def _question_part(record: DelegationTask, question: _Question) -> UserPromptPart:
+def _question_part(record: DelegationTask, question: _Question) -> TaskQuestionPart:
     return make_task_question(
         question.text, task_id=record.id, agent_name=record.agent_name, question_id=question.question_id
     )
@@ -286,7 +286,9 @@ class DelegationTasks:
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
         # Stacks, like `_emitters`: the latest registration receives, and each run removes only its own.
-        self._receivers: dict[tuple[str, str | None], list[Callable[[UserPromptPart], str | None]]] = {}
+        self._receivers: dict[
+            tuple[str, str | None], list[Callable[[TaskOutputPart | TaskQuestionPart], str | None]]
+        ] = {}
         self._steering: dict[str, list[Callable[[str], str | None]]] = {}
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
@@ -836,7 +838,7 @@ class DelegationTasks:
         *,
         conversation_id: str,
         parent_id: str | None,
-        enqueue: Callable[[UserPromptPart], str | None],
+        enqueue: Callable[[TaskOutputPart | TaskQuestionPart], str | None],
         steer: Callable[[str], str | None] | None = None,
     ) -> Generator[None]:
         """Keep a queue attached only for the lifetime of its owning run.
@@ -847,7 +849,7 @@ class DelegationTasks:
         # What this run queued, which it alone can still deliver.
         queued: set[str] = set()
 
-        def receive(part: UserPromptPart) -> str | None:
+        def receive(part: TaskOutputPart | TaskQuestionPart) -> str | None:
             enqueue_id = enqueue(part)
             if enqueue_id is not None:
                 queued.add(enqueue_id)
@@ -1028,7 +1030,7 @@ def isolated(owner: DelegationTasks | None) -> Generator[None]:
 
 
 def enqueue_while_open(
-    ctx: RunContext[object], part: UserPromptPart, *, priority: Literal['asap', 'when_idle']
+    ctx: RunContext[object], part: ModelRequestPart, *, priority: Literal['asap', 'when_idle']
 ) -> str | None:
     """Queue `part` on the run of `ctx`, or return `None` once that run takes no more messages.
 

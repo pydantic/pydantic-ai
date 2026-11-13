@@ -34,8 +34,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.framing import neutralize_tags
-from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import ModelRequest, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -45,7 +44,7 @@ from pydantic_ai.tools import (
     matches_tool_selector,
 )
 from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
-from pydantic_ai_harness._background_completion import make_background_completion, tool_result_tags
+from pydantic_ai_harness._background_completion import BackgroundToolResultPart, make_background_result
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -107,7 +106,7 @@ class _Completion:
 
     tool_name: str
     max_retries: int
-    content: tuple[UserContent, ...]
+    result: BackgroundToolResultPart
     retry: Exception | None = None
     """The failure that counts toward the tool's `max_retries`, when the call is to be retried."""
     succeeded: bool = False
@@ -124,8 +123,8 @@ _SignalledError = (
 """Errors a background task reports to the model as a failed result instead of ending the run."""
 
 
-def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> TextContent:
-    """Describe a tool-signalled failure to the model, framed as the call's failed result."""
+def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> BackgroundToolResultPart:
+    """Describe a tool-signalled failure to the model, as the call's failed result."""
     if isinstance(error, (ApprovalRequired, CallDeferred)):
         message = f'{type(error).__name__} was raised; background tools cannot defer a running task.'
     else:
@@ -139,15 +138,12 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
             content = error.tool_retry.content
         else:
             content = error.tool_failed.content
-        message = neutralize_tags(content) if isinstance(content, str) and content else type(error).__name__
-    open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
-    return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
+        message = content if isinstance(content, str) and content else type(error).__name__
+    return make_background_result(tool_name, task_id, message, failed=True)
 
 
-def _format_background_result(
-    tool_name: str, task_id: str, result: Any
-) -> tuple[TextContent, *tuple[UserContent, ...]]:
-    """Format a tool result as model-visible user content with completion metadata."""
+def _format_background_result(tool_name: str, task_id: str, result: Any) -> BackgroundToolResultPart:
+    """The call's result as model-visible content: the return value, its files, then any `ToolReturn.content`."""
     if isinstance(result, ToolReturn):
         return_value: object = result.return_value
         extra_content = result.content
@@ -157,23 +153,21 @@ def _format_background_result(
 
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
     # The frame's attributes name the call the "running in background" reply announced, so the result needs no
-    # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
-    # to add for the model. The output's files sit between the frame's tags as separate content, so the text is
-    # escaped on its own instead of going through `wrap()`.
-    open_tag, close_tag = tool_result_tags(tool_name, task_id)
-    completion_text = f'{open_tag}\n{neutralize_tags(return_part.model_response_str())}'
-    files = return_part.files
-    if not files:
-        completion_text = f'{completion_text}\n{close_tag}'
-    content: list[UserContent] = [completion_text, *files, close_tag] if files else [completion_text]
+    # preamble. `ToolReturn.content` is the tool's too, so it goes in the same frame, after what the tool returned.
+    content: list[UserContent] = [return_part.model_response_str(), *return_part.files]
     if isinstance(extra_content, str):
         content.append(extra_content)
     elif extra_content is not None:
         content.extend(extra_content)
-
-    if all(isinstance(item, str) for item in content):
-        return (make_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
-    return (make_background_completion(completion_text, task_id), *content[1:])
+    # Adjacent text goes on separate lines, as one item.
+    merged: list[UserContent] = []
+    for item in content:
+        if isinstance(item, str) and merged and isinstance(merged[-1], str):
+            merged[-1] = f'{merged[-1]}\n{item}'
+        else:
+            merged.append(item)
+    body = merged[0] if len(merged) == 1 and isinstance(merged[0], str) else merged
+    return make_background_result(tool_name, task_id, body)
 
 
 @dataclass
@@ -355,8 +349,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         tool_name = call.tool_name
 
         def failure(error: _SignalledError, *, retry: Exception | None = None) -> _Completion:
-            content = (_format_background_failure(tool_name, task_id, error),)
-            return _Completion(tool_name, ctx.max_retries, content, retry=retry)
+            return _Completion(
+                tool_name, ctx.max_retries, _format_background_failure(tool_name, task_id, error), retry=retry
+            )
 
         async def _run() -> None:
             outcome: _Outcome
@@ -446,7 +441,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     def _deliver(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
         if isinstance(outcome, BaseException):
             raise outcome
-        ctx.enqueue(*outcome.content)
+        ctx.enqueue(outcome.result)
         self._unsettled.append(outcome)
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:

@@ -27,7 +27,7 @@ from pydantic_ai_harness import RefineOutput
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[RefineOutput()])
 ```
 
-When the run would end with an output, `RefineOutput` adds a system prompt to the conversation that tells the model to review its last answer and give the complete answer again, revised. The model answers once more, with its tools available, and that answer is the run's output. The earlier answer stays in the [message history](https://pydantic.dev/docs/ai/core-concepts/message-history/).
+When the run would end with an output, `RefineOutput` adds an instruction in the application's voice to the conversation that tells the model to review its last answer and give the complete answer again, revised. The model answers once more, with its tools available, and that answer is the run's output. The earlier answer stays in the [message history](https://pydantic.dev/docs/ai/core-concepts/message-history/).
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -44,7 +44,7 @@ RefineOutput(rounds=2, instructions='Check every figure against the source docum
 
 - A round costs at least one more model request, more when the model calls tools during it, and counts toward [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) like any other request.
 - With structured output the model produces the output again. [Output validators and output functions](https://pydantic.dev/docs/ai/core-concepts/output/) run on every answer, not only the last, so keep them free of side effects.
-- The instruction is a [`SystemPromptPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.SystemPromptPart) whose `metadata` holds `'origin': 'pydantic-ai-harness.refine_output.v1'` and the `round` number. It keeps the default conversation scope, so it stays in the message history. Each run starts with no rounds used.
+- The instruction is a `ReviewRoundPart`, an [`InstructionCapabilityPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.InstructionCapabilityPart) kind (a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice) whose `round` field holds the round number and never reaches the model. It keeps the default conversation scope, so it stays in the message history. Find review rounds by `isinstance(part, ReviewRoundPart)` (from `pydantic_ai_harness.refine_output`), not by their text. Each run starts with no rounds used.
 - Code that streams the run sees every answer as the model writes it: the first one, then each revised one. Only the last is the run's output.
 
 Four kinds of run end without a review:

@@ -594,8 +594,11 @@ for resolution, labels, and backend requirements.
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
-prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
-applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+prefix stays stable. Notes are workspace-sourced `DataCapabilityPart`s, `ContextFilePathPart`
+(`<context_file_path>`) or `ContextFilePart` (`<context_file path="...">`), from
+`pydantic_ai_harness.repo_context`; find them by type, and their `directory` field. With it on, the
+instructions also gain one static sentence: each instruction file applies to its subtree, the deeper file
+wins, and the user's direct instructions win over all of them.
 `nested_max_chars` (32,000 by default) caps the `'contents'` inlined per conversation, counting the
 inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
 `None` removes the cap. It doesn't apply with

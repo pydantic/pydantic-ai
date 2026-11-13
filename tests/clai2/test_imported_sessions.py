@@ -43,7 +43,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
+from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, TaskOutputPart
 from pydantic_clai2 import chat
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli import cli, headless
@@ -502,7 +502,7 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
         ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart', 'UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
         ('ModelResponse', ['TextPart']),
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
+        ('ModelRequest', ['TaskOutputPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart']),
     ]
@@ -523,15 +523,8 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     assert (checked.provider_response_id, second.provider_response_id) == ('m2', 'm3')
     report, unknown = reports.parts
     task_id = claude_code_sessions.tasks(path, 'conversation')[0].id
-    assert (
-        isinstance(report, UserPromptPart)
-        and is_task_report(report)
-        and isinstance(report.content, list)
-        and isinstance(report.content[0], TextContent)
-    )
-    assert report.content[0].content == (
-        f'<task_output task_id="{task_id}" agent_name="self">\nLooks good\n- one nit\n</task_output>'
-    )
+    assert isinstance(report, TaskOutputPart)
+    assert (report.task_id, report.agent_name, report.content) == (task_id, 'self', 'Looks good\n- one nit')
     assert context(unknown)[0] == 'meta'
     assert isinstance(done, ModelResponse) and done.parts == [TextPart('Done')]
     assert context(closing.parts[0])[1].endswith(
@@ -1054,9 +1047,11 @@ def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:
         ('agent_message:message', 'Plain'),
     ]
     # The final answer becomes the task's report, as a CLAI task reports.
-    [report] = [p for p in requests if is_task_report(p)]
+    [report] = [p for p in requests if isinstance(p, TaskOutputPart)]
     assert report == replace(
-        replace(research, conversation_id='', output='Found it', generation=1).report(), timestamp=report.timestamp
+        replace(research, conversation_id='', output='Found it', generation=1).report(),
+        timestamp=report.timestamp,
+        record_id=report.record_id,
     )
     closing = context(requests[-1])[1]
     assert all(task.id in closing for task in tasks.values())

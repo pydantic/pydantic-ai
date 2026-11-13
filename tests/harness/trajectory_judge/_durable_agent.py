@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo
-from pydantic_ai_harness.trajectory_judge import TrajectoryJudge
+from pydantic_ai_harness.trajectory_judge import JudgeSteeringPart, TrajectoryJudge
 
 judge_calls: list[str] = []
 
@@ -39,5 +39,5 @@ def steering(messages: list[ModelMessage]) -> list[str]:
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, JudgeSteeringPart)
     ]

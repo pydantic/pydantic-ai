@@ -20,6 +20,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     EndStrategy,
     ExternalToolset,
     FunctionToolset,
@@ -5340,6 +5341,7 @@ def test_include_return_schema_via_capability():
                 CapabilityLoadDeltaPart,
                 InstructionBaselinePart,
                 ModelSettingsDeltaPart,
+                CapabilityPart,
             ),
         )
     ]

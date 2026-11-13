@@ -114,7 +114,15 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import LoadCapabilityReturnPart
+from pydantic_ai.messages import (
+    CapabilitySource,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    LoadCapabilityReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -2218,6 +2226,50 @@ def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
     assert key_for(time1) == key_for(time2)
 
 
+def test_cache_policy_excludes_a_capability_parts_per_record_fields():
+    """A capability part's `record_id`, `timestamp` and a run's synthetic `capability_id` never reach the model.
+
+    Its content and an `id` the application chose still fork the key. Unit test because key stability across separately
+    constructed inputs can't be observed through a recorded run.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(content: str = 'Page text.', capability_id: str = '<reporter:abc123>') -> str | None:
+        part = _CachedPagePart(
+            content=content, source=CapabilitySource(capability_id, authority='none'), capability_id=capability_id
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for() == key_for() == key_for(capability_id='<reporter:def456>')
+    assert key_for() != key_for(content='Other text.')
+    assert key_for(capability_id='reporter') != key_for(capability_id='budget')
+
+
+def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
+    """A run's synthetic `capability_id` on a part's source doesn't fork the key, even when the part's own id is set.
+
+    An id the application chose on the source still does.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(source_capability_id: str) -> str | None:
+        part = _CachedPagePart(
+            content='Page text.',
+            source=CapabilitySource(source_capability_id, authority='none'),
+            capability_id='reporter',
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
+    assert key_for('fetcher') != key_for('crawler')
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -2891,6 +2943,69 @@ async def test_durability_repeated_run_hits_cache_preserves_provenance():
         producing_conversation_id,
     ]
     assert result2.all_messages()[0].run_id != response2.run_id
+
+
+@dataclass(kw_only=True)
+class _CachedNotePart(InstructionCapabilityPart, namespace='test_prefect', name='note'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _CachedPagePart(DataCapabilityPart, namespace='test_prefect', name='page', tag='page'):
+    pass
+
+
+@dataclass
+class _EnqueuesCapabilityParts(AbstractCapability[object]):
+    """Sends an instruction part and a data part with each request, as a capability reporting on its work."""
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(
+            _CachedNotePart(content=OperatorText('Be brief.'), source=OperatorSource()),
+            _CachedPagePart(content='Page text.', source=ToolResultSource(tool_name='fetch')),
+        )
+        return request_context
+
+
+async def test_durability_repeated_run_with_capability_parts_hits_cache():
+    """A capability part gets a fresh `record_id`, `timestamp` and, from an unnamed capability, `capability_id` each run.
+
+    None of them reaches the model, so a retried flow that sends the same parts must read the cached response
+    rather than call the model again.
+    """
+    call_count = 0
+
+    def counting_model(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(
+        FunctionModel(counting_model),
+        name='capability_part_cache_test_agent',
+        capabilities=[
+            _EnqueuesCapabilityParts(),
+            PrefectDurability(model_task_config=TaskConfig(cache_policy=PrefectAgentInputs())),
+        ],
+    )
+
+    @flow
+    async def run_agent(prompt: str) -> AgentRunResult[str]:
+        return await agent.run(prompt)
+
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    first = await run_agent(prompt)
+    second = await run_agent(prompt)
+    parts = [
+        [part for message in result.all_messages() for part in message.parts if isinstance(part, _CachedPagePart)]
+        for result in (first, second)
+    ]
+    # The parts differ between the runs only in what never reaches the model.
+    [[first_part], [second_part]] = parts
+    assert first_part.record_id != second_part.record_id
+    assert call_count == 1
 
 
 async def test_durability_cache_identity_distinguishes_model_inputs_and_tool_arguments() -> None:

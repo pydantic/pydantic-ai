@@ -29,8 +29,9 @@ a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
 it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
-loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
-`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
+loaded mid-run waits for the next prompt. Snapshots are `MemorySnapshotPart`s (a `DataCapabilityPart` from
+`pydantic_ai_harness.memory`, `<memory>` frame, `scope_hash` and `memory_id` fields); find them by type. List
+compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent

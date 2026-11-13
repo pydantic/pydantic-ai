@@ -17,7 +17,9 @@ from pydantic_ai._instructions import instruction_window_start, is_loaded_block,
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
+    DataCapabilityPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
@@ -45,7 +47,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -140,53 +142,58 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
 
 def _request_part_text(part: ModelRequestPart) -> list[str]:
     """Text segments a single request part contributes to the token estimate."""
-    if isinstance(part, UserPromptPart):
-        return [''.join(user_prompt_texts(part))]
-    elif isinstance(part, SystemPromptPart):
-        return [part.content]
-    elif isinstance(part, InstructionDeltaPart):
-        return [part.render()]
-    # Records what the request's instructions were made of, which are counted with the request.
-    elif isinstance(part, InstructionBaselinePart):
-        return []
-    elif isinstance(part, ToolReturnPart):
-        # Sent in full, a retried call's feedback included: a retry that answers a call travels as
-        # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
-        # so they arrive here too.
-        return [tool_return_text(part)]
-    elif isinstance(part, RetryFeedbackPart):
-        # Retry feedback that answers no tool call. It is stored model-neutral and translated at
-        # request time into a system prompt or a `<pyai:validation_errors>`-fenced user prompt, so it
-        # occupies the window like the parts above. `model_response()` rather than
-        # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
-        # and this renders it the way the model sees it.
-        return [part.model_response()]
-    # TODO(v3): remove RetryPromptPart
-    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # The part the two above replaced. A stored history loads as one of them, but code that
-        # builds one by hand and passes it as `message_history` still puts an instance here, and
-        # this reads the history before the model translates it.
-        return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
-    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
-    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
-    # skipping the part is not a claim that the reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
-        return []
-    elif isinstance(part, CompactionPart):
-        # A summary the application wrote, sent as text.
-        return [part.content or '']
-    elif isinstance(part, SpeechPart):
-        # Count the transcript the provider bills against the window, not the binary audio.
-        # The explicit `isinstance` keeps the `else` a real runtime branch.
-        return [part.transcript or '']
-    else:
-        # A part type newer than this code: skip it, since this runs on every request.
-        # `assert_never` under `TYPE_CHECKING` keeps the chain exhaustive for pyright
-        # without crashing at runtime on a newer pydantic-ai.
-        if TYPE_CHECKING:
-            assert_never(part)
-        return []  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+    match part:
+        case UserPromptPart():
+            return [''.join(user_prompt_texts(part))]
+        case SystemPromptPart():
+            return [part.content]
+        case InstructionDeltaPart():
+            return [part.render()]
+        # Records what the request's instructions were made of, which are counted with the request.
+        case InstructionBaselinePart():
+            return []
+        case ToolReturnPart():
+            # Sent in full, a retried call's feedback included: a retry that answers a call travels as
+            # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
+            # so they arrive here too.
+            return [tool_return_text(part)]
+        case RetryFeedbackPart():
+            # Retry feedback that answers no tool call. It is stored model-neutral and translated at
+            # request time into a system prompt or a `<pyai:validation_errors>`-fenced user prompt, so it
+            # occupies the window like the parts above. `model_response()` rather than
+            # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
+            # and this renders it the way the model sees it.
+            return [part.model_response()]
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            # The part the two above replaced. A stored history loads as one of them, but code that
+            # builds one by hand and passes it as `message_history` still puts an instance here, and
+            # this reads the history before the model translates it.
+            return [str(part.content)]
+        # Control bookkeeping rather than message text: it records which tools became available or capabilities were
+        # loaded, and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this
+        # estimator counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked
+        # separately); skipping the part is not a claim that the reveal was free.
+        case ToolAvailabilityDeltaPart() | CapabilityLoadDeltaPart() | ModelSettingsDeltaPart():
+            return []
+        case CompactionPart():
+            # A summary the application wrote, sent as text.
+            return [part.content or '']
+        case CapabilityPart():
+            # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags
+            # and a kind's note aren't counted.
+            return [capability_part_text(part)]
+        case SpeechPart():
+            # Count the transcript the provider bills against the window, not the binary audio.
+            # Its own case keeps `case _` a real runtime branch.
+            return [part.transcript or '']
+        case _:  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+            # A part type newer than this code: skip it, since this runs on every request.
+            # `assert_never` under `TYPE_CHECKING` keeps the match exhaustive for pyright
+            # without crashing at runtime on a newer pydantic-ai.
+            if TYPE_CHECKING:
+                assert_never(part)
+            return []
 
 
 def _response_part_text(part: ModelResponsePart) -> list[str]:
@@ -988,8 +995,13 @@ def _split_legacy_part(part: ModelRequestPart) -> list[ModelRequestPart]:
 
 
 def is_harness_data(part: ModelRequestPart) -> bool:
-    """Whether *part* is user-channel content a harness capability added, such as a `SubAgents` task report."""
-    return isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+    """Whether *part* is user-channel content a capability added, such as a `SubAgents` task report.
+
+    That's a `DataCapabilityPart`, recognized by its type, or user text an earlier version marked with its `origin`.
+    """
+    return isinstance(part, DataCapabilityPart) or (
+        isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+    )
 
 
 def _is_harness_marker_part(part: ModelRequestPart) -> bool:

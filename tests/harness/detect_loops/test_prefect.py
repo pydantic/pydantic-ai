@@ -12,7 +12,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops
 from tests.conftest import try_import
 
-from ._stuck_agent import NUDGE_METADATA, nudges, read_file, stuck_model
+from ._stuck_agent import NUDGE, nudges, read_file, stuck_model
 
 with try_import() as imports_successful:
     from prefect import flow
@@ -41,6 +41,6 @@ async def test_flow_delivers_the_nudge(prefect_test_server: None, tmp_path: Path
     with temporary_settings({PREFECT_LOCAL_STORAGE_PATH: tmp_path}):
         messages = await run()
 
-    assert nudges(messages) == [NUDGE_METADATA]
+    assert nudges(messages) == [NUDGE]
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'missing.txt does not exist.'

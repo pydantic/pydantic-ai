@@ -15,12 +15,14 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
 from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from pydantic_ai._capability_parts import effective_authority
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    CapabilityPart,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -39,7 +41,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_text, with_text
+from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_text, with_text
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -280,6 +282,8 @@ def _request_part_element(
             return None
         case UserPromptPart():
             return _message_element('user', user_prompt_text(part))
+        case CapabilityPart():
+            return _capability_part_element(part, tool_return_max_chars)
         # A request-scoped prompt applied to its own request only, so it's no lasting context.
         case SystemPromptPart() if part.scope != 'request' and not (skip_previous_summary and is_legacy_summary(part)):
             return _message_element('system', part.content)
@@ -365,6 +369,28 @@ def _message_element(
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<message role="{role}"{attributes}>\n{body}\n</message>'
+
+
+def _capability_part_element(part: CapabilityPart, max_chars: int | None) -> str | None:
+    """A capability part, recognized by its type, as the transcript shows it.
+
+    A request-scoped part applied to its own request only, whatever its voice, so it's left out. An instruction in the
+    application's voice reads as a system message. Anything else, data a capability added or an instruction its source
+    downgraded, the model saw framed rather than in the application's voice, so it's labeled with its kind, never taken
+    for the user's.
+    """
+    if part.scope == 'request':
+        return None
+    if effective_authority(part) != 'operator':
+        return _harness_data_element(part.kind, capability_part_text(part), max_chars)
+    return _message_element('system', capability_part_text(part))
+
+
+def _is_transcript_data(part: ModelRequestPart) -> bool:
+    """Whether *part* is a `<harness_data>` element in the transcript: harness data, or a downgraded instruction."""
+    return is_harness_data(part) or (
+        isinstance(part, CapabilityPart) and part.scope != 'request' and effective_authority(part) != 'operator'
+    )
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
@@ -1112,7 +1138,7 @@ async def write_summary(
     )
     prompt = summarizer.summary_prompt.format(messages=formatted)
     if any(
-        is_harness_data(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
+        _is_transcript_data(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
     ):
         prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
 

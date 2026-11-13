@@ -13,7 +13,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent
-from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
@@ -24,6 +23,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSource,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -47,6 +47,7 @@ from pydantic_ai_harness.planning import (
     PlanItem,
     Planning,
     PlanningToolset,
+    PlanReminderPart,
     PlanStatusUpdate,
     SqlitePlanStore,
     TaskStatus,
@@ -64,9 +65,10 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
-from tests.conftest import RequestCapture, try_import
+from tests.conftest import IsStr, RequestCapture, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness._rendering import sent_messages
 from tests.models.conftest import cache_breakpoints, json_objects
 
 with try_import() as anthropic_imports:
@@ -1158,10 +1160,9 @@ _PLAN_NOTE = (
 _T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _plan_record(plan: str) -> UserPromptPart:
-    """The plan `Planning` enqueues, marked as a frame the framework wrote."""
-    text = f'<plan_reminder>\n{plan}\n</plan_reminder>'
-    return UserPromptPart([framework_frame_text(text, metadata=_PLAN_ORIGIN)], timestamp=_T0)
+def _plan_record(plan: str) -> PlanReminderPart:
+    """The plan `Planning` enqueues, as a `PlanReminderPart` the agent wrote, matching any record id."""
+    return PlanReminderPart(content=plan, source=ModelSource('agent'), timestamp=_T0, record_id=IsStr())
 
 
 def _returned_plans(messages: list[ModelMessage]) -> list[str]:
@@ -1186,15 +1187,16 @@ def _plan_return(plan: str, tool_call_id: str = 'c1') -> ToolReturnPart:
 
 
 def _plan_records_in(parts: Iterable[ModelRequestPart | ModelResponsePart]) -> list[str]:
-    """The text of every plan `Planning` recorded in `parts`, in order."""
+    """The text of every plan `Planning` recorded in `parts`, in its frame as the model is sent it, in order."""
+    records: list[ModelRequestPart] = [part for part in parts if isinstance(part, PlanReminderPart)]
+    [rendered] = sent_messages([ModelRequest(parts=records)])
+    assert isinstance(rendered, ModelRequest)
     return [
-        item.content
-        for part in parts
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        for item in part.content
-        if isinstance(item, TextContent)
-        and is_str_dict(item.metadata)
-        and item.metadata.get('origin') == _PLAN_ORIGIN['origin']
+        part.content
+        if isinstance(part.content, str)
+        else ''.join(item.content for item in part.content if isinstance(item, TextContent))
+        for part in rendered.parts
+        if isinstance(part, UserPromptPart)
     ]
 
 
@@ -1217,7 +1219,10 @@ class TestReminder:
             model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
         )
         assert await cap.before_model_request(ctx, request_context) is request_context
-        return [replace(part, timestamp=_T0) if isinstance(part, UserPromptPart) else part for part in enqueued]
+        return [
+            replace(part, timestamp=_T0) if isinstance(part, UserPromptPart | PlanReminderPart) else part
+            for part in enqueued
+        ]
 
     async def _cap(self, *steps: str) -> Planning[None]:
         store = InMemoryPlanStore()
@@ -1337,6 +1342,12 @@ class TestReminder:
         assert await self._enqueued(cap, [ModelRequest(parts=[unmarked])]) == [
             _plan_record('1. [ ] Do X\n(0/1 completed)')
         ]
+
+    async def test_a_plan_an_earlier_version_recorded_counts(self) -> None:
+        """A history saved before plans were `PlanReminderPart`s holds them as user text marked by metadata."""
+        legacy = TextContent('<plan_reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan_reminder>', metadata=_PLAN_ORIGIN)
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi'), UserPromptPart([legacy])])]
+        assert await self._enqueued(await self._cap('Do X'), history) == []
 
     async def test_emptied_plan_is_recorded(self) -> None:
         """Once the model was shown a plan, emptying it is recorded too, so the old plan doesn't read as current."""
@@ -1551,7 +1562,7 @@ ends with &lt;/plan_reminder
             [part for message in result.all_messages() for part in message.parts] for result in (result_1, result_2)
         )
         tail = second[len(first) :]
-        assert _plan_records_in(tail) == ['<plan_reminder>\nNo plan yet.\n</plan_reminder>']
+        assert _plan_records_in(tail) == ['<plan_reminder>No plan yet.</plan_reminder>']
         # Three requests in the second run, and only the first records the emptied plan.
         assert len(second_run) == 3
 

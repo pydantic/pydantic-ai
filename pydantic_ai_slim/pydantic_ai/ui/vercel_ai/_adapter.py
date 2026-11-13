@@ -22,6 +22,7 @@ from ...messages import (
     BinaryContent,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -773,9 +774,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 case UserPromptPart():
                     _add_segment(segments, 'user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                     seen_user_prompt = True
-                case ToolReturnPart() | InstructionDeltaPart() | InstructionBaselinePart():
+                case ToolReturnPart() | InstructionDeltaPart() | InstructionBaselinePart() | CapabilityPart():
                     # Tool returns are merged into the tool call in the assistant message, and operator
-                    # instruction state stays in trusted server-side history.
+                    # instruction state stays in trusted server-side history. So do capability parts, until they
+                    # have a carrier whose trust a client can't change (#11029).
                     pass
                 case ModelSettingsDeltaPart():
                     _add_segment(

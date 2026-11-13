@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeIs
@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -114,7 +114,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
         replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]] | None = None,
-    ) -> CombinedCapability[AgentDepsT]:
+    ) -> Self:
         """A shallow copy holding `new_capabilities`, with the composition view carried across.
 
         The only supported way to swap a container's children. `replace()` would re-run
@@ -294,14 +294,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             or any(c.listens_to(event) for c in self._dispatch)
         )
 
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy whose children, and so what each of them enqueues, carry no more than `authority`.
+
+        Composition merges a container's children into the enclosing one and dispatches each on its own, so the ceiling
+        is set on every child as well as on the container.
+        """
+        lowered = super().with_authority(authority)
+        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c._for_run_keeping_authority(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -376,25 +385,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if cap_settings is None:
                 continue
 
-            if capability.defer_loading is True:
-                # Request-only settings can be lazy without changing prompt/tool schemas.
-                # Keep them in place so loaded capabilities preserve merge order.
-                def deferred_settings(
-                    ctx: RunContext[AgentDepsT],
-                    *,
-                    capability: AbstractCapability[AgentDepsT] = capability,
-                    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
-                ) -> ModelSettings:
-                    cap_ctx = _ctx_for_active_cap(capability, ctx)
-                    if cap_ctx is None:
-                        return ModelSettings()
-                    if callable(cap_settings):
-                        return cap_settings(cap_ctx)
-                    return cap_settings
-
-                settings_chain.append(deferred_settings)
-            else:
-                settings_chain.append(cap_settings)
+            settings_chain.append(_settings_entry(capability, cap_settings))
 
         if not settings_chain:
             return None
@@ -1228,7 +1219,11 @@ def bind_capabilities_tier(
         if is_deferred_group(capability):
             # Each child of a deferred group binds in its own tier, as it would outside the group.
             return bind_capabilities_tier(capability, agent, innermost=innermost)
-        return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
+        return (
+            capability._keep_authority(capability.for_agent(agent))  # pyright: ignore[reportPrivateUsage]
+            if is_innermost(capability) == innermost
+            else capability
+        )
 
     branches = combined.capabilities
     new_caps = [bind(c) for c in branches]
@@ -1268,6 +1263,32 @@ class _GroupMember(WrapperCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)
+
+
+def _settings_entry(
+    capability: AbstractCapability[AgentDepsT],
+    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings],
+) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]:
+    """A child's settings as an entry in the merge chain, evaluated against the child's own context."""
+    if capability.defer_loading is True:
+        # Request-only settings can be lazy without changing prompt/tool schemas.
+        # Keep them in place so loaded capabilities preserve merge order.
+        def deferred_settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
+            if cap_ctx is None:
+                return ModelSettings()
+            if callable(cap_settings):
+                return cap_settings(cap_ctx)
+            return cap_settings
+
+        return deferred_settings
+    if callable(cap_settings):
+        # The settings function is the capability's code, held to its authority if it enqueues.
+        def attributed_settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            return cap_settings(_ctx_for_cap(capability, ctx))
+
+        return attributed_settings
+    return cap_settings
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

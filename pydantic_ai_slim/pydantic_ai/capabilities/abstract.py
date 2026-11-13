@@ -3,10 +3,10 @@ from __future__ import annotations
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Self, TypeAlias, get_args
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -23,9 +23,11 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    Authority,
     CapabilityInstructionSource,
     ModelResponse,
     ToolCallPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -200,8 +202,38 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+_AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
+
+
+class _CapabilityAuthority:
+    """Declares `authority` for [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
+
+    A plain class rather than a dataclass, so `authority` isn't a dataclass field of every capability: a capability
+    sets it as a class attribute, or declares it as a field of its own, such as `LocalWorkspace(authority=...)`.
+    """
+
+    authority: Authority = 'operator'
+    """The most [authority][pydantic_ai.messages.Authority] what this capability enqueues can carry.
+
+    A [capability part](../capabilities/custom.md#capability-parts) it enqueues whose source has more authority
+    than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
+    and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
+    authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
+    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose mid-conversation
+    content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
+    a subclass, or as a field of the capability's own. To lower one instance, use
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
+    capability sends mid-conversation, including its tools' `ToolReturn.content`. It doesn't cap the capability's
+    instructions, its tool names and descriptions, or its tools' return values: review or leave those out yourself.
+
+    For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
+    default authority of the workspace's files. A file another capability reads through a workspace carries the
+    workspace's authority for that file, capped again by the reader's own `authority`.
+    """
+
+
 @dataclass(init=False)
-class AbstractCapability(ABC, Generic[AgentDepsT]):
+class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
 
     A capability is a reusable, composable unit of agent behavior that can provide
@@ -223,6 +255,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     hook raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest].
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
+
+    `authority` (default `'operator'`) is the most [authority][pydantic_ai.messages.Authority] what the capability
+    enqueues can carry: a [capability part](../capabilities/custom.md#capability-parts) whose source has more is
+    stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] at this level instead. Set it as a class
+    attribute of a subclass or as a field of the capability's own, and lower one instance with
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. For a workspace capability, such as
+    [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the default authority of the workspace's
+    files.
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
@@ -291,6 +331,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     description: str | None = None
     """Description of the capability."""
+
+    _authority_ceiling: Authority | None = field(default=None, init=False, repr=False)
+    """The authority [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] lowered this instance to.
+
+    Not a constructor argument, so capabilities with their own `__init__` and their spec schemas are unaffected.
+    """
 
     defer_loading: bool = False
     """If True, model-facing tools and instructions are hidden until the model explicitly
@@ -528,6 +574,50 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
 
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy of this capability whose enqueued parts carry no more than `authority`.
+
+        Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
+        class attribute lowers every instance of a class: for example, one plugin's capability at `'none'` while
+        another instance of its class keeps `'operator'`. It only ever lowers: asking for more authority than the
+        capability already has leaves it where it is. Like the class attribute, it covers what the capability sends
+        mid-conversation, not its instructions or tool definitions: for an MCP server you don't trust, also pass
+        `include_instructions=False`.
+        """
+        return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
+
+    @property
+    def _effective_authority(self) -> Authority:
+        """The class's `authority`, lowered by `with_authority` on this instance.
+
+        A capability may have an `authority` of its own that means something else, such as a login URL. That says
+        nothing about what it can say, so it carries no authority, rather than failing a capability that never
+        enqueues a capability part.
+        """
+        authority: Authority = self.authority if self.authority in _AUTHORITIES else 'none'
+        ceiling = self._authority_ceiling
+        return authority if ceiling is None else _lower_authority(authority, ceiling)
+
+    def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Carry this instance's authority to what its `for_run` or `for_agent` returned.
+
+        Both the class's `authority` and a `with_authority` lowering: an override that builds a fresh instance, such as
+        through `dataclasses.replace`, or one of another class, would otherwise drop it and raise the authority back.
+        """
+        ceiling = self._effective_authority
+        if resolved is self or resolved._effective_authority == _lower_authority(
+            resolved._effective_authority, ceiling
+        ):
+            return resolved
+        return resolved.with_authority(ceiling)
+
+    async def _for_run_keeping_authority(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """`for_run`, keeping the authority `with_authority` lowered this instance to.
+
+        `for_run` gets a context attributed to this capability, so what it enqueues is held to the same authority.
+        """
+        return self._keep_authority(await self.for_run(ctx._attributed_to(self)))  # pyright: ignore[reportPrivateUsage]
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -599,7 +689,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
         """Attribute one instruction recipe to this capability."""
-        return sourced_instruction(instruction, CapabilityInstructionSource(self.id) if self.id is not None else None)
+        sourced = sourced_instruction(
+            instruction, CapabilityInstructionSource(self.id) if self.id is not None else None
+        )
+        return replace(sourced, owner=self)
 
     def _attribute_container_instructions(
         self,

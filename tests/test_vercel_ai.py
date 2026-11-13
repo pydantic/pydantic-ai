@@ -18,7 +18,6 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, Too
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
-from pydantic_ai._framework_frame import framework_frame_text, is_framework_frame
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
@@ -45,6 +44,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionCapabilityPart,
     InstructionDeltaPart,
     InstructionId,
     LoadCapabilityCallPart,
@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -13032,11 +13033,16 @@ def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tup
     ]
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_vercel_ai', name='reminder'):
+    pass
+
+
 class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -13059,7 +13065,7 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
         if '[DONE]' not in encoded
     ]
 
-    assert [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages'] == []
+    assert [chunk for chunk in chunks if chunk['type'] in ('data-enqueued-messages', 'error')] == []
     assert 'Reminder' not in json.dumps(chunks)
 
 
@@ -15081,9 +15087,10 @@ async def test_dispatch_request_forwards_manage_message_history():
 
 
 def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
-    """A frame's mark in `TextContent` metadata never reaches the client; the application's own keys do."""
-    marked = framework_frame_text('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', author='tool')
-    with_origin = framework_frame_text('<report>\nDone.\n</report>', metadata={'origin': 'app'})
+    """The reserved namespace of `TextContent` metadata never reaches the client; the application's own keys do."""
+    reserved = {'__pydantic_ai__': {'framework_frame': True}}
+    marked = TextContent('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', metadata=reserved)
+    with_origin = TextContent('<report>\nDone.\n</report>', metadata={**reserved, 'origin': 'app'})
     content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Go.')]),
@@ -15112,4 +15119,4 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'origin' in dumped
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
-    assert is_framework_frame(marked)
+    assert marked.metadata == reserved

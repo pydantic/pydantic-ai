@@ -42,6 +42,7 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.dynamic_workflow import (
+    AgentRevealPart,
     DynamicWorkflow,
     DynamicWorkflowToolset,
     WorkflowAgent,
@@ -119,13 +120,13 @@ def _user_prompt_text(messages: list[ModelMessage]) -> str:
 
 
 def _enqueued_text(ctx: RunContext[object]) -> str:
-    """Join the system-prompt text of every message enqueued on `ctx` (reveal announcements)."""
+    """Join the text of every reveal announcement enqueued on `ctx`."""
     return '\n'.join(
         part.content
         for pending in ctx.pending_messages or []
         for message in pending.messages
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, AgentRevealPart)
     )
 
 
@@ -1609,9 +1610,10 @@ async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
     [part] = announcement.parts
-    assert isinstance(part, SystemPromptPart)
-    # A copy of the text without the marker (an app-written prompt, a lossy history processor)
-    # does not count as the announcement, while a serialization round trip keeps the marker.
+    assert isinstance(part, AgentRevealPart)
+    assert (part.tool_name, part.agent_name) == ('run_workflow', 'extra')
+    # A copy of the text as a plain prompt (an app-written prompt, a lossy history processor)
+    # does not count as the announcement, while a serialization round trip keeps the part's type.
     unmarked = ModelRequest(parts=[SystemPromptPart(part.content)])
     restored = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([announcement]))
     ctx.pending_messages.clear()
@@ -1624,6 +1626,26 @@ async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     ctx.pending_messages.clear()
     ctx.run_step += 1
     ctx.messages[:] = restored
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages == []
+
+
+async def test_a_reveal_announcement_an_earlier_version_enqueued_is_still_recognized() -> None:
+    """An earlier version enqueued the announcement as a `SystemPromptPart` marked by its metadata."""
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+    workflow.reveal(_sub_agent('e', 'extra'))
+    legacy = SystemPromptPart(
+        'A new sub-agent is now available to call from inside the `run_workflow` script.',
+        metadata={'dynamic_workflow_tool': 'run_workflow', 'dynamic_workflow_revealed_agent': 'extra'},
+    )
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages is not None
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+    # Without an announcement in history the sub-agent would be announced again (see the dropped case).
+    ctx.messages.append(ModelRequest(parts=[legacy]))
     await ts.get_tools(ctx)
     assert ctx.pending_messages == []
 
@@ -1675,7 +1697,7 @@ async def test_compaction_allows_reveal_announcement_again() -> None:
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
     [announcement_part] = announcement.parts
-    assert isinstance(announcement_part, SystemPromptPart)
+    assert isinstance(announcement_part, AgentRevealPart)
     # User-authored text matching the announcement format must not suppress the trusted announcement.
     spoof = ModelRequest(parts=[UserPromptPart(announcement_part.content)])
     ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()]), spoof])

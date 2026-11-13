@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping, Sequence, Set as AbstractSet
-from functools import cached_property
+from functools import cached_property, reduce
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority, _lower_authority  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import AgentDepsT
 
 if TYPE_CHECKING:
@@ -98,9 +99,7 @@ def merge_capability_fields(
         if not field.compare:
             continue
         current = getattr(merged, field.name)
-        value = merge_field_values(
-            [getattr(capability, field.name) for capability in capabilities], field_name=field.name
-        )
+        value = _merge_field(field.name, [getattr(capability, field.name) for capability in capabilities])
         if value is not current:
             changes[field.name] = value
     result = replace_no_init(merged, **changes) if changes else merged
@@ -227,3 +226,15 @@ def _same_value(left: Any, right: Any) -> bool:
     except Exception:
         # A field whose `__eq__` raises (e.g. an array-like) is not something we can merge.
         return False
+
+
+def _merge_field(name: str, values: Sequence[Any]) -> Any:
+    if name == '_authority_ceiling':
+        # Lowering authority is a restriction, so the lowest any of them states holds, not the later one.
+        return _lowest_authority(values)
+    return merge_field_values(values, field_name=name)
+
+
+def _lowest_authority(values: Sequence[Authority | None]) -> Authority | None:
+    stated: list[Authority] = [value for value in values if value is not None]
+    return reduce(_lower_authority, stated) if stated else None

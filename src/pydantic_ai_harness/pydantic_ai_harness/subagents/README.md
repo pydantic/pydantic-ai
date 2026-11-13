@@ -414,11 +414,15 @@ stable conversation ID, and owns every worker, an asyncio task, until shutdown. 
 is implemented.
 
 Use `DelegationReports` on the parent run to deliver settled background reports through core's
-queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
-`<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
-didn't succeed, like a background tool's `<pyai:tool_result>`. The output was written by a model, so it
-never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
-the frame: the acceptance receipt the parent got at launch already said a report would follow.
+queued-message API. Each report is a `TaskOutputPart` holding the child's output as
+`<task_output task_id="..." agent_name="...">` data on the user channel, with `outcome="..."` added
+when the task didn't succeed, like a background tool's `<tool_result>`. The output was written by a
+model, so it never enters system voice: a note in the application's voice says the sub-agent wrote
+it, not the user or the application. The output goes out as the child wrote it; text in it that
+looks like the frame's own tag or an application frame such as `<system>` gets a further note naming
+the sub-agent as its author, so it can't end the frame early or speak as the application. Nothing
+else precedes the frame: the acceptance receipt the parent got at launch already said a report would
+follow.
 
 Reports default to `priority='when_idle'` so active parents finish their current work first. A host
 that starts an idle continuation should use `DelegationReports(..., priority='asap')` and
@@ -426,14 +430,12 @@ that starts an idle continuation should use `DelegationReports(..., priority='as
 prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
 run has read its last queued messages is kept for the conversation's next run.
 
-Use `is_task_report(part)` to recognize the output part, or a task's question, which arrives the
-same way framed as `<task_question task_id="..." agent_name="...">`, for example to keep it out of
-a transcript of what the user typed. Like `BackgroundTools` completions, the metadata is never sent
-to the model, but the Vercel AI and AG-UI message conversions omit it: a history that round-trips
-through them returns the report or question as plain user text, and `is_task_report` no longer
-matches it. History passed in `message_history` is trusted as the caller's own, this metadata
-included. Load history from an untrusted client with a UI adapter, which never puts client metadata
-on message content, or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
+A task's question arrives the same way, as a `TaskQuestionPart` framed as
+`<task_question task_id="..." agent_name="...">`. Find reports and questions in history by these
+types, or with `is_task_report(part)`, which also recognizes the user text an earlier version
+delivered them as, for example to keep them out of a transcript of what the user typed. The Vercel AI
+and AG-UI message conversions leave capability parts out, so reports and questions stay in
+server-side history.
 
 ```python
 from pathlib import Path

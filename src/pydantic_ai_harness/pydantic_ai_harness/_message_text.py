@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from pydantic_ai.messages import (
+    CapabilityPart,
     StructuredContent,
     TextContent,
     ToolReturnPart,
@@ -68,3 +69,9 @@ def tool_return_text(part: ToolReturnPart) -> str:
     return ' '.join(
         f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
     )
+
+
+def capability_part_text(part: CapabilityPart) -> str:
+    """The text of a capability part's content, as the model sees it, without a data kind's frame or note."""
+    content = part.model_content()
+    return ''.join(user_prompt_texts(UserPromptPart([content] if isinstance(content, StructuredContent) else content)))

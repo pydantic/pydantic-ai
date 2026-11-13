@@ -38,7 +38,7 @@ Long multi-turn runs suffer instruction fade: after many tool-use turns the mode
 
 ## The solution
 
-`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) at the **tail** of the request. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it. It's recorded in the message history like any other part. A static `Reminder` can be a [lasting reminder](#lasting-reminders) instead, kept in front of the model for the rest of the conversation.
+`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a `ReminderPart`, a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice, which the model sees as a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) at the **tail** of the request. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it. It's recorded in the message history like any other part. A static `Reminder` can be a [lasting reminder](#lasting-reminders) instead, kept in front of the model for the rest of the conversation.
 
 - On Anthropic models that take mid-conversation system messages, it's sent as a turn-scoped system message (`clear_at`): every copy stays on the wire, the API stops rendering each one once the next request arrives, and a cleared one costs no tokens. Leaving earlier reminders in place is what keeps the cached prefix and the model's earlier reasoning valid; deleting one would invalidate every thinking block after it on models with preserved thinking.
 - Everywhere else, it's sent with its own request only, at the end, rendered like any other [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts), and left out of later ones.
@@ -82,11 +82,11 @@ A request-scoped reminder, the default, adds recency; it doesn't keep a rule in 
 
 A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
 
-The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders).
+The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written, and one that looks like a framework frame, such as a `<system` tag, raises `UserError` and fails the run; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders).
 
 ### Lasting reminders
 
-By default a reminder is request-scoped: the model sees it on the request it fires on, and not after. That's what a nudge about the next step needs, and the history doesn't fill up with copies the model keeps re-reading. Some guidance has to outlast that step, such as an obligation the model meets several tool calls later. Set `scope='conversation'` (named as in [`SystemPromptPart.scope`](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts)) to record each firing as a lasting system prompt instead:
+By default a reminder is request-scoped: the model sees it on the request it fires on, and not after. That's what a nudge about the next step needs, and the history doesn't fill up with copies the model keeps re-reading. Some guidance has to outlast that step, such as an obligation the model meets several tool calls later. Set `scope='conversation'` (named as in [`CapabilityPart.scope`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.CapabilityPart.scope)) to record each firing as a lasting system prompt instead:
 
 ```python
 from pydantic_ai_harness import SystemReminders
@@ -104,7 +104,7 @@ SystemReminders(
 )
 ```
 
-Each firing adds a `SystemPromptPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
+Each firing adds a `ReminderPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
 
 Choose the scope by what the text has to do:
 
@@ -112,7 +112,7 @@ Choose the scope by what the text has to do:
 - Text that matters for the next step only, or carries a value that changes (a count, a time, a budget), stays request-scoped, so stale copies don't pile up in the history.
 - Text that must still apply several steps after it fires is a lasting reminder.
 
-A lasting reminder is operator text, sent in system voice like any other reminder. It's a system prompt, so `SummarizingCompaction` summarizes it as a system message, never as something the user said, and `keep_user_messages` never keeps it. Its `origin` metadata keeps compaction from taking it for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
+A lasting reminder is operator text, sent in system voice like any other reminder. It's a `ReminderPart` in the application's voice, so `SummarizingCompaction` summarizes it as a system message, never as something the user said, and `keep_user_messages` never keeps it. Recognized by its type, it's never taken for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
 
 ## Dynamic reminders
 
@@ -128,13 +128,13 @@ SystemReminders(
 )
 ```
 
-Every reminder is sent as a system prompt, so the model reads it with the authority of your instructions. Static `Reminder` content and a `str` a dynamic callable returns are operator text, sent in system voice as written: return only text you wrote yourself. The built-in dynamic reminders never put text they didn't write in system voice.
+Every reminder is sent as a system prompt, so the model reads it with the authority of your instructions. Static `Reminder` content and a `str` a dynamic callable returns are operator text, sent in system voice as written: return only text you wrote yourself. Static `Reminder` content that looks like a framework frame, such as a `<system>` tag, raises `UserError` when the `Reminder` is created. The built-in dynamic reminders never put text they didn't write in system voice.
 
 `GoalReanchor` doesn't quote the user at all: it points the model back at the user's first request, which is already in the conversation. `LLMReminder` returns a `GeneratedReminder`, a distinct type rather than a `str`, so string operations can't turn the generated text into operator text; a wrapper that passes it through keeps it as data.
 
-`SystemReminders` sends a `GeneratedReminder` as a fixed framework note in system voice, which ranks the reminder below your instructions and the user's request, and the generated text on the user channel in a `<generated_reminder model="...">` tag. The two are one record in the message history, kept and sent together on every later request and seen together by compaction and summaries, so in history kept on the server the generated text doesn't reach the model without the note that says what it is. History that round-trips through a UI client is the one exception: see [UI history](#ui-history). Both parts carry `origin` metadata, so the reminders recognize their own records.
+`SystemReminders` sends a `GeneratedReminder` as a `GeneratedReminderPart`: the generated text on the user channel in a `<generated_reminder model="...">` tag, behind a fixed note in the application's voice that ranks the reminder below your instructions and the user's request and says the reminder model wrote it, not the user or the application. The note and the text are one record in the message history, kept and sent together on every later request and seen together by compaction and summaries, so in history kept on the server the generated text doesn't reach the model without the note that says what it is. History that round-trips through a UI client is the one exception: see [UI history](#ui-history). The reminders find their own records in history by that type.
 
-Every opening and closing spelling of a framing tag inside the generated text, `<system>` and the reminder tags included, is escaped (`&lt;system>`), so it can't end its tag, open another or speak as the system. `LLMReminder` also quotes the transcript it sends the reminder model, in `<summary>`, `<goal>` and `<message role="...">` elements, starting at the latest native compaction boundary.
+The generated text goes out as the model wrote it: text in it that looks like the `<generated_reminder>` tag or a framework frame such as `<system>` gets a further note naming the reminder model as its author, so it can't end its tag, open another or speak as the system. `LLMReminder` also quotes the transcript it sends the reminder model, in `<summary>`, `<goal>` and `<message role="...">` elements, starting at the latest native compaction boundary.
 
 ### `GoalReanchor` -- zero-cost goal anchoring
 
@@ -158,7 +158,7 @@ from pydantic_ai_harness.system_reminders import LLMReminder
 SystemReminders(dynamic_reminders=[LLMReminder(model='anthropic:claude-haiku-4-5', interval=10)])
 ```
 
-`LLMReminder` generates every `interval` model requests: the 10th, 20th, 30th, ... by default, the cadence `TrajectoryJudge` reviews a run on. Each firing issues one extra model call (its usage is threaded onto the parent run via `ctx.usage`, so it shows up in `result.usage`, and the generation run is filed under the parent's `conversation_id`), and adds its note and generated text to the message history for good, sent again on every later request. So `interval` bounds both: a run of R requests makes `R // interval` extra calls and gains `2 * (R // interval)` parts. A run shorter than `interval` requests gets no generated reminder, which is the point of the default: instruction fade sets in over long runs. Set `interval` lower for a tighter cadence, and add `GoalReanchor` alongside it for a free check on every request in between:
+`LLMReminder` generates every `interval` model requests: the 10th, 20th, 30th, ... by default, the cadence `TrajectoryJudge` reviews a run on. Each firing issues one extra model call (its usage is threaded onto the parent run via `ctx.usage`, so it shows up in `result.usage`, and the generation run is filed under the parent's `conversation_id`), and adds one `GeneratedReminderPart`, the generated text with its note, to the message history for good, sent again on every later request. So `interval` bounds both: a run of R requests makes `R // interval` extra calls and gains `R // interval` parts. A run shorter than `interval` requests gets no generated reminder, which is the point of the default: instruction fade sets in over long runs. Set `interval` lower for a tighter cadence, and add `GoalReanchor` alongside it for a free check on every request in between:
 
 ```python
 from pydantic_ai_harness import SystemReminders
@@ -167,7 +167,7 @@ from pydantic_ai_harness.system_reminders import GoalReanchor, LLMReminder
 SystemReminders(dynamic_reminders=[GoalReanchor(), LLMReminder(model='anthropic:claude-haiku-4-5', interval=5)])
 ```
 
-`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history by two parts on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
+`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
 
 The nested call runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text.
 
@@ -190,7 +190,7 @@ Without a durability engine, generation runs directly in all three cases, with t
 
 ## Observing reminders
 
-Subscribe to `ReminderFiredEvent` to observe reminders after they are appended:
+Subscribe to `ReminderFiredEvent` to observe reminders after they are appended. Its `text` is what the model is sent: for an `LLMReminder`'s `GeneratedReminder`, the note and the framed text:
 
 ```python
 from pydantic_ai import Agent
@@ -229,9 +229,9 @@ The reminder is only added when the last message in the request is a `ModelReque
 
 ## UI history
 
-With a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/#trust-model-for-client-submitted-messages) in its default `manage_system_prompt='server'` mode, history that goes through the client doesn't keep an `LLMReminder` record intact. The dump leaves out the record's system note but keeps its generated text, and AG-UI also drops the metadata that marks the text as reminder data. When the client sends that history back, the generated reminder reads as plain user text, and compaction may keep it as a user turn. Plain reminders, `GoalReanchor` included, are request-scoped and left out of the dump altogether, so they're unaffected. A `Reminder(scope='conversation')` is a lasting system prompt, which the dump leaves out in `'server'` mode like any other system prompt: history the client sends back doesn't have its copies, so keep the history on the server for lasting reminders too.
+With a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/#trust-model-for-client-submitted-messages) in its default `manage_system_prompt='server'` mode, history that goes through the client doesn't keep an `LLMReminder` record: the dump leaves out capability parts, `GeneratedReminderPart` included, so history the client sends back doesn't have them. Plain reminders, `GoalReanchor` included, are request-scoped and left out of the dump altogether, so they're unaffected. A `Reminder(scope='conversation')` is a lasting system prompt, which the dump leaves out in `'server'` mode like any other system prompt: history the client sends back doesn't have its copies, so keep the history on the server for lasting reminders too.
 
-If you use `LLMReminder` with a UI adapter, keep the [message history on the server](https://pydantic.dev/docs/ai/core-concepts/message-history/) and don't rely on the client's copy. A durable fix is planned with `CapabilityPart` ([#11029](https://github.com/pydantic/pydantic-ai/issues/11029)), and a server-held history mode for UI adapters is proposed in [#11031](https://github.com/pydantic/pydantic-ai/issues/11031).
+If you use `LLMReminder` with a UI adapter, keep the [message history on the server](https://pydantic.dev/docs/ai/core-concepts/message-history/) and don't rely on the client's copy. A carrier that lets capability parts go through a client is planned in [#11029](https://github.com/pydantic/pydantic-ai/issues/11029), and a server-held history mode for UI adapters is proposed in [#11031](https://github.com/pydantic/pydantic-ai/issues/11031).
 
 ## Not spec-serializable
 

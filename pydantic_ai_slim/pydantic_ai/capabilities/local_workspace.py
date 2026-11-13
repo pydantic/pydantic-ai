@@ -48,7 +48,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     authority: Authority = 'operator'
     """The [authority][pydantic_ai.messages.Authority] of the directory's files: `'user'` for the user's own files,
     `'none'` for files nobody on the application's side wrote. Anything below `'operator'` wraps the workspace in an
-    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]. As for any capability, it's also the most
+    what `LocalWorkspace` itself enqueues can carry."""
 
     path_authority: Mapping[str, Authority] | None = None
     """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching

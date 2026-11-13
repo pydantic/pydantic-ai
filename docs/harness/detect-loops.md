@@ -77,19 +77,19 @@ A tool polled until a job finishes, with arguments that don't change, is a `repe
 
 ### `'nudge'` (default)
 
-The capability enqueues a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. For example:
+The capability enqueues a `LoopNudgePart`, an [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] kind (a [capability part](../capabilities/custom.md#capability-parts) in the application's voice), with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. The model sees its text as a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), or as `<system>` user text on a model without inline system prompts. For example:
 
 ```text
 Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.
 ```
 
-The text names tools using only letters, digits, and `_`; any other character becomes `_`. The real names, and the pattern, are in the part's `metadata`:
+The text names tools using only letters, digits, and `_`; any other character becomes `_`. The part's `pattern` and `tool_names` fields hold the pattern and the real names, and never reach the model. Find nudges in history by their type, not by their text:
 
 ```python {test="skip" lint="skip"}
-{'origin': 'pydantic-ai-harness.detect_loops.nudge.v1', 'pattern': 'repeated_result', 'tool_names': ['read_file']}
-```
+from pydantic_ai_harness.detect_loops import LoopNudgePart
 
-Find nudges in history by that `origin`, not by their text ([identifying system prompts](../message-history.md#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts).
+nudges = [part for message in messages for part in message.parts if isinstance(part, LoopNudgePart)]
+```
 
 A nudge doesn't stop a model that ignores it. Combine it with [`UsageLimits`](../agent.md#usage-limits) for a hard stop.
 

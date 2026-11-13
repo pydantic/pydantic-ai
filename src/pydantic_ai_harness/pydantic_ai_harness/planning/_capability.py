@@ -7,12 +7,13 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
+    DataCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelSource,
     TextContent,
     ToolReturnPart,
     UserContent,
@@ -30,7 +31,9 @@ from pydantic_ai_harness.planning._toolset import (
     PlanningToolset,
     PlanStoreOperations,
     available_tool_names,
+    frame_plan_text,
     framed_plan,
+    render_plan,
     resolve_run_store,
     tool_call_store,
 )
@@ -57,6 +60,19 @@ _SUBTASK_GUIDANCE = (
     '(`completed` or `cancelled`). Call `get_available_tasks` to pick the next step that has no '
     'incomplete dependencies.'
 )
+
+
+_PLAN_SOURCE = ModelSource('agent')
+"""Who wrote a recorded plan: the agent's model, whose plan tools stored the steps, so it has no authority."""
+
+
+@dataclass(kw_only=True)
+class PlanReminderPart(DataCapabilityPart[str], namespace='planning', name='plan_reminder', tag='plan_reminder'):
+    """The current plan, as `Planning` records it when the model can no longer see the plan its tools last returned.
+
+    Data on the user channel in a `<plan_reminder>` tag, with a note that the agent wrote it, not the user or the
+    application. Find them in history by this type.
+    """
 
 
 @dataclass
@@ -252,7 +268,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         # A plan emptied outside the plan tools after the model was shown one is recorded too, so it doesn't read as current.
         plan = framed_plan(items)
         if plan != latest:
-            ctx.enqueue(UserPromptPart([framework_frame_text(plan, metadata={'origin': PLAN_ORIGIN})]))
+            ctx.enqueue(PlanReminderPart(content=render_plan(items), source=_PLAN_SOURCE))
         return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
@@ -338,9 +354,10 @@ _PLAN_NOTE = (
 
 
 def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
-    """The latest plan visible in `messages`: one a plan tool returned or `Planning` recorded, found by metadata.
+    """The latest plan visible in `messages`, in its frame: one a plan tool returned or `Planning` recorded.
 
-    A plan tool's return counts only while its content still holds the plan its metadata names.
+    Found by metadata or by type. A plan tool's return counts only while its content still holds the plan its metadata
+    names.
     """
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
@@ -348,6 +365,8 @@ def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
         for part in reversed(message.parts):
             if isinstance(part, ToolReturnPart):
                 plan = _returned_plan(part)
+            elif isinstance(part, PlanReminderPart):
+                plan = frame_plan_text(part.content)
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 plan = _recorded_plan(part.content)
             else:
@@ -373,8 +392,14 @@ def _returned_plan(part: ToolReturnPart) -> str | None:
 
 
 def _recorded_plan(content: Sequence[UserContent]) -> str | None:
-    """The latest plan `Planning` recorded in a user prompt's content, by its metadata."""
-    for item in reversed(content):
-        if isinstance(item, TextContent) and is_str_dict(item.metadata) and item.metadata.get('origin') == PLAN_ORIGIN:
-            return item.content
-    return None
+    """The plan an earlier version of `Planning` recorded as user text in `content`, found by its metadata."""
+    return next(
+        (
+            item.content
+            for item in reversed(content)
+            if isinstance(item, TextContent)
+            and is_str_dict(item.metadata)
+            and item.metadata.get('origin') == PLAN_ORIGIN
+        ),
+        None,
+    )
