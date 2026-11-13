@@ -316,10 +316,9 @@ class X11Computer:
         Each command may take `pauses` on top of the usual time limit. Each of `releases` is an `xdotool` chain, run
         on its own so one that fails doesn't keep the others from running.
         """
-        stderr = ''
         try:
             for command in commands:
-                stderr += (await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)).stderr
+                await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)
         except BaseException as error:
             failures = await self._release(releases)
             if failures and isinstance(error, WorkspaceError) and not isinstance(error, WorkspaceUnavailableError):
@@ -328,9 +327,6 @@ class X11Computer:
                     + '; '.join(failures)
                 ) from error
             raise
-        # xdotool skips a key name the display doesn't know and still succeeds.
-        if 'No such key name' in stderr:
-            raise UnsupportedActionError(f'The display cannot press that key: {stderr.strip()}')
 
     async def _release(self, releases: list[list[str]]) -> list[str]:
         """Stop the input command, then run each of `releases`; return what failed or didn't get to run in time."""
