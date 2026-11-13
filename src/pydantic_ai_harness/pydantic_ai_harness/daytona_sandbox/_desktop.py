@@ -226,7 +226,7 @@ class DaytonaDesktop:
 
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()
-        mouse, keyboard = self._computer_use.mouse, self._computer_use.keyboard
+        mouse = self._computer_use.mouse
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 button, held = _button(button), _keys(modifiers)
@@ -236,20 +236,8 @@ class DaytonaDesktop:
                 async with self._holding(_keys(modifiers)):
                     await mouse.move(x, y, request_timeout=_REQUEST_TIMEOUT)
             case Drag(path=path, modifiers=modifiers):
-                start, end, held = path[0], path[-1], _keys(modifiers)
-                async with self._holding(held):
-                    try:
-                        await mouse.down(start.x, start.y, request_timeout=_REQUEST_TIMEOUT)
-                        await anyio.sleep(DRAG_PRESS_PAUSE)
-                        for point in drag_steps(path):
-                            await anyio.sleep(DRAG_STEP_PAUSE)
-                            await mouse.move(point.x, point.y, request_timeout=_REQUEST_TIMEOUT)
-                        await anyio.sleep(DRAG_PRESS_PAUSE)
-                        await mouse.up(end.x, end.y, request_timeout=_REQUEST_TIMEOUT)
-                    except BaseException:
-                        with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                            await mouse.up(request_timeout=_REQUEST_TIMEOUT)
-                        raise
+                async with self._holding(_keys(modifiers)):
+                    await self._drag(path)
             case MouseDown(button=button):
                 await mouse.down(button=_button(button), request_timeout=_REQUEST_TIMEOUT)
             case MouseUp(button=button):
@@ -260,17 +248,34 @@ class DaytonaDesktop:
             case TypeText(text=text):
                 await self._type(text)
             case PressKeys(keys=keys, repeat=repeat):
-                names = _keys(keys)
-                modifiers = [name for name in names if name in _MODIFIERS.values()]
-                others = [name for name in names if name not in modifiers]
-                for _ in range(repeat):
-                    if len(others) == 1:
-                        await keyboard.press(others[0], modifiers, request_timeout=_REQUEST_TIMEOUT)
-                    else:  # only modifiers, or several other keys: `press` takes one
-                        async with self._holding(names):
-                            pass
+                await self._press(_keys(keys), repeat)
             case HoldKeys(keys=keys, seconds=seconds):
                 async with self._holding(_keys(keys)):
                     await anyio.sleep(seconds)
             case _:
                 raise UnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")
+
+    async def _drag(self, path: Sequence[Point]) -> None:
+        mouse, start, end = self._computer_use.mouse, path[0], path[-1]
+        try:
+            await mouse.down(start.x, start.y, request_timeout=_REQUEST_TIMEOUT)
+            await anyio.sleep(DRAG_PRESS_PAUSE)
+            for point in drag_steps(path):
+                await anyio.sleep(DRAG_STEP_PAUSE)
+                await mouse.move(point.x, point.y, request_timeout=_REQUEST_TIMEOUT)
+            await anyio.sleep(DRAG_PRESS_PAUSE)
+            await mouse.up(end.x, end.y, request_timeout=_REQUEST_TIMEOUT)
+        except BaseException:
+            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
+                await mouse.up(request_timeout=_REQUEST_TIMEOUT)
+            raise
+
+    async def _press(self, names: list[str], repeat: int) -> None:
+        modifiers = [name for name in names if name in _MODIFIERS.values()]
+        others = [name for name in names if name not in modifiers]
+        for _ in range(repeat):
+            if len(others) == 1:
+                await self._computer_use.keyboard.press(others[0], modifiers, request_timeout=_REQUEST_TIMEOUT)
+            else:  # only modifiers, or several other keys: `press` takes one
+                async with self._holding(names):
+                    pass
