@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from copy import copy
 from typing import Any, Self, TypeAlias
 
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
@@ -78,39 +77,28 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return new
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """Forward the step to the inner toolset.
+        """If per_run_step, re-evaluate factory and manage transitions in-place.
 
-        If per_run_step, re-evaluate the factory and manage transitions in place, preparing each new
-        inner toolset before entry, and return self. Otherwise, return a copy holding the stepped inner
-        toolset when it changed, leaving this instance as entered: durable execution shares it across
-        parallel tool-call units, which must not replace each other's stepped toolset.
+        Prepares each new inner toolset before entry and forwards every step to the active
+        toolset, even when the factory is not re-evaluated. Returns self.
         """
-        if not self.per_run_step:
-            if self._toolset is None:
-                return self
-            toolset = await self._toolset.for_run_step(ctx)
-            if toolset is self._toolset:
-                return self
-            stepped = copy(self)
-            stepped._toolset = toolset
-            return stepped
-
-        factory_toolset = await self._evaluate_factory(ctx)
-        # Compare the factory result, not its per-run replacement: an unchanged factory
-        # result must keep the prepared instance and its entered resources across steps.
-        if factory_toolset is not self._factory_toolset:
-            # Detach first so a failed exit, preparation or entry cannot double-exit the
-            # old toolset or exit a replacement that was never entered.
-            old_toolset = self._entered_toolset
-            self._toolset = None
-            self._entered_toolset = None
-            self._factory_toolset = None
-            if old_toolset is not None:
-                await old_toolset.__aexit__(None, None, None)
-            if factory_toolset is not None:
-                new_toolset = await factory_toolset.for_run(ctx)
-                await self._enter_inner_toolset(new_toolset)
-                self._factory_toolset = factory_toolset
+        if self.per_run_step:
+            factory_toolset = await self._evaluate_factory(ctx)
+            # Compare the factory result, not its per-run replacement: an unchanged factory
+            # result must keep the prepared instance and its entered resources across steps.
+            if factory_toolset is not self._factory_toolset:
+                # Detach first so a failed exit, preparation or entry cannot double-exit the
+                # old toolset or exit a replacement that was never entered.
+                old_toolset = self._entered_toolset
+                self._toolset = None
+                self._entered_toolset = None
+                self._factory_toolset = None
+                if old_toolset is not None:
+                    await old_toolset.__aexit__(None, None, None)
+                if factory_toolset is not None:
+                    new_toolset = await factory_toolset.for_run(ctx)
+                    await self._enter_inner_toolset(new_toolset)
+                    self._factory_toolset = factory_toolset
 
         if self._toolset is not None:
             self._toolset = await self._toolset.for_run_step(ctx)

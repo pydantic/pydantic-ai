@@ -114,6 +114,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, without_admin_server
 from ..realtime_connections import InferredConnection
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
 pytest.importorskip('dbos')
@@ -155,7 +156,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
@@ -5149,83 +5150,18 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
 
 
-@pytest.mark.parametrize('variant', ['copy', 'nested', 'inplace'])
+@pytest.mark.parametrize('variant', VARIANTS)
 async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
-    dbos: DBOS, variant: Literal['copy', 'nested', 'inplace']
+    dbos: DBOS, variant: Variant
 ) -> None:
-    """Parallel tool-call units each call through the stepped toolset they listed their tool on.
+    """Parallel tool-call units list and call their tools through the toolset prepared once for the step.
 
-    A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit,
-    and each unit prepares it for the step. When its toolset's `for_run_step` returns a new instance,
-    one unit's preparation must not replace the instance another unit already listed its tool on.
-    `FunctionModel` drives it rather than a cassette: the race is between the tool-call units, after the
-    model response that requests both calls.
+    A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit, as a
+    non-durable run shares it. `FunctionModel` drives it rather than a cassette: the race is between the
+    tool-call units, after the model response that requests both calls.
     """
-    serials = iter(range(1, 100))
-    listed: dict[str, int] = {}
-    called: dict[str, int] = {}
-    both_listed = asyncio.Event()
-
-    def echo(text: str) -> str:
-        return text
-
-    @dataclass
-    class StepStateToolset(WrapperToolset[None]):
-        serial: int = 0
-
-        async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
-            return StepStateToolset(await self.wrapped.for_run_step(ctx), serial=next(serials))
-
-        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
-            tools = await self.wrapped.get_tools(ctx)
-            if ctx.tool_call_id is not None:
-                # Hold each call unit here until both have listed, as a listing that does I/O would.
-                listed[ctx.tool_call_id] = self.serial
-                if len(listed) == 2:
-                    both_listed.set()
-                async with asyncio.timeout(10):
-                    await both_listed.wait()
-            return tools
-
-        async def call_tool(
-            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
-        ) -> Any:
-            assert ctx.tool_call_id is not None
-            called[ctx.tool_call_id] = self.serial
-            return await self.wrapped.call_tool(name, tool_args, ctx, tool)
-
-    @dataclass
-    class InPlaceStepStateToolset(StepStateToolset):
-        async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
-            # Updates its own step state and returns `self`, as `docs/toolsets.md` describes.
-            self.serial = next(serials)
-            return self
-
-    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) > 1:
-            return ModelResponse(parts=[TextPart('done')])
-        return ModelResponse(
-            parts=[
-                ToolCallPart('echo', {'text': 'a'}, tool_call_id='call-a'),
-                ToolCallPart('echo', {'text': 'b'}, tool_call_id='call-b'),
-            ]
-        )
-
-    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
-        if variant == 'nested':
-            # As `PrefixTools(Toolset(factory))` contributes from inside a dynamic capability.
-            return DynamicToolset(lambda ctx: StepStateToolset(FunctionToolset([echo])))
-        if variant == 'inplace':
-            return InPlaceStepStateToolset(FunctionToolset([echo]))
-        return StepStateToolset(FunctionToolset([echo]))
-
-    agent = Agent(
-        FunctionModel(model),
-        deps_type=type(None),
-        name=f'dbos_parallel_run_held_dynamic_{variant}',
-        toolsets=[DynamicToolset(factory, per_run_step=False, id='step_state')],
-        capabilities=[DBOSDurability()],
-    )
+    state = StepState()
+    agent = parallel_calls_agent(f'dbos_parallel_run_held_dynamic_{variant}', variant, state, DBOSDurability())
 
     @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{variant}')
     async def run_agent() -> str:
@@ -5233,8 +5169,9 @@ async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dyn
 
     with SetWorkflowID(str(uuid.uuid4())):
         assert await run_agent() == 'done'
-    assert called == listed
-    assert listed.keys() == {'call-a', 'call-b'}
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
 
 
 async def test_dbos_durability_nested_agent_in_tool_routes_to_inner_registrations(dbos: DBOS) -> None:

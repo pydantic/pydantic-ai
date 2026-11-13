@@ -167,6 +167,7 @@ class RunHeldToolset(Generic[AgentDepsT]):
         """The toolset `id` a durable unit looks it up by."""
         self.toolset = toolset
         self._entered = False
+        self._step: tuple[int, AbstractToolset[AgentDepsT]] | None = None
 
     @functools.cached_property
     def _lock(self) -> anyio.Lock:
@@ -184,6 +185,20 @@ class RunHeldToolset(Generic[AgentDepsT]):
                 self._entered = True
             return self.toolset
 
+    async def stepped(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset the run holds, entered and prepared for `ctx`'s run step.
+
+        The first unit of a step prepares it, from what the previous step prepared, and the step's other
+        units reuse that: a non-durable run prepares its toolsets once per step, and parallel tool-call
+        units must not prepare one shared toolset over each other's preparation.
+        """
+        toolset = await self.entered()
+        async with self._lock:
+            if self._step is None or self._step[0] != ctx.run_step:
+                previous = toolset if self._step is None else self._step[1]
+                self._step = (ctx.run_step, await previous.for_run_step(ctx))
+            return self._step[1]
+
     async def aclose(self, *args: Any) -> None:
         """Exit the toolset at the end of the run, if any unit entered it.
 
@@ -194,6 +209,7 @@ class RunHeldToolset(Generic[AgentDepsT]):
         async with self._lock:
             if self._entered:
                 self._entered = False
+                self._step = None
                 await self.toolset.__aexit__(*args)
 
 
@@ -228,14 +244,25 @@ async def toolset_for_unit(
         yield run_toolset
 
 
+@asynccontextmanager
+async def stepped_toolset_for_unit(
+    toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> AsyncGenerator[AbstractToolset[AgentDepsT]]:
+    """Yield the toolset to run one durable unit against, prepared for the unit's run step."""
+    if (held := _run_held_toolset(toolset, ctx)) is not None:
+        yield await held.stepped(ctx)
+        return
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
+        yield await run_toolset.for_run_step(ctx)
+
+
 async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
     """Resolve a dynamic toolset and collect its tools and instructions in a single entry.
 
     Falls back to resolving the toolset for this unit alone when the run's own resolved toolset
     isn't reachable, so replay/recovery in a fresh process stays deterministic.
     """
-    async with toolset_for_unit(toolset, ctx) as run_toolset:
-        run_toolset = await run_toolset.for_run_step(ctx)
+    async with stepped_toolset_for_unit(toolset, ctx) as run_toolset:
         tools = await run_toolset.get_tools(ctx)
         instructions = await run_toolset.get_instructions(without_tool_name_path(ctx))
         return DynamicToolsResult(
@@ -294,8 +321,7 @@ async def call_dynamic_tool(
     The args were only parsed (not validated) on the workflow/flow side, where the real tool
     isn't available; validation happens here against the resolved tool's own validator.
     """
-    async with toolset_for_unit(toolset, ctx) as run_toolset:
-        run_toolset = await run_toolset.for_run_step(ctx)
+    async with stepped_toolset_for_unit(toolset, ctx) as run_toolset:
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         tool_ctx = without_tool_name_path(ctx)
         args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(tool_ctx))
@@ -311,8 +337,7 @@ async def validate_dynamic_tool_args(
     tool_def: ToolDefinition | None = None,
 ) -> None:
     """Resolve a dynamic toolset and validate arguments against its real tool."""
-    async with toolset_for_unit(toolset, ctx) as run_toolset:
-        run_toolset = await run_toolset.for_run_step(ctx)
+    async with stepped_toolset_for_unit(toolset, ctx) as run_toolset:
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         await validate_tool_args(tool, tool_args, without_tool_name_path(ctx))
 
@@ -869,12 +894,10 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # `per_run_step=False` is the factory's own statement that one resolution covers the
             # run, so resolve it here like a non-durable run does, leaving entry to the first
             # durable unit that needs the toolset. This runs the factory in container code, where
-            # it must be deterministic and leave its I/O to the units. Every unit calls
-            # `for_run_step` on the held toolset, which leaves it unchanged and returns a copy when
-            # the factory result's step preparation produces a new toolset, so parallel tool-call
-            # units can share it. A `per_run_step=True` factory is re-evaluated per unit as before:
-            # its `for_run_step` swaps the inner toolset in place, which parallel tool-call units
-            # must not share.
+            # it must be deterministic and leave its I/O to the units, which use it as
+            # `RunHeldToolset.stepped` prepares it once per run step. A `per_run_step=True`
+            # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner
+            # toolset in place, which parallel tool-call units must not share.
             run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 

@@ -213,6 +213,7 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 
 
 def test_durability_codecs() -> None:
@@ -3972,6 +3973,28 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert calls == ['called']
     assert len(task_run_names) == 1
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_prefect_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    variant: Variant,
+) -> None:
+    """Parallel tool-call tasks list and call their tools through the toolset prepared once for the step.
+
+    `FunctionModel` drives it rather than a cassette: the race is between the tool-call tasks, after the model
+    response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'prefect_parallel_run_held_dynamic_{variant}', variant, state, PrefectDurability())
+
+    @flow(name=f'prefect_parallel_run_held_dynamic_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
 
 
 async def test_prefect_durability_task_name_assembly_sequence() -> None:
