@@ -62,7 +62,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 from pydantic_ai_harness import Coder, Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     '{{ openai:medium }}',
@@ -70,7 +70,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         WebSearch(),  # look up docs and error messages on the web
-        Memory(FileStore('.agent-memory')),  # remembers across sessions
+        Memory(FileMemoryStore('.agent-memory')),  # remembers across sessions
     ],
 )
 ```
@@ -89,16 +89,16 @@ A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where th
 
 [Coder](coder.md), [FileSystem](filesystem.md), [Shell](shell.md), [Repo Context](repo-context.md), and [Macroscope](macroscope.md) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](coder.md#sharing-a-workspace).
 
-Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
+Skills, SubAgents, ToolOutputLimits, and Memory's `FileMemoryStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory, ToolOutputLimits
-from pydantic_ai_harness.memory import FileStore
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.memory import FileMemoryStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
-memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
-limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
+memory = Memory(FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
+limits = ToolOutputLimits(store=LocalFileOverflowStore())  # spills in this machine's temp directory
 ```
 
 By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored. When the workspace user cannot write to the working directory, Shell keeps its job files in a directory private to that user under the workspace's temp directory (`$TMPDIR` in its environment, or `/tmp`) instead.
@@ -200,6 +200,7 @@ How the agent thinks and divides the work.
 | [Thinking](../capabilities/thinking.md) | Core | Provider-adaptive extended thinking at configurable effort |
 | [Planning](planning.md) | Harness | Model-owned task plans with a cache-safe live reminder |
 | [Subagents](subagents.md) | Harness | Delegate self-contained tasks to named child agents |
+| [Peers](peers.md) | Harness | Discover and message other agent sessions without controlling their runs |
 | [Dynamic Workflow](dynamic-workflow.md) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](advisor.md) | Harness | Let an executor consult a stronger model mid-run |
 | [Background Tools](background-tools.md) | Harness | Run selected tools concurrently; results arrive as follow-up messages |

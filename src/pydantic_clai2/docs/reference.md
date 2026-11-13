@@ -579,11 +579,12 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+To steer the active run instead, press Alt+Enter (Option+Enter; Ctrl+Enter on
+Windows, see [Windows Terminal](#windows-terminal)). With a typed
 draft, this immediately shows the message in the transcript and enqueues it for
 the run's next model request. It does not interrupt the current response or
 cancel in-flight tools. Messages already queued stay queued. With an empty
-draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+draft, it sends the oldest queued follow-up instead. Each press sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
 pressed Enter. A queued message that cannot steer stays queued and is not
@@ -830,6 +831,20 @@ a provider with no endpoint, such as `sentence-transformers`, fails the turn. CL
 versions before this setting ignore it and send to the provider's default endpoint, so
 if you depend on a gateway, also set the provider's environment variable or don't
 downgrade.
+
+Set `api_key` to the name of a `/keys` entry for a model to use that key instead of
+the provider's environment variable. Only the name is saved; the key stays in `/keys`
+and is read each time the model is built, so deleting or renaming the key in `/keys`
+fails the turn until you pick another. The row
+shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
+The plain model's `api_key` also applies to its `@default` account, which uses the
+environment's key; a profile such as `openai@work` keeps its own sign-in unless its
+own model sets `api_key`. While `accounts.pool` runs a plain model on every signed-in
+account, each keeps its own key, so its `api_key` reaches only the `@default` account,
+if that is one of them. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
+and plugin models take their keys elsewhere and have no API Key row. CLAI versions
+before this setting ignore it and use the environment's key, sending it to any saved
+`base_url`, so don't downgrade while a model relies on both.
 
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
@@ -1337,6 +1352,20 @@ still queues the message like Enter, the terminal is sending a plain Enter:
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
 - For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
   `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
+### Windows Terminal
+
+Windows Terminal and the Windows console take Alt+Enter to toggle full screen,
+so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
+CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
+is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
+wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
+Ctrl+Enter needs a terminal that reports modified keys, such as Windows
+Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
+a newline.
+SSH does not forward `WT_SESSION`, so a remote session started from Windows
+Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
+example with `export WT_SESSION=1` in the shell you start CLAI from.
 
 ### Interrupting a turn
 

@@ -26,7 +26,7 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
 )
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu, TerminalAnswerer, terminal_approver
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer

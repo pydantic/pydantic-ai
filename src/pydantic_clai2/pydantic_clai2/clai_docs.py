@@ -44,7 +44,7 @@ _HARNESS_DOCS = (
     'compaction',
     'day_ai',
     'deny_unanswered',
-    'filesystem',
+    'file_system',
     'github',
     'google_workspace',
     'grain',
@@ -62,7 +62,7 @@ _HARNESS_DOCS = (
     'skills',
     'slack',
     'step_persistence',
-    'subagents',
+    'sub_agents',
     'tool_call_judge',
 )
 """The harness capabilities CLAI uses, whose READMEs ship in the `pydantic-ai-harness` package."""

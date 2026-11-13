@@ -41,6 +41,17 @@ class SetToolMetadata(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return 'SetToolMetadata'
 
+    @classmethod
+    def from_spec(cls, tools: ToolSelector[Any] = 'all', **metadata: Any) -> SetToolMetadata[Any]:
+        """Create from spec.
+
+        Unlike `__init__`, takes `tools` positionally, so the short form loads too.
+
+        - Short: `{SetToolMetadata: [my_tool]}`
+        - Keyword: `{SetToolMetadata: {tools: [my_tool], code_mode: true}}`
+        """
+        return cls(tools=tools, **metadata)
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         selector = self.tools
         metadata = self.metadata
