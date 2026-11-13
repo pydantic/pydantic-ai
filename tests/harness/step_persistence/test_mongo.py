@@ -16,6 +16,7 @@ import anyio.to_thread
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
+from pymongo.driver_info import DriverInfo
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import BulkWriteError
 
@@ -656,3 +657,23 @@ class TestMongoStepStoreStoresEachMessageOnce:
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=history))
 
         assert [s.messages for s in await store.list_snapshots(run_id='r1')] == histories
+
+
+class TestMongoStepStoreDriverInfo:
+    async def test_owned_client_reports_harness_in_handshake(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[object] = []
+        original_init = AsyncMongoClient.__init__
+
+        def spy(self: AsyncMongoClient[dict[str, object]], *args: object, **kwargs: object) -> None:
+            seen.append(kwargs.get('driver'))
+            original_init(self, *args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+        monkeypatch.setattr(AsyncMongoClient, '__init__', spy)
+        store = MongoStepStore(db_url='mongodb://localhost:59017', database='t')
+        try:
+            (driver,) = seen
+            assert isinstance(driver, DriverInfo)
+            assert driver.name == 'pydantic-ai-harness'
+        finally:
+            monkeypatch.undo()
+            await store.aclose()

@@ -35,6 +35,7 @@ from bson.binary import Binary
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
+from pydantic_ai_harness._mongo_client import create_async_mongo_client
 from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
@@ -112,7 +113,7 @@ class MongoMediaStore:
             self._own_client = False
         else:
             assert db_url is not None
-            self._client = AsyncMongoClient[_MongoDocument](db_url)
+            self._client = create_async_mongo_client(db_url)
             self._own_client = True
 
         self._db: AsyncDatabase[_MongoDocument] = self._client[database]

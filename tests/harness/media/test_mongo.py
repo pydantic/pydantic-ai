@@ -14,6 +14,7 @@ import pytest
 from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
+from pymongo.driver_info import DriverInfo
 
 import pydantic_ai_harness.media as media
 from pydantic_ai_harness.media import (
@@ -359,3 +360,23 @@ class TestMediaLazyExport:
 
         with pytest.raises(AttributeError, match='has no attribute'):
             _ = media.NoSuchStore
+
+
+class TestMongoMediaStoreDriverInfo:
+    async def test_owned_client_reports_harness_in_handshake(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[object] = []
+        original_init = AsyncMongoClient.__init__
+
+        def spy(self: AsyncMongoClient[dict[str, object]], *args: object, **kwargs: object) -> None:
+            seen.append(kwargs.get('driver'))
+            original_init(self, *args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+        monkeypatch.setattr(AsyncMongoClient, '__init__', spy)
+        store = MongoMediaStore(db_url='mongodb://localhost:59017', database='t')
+        try:
+            (driver,) = seen
+            assert isinstance(driver, DriverInfo)
+            assert driver.name == 'pydantic-ai-harness'
+        finally:
+            monkeypatch.undo()
+            await store.aclose()
