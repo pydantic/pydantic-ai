@@ -43,6 +43,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
+from ..display_contract_live import check_display_contract
 
 pytestmark = [pytest.mark.sprites_live]
 
@@ -78,9 +79,9 @@ async def client(sprites_token: str) -> AsyncIterator[AsyncSpritesClient]:
 
 
 @asynccontextmanager
-async def _owned(client: AsyncSpritesClient) -> AsyncGenerator[SpritesSandboxBackend]:
+async def _owned(client: AsyncSpritesClient, *, desktop: bool = False) -> AsyncGenerator[SpritesSandboxBackend]:
     """Create a Sprite and delete it on the way out, even when the test deleted it already."""
-    backend = SpritesSandboxBackend(client=client)
+    backend = SpritesSandboxBackend(client=client, desktop=desktop)
     native = await backend.get_sandbox()
     try:
         yield backend
@@ -263,6 +264,16 @@ async def test_coder_shell_and_file_tools_run_in_the_sprite(client: AsyncSprites
 
     assert 'git version' in result.output
     assert 'hello' in result.output
+
+
+async def test_a_desktop_meets_the_display_contract(client: AsyncSpritesClient) -> None:
+    """The fakes keep the X server's state between commands: a plain Xvfb resets each time its last client exits, so
+    without `-noreset` the pointer went back to the middle after every action."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await check_display_contract(display)
 
 
 async def test_commands_get_a_usable_environment(client: AsyncSpritesClient) -> None:
