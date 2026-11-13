@@ -364,6 +364,28 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
         assert provider.actions == [Click(x=1, y=1)]
 
+    async def test_a_hook_can_ask_before_acting_on_a_call_another_hook_repaired(self) -> None:
+        """A repaired call is no longer a typed `ComputerCallPart`, so the recipe reads the tool's kind and its arguments."""
+        provider = ScreenProvider()
+
+        async def correct(ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any) -> Any:
+            return {'actions': [{'type': 'click', 'x': 1, 'y': 1}]}
+
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1, 'extra': 'bad'}]),
+            capabilities=[
+                provider.capability(),
+                ComputerUse(),
+                Hooks(before_tool_validate=correct),
+                _ask_before_acting(),
+            ],
+            output_type=[str, DeferredToolRequests],
+        )
+        result = await agent.run('Go.')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert provider.actions == []
+
     async def test_zoom_and_the_pointer_position_come_back_before_the_screenshot(self) -> None:
         model = _scripted(
             [{'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 100, 'bottom': 50}}, {'type': 'cursor_position'}]
@@ -921,10 +943,11 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
         assert provider.actions == [Click(x=640, y=400)]
 
-    async def test_a_call_changed_before_it_ran_says_what_ran(self) -> None:
+    async def test_a_call_changed_before_it_ran_says_so_without_what_ran(self) -> None:
+        """The approver's actions can hold what the model must not see, such as a password typed in."""
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'rm -rf /'}]),
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'placeholder'}]),
             capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
@@ -932,16 +955,17 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert isinstance(paused.output, DeferredToolRequests)
         (call,) = paused.output.approvals
 
-        only_the_click = ToolApproved(override_args={'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
+        with_the_password = ToolApproved(override_args={'actions': [{'type': 'type', 'text': 'hunter2'}]})
         resumed = await agent.run(
             message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: only_the_click}),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: with_the_password}),
         )
-        assert provider.actions == [Click(x=1, y=1)]
+        assert provider.actions == [TypeText(text='hunter2')]
         (tool_return,) = _returns(resumed.all_messages())
         assert tool_return.content_items()[0] == snapshot(
-            'Before it ran, this call was changed to: [{"type":"click","x":1,"y":1,"button":"left","count":1,"modifiers":[]}]. Ran 1 action. Screenshot attached (1280x800).'
+            'This call was changed before it ran. Ran 1 action. Screenshot attached (1280x800).'
         )
+        assert 'hunter2' not in tool_return.model_response_str()
         assert tool_return.metadata == {'performed': 1, 'changed': True, 'screenshot_size': (1280, 800)}
 
     async def test_a_screen_within_what_the_model_takes_is_sent_as_it_is(self) -> None:
@@ -1024,6 +1048,36 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
 
         assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
+
+    async def test_a_call_that_waited_its_turn_measures_the_screen_the_call_before_left(self) -> None:
+        turns = _Turns()
+        provider = ScreenProvider()
+
+        class Turning(turns.backend):
+            size = (1280, 800)
+
+            async def display_size(self) -> tuple[int, int]:
+                return self.size
+
+            async def screenshot(self) -> bytes:
+                image = png(*self.size)
+                self.size = (800, 1280)  # the screen turns once the first call has looked
+                return image
+
+        screen = Turning(provider, None)
+        agents = [
+            Agent(_scripted([{'type': 'type', 'text': 'first'}]), capabilities=[turns.capability, ComputerUse()]),
+            Agent(
+                _scripted(
+                    [{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000)
+                ),
+                capabilities=[turns.capability, ComputerUse()],
+            ),
+        ]
+
+        await turns.run(lambda: agents[0].run('Go.', workspace=screen), lambda: agents[1].run('Go.', workspace=screen))
+
+        assert provider.actions == [TypeText(text='first'), Click(x=400, y=640)]
 
     def test_agents_on_one_screen_in_separate_event_loops_do_not_wait_on_each_other(self) -> None:
         """A lock can't wake a waiter on another event loop, as Temporal runs each workflow on a loop of its own."""
@@ -1328,8 +1382,8 @@ def _ask_before_acting() -> Hooks[Any]:
         ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
         looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
-        if isinstance(call, ComputerCallPart) and not ctx.tool_call_approved:
-            if any(action.type not in looking for action in call.actions or []):
+        if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+            if any(action.type not in looking for action in args['actions']):
                 raise ApprovalRequired
         return args
 
