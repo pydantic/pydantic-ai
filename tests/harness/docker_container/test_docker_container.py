@@ -327,6 +327,20 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
     assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
 
 
+async def test_authority_reaches_the_runs_workspace(docker: FakeDocker, container_dir: Path) -> None:
+    container = DockerContainer(image='image', working_dir=str(container_dir), authority='none')
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[container])
+
+    @agent.tool
+    async def probe(ctx: RunContext[object]) -> str:
+        return await ctx.workspace.authority_of('AGENTS.md')
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":"none"}'
+    assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
+
+
 async def test_destroying_a_removed_container_is_fine(docker: FakeDocker) -> None:
     await DockerContainer().destroy(WorkspaceRef(provider='docker', id='gone'))
 

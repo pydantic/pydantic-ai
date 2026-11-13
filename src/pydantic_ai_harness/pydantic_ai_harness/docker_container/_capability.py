@@ -6,9 +6,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace import with_authority
+from pydantic_ai_harness._workspace_provider import (
+    check_path_authority,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.docker_container._backend import (
     PROVIDER,
     DockerContainerBackend,
@@ -61,11 +68,22 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the container's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are container paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
@@ -80,6 +98,10 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
         await remove_container(ref.id, executable=self._executable_path)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
         del ctx
         if ref is not None:

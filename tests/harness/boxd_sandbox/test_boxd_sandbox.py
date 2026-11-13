@@ -231,12 +231,14 @@ async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeB
 def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
     assert sorted(definitions['spec_params_BoxdSandbox']['properties']) == [
+        'authority',
         'auto_suspend_timeout',
         'defer_loading',
         'description',
         'env',
         'id',
         'org',
+        'path_authority',
         'snapshot',
         'vcpu',
         'working_dir',

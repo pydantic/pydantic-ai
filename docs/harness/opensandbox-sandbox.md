@@ -211,7 +211,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 
 ## Configuration
 
-[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
+[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir`, `env`, `authority` and `path_authority`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
 
 | Option | What it does |
 | --- | --- |
@@ -223,6 +223,8 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Telemetry
 

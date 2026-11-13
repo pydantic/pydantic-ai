@@ -17,12 +17,21 @@ from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    Authority,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -87,6 +96,28 @@ async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: Fake
     native = await backend.get_sandbox()
     assert native is fake_modal.sandboxes[0]
     assert backend.ref == WorkspaceRef(provider='modal', id=native.object_id)
+
+
+@pytest.mark.parametrize(
+    'authority,path_authority',
+    [('none', {'docs': 'user'}), ('operator', {'docs': 'user'})],
+    ids=['both', 'path-only'],
+)
+def test_authority_wraps_the_runs_workspace(
+    fake_modal: FakeModal, authority: Authority, path_authority: dict[str, Authority]
+) -> None:
+    # Modal's own `__init__` takes both fields, and `get_workspace` builds no sandbox, so this needs no run.
+    # A `path_authority` alone, with the default `'operator'`, still wraps.
+    sandbox = ModalSandbox[object](image='python:3.13-slim', authority=authority, path_authority=path_authority)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage())
+    workspace = sandbox.get_workspace(ctx, ref=None)
+    assert isinstance(workspace, AuthorityWorkspace)
+    assert workspace.durable_policy() == (authority, path_authority)
+
+
+def test_a_home_relative_path_authority_fails_at_construction() -> None:
+    with pytest.raises(UserError, match='`~` is not expanded'):
+        ModalSandbox[object](path_authority={'~/.config/app': 'operator'})
 
 
 def test_root_package_exports_the_capability_and_backend() -> None:
@@ -670,12 +701,14 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([ModalSandbox])['$defs']
     assert sorted(definitions['spec_params_ModalSandbox']['properties']) == [
         'app_name',
+        'authority',
         'create_app_if_missing',
         'description',
         'env',
         'id',
         'idle_timeout',
         'image',
+        'path_authority',
         'sandbox_timeout',
         'warn_if_no_tools',
         'working_dir',
