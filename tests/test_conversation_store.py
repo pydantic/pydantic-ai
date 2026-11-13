@@ -1,5 +1,13 @@
+"""Tests for `ConversationStore` and the conversations runs hand it, including those of failed runs.
+
+These are unit-style tests rather than VCR tests: what's under test is how Pydantic AI records, saves and loads
+a conversation, and what a failed or cancelled run's error carries, not how a provider responds, so `TestModel`
+and `FunctionModel` drive the runs.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
 from unittest.mock import Mock
@@ -11,13 +19,17 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     Conversation,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
+    RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
+    capture_run_conversation,
     messages as _messages,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
     ConversationConflict,
@@ -25,12 +37,12 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     InMemoryConversationStore,
 )
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart, ToolCallPart, ToolReturnPart, repair_messages
+from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
+from pydantic_ai.messages import ModelSettingsDeltaPart, ToolReturnPart, repair_messages
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import DeferredToolRequests
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 pytestmark = pytest.mark.anyio
 
@@ -1241,3 +1253,230 @@ class _RecordRacingStore(InMemoryConversationStore):
         if race is not None:
             await race()
         return record
+
+
+def _call_look_up(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('look_up')])
+
+
+async def _loaded(store: InMemoryConversationStore, turns: int) -> Conversation:
+    stored = await _stored_conversation(store, turns=turns)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    return loaded
+
+
+async def test_a_run_that_hits_a_usage_limit_can_still_store_what_it_did() -> None:
+    store = InMemoryConversationStore()
+    loaded = await _loaded(store, turns=1)
+    agent = Agent(FunctionModel(_call_look_up))
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    # The conversation's usage carries into the run, so this allows one more request: the one calling the tool.
+    limits = UsageLimits(request_limit=loaded.usage.requests + 1)
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run('Look it up', conversation=loaded, usage_limits=limits)
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.conversation_id == loaded.conversation_id
+
+    added = await store.save(failed)
+
+    # The new turn: the prompt, the response calling the tool, and the request with its return.
+    assert [entry.message for entry in added] == failed.messages[len(loaded.messages) :]
+    assert len(added) == 3
+    reloaded = await store.load(loaded.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == failed.messages
+
+
+async def test_a_failed_run_s_error_gets_its_conversation_once_it_leaves_the_run() -> None:
+    """Caught inside the run, the error has no conversation yet: the run sets it as the error leaves the run."""
+    agent = Agent(FunctionModel(_call_look_up))
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    messages: list[ModelMessage] = []
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        async with agent.iter('Look it up', usage_limits=UsageLimits(request_limit=1)) as run:
+            try:
+                async for _ in run:
+                    pass
+            except UsageLimitExceeded as error:
+                assert error.conversation is None
+                messages = run.all_messages()
+                raise
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.messages == messages != []
+
+
+async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ValueError('the database is down')
+
+    with capture_run_conversation() as captured:
+        assert captured.conversation is None
+        with pytest.raises(ValueError, match='the database is down'):
+            await agent.run('Look it up')
+    failed = captured.conversation
+    assert failed is not None
+
+    added = await store.save(failed)
+
+    # Later reads return the saved conversation, so it can be saved again without a conflict.
+    assert captured.conversation is failed
+    # The prompt, the response calling the tool, and the request its return would have gone in, cut short.
+    assert [entry.message for entry in added] == failed.messages
+    last = added[-1].message
+    assert isinstance(last, ModelRequest)
+    assert last.state == 'interrupted'
+
+
+async def test_a_conversation_read_while_the_run_goes_on_is_not_kept() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ValueError('the database is down')
+
+    snapshots: list[Conversation | None] = []
+    with capture_run_conversation() as captured:
+        with pytest.raises(ValueError, match='the database is down'):
+            async with agent.iter('Look it up') as run:
+                async for _ in run:
+                    snapshots.append(captured.conversation)
+    failed = captured.conversation
+    assert failed is not None
+
+    # Each read during the run was a snapshot of it so far, and none of them was kept.
+    assert [len(snapshot.messages) for snapshot in snapshots if snapshot is not None] == [0, 0, 2]
+    assert len(failed.messages) == 3
+    assert captured.conversation is failed
+
+
+async def test_capture_run_conversation_keeps_the_first_run_and_leaves_an_inner_context_s_run_to_it() -> None:
+    agent = Agent(TestModel())
+
+    with capture_run_conversation() as outer:
+        first = await agent.run('First', conversation_id='first')
+        with capture_run_conversation() as inner:
+            await agent.run('Inner', conversation_id='inner')
+        await agent.run('Second', conversation_id='second')
+
+    assert outer.conversation is not None and inner.conversation is not None
+    assert outer.conversation.conversation_id == 'first'
+    assert outer.conversation.messages == first.all_messages()
+    assert inner.conversation.conversation_id == 'inner'
+
+
+class _FailsBeforeTheRun(AbstractCapability[None]):
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        raise RuntimeError('the hook failed')
+
+
+async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls_waiting() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> str:
+        return 'deleted'  # pragma: no cover
+
+    paused = await agent.run('Delete it', output_type=[str, DeferredToolRequests])
+    assert isinstance(paused.output, DeferredToolRequests)
+    await store.save(paused)
+    loaded = await store.load(paused.conversation_id)
+    assert loaded is not None and loaded.deferred_tool_requests is not None
+    [call] = loaded.deferred_tool_requests.approvals
+
+    with capture_run_conversation() as captured:
+        with pytest.raises(RuntimeError, match='the hook failed'):
+            await agent.run(
+                conversation=loaded,
+                output_type=[str, DeferredToolRequests],
+                deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+                capabilities=[_FailsBeforeTheRun()],
+            )
+    failed = captured.conversation
+    assert failed is not None
+    assert failed.deferred_tool_requests == loaded.deferred_tool_requests
+    # A copy, so changing it doesn't change the conversation the run was given.
+    assert failed.deferred_tool_requests is not loaded.deferred_tool_requests
+
+    await store.save(failed)
+    reloaded = await store.load(paused.conversation_id)
+    assert reloaded is not None
+    assert reloaded.deferred_tool_requests == loaded.deferred_tool_requests
+
+
+async def test_an_externally_cancelled_event_stream_carries_its_conversation() -> None:
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def wait() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return 'done'  # pragma: no cover
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Wait') as events:
+            async for _ in events:
+                pass
+
+    task = asyncio.create_task(consume())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await task
+
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None and cancelled.conversation is not None
+    assert cancelled.conversation.messages == cancelled.all_messages()
+
+
+async def test_a_cancelled_run_carries_its_conversation() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool
+    def stop(ctx: RunContext) -> str:
+        ctx.cancel()
+        return 'stopped'
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('Stop')
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.messages == exc_info.value.all_messages()
+
+
+async def test_a_nested_run_s_error_carries_the_outer_run_s_conversation() -> None:
+    inner = Agent(TestModel())
+    outer = Agent(TestModel())
+
+    @inner.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return (await inner.run('Look it up', usage_limits=UsageLimits(request_limit=1))).output
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await outer.run('Delegate', conversation_id='outer')
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.conversation_id == 'outer'

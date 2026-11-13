@@ -43,6 +43,7 @@ from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._run_context import set_current_run_context
+from .._run_conversation import failed_run_conversation
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
@@ -260,11 +261,13 @@ class AgentRunEvents(
         agent_run = self._binding.agent_run
         if agent_run is None:
             return
-        _agent_graph.run_cancelled_snapshot(
+        cancelled = _agent_graph.run_cancelled_snapshot(
             'The agent run was cancelled by an external asyncio cancellation.',
             agent_run.ctx.state,
             agent_run.ctx.deps,
-        )._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+        )
+        cancelled._conversation = failed_run_conversation(agent_run.ctx.state, agent_run.ctx.deps)  # pyright: ignore[reportPrivateUsage]
+        cancelled._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
 
     async def aclose(self) -> None:
         """Cancel the background run (if started) and close the receive stream, idempotently."""
