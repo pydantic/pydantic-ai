@@ -78,7 +78,7 @@ with try_import() as imports_successful:
         minimum: dict[int, int]
 
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
-            return len(ctx.output) >= self.minimum[1]  # pragma: no cover
+            return len(ctx.output) >= self.minimum[1]
 
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
@@ -168,6 +168,8 @@ def test_non_string_keyed_short_form():
     assert list(validator_for(schema)(schema).iter_errors(raw)) == []
     loaded = Dataset[str, str, str].from_dict(raw, custom_evaluator_types=[IntKeyed])
     assert loaded.evaluators == [IntKeyed(minimum={1: 4})]
+    report = loaded.evaluate_sync(lambda value: value)
+    assert all(result.value is True for result in report.cases[0].assertions.values())
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])

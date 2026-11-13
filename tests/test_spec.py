@@ -246,7 +246,8 @@ class ModelParam(AbstractCapability[None]):
     limits: Limits
 
     @classmethod
-    def from_spec(cls, limits: Limits) -> Self: ...  # pragma: no cover
+    def from_spec(cls, limits: Limits) -> Self:
+        return cls(limits=Limits.model_validate(limits))
 
 
 class TestBuildSchemaTypes:
@@ -334,9 +335,12 @@ class TestBuildSchemaTypes:
         validator = validator_for(schema)(schema)
         keyword_form = {'model': 'test', 'capabilities': [{'ModelParam': {'limits': {'length': 4}}}]}
         assert list(validator.iter_errors(keyword_form)) == []
+        capabilities = Agent.from_spec(keyword_form, custom_capability_types=[ModelParam]).root_capability.capabilities
+        assert [c.limits for c in capabilities if isinstance(c, ModelParam)] == [Limits(length=4)]
         short_form = {'model': 'test', 'capabilities': [{'ModelParam': {'length': 4}}]}
         assert list(validator.iter_errors(short_form))
 
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_unrepresentable_param_capability_schema(self):
         """A sole parameter with no JSON schema drops the capability's short form instead of raising."""
 
@@ -345,10 +349,15 @@ class TestBuildSchemaTypes:
         @dataclass
         class ClientParam(AbstractCapability[None]):
             @classmethod
-            def from_spec(cls, client: Client | None = None) -> Self: ...  # pragma: no cover
+            def from_spec(cls, client: Client | None = None) -> Self:
+                return cls()
 
         schema = AgentSpec.model_json_schema_with_capabilities([ClientParam])
         assert [key for key in schema['$defs'] if key.endswith('_ClientParam')] == []
+        name_only = {'model': 'test', 'capabilities': ['ClientParam']}
+        assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
+        capabilities = Agent.from_spec(name_only, custom_capability_types=[ClientParam]).root_capability.capabilities
+        assert [c for c in capabilities if isinstance(c, ClientParam)] == [ClientParam()]
 
     def test_no_params_class(self):
         class NoParams:
