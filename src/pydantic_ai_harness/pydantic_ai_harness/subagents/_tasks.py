@@ -441,9 +441,7 @@ class DelegationTasks:
         Once a settled task is saved, its history is kept in the file only: `history` reads it from there, and
         a resume loads it back first.
         """
-        self._unsaved.add(record.id)
         await self._write(record)
-        self._unsaved.discard(record.id)
         if record.id not in self._holding:
             self._release(record)
 
@@ -452,7 +450,11 @@ class DelegationTasks:
         if not _SAFE_ID.fullmatch(record.id):
             raise ValueError('Invalid task identity')
         if self.directory is not None:
+            # Marked until written, even when cut short waiting for the lock.
+            self._unsaved.add(record.id)
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
+                # Again, since an earlier save of this record clears it once its own write lands.
+                self._unsaved.add(record.id)
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
                 if (saved := self._saved_history(record)) is not None:
@@ -460,6 +462,7 @@ class DelegationTasks:
                 self._history_on_disk.pop(record.id, None)
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
+                self._unsaved.discard(record.id)
 
     @contextmanager
     def _holding_history(self, record: DelegationTask) -> Generator[None]:

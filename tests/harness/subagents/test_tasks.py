@@ -1475,7 +1475,7 @@ async def test_close_drains_many_children_concurrently(
                 )
             await all_running.wait()
             owner.closing = True
-    assert 'did not release' not in caplog.text
+    assert 'children still running' not in caplog.text
     assert all(task.done() for task in asyncio.all_tasks() if task.get_name().startswith('delegate-'))
     children = [record for record in owner.records.values() if record.conversation_id == 'root']
     assert sorted(saved) == sorted(record.id for record in children)
