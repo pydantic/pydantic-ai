@@ -41,7 +41,24 @@ The model gets `list_peers(query='')` and `send_message(to, text, reply_to=None)
 
 To hold messages in host storage instead, implement `PeerInbox`. `Peers` calls `take(run_id)` before and after each model request: the first call claims the inbox for that run, and each call returns the messages the run has not taken yet. It calls `acknowledge(message_id)` once a message has entered conversation history, and `release(run_id)` when the run ends; messages taken but not acknowledged stay held for the next run. While one run holds the inbox, `take` returns nothing to another. `LocalPeerInbox` is the in-process implementation.
 
-Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. It is not an instruction from the receiving user and cannot grant approval. A host that delivers peer messages itself must send each one as its own message part: merged into a user prompt, peer text loses its provenance and reads as the user's own words. A peer message that reaches a running agent can still steer it into any tool that does not require approval, so if peers can reach the agent, require approval for tools with side effects. `read_peer_message(part)` reads a `PeerMessage` from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
+### Wire format
+
+`TypeAdapter(PeerMessage)` is the harness-neutral message format, so an adapter for an agent outside Pydantic AI can exchange messages with a host network:
+
+```json
+{
+  "id": "msg-1",
+  "sender": {"id": "peer-alice", "handle": "alice", "workspace": "/work/api"},
+  "recipient": "peer-bob",
+  "text": "The migration is done.",
+  "sent_at": "2026-11-13T12:00:00Z",
+  "reply_to": null
+}
+```
+
+`text` is limited to `MAX_MESSAGE_BYTES` UTF-8 bytes. The inbox file of `LocalPeerInbox` is not a cross-process contract: other processes reach a recipient through the host's transport, which admits each message into the recipient's inbox.
+
+Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. The model sees it as `<peer_message sender="alice" id="msg-1">...</peer_message>`, framed by core with the sender handle the host supplied, so it never reads as the user speaking. It is not an instruction from the receiving user and cannot grant approval. A host that delivers peer messages itself must send each one as its own message part: merged into a user prompt, peer text loses its provenance and reads as the user's own words. A peer message that reaches a running agent can still steer it into any tool that does not require approval, so if peers can reach the agent, require approval for tools with side effects. `read_peer_message(part)` reads a `PeerMessage` from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
 
 ## Limits and scope
 
