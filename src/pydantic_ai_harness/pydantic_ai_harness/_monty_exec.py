@@ -485,7 +485,8 @@ class MontyExecutor:
                 del self._pending[cid]
                 results[cid] = _wrap_gathered(outcome)
 
-        return await call_monty(self.portal, snapshot.resume, results)
+        # Stable delivery makes concurrent failures deterministic, including calls settled at a barrier.
+        return await call_monty(self.portal, snapshot.resume, dict(sorted(results.items())))
 
 
 async def _await_external(call: PendingCall) -> ExternalReturnValue | ExternalException:
