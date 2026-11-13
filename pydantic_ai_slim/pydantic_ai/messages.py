@@ -4143,7 +4143,7 @@ class CompactionPart:
 class FilePart:
     """A file response from a model."""
 
-    content: BinaryContent
+    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryContent.narrow_type)]
     """The file content of the response."""
 
     _: KW_ONLY
@@ -4171,8 +4171,8 @@ class FilePart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def __post_init__(self) -> None:
-        # Runs on direct construction and on validation alike, so a custom model returning
-        # `FilePart(BinaryContent(image))` and a deserialized message history both yield a `BinaryImage`.
+        # Validation narrows `content` through its annotation; this also narrows a part built directly in code,
+        # such as a custom model returning `FilePart(BinaryContent(image))`.
         if isinstance(self.content, BinaryContent) and not isinstance(self.content, BinaryImage):
             self.content = BinaryContent.narrow_type(self.content)
 
