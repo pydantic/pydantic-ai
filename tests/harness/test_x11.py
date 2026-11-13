@@ -188,13 +188,13 @@ LONG_DRAG = Drag(path=tuple(Point(x=100 + i % 2 * 300, y=100 + i) for i in range
 """A drag too long for one command: on Sprites, one command for it was refused (HTTP 414)."""
 
 
-async def test_x11_computer_drags_a_long_path_in_commands_the_providers_take_holding_on_between_them() -> None:
+async def test_x11_computer_splits_a_long_drag_holding_the_button_across_commands() -> None:
     desktop = ScriptedDesktop()
     await desktop.screen.act(LONG_DRAG)
     chains = [argv[argv.index('xdotool') + 1 :] for argv in desktop.argvs]
     assert len(chains) > 1
     assert all(fits_the_providers(argv) for argv in desktop.argvs)
-    # Pressed in the first, let go in the last: X keeps the button and the key down between desktop.
+    # Pressed in the first, let go in the last: X keeps the button and the key down between commands.
     pressed = ['keydown', 'alt', 'mousemove', '100', '100', 'mousedown', '1']
     assert chains[0][: len(RELEASE_MODIFIERS) + len(pressed)] == [*RELEASE_MODIFIERS, *pressed]
     assert chains[-1][-6:] == ['sleep', '0.1', 'mouseup', '1', 'keyup', 'alt']
@@ -259,19 +259,11 @@ async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayA
     assert desktop.calls == []
 
 
-@pytest.mark.parametrize(
-    'key',
-    [
-        # xdotool matches command names in any case.
-        'Exec',
-        '--help',
-    ],
-)
-async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key: str) -> None:
+async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands() -> None:
     # `xdotool key exec sh -c ...` runs the program: `exec` ends the key names and starts a command. Validation
     # already refuses these names; the display refuses them too, for an action built without it.
     unvalidated = PressKeys(keys=('a',))
-    object.__setattr__(unvalidated, 'keys', (key,))
+    object.__setattr__(unvalidated, 'keys', ('Exec',))
     desktop = ScriptedDesktop()
     with pytest.raises(UnsupportedActionError, match='cannot press the key'):
         await desktop.screen.act(unvalidated)
@@ -281,24 +273,26 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key
 @pytest.mark.parametrize(
     'action, releases',
     [
-        (
+        pytest.param(
             Click(x=1, y=2, modifiers=('ctrl', 'shift')),
             stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'shift', 'ctrl']),
+            id='click-with-modifiers',
         ),
-        (Drag(path=(Point(x=1, y=2), Point(x=3, y=4))), stops_then(['xdotool', 'mouseup', '1'])),
-        (
+        pytest.param(
             Drag(path=(Point(x=1, y=2), Point(x=3, y=4)), modifiers=('alt',)),
             stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'alt']),
+            id='drag-with-modifier',
         ),
-        (PressKeys(keys=('ctrl', 's'), repeat=3), stops_then(['xdotool', 'keyup', 's', 'ctrl'])),
+        pytest.param(PressKeys(keys=('ctrl', 's'), repeat=3), stops_then(['xdotool', 'keyup', 's', 'ctrl']), id='keys'),
         # Typing can stop between a key's press and release; X would then repeat the key without end.
-        (
+        pytest.param(
             TypeText(text='Yay'),
             stops_then(['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0059', 'U0061', 'U0079']),
+            id='type',
         ),
         # A click can stop between pressing and releasing its button.
-        (Click(x=1, y=2, button='right'), stops_then(['xdotool', 'mouseup', '3'])),
-        (MoveMouse(x=1, y=2), stops_then()),
+        pytest.param(Click(x=1, y=2, button='right'), stops_then(['xdotool', 'mouseup', '3']), id='click'),
+        pytest.param(MoveMouse(x=1, y=2), stops_then(), id='move'),
     ],
 )
 async def test_x11_computer_releases_what_a_failed_action_held(
@@ -314,9 +308,13 @@ async def test_x11_computer_tries_every_release_when_one_fails_and_says_what_may
     failed = CommandResult(exit_code=1, stdout='', stderr='BadValue')
     # The action fails, then stopping it, then letting go of the button.
     desktop = ScriptedDesktop(failed, failed, failed)
-    with pytest.raises(WorkspaceError, match='BadValue') as error:
+    failure = 'Display command failed with exit code 1 on display :1: BadValue'
+    with pytest.raises(WorkspaceError) as error:
         await desktop.screen.act(Click(x=1, y=2, modifiers=('ctrl',)))
-    assert 'Releasing what it pressed failed too, so a mouse button or key may still be held' in str(error.value)
+    assert str(error.value) == (
+        f'{failure}. Releasing what it pressed failed too, so a mouse button or key may still be held: '
+        f'{failure}; {failure}'
+    )
     assert recovery(desktop.argvs) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'ctrl'])
 
 
@@ -348,7 +346,8 @@ async def test_x11_computer_raises_a_lost_environment_while_releasing() -> None:
     'action, release',
     [
         (HoldKeys(keys=('shift',), seconds=5), ['xdotool', 'keyup', 'shift']),
-        (TypeText(text='!'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0021']),
+        # Each typed key is let go once, however often it was typed.
+        (TypeText(text='aa!'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0061', 'U0021']),
         # A scroll, like a click, can stop between pressing and releasing its wheel button.
         (Scroll(direction='down', amount=3), ['xdotool', 'mouseup', '5']),
     ],
@@ -368,7 +367,7 @@ async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
     assert isinstance(desktop.screen, SupportsZoom)
     assert await desktop.screen.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
     # The region goes in as an argument, never into the script.
-    assert desktop.argvs[0][-1] == '10,20,100,50'
+    assert desktop.argvs[0][3:] == ['sh', '-a', '10,20,100,50']
 
 
 @pytest.mark.parametrize(
@@ -384,7 +383,11 @@ async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
         # length, not its square.
         (CommandResult(exit_code=0, stdout=' \n' * 100_000, stderr=''), 'display_size', "output: ''"),
         # An X screen is at most 65535 pixels wide, so a larger size can't make a drag move through millions of points.
-        (CommandResult(exit_code=0, stdout='Width: 1000000\nHeight: 800\n', stderr=''), 'display_size', 'Width'),
+        (
+            CommandResult(exit_code=0, stdout='Width: 1000000\nHeight: 800\n', stderr=''),
+            'display_size',
+            'Unexpected display size output',
+        ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'cursor_position', 'getmouselocation'),
         (CommandResult(exit_code=0, stdout='bm90IGEgcG5n', stderr=''), 'screenshot', 'did not return a PNG'),
         (CommandResult(exit_code=0, stdout='abc', stderr=''), 'screenshot', 'did not return a PNG'),

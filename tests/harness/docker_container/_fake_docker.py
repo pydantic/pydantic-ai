@@ -156,10 +156,13 @@ printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 `no-display` exists, and logs each call."""
 
 _FAKE_XWININFO = """#!/bin/sh
-[ ! -e "$(dirname "$0")/no-display" ] || { echo "xwininfo: unable to open display" >&2; exit 1; }
-printf '  Width: 1280\\n  Height: 800\\n'
+bin=$(dirname "$0")
+[ ! -e "$bin/no-display" ] || { echo "xwininfo: unable to open display" >&2; exit 1; }
+size=$(cat "$bin/screen-size" 2>/dev/null || echo 1280x800)
+printf '  Width: %s\\n  Height: %s\\n' "${size%x*}" "${size#*x}"
 """
-"""Stands in for `xwininfo -root`, so a host's real one never answers for the container's display."""
+"""Stands in for `xwininfo -root`, so a host's real one never answers for the container's display: reports the size
+the fake X server was last started at, or 1280x800 for a display that was already up."""
 
 _FAKE_SCROT = """#!/bin/sh
 for last; do :; done
@@ -173,6 +176,7 @@ echo "$*" >> "$bin/xvfb-starts"
 if [ -e "$bin/xvfb-fails" ]; then echo 'Fatal server error: no screens found' >&2; exit 1; fi
 if [ -e "$FAKE_TMP/.X1-lock" ]; then echo 'Fatal server error: Server is already active for display 1' >&2; exit 1; fi
 rm -f "$bin/no-display"
+echo "${4%x*}" > "$bin/screen-size"  # `-screen 0 WIDTHxHEIGHTx24`, for `xwininfo`
 exec sleep 2
 """
 """Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` or a
@@ -183,7 +187,7 @@ Also keeps a host's real Xvfb from starting.
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager and the panel, so a host's real ones never start."""
+"""Stands in for the window manager, the panel and `xprop`, so a host's real ones never run."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
@@ -292,6 +296,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('Xvfb', _FAKE_XVFB),
         ('fluxbox', _FAKE_FLUXBOX),
         ('tint2', _FAKE_FLUXBOX),
+        ('xprop', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
