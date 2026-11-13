@@ -151,6 +151,7 @@ class LocalPeerInbox(PeerInbox):
     async def acknowledge(self, message_id: str) -> None:
         """Remove a message once it entered the conversation history, and remember its ID."""
         async with self._lock:
+            await self._load()
             if message_id not in self._messages:
                 return
             updated = self._messages.copy()

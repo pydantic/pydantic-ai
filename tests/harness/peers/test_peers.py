@@ -1030,6 +1030,14 @@ class TestPeers:
         await delivered_parts(inbox)
         assert await sender.send(target.id, 'one', key='k1') == replace(first, status='queued', pending=1)
 
+    async def test_acknowledge_loads_a_file_inbox_first(self, tmp_path: Path) -> None:
+        path = tmp_path / 'inbox.json'
+        await LocalPeerInbox(path=path).receive(message())
+        reloaded = LocalPeerInbox(path=path)
+        await reloaded.acknowledge('first')
+        assert await reloaded.pending() == []
+        assert (await reloaded.receive(message())).status == 'delivered'
+
     async def test_host_inbox_receives_through_the_inbox_protocol(self) -> None:
         class HostInbox:
             def __init__(self) -> None:
