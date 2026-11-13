@@ -72,6 +72,7 @@ async def test_models_that_take_their_key_elsewhere_fail_clearly(store: Settings
     for name, provider in (
         ('openrouter:openai/gpt-5', 'openrouter'),
         ('openai-codex:gpt-5', 'openai-codex'),
+        ('snowflake:claude-sonnet-4-5', 'snowflake'),
         ('single:x', 'single'),
         ('chain:both', 'chain:both'),
         ('openai@*:gpt-5', r'openai@\*:gpt-5'),

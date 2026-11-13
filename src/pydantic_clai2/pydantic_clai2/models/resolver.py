@@ -49,9 +49,9 @@ def _check_built(provider: str, built: Mapping[str, str], *, plugin: bool) -> No
     if plugin and 'base_url' in built:
         raise _no_endpoint(provider)
     if 'api_key' in built:
-        from pydantic_clai2.models.key_profiles import KEYED_ELSEWHERE
+        from pydantic_clai2.models.key_profiles import takes_key
 
-        if plugin or provider in KEYED_ELSEWHERE:
+        if plugin or not takes_key(provider):
             raise _no_api_key(provider)
 
 
