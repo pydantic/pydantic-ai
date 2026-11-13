@@ -261,7 +261,7 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
         messages, finished = until_finished(socket)
         assert finished.outcome == 'ok', record.output
         assert not [message for message in messages if isinstance(message, TurnEnded)], 'the turn still runs'
-        assert prompts(record.messages) == ['child', 'and the docs?']
+        assert prompts(web_.shell.tasks.history(record.id)) == ['child', 'and the docs?']
         web_.portal.call(release.set)
         receive_until(socket, TurnEnded)
         assert prompts(web_.shell.session.messages) == ['hold']
@@ -289,7 +289,7 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
             'This agent delegates no tasks now, so its tasks take no prompts. Turn sub-agents on first.'
         )
         assert record.user_stopped and record.status == 'finished', 'left as it was'
-        assert prompts(record.messages) == ['child']
+        assert prompts(web_.shell.tasks.history(record.id)) == ['child']
         assert web_.shell.session.messages == conversation
         assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}
 

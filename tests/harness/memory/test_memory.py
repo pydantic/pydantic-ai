@@ -663,6 +663,15 @@ class TestWriteMemory:
         assert memory_file is not None
         assert sorted(memory_file.content.splitlines()) == [f'- fact {index}' for index in range(8)]
 
+    async def test_sqlite_append_preserves_content_after_nul(self, tmp_path: Path) -> None:
+        store = SqliteMemoryStore(database=tmp_path / 'memory.sqlite3')
+        toolset = MemoryToolset(Memory[None](store=store))
+        await toolset.write_memory(_ctx('first'), 'before\x00after critical fact 😀')
+
+        await toolset.write_memory(_ctx('append'), 'new fact')
+
+        assert await toolset.read_memory(_ctx('read'), 'MEMORY.md') == 'before\x00after critical fact 😀\nnew fact\n'
+
     async def test_durable_replay_and_fingerprint_conflict(self) -> None:
         capability = Memory[None]()
         toolset = MemoryToolset(capability)

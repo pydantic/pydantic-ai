@@ -62,6 +62,7 @@ _HARNESS_DOCS = (
     'slack',
     'step_persistence',
     'subagents',
+    'tool_call_judge',
 )
 """The harness capabilities CLAI uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 

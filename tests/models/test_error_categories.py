@@ -1289,6 +1289,114 @@ CASES = [
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
+        id='anthropic-spend-cap',
+        model=_anthropic,
+        # The tier spend cap is a `rate_limit_error` without `retry-after` that lasts until the next month, as
+        # https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap documents it.
+        handler=_json(
+            429,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'rate_limit_error',
+                    'message': 'You have reached your API usage limits: your organization has crossed its monthly API '
+                    "usage threshold, set based on your organization's API tier. You will regain access on 2026-09-01 "
+                    'at 00:00 UTC.',
+                    'details': {'error_code': 'enforced_spend_limit_reached'},
+                },
+                'request_id': 'req_018EeWyXxfu5pfWkrYcMdjWG',
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={
+            'status_code': 429,
+            'provider_error_type': 'rate_limit_error',
+            'provider_error_code': None,
+            'retry_after': None,
+        },
+    ),
+    Case(
+        id='anthropic-stream-spend-cap',
+        model=_anthropic,
+        handler=_sse(
+            _ANTHROPIC_MESSAGE_START,
+            (
+                'error',
+                {
+                    'type': 'error',
+                    'error': {
+                        'type': 'rate_limit_error',
+                        'message': 'You have reached your API usage limits.',
+                        'details': {'error_code': 'enforced_spend_limit_reached'},
+                    },
+                },
+            ),
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error', 'retry_after': None},
+        stream=True,
+    ),
+    Case(
+        id='anthropic-ramp-limit',
+        model=_anthropic,
+        # Also a `rate_limit_error` with a `details.error_code`, but one that waiting lifts.
+        handler=_json(
+            429,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'rate_limit_error',
+                    'message': 'Ramp limit exceeded',
+                    'details': {'error_code': 'ramp_limit_exceeded'},
+                },
+            },
+            headers={'retry-after': '5'},
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={
+            'status_code': 429,
+            'provider_error_type': 'rate_limit_error',
+            'provider_error_code': None,
+            'retry_after': 5.0,
+        },
+    ),
+    # https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit documents how the message of
+    # a spend limit the user set starts.
+    Case(
+        id='anthropic-spend-limit',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'You have reached your specified API usage limits. You will regain access on '
+                    '2026-12-01 at 00:00 UTC.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-workspace-spend-limit',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'You have reached your specified workspace API usage limits. You will regain access on '
+                    '2026-12-01 at 00:00 UTC.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
         id='anthropic-api-error',
         model=_anthropic,
         handler=_json(500, {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
@@ -1648,7 +1756,7 @@ CASES = [
             413,
             {'type': 'error', 'error': {'type': 'request_too_large', 'message': 'Request exceeds the maximum size'}},
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 413, 'provider_error_type': 'request_too_large'},
     ),
     Case(

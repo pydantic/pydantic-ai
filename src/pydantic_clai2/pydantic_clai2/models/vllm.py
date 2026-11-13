@@ -120,7 +120,7 @@ def save_connection(connection: Connection, *, account: str = 'vllm') -> None:
     save_key_connection(value=json.dumps(value), account=account, token=connection.token)
 
 
-def model(name: str) -> OpenAIChatModel:
+def model(name: str, *, base_url: str | None = None) -> OpenAIChatModel:
     """Resolve a saved vLLM selection through core, without global API-key fallbacks."""
     ref = parse_model(name)
     setup = '/model add > vllm' if ref.profile is None else f'/login {ref.account}'
@@ -132,7 +132,7 @@ def model(name: str) -> OpenAIChatModel:
     except ValidationError:
         raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
     provider = RetryingProvider(
-        base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
+        base_url=base_url or api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
     )
     return OpenAIChatModel(ref.name, provider=provider)
 

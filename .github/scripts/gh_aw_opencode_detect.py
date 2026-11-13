@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 from douwebot_opencode_result import final_text, rejection_reason
-from douwebot_opencode_run import check_symlinks, run_read_only
+from douwebot_opencode_run import Attempt, check_symlinks, run_read_only
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 DETECTION_DIR = Path('/tmp/gh-aw/threat-detection')
@@ -55,13 +55,14 @@ def report_status(reason: str, code: int) -> None:
 
 
 def main() -> None:
-    """Record a verdict, or the status line that explains its absence."""
+    """Record a verdict, or the status line that explains its absence, and the plan of the last OpenCode run."""
     result_path = DETECTION_DIR / 'detection_result.json'
     full_path = DETECTION_DIR / 'detection_result_full.json'
     for path in (result_path, full_path):
         path.unlink(missing_ok=True)
     deadline = time.monotonic() + DEADLINE_SECONDS
     retries = int(os.environ['GH_AW_HARNESS_MAX_RETRIES'])
+    attempts: list[Attempt] = []
     try:
         check_symlinks(DETECTION_DIR)
         prompt = Path(os.environ['GH_AW_PROMPT']).read_text(encoding='utf-8') + TOOL_GUIDANCE
@@ -73,7 +74,9 @@ def main() -> None:
             if remaining <= 0:
                 raise subprocess.TimeoutExpired('opencode', DEADLINE_SECONDS)
             try:
-                run_read_only(prompt, cwd=DETECTION_DIR, agent='detector', output=stream, timeout=remaining)
+                run_read_only(
+                    prompt, cwd=DETECTION_DIR, agent='detector', output=stream, timeout=remaining, attempts=attempts
+                )
                 text = final_text(stream)
                 break
             except (ValueError, subprocess.CalledProcessError) as exc:
@@ -88,6 +91,11 @@ def main() -> None:
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         report_status('engine_error', 2)
         sys.exit(f'OpenCode threat detection failed: {type(exc).__name__}')
+    finally:
+        # The detector's usage span reports the plan that served detection, or failed it last.
+        if attempts:
+            with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+                output.write(f'provider={attempts[-1].provider.name}\nplan={attempts[-1].provider.plan}\n')
     try:
         verdict = parse_verdict(text)
     except ValueError as exc:

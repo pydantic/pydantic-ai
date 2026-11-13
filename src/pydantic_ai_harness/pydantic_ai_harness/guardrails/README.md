@@ -7,7 +7,28 @@ Guardrails run a callable you supply at three points of a run: the user prompt b
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/)
 
-![Guardrails run your guard functions at the edges of a run. InputGuardrail checks the prompt in wrap_model_request before the model sees it. ToolGuardrail checks tool arguments in before_tool_execute and tool results in after_tool_execute. OutputGuardrail checks the final output in after_output_process before the caller gets it. A table shows what allow, block, replace, retry and approve do at each point.](https://pydantic.dev/docs/ai/img/harness/guardrails.svg)
+```mermaid
+flowchart TB
+    accTitle: Guardrails: check the prompt, the tool calls and the output
+    accDescr: The user prompt passes InputGuardrail(guard=...) in wrap_model_request before the model. A tool call from the model passes ToolGuardrail(guard=...) in before_tool_execute before your tool, and the result passes ToolGuardrail(result_guard=...) in after_tool_execute before the model. The final output passes OutputGuardrail(guard=...) in after_output_process before the caller.
+    prompt["user prompt"]
+    input["InputGuardrail(guard=...)<br/>wrap_model_request"]:::capability
+    model(["model"])
+    toolguard["ToolGuardrail(guard=...)<br/>before_tool_execute"]:::capability
+    tool["your tool"]
+    resultguard["ToolGuardrail(result_guard=...)<br/>after_tool_execute"]:::capability
+    output["OutputGuardrail(guard=...)<br/>after_output_process"]:::capability
+    caller["caller"]
+    prompt --> input
+    input --> model
+    model -->|"tool call"| toolguard
+    toolguard --> tool
+    tool -->|"result"| resultguard
+    resultguard --> model
+    model -->|"final output"| output
+    output --> caller
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## How it works
 

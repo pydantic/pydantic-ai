@@ -207,8 +207,8 @@ Variables already set in your shell win. In a folder you do not trust, start CLA
 Shell commands the agent runs do not see your provider API keys.
 
 `/keys` keeps named API keys in an encrypted store. vLLM and OpenRouter connections,
-`/login PROVIDER@PROFILE`, and plugins such as Linear and Notion can use a saved key by
-name, so you change it in one place. The names are labels: CLAI does not set them as
+`/login PROVIDER@PROFILE`, a model's `api_key` in `/model settings`, and plugins such as
+Linear and Notion can use a saved key by name, so you change it in one place. The names are labels: CLAI does not set them as
 environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
 <kbd>d</kbd> to delete. Values are never shown.
 

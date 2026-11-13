@@ -19,3 +19,7 @@ async def test_researcher_with_local_store_needs_no_workspace(tmp_path: Path) ->
     # TestModel rejects native web tools, but only after the workspace preflight succeeds.
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
         await agent.run('research')
+
+
+def test_researcher_loads_from_agent_spec() -> None:
+    Agent.from_spec({'model': 'test', 'capabilities': ['Researcher']}, custom_capability_types=[Researcher])

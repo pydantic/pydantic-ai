@@ -11,7 +11,29 @@ Run your agent's commands and file edits in a [BoxLite](https://github.com/boxli
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BoxLiteSandbox's get_workspace hook gives the run a BoxLite micro-VM on your own machine as ctx.workspace. The BoxLite runtime runs inside your process, and each command and file operation runs in the VM, which has its own kernel and filesystem; output comes back to the tool. The first use boots the box, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A new box has no network; with allow_internet_access=True and allowed_hosts it can reach only the listed hosts.](../img/harness/boxlite-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: BoxLite Sandbox: your agent's commands run in a local micro-VM
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. As ctx.workspace, BoxLiteSandbox's runtime in your process runs commands and file operations in a BoxLite micro-VM (own kernel, filesystem, kept until destroy(ref)), and a later run reattaches by the WorkspaceRef. By default the VM cannot connect to any host. With allow_internet_access=True and allowed_hosts it reaches only the listed hosts.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history"]
+        sandbox["BoxLiteSandbox()<br/>runtime in your process"]:::capability
+        vm["BoxLite micro-VM<br/>own kernel, filesystem<br/>kept until destroy(ref)"]:::external
+    end
+    allowed["hosts in allowed_hosts"]:::external
+    other["any other host,<br/>every host by default"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sandbox
+    ref -.->|"a later run reattaches"| sandbox
+    sandbox <-->|"commands and<br/>file operations"| vm
+    vm -->|"allow_internet_access=True"| allowed
+    vm -.-x|"cannot connect"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install
 

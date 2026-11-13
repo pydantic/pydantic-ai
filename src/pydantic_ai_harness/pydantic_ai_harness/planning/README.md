@@ -6,7 +6,22 @@ Give an agent a structured task list it maintains through a small toolset. The p
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model keeps a task plan with the Planning tools: write_plan, read_plan, add_task, update_task_status, update_task_statuses and remove_task, plus add_subtask, set_dependency and get_available_tasks with enable_subtasks. The plan lives in a PlanStore, in memory by default or in SQLite, Postgres or Redis. Every tool that changes the plan ends its result with the whole plan as a checklist in a <plan_reminder> tag, so the plan stays in the conversation and never in the system prompt. Before each model request Planning reads the store and records the plan itself only when the model cannot see the current one.](https://pydantic.dev/docs/ai/img/harness/planning.svg)
+```mermaid
+flowchart TB
+    accTitle: Planning: a task list the model keeps up to date
+    accDescr: The model calls the Planning tools write_plan, add_task and update_task_status, which read and write a PlanStore in memory, SQLite, Postgres or Redis. After each change, a plan_reminder block with the whole plan as a checklist reaches the model in the conversation. Before each request, the plan from the PlanStore also goes into a plan_reminder block if the model can't see it.
+    model(["model"])
+    tools["Planning()<br/>write_plan, add_task,<br/>update_task_status"]:::capability
+    store[("PlanStore<br/>in memory, SQLite,<br/>Postgres or Redis")]:::external
+    reminder["&lt;plan_reminder&gt;<br/>the whole plan<br/>as a checklist"]:::capability
+    model -->|"tool call"| tools
+    tools <-->|"reads, writes"| store
+    tools -->|"after each change"| reminder
+    store -.->|"before each request,<br/>if the model can't see it"| reminder
+    reminder -->|"in the conversation"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## The problem
 

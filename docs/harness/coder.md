@@ -14,7 +14,24 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.](../img/harness/coder.svg)
+```mermaid
+flowchart LR
+    accTitle: Coder: a coding agent assembled from harness capabilities
+    accDescr: The model calls the Coder capability and gets results. Coder bundles FileSystem with read_file, write_file, edit_file, list_files and grep, Shell with shell, SubAgents with delegate_task, and RepoContext with AGENTS.md and CLAUDE.md. Coder works in the workspace, which is LocalWorkspace('.') or a cloud sandbox.
+    model(["model"])
+    subgraph coder["Coder()"]
+        direction LR
+        fs["FileSystem<br/>read_file, write_file,<br/>edit_file, list_files, grep"]:::capability
+        shell["Shell<br/>shell"]:::capability
+        sub["SubAgents<br/>delegate_task"]:::capability
+        repo["RepoContext<br/>AGENTS.md,<br/>CLAUDE.md"]:::capability
+    end
+    workspace["workspace<br/>LocalWorkspace('.')<br/>or a cloud sandbox"]:::external
+    model <--> coder
+    coder --> workspace
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Usage
 
@@ -186,10 +203,10 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
-`Coder`'s instructions tell the agent to use `delegate_task` only when the user or applicable `AGENTS.md`
-instructions explicitly ask for sub-agents, delegation, or parallel agent work, the rule Codex gives its models for
-`spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
-multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
+`Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task` unless the user or `AGENTS.md` asks,
+the rule Codex gives its models for `spawn_agent`. A delegate explores the project again from a fresh context, so
+delegation the user did not ask for multiplies tool calls and cost. To have the agent delegate, ask for it in the
+prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
@@ -220,20 +237,35 @@ is no completion notification or automatic wake-up after a final response. The S
 supervisor, cleanup, and the `CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` progress
 events a UI can subscribe to.
 
-The default instructions tell the agent to finish required work before giving a final response: do other
-useful work, then poll status and output until completion or a genuine blocker.
-Servers may remain running after startup and readiness are verified. Commands get only the environment
+The default instructions tell the agent to finish long-running work before replying, polling until it is done or
+blocked. Servers the task needs may keep running; it stops the rest. Commands get only the environment
 the workspace passes (see [The command environment](#the-command-environment)); host files remain
 accessible to commands in a local workspace.
 
 ## Instructions
 
-The default instructions keep engineering guidance brief: autonomous investigation and completion,
-focused changes and verification, pragmatic DRY, YAGNI, and the Zen of Python, and matching the
-surrounding code's style, structure, and imports rather than adding new abstractions.
-They also ask the agent to leave only the requested change in the project: check behavior with inline
-shell scripts rather than new files, add tests only where the project already has them, and delete
-scratch files before finishing.
+The default instructions are short: match the surrounding code's style, structure, and imports; read
+files with `read_file`; confirm each stated requirement and edge case explicitly; check behavior with
+heredocs rather than new files; and finish long-running work before replying. Guidance that only helps
+on benchmarks is opt-in; see [Benchmarking](#benchmarking).
+
+`autonomy` sets how far the agent works on its own:
+
+| `autonomy` | The agent |
+|---|---|
+| `'low'` | Proposes a plan and waits for approval before editing. |
+| `'medium'` | Works until done, asking when a choice really matters. |
+| `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
+| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
+
+`autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
+or running commands if it ignores the sentence. To require approval before writes or commands, add
+[`Permissions`](permissions.md).
+
+A delegate, whether started by `delegate_task` or used as another agent's sub-agent, was handed its task by its parent,
+so, whatever the level, it is told to choose sensible defaults and finish, and to measure results against any numeric
+target the task states.
+
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
@@ -302,6 +334,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
+`Coder`'s default instructions no longer ask for self-contained deliverables checked from a clean directory, or for a solution that uses every field of the provided data. Bind `BenchmarkInstructions()` next to `Coder` to keep them (see [Benchmarking](#benchmarking)).
+
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
 `Coder` now turns off strict mode for its own tools; pass `strict=None` to keep the provider's default (see [Strict tool schemas](#strict-tool-schemas)).
@@ -331,11 +365,33 @@ With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` 
 
 ## Benchmarking
 
-See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/TERMINAL_BENCH.md)
-for running Coder inside Harbor, pinning the adapter and harness, and inspecting trial results.
+A benchmark verifier grades only the files a task asked for, in a clean directory, and benchmark data
+is built so that every field matters. Neither holds for everyday work in a project, so `Coder` leaves
+that guidance out. Benchmark runs opt in by binding `BenchmarkInstructions` next to `Coder`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import BenchmarkInstructions, Coder
+
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[LocalWorkspace('.'), Coder(), BenchmarkInstructions()],
+)
+```
+
+It tells the agent to make deliverables self-contained and check them from a clean directory, and to use
+every field the provided data supplies. `delegate_task`'s `self` delegate re-runs the same agent, so it
+gets this guidance too. It adds no spans of its own; on an instrumented run, the guidance appears with the
+other instructions. Record whether a run used `BenchmarkInstructions` with its score.
+
+See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/TERMINAL_BENCH.md) for running Coder
+inside Harbor, pinning the adapter and harness, and inspecting trial results.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/).
 
 ## API reference
 
 ::: pydantic_ai_harness.coder.Coder
+
+::: pydantic_ai_harness.coder.BenchmarkInstructions

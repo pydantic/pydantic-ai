@@ -44,15 +44,18 @@ class MCPReadOnlyNoToolsWarning(UserWarning):
     """
 
 
-def warn_module_renamed(old: str, new: str) -> None:
+def warn_module_renamed(old: str, new: str, *, reason: str = '') -> None:
     """Emit a `HarnessDeprecationWarning` that `pydantic_ai_harness.<old>` is now `pydantic_ai_harness.<new>`.
 
     Called at import time from the shim package left at the old module path, so existing
-    imports keep working with a clear pointer to the new location.
+    imports keep working with a clear pointer to the new location. `reason`, one or more
+    sentences, says why, when the new name alone doesn't.
     """
+    message = f'`pydantic_ai_harness.{old}` has been renamed to `pydantic_ai_harness.{new}`.'
+    if reason:
+        message += f' {reason}'
     warnings.warn(
-        f'`pydantic_ai_harness.{old}` has been renamed to `pydantic_ai_harness.{new}`. '
-        f'Update your imports; this compatibility shim will be removed in a future release.',
+        f'{message} Update your imports; this compatibility shim will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=2,
     )

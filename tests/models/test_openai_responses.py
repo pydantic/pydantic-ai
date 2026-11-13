@@ -5266,7 +5266,7 @@ async def test_response_scoped_tool_call_id_from_other_endpoint(allow_model_requ
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+        profile=OpenAIModelProfile(tool_call_ids_are_response_scoped=True),
     )
 
     await model.request(history, None, ModelRequestParameters())
@@ -5353,7 +5353,7 @@ async def test_response_scoped_tool_call_id_with_previous_response(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+        profile=OpenAIModelProfile(tool_call_ids_are_response_scoped=True),
     )
 
     await model.request(
@@ -6886,6 +6886,128 @@ async def test_openai_responses_web_search_usage_reported_count(
     reported = vcr.interactions[0].response.body.content['tool_usage']['web_search']['num_requests']
     assert reported == snapshot(4)
     assert result.usage.details['web_search_requests'] == reported == actions['search']
+
+
+async def test_openai_responses_web_search_usage_prefers_reported_count(allow_model_requests: None):
+    """OpenAI's reported `tool_usage.web_search.num_requests` wins over counting `search` actions.
+
+    The recording in `test_openai_responses_web_search_usage_reported_count` can't tell the two apart, as it reports as
+    many searches as it has `search` actions, so this mocked response makes them differ. It's built the way the SDK
+    builds a response, since `tool_usage` is an extra field on older SDKs and a typed one on newer SDKs.
+    """
+    raw_response: dict[str, object] = {
+        'id': 'resp_001',
+        'object': 'response',
+        'created_at': 1704067200,
+        'model': 'gpt-4o',
+        'status': 'completed',
+        'parallel_tool_calls': True,
+        'tool_choice': 'auto',
+        'tools': [],
+        'output': [
+            {
+                'id': 'web-search-1',
+                'type': 'web_search_call',
+                'status': 'completed',
+                'action': {'type': 'search', 'query': 'pydantic'},
+            },
+            {
+                'id': 'msg_001',
+                'type': 'message',
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': 'done', 'annotations': []}],
+            },
+        ],
+        'tool_usage': {'web_search': {'num_requests': 7}},
+    }
+    response = construct_type(type_=resp.Response, value=raw_response)
+    assert isinstance(response, resp.Response)
+    model = OpenAIResponsesModel(
+        'gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
+    )
+
+    result = await Agent(model).run('What is pydantic?')
+
+    assert result.usage == snapshot(
+        RunUsage(
+            details={'web_search_requests': 7}, web_searches=7, unmeasured_requests=1, cost=Decimal('0.07'), requests=1
+        )
+    )
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_responses_web_search_call_without_action(allow_model_requests: None, stream: bool):
+    """A `web_search_call` item without `action` isn't counted as a billed search, and doesn't fail the run.
+
+    OpenAI can return completed `web_search_call` items without `action`
+    (https://github.com/openai/openai-openapi/issues/572), which the SDK builds with `action=None`.
+    Mocked because no recording has such an item.
+
+    Test for https://github.com/pydantic/pydantic-ai/issues/13259
+    """
+    search = ResponseFunctionWebSearch.model_construct(id='web-search-1', status='completed', type='web_search_call')
+    message = ResponseOutputMessage(
+        id='msg_001',
+        content=[ResponseOutputText(text='done', type='output_text', annotations=[])],
+        role='assistant',
+        status='completed',
+        type='message',
+    )
+    response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[search, message],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        usage=ResponseUsage.model_construct(input_tokens=100, output_tokens=10, total_tokens=110),
+    )
+
+    if stream:
+        mock_client = MockOpenAIResponses.create_mock_stream(
+            [
+                resp.ResponseCreatedEvent(
+                    response=response.model_copy(update={'status': 'in_progress', 'output': [], 'usage': None}),
+                    type='response.created',
+                    sequence_number=0,
+                ),
+                resp.ResponseOutputItemAddedEvent(
+                    item=message.model_copy(update={'content': [], 'status': 'in_progress'}),
+                    output_index=1,
+                    type='response.output_item.added',
+                    sequence_number=1,
+                ),
+                resp.ResponseTextDeltaEvent(
+                    content_index=0,
+                    delta='done',
+                    item_id='msg_001',
+                    output_index=1,
+                    type='response.output_text.delta',
+                    sequence_number=2,
+                    logprobs=[],
+                ),
+                resp.ResponseCompletedEvent(response=response, type='response.completed', sequence_number=3),
+            ]
+        )
+        agent = Agent(OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+        async with agent.run_stream('What is pydantic?') as result:
+            assert await result.get_output() == 'done'
+        usage = result.usage
+    else:
+        mock_client = MockOpenAIResponses.create_mock(response)
+        agent = Agent(OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+        run_result = await agent.run('What is pydantic?')
+        assert run_result.output == 'done'
+        usage = run_result.usage
+
+    assert usage == snapshot(
+        RunUsage(
+            details={'reasoning_tokens': 0}, output_tokens=10, input_tokens=100, cost=Decimal('0.00035'), requests=1
+        )
+    )
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):

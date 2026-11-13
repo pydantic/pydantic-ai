@@ -4,7 +4,24 @@ Give an agent bounded, pattern-filtered access to a directory tree.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
 
-![The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestedEvent that a listener can cancel.](https://pydantic.dev/docs/ai/img/harness/filesystem.svg)
+```mermaid
+flowchart TB
+    accTitle: FileSystem: file tools bounded by one directory
+    accDescr: The model calls FileSystem tools such as read_file, write_file and edit_file, which before any I/O resolve the path, check it is inside root_dir and match the patterns. They reject calls outside root_dir, denied or writing to a read-only path and pass allowed ones to the workspace root_dir/. Before a change your listener gets FileChangeRequestedEvent and can call cancel(reason).
+    model(["model"])
+    tools["FileSystem()<br/>read_file, write_file,<br/>edit_file and more"]:::capability
+    checks["resolve the path, check<br/>it is inside root_dir,<br/>match the patterns"]:::capability
+    rejected["outside root_dir,<br/>denied, or a write<br/>to a read-only path"]:::blocked
+    workspace["workspace<br/>root_dir/"]
+    listener["your listener<br/>can call cancel(reason)"]
+    model <-->|"tool call, result"| tools
+    tools -->|"before any I/O"| checks
+    checks -.-x|"rejects"| rejected
+    checks -->|"allowed"| workspace
+    checks -.->|"FileChangeRequestedEvent<br/>before a change"| listener
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
