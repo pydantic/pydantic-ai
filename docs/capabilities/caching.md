@@ -168,7 +168,7 @@ So a 5-minute or 30-minute cache (1.25x) breaks even after one read, and Anthrop
 - History processors that rewrite already-sent messages on every request.
 - Switching models or providers during a conversation. Each provider maintains a separate cache.
 
-On Anthropic models that bind thinking blocks to the prefix that produced them (Claude Fable 5.1, Claude Opus 5.5 and Claude Sonnet 5.5), the same changes mid-conversation cause a 400 error, not just a cache miss: see [Thinking block binding](../models/anthropic.md#thinking-block-binding).
+On Anthropic models that bind thinking blocks to the prefix that produced them (Claude Fable 5.1 and 5.2, Claude Mythos 5.2, Claude Opus 5.5, Claude Sonnet 5.5 and Claude Haiku 5.5), the same changes mid-conversation cause a 400 error, not just a cache miss: see [Thinking block binding](../models/anthropic.md#thinking-block-binding).
 
 ### Provider retention
 

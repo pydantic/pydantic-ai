@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "145"
+      - "149"
       content-type:
       - application/json
       host:
@@ -25,14 +25,17 @@ interactions:
         - role: user
           content: "Reply with exactly: OK"
         reasoning:
-          effort: low
+          effort: minimal
   response:
     status: 200
     headers:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -48,12 +51,12 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793032219-JhNP7S54ejjkgW0AKvWG
+        id: gen-1794001740-Y0Sknud4qgrpeV8Xg2xe
         object: chat.completion
-        created: 1793032219
+        created: 1794001740
         model: moonshotai/kimi-k2.7-code
-        provider: Inceptron
-        system_fingerprint: null
+        provider: StreamLake
+        system_fingerprint: fpv0_8f8e1388
         service_tier: null
         choices:
         - index: 0
@@ -62,31 +65,31 @@ interactions:
           native_finish_reason: stop
           message:
             role: assistant
-            content: " OK"
+            content: OK
             refusal: null
-            reasoning: " The user wants me to reply with exactly \"OK\". Just the text OK, nothing else."
+            reasoning: "The user wants me to reply with exactly: OK. No additional text, formatting, or explanation. Just \"OK\"."
             reasoning_details:
             - type: reasoning.text
-              text: " The user wants me to reply with exactly \"OK\". Just the text OK, nothing else."
+              text: "The user wants me to reply with exactly: OK. No additional text, formatting, or explanation. Just \"OK\"."
               format: unknown
               index: 0
         usage:
-          prompt_tokens: 13
-          completion_tokens: 22
-          total_tokens: 35
-          cost: 0.0000824256
+          prompt_tokens: 12
+          completion_tokens: 28
+          total_tokens: 40
+          cost: 0.00008571
           is_byok: false
           prompt_tokens_details:
-            cached_tokens: 0
+            cached_tokens: 12
             cache_write_tokens: 0
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0000824256
-            upstream_inference_prompt_cost: 8.7256e-6
-            upstream_inference_completions_cost: 0.0000737
+            upstream_inference_cost: 0.00008571
+            upstream_inference_prompt_cost: 1.71e-6
+            upstream_inference_completions_cost: 0.000084
           completion_tokens_details:
-            reasoning_tokens: 19
+            reasoning_tokens: 25
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T16:30:20.814934+00:00
+  recorded_at: 2026-11-06T21:49:02.520950+00:00

@@ -8,10 +8,13 @@ import json
 import ssl
 import sys
 import threading
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 
@@ -48,6 +51,18 @@ def _fake_github_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
 def _no_incident_reread_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-read open incidents without waiting unless a test records the delay."""
     monkeypatch.setattr(health, '_INCIDENT_READ_DELAY_SECONDS', 0)
+
+
+@pytest.fixture(autouse=True)
+def _no_backup_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check only the primary account unless a test configures the backup key."""
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_otlp_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Export no decision span unless a test serves its own endpoint."""
+    monkeypatch.delenv('OTEL_EXPORTER_OTLP_ENDPOINT', raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -890,6 +905,26 @@ def test_check_requires_the_actual_run_attempt(tmp_path: Path, monkeypatch: pyte
     assert not output.exists()
 
 
+def test_main_reports_a_github_http_error_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A GitHub HTTP error that escapes a command fails the run with its status, and is closed."""
+    error = health.urllib.error.HTTPError('issues', 502, 'Bad Gateway', Message(), None)
+
+    class _UnreadableIncidents(FakeGitHub):
+        def open_incidents(self) -> list[health.Issue]:
+            raise error
+
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: _UnreadableIncidents())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    assert health.main(['monitor']) == 1
+    assert capsys.readouterr().err == 'provider-health failed: HTTP Error 502: Bad Gateway\n'
+    # Only Python 3.14+ warns about an unclosed `HTTPError`, and CI runs this file on 3.13.
+    assert error.closed
+
+
 @pytest.mark.parametrize('run_attempt', [None, True, 0, -1, '2'])
 def test_attempt_contract_rejects_missing_or_invalid_values(run_attempt: object, tmp_path: Path) -> None:
     """Health artifacts require positive integer attempts; invalid agent attempts stay untyped."""
@@ -1071,7 +1106,8 @@ def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None
     [
         ({'kind': 'timeout'}, None, None),
         ({'kind': 'rate_limit', 'http_status': 429}, None, None),
-        ({'kind': 'plan_limit', 'http_status': 429}, 'provider', 'plan_limit'),
+        # The agent artifact alone never confirms a provider failure, so the plan limit stays with its task.
+        ({'kind': 'plan_limit', 'http_status': 429}, 'task', 'plan_limit'),
     ],
 )
 def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
@@ -1130,6 +1166,7 @@ def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=artifacts,
                 dry_run=False,
                 recover_issue=None,
@@ -1145,7 +1182,7 @@ def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
         assert expected_kind is not None
         [issue] = client.issues
         assert _marker_from_body(issue.body) == health.IncidentMarker(
-            expected_scope, 'zai', expected_kind, '85', None, run_attempt=2
+            expected_scope, f'{workflow}:{task_key}', expected_kind, '85', None, run_attempt=2
         )
 
 
@@ -1194,6 +1231,7 @@ def test_monitor_rejects_current_attempt_artifact_identity_mismatch(
             run_attempt=2,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=agent_log,
             dry_run=False,
             recover_issue=None,
@@ -1304,6 +1342,14 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert health.parse_run_result(agent_artifact) == health.RunResult(
         workflow, task_key, trigger_event, 1, health.Failure('plan_limit', 429, None)
     )
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('exhausted', '2026-10-01T17:00:00Z'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    # The host record reads the same metadata from the engine's terminal session record.
+    agent_session = tmp_path / 'agent-session.jsonl'
+    terminal = {'status': 'failure', 'metadata': {'provider_health': result_event['provider_health']}}
+    agent_session.write_text(json.dumps({'type': 'session.result', 'data': terminal}) + '\n')
+    run_result = tmp_path / 'run-result.json'
+    assert health.main(['record', '--agent-session', str(agent_session), '--output', str(run_result)]) == 0
 
     health_artifact = tmp_path / 'provider-health.json'
     _write_health(
@@ -1329,6 +1375,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         run_attempt=1,
         conclusion='failure',
         health_artifact=health_artifact,
+        run_result=run_result,
         agent_artifact=agent_artifact,
         dry_run=False,
         recover_issue=None,
@@ -1343,6 +1390,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
             run_attempt=1,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=run_result,
             agent_artifact=agent_artifact,
             dry_run=False,
             recover_issue=None,
@@ -1409,6 +1457,7 @@ def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
             run_attempt=1,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=agent_artifact,
             dry_run=False,
             recover_issue=None,
@@ -1477,6 +1526,7 @@ def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=log,
                 dry_run=False,
                 recover_issue=None,
@@ -1537,6 +1587,7 @@ def test_monitor_ignores_stale_failure_on_current_healthy_success(
                 run_attempt=2,
                 conclusion='success',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=agent_log,
                 dry_run=False,
                 recover_issue=None,
@@ -1594,6 +1645,7 @@ def test_monitor_reuses_existing_provider_block_when_agent_result_is_stale(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=agent_log,
                 dry_run=False,
                 recover_issue=None,
@@ -1636,6 +1688,7 @@ def test_monitor_rejects_health_artifact_from_different_run_attempt(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=None,
                 dry_run=False,
                 recover_issue=None,
@@ -1674,6 +1727,7 @@ def test_monitor_rejects_health_artifact_from_different_run_id(tmp_path: Path, m
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=None,
                 dry_run=False,
                 recover_issue=None,
@@ -1794,7 +1848,7 @@ def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision
     start_decision = tmp_path / 'agent-start' / 'provider-health.json'
 
     assert health.main(['check', '--output', str(gate_decision)]) == 0
-    assert github_output.read_text() == 'ready=true\nreason=Provider health check passed\n'
+    assert github_output.read_text() == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
 
     if blocker == 'provider_incident':
         client.issues.append(_issue(10572, health.IncidentMarker('provider', 'zai', 'rate_limit', '39', None)))
@@ -1829,6 +1883,7 @@ def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision
             run_attempt=1,
             conclusion='failure',
             health_artifact=decision,
+            run_result=None,
             agent_artifact=agent_artifact,
             dry_run=False,
             recover_issue=None,
@@ -2282,18 +2337,27 @@ def test_missing_credentials_on_secretless_pull_request_events_leave_the_alert_t
 
 def test_scope_rules_for_typed_and_untyped_failures() -> None:
     """Terminal failure kinds map to provider, task, or scheduled workflow scope."""
-    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', None, None))) == (
-        'provider',
-        'zai',
+    assert _scope_for(
+        health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', None, None), provider_confirmed=True)
+    ) == ('provider', 'zai', 'authentication')
+    assert _scope_for(
+        health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None), provider_confirmed=True)
+    ) == ('provider', 'zai', 'other')
+    plan_limited = health.RunResult(
+        'w', 't', 'workflow_dispatch', 1, health.Failure('plan_limit', 429, None), provider_confirmed=True
+    )
+    assert _scope_for(plan_limited) == ('provider', 'zai', 'plan_limit')
+    # Without the host's confirmation, a provider-scope kind stays with its workflow or task.
+    assert _scope_for(replace(plan_limited, provider_confirmed=False)) == ('task', 'w:t', 'plan_limit')
+    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', 401, None))) == (
+        'workflow',
+        'w',
         'authentication',
     )
-    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None))) == (
-        'provider',
-        'zai',
-        'other',
-    )
-    plan_limited = health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('plan_limit', 429, None))
-    assert _scope_for(plan_limited) == ('provider', 'zai', 'plan_limit')
+    # Confirmation cannot widen a failure that does not claim provider scope.
+    assert _scope_for(
+        health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('other', 500, None), provider_confirmed=True)
+    ) == ('task', 'w:t', 'other')
     scheduled_timeout = health.RunResult('w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None))
     repeated_scheduled_timeout = health.RunResult(
         'w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None)
@@ -2304,6 +2368,257 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
         health.RunResult('w', 'target-head-a1b2', 'workflow_dispatch', 1, health.Failure('timeout', None, None))
     ) == ('task', 'w:target-head-a1b2', 'timeout')
     assert _scope_for(health.RunResult('w', 't', 'schedule', 1, None)) == ('workflow', 'w', 'execution')
+
+
+_SCHEDULED_RUN = ('Pydantic AI Stale Issues Finder', 'Stale Issues:schedule:main:abc123:', 'schedule')
+_CREDENTIAL_REJECTED = health.Quota('unknown', diagnostic='http_error', http_status=401)
+_PLAN_EXHAUSTED = health.Quota('exhausted', '2026-10-22T18:00:00Z')
+
+
+def _agent_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException | None) -> Path:
+    """Write the engine's terminal `session.result` for a scheduled run, with the workflow agent's metadata."""
+    workflow, task_key, trigger_event = _SCHEDULED_RUN
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.delenv('PYDANTIC_AI_TASK_ID', raising=False)
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    provider_health = shim.provider_health()
+    if error is not None:
+        provider_health['failure'] = shim.failure_details(error)
+    terminal = {'status': 'failure' if error else 'success', 'metadata': {'provider_health': provider_health}}
+    session = tmp_path / 'agent' / 'agent-session.jsonl'
+    session.parent.mkdir()
+    session.write_text(json.dumps({'type': 'session.result', 'data': terminal}) + '\n')
+    return session
+
+
+def _record(
+    session: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, quota: health.Quota
+) -> tuple[Path, list[str]]:
+    """Run the host-side `record` command with a stubbed Z.ai check, returning the record path and checked keys."""
+    probes: list[str] = []
+
+    def probe(api_key: str) -> health.Quota:
+        probes.append(api_key)
+        return quota
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', probe)
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-host-key')
+    record = tmp_path / 'provider-health' / 'run-result.json'
+    assert health.main(['record', '--agent-session', str(session), '--output', str(record)]) == 0
+    return record, probes
+
+
+def _zai_error(status: int, code: str) -> ModelHTTPError:
+    return ModelHTTPError(status, 'glm-5.3', {'error': {'code': code, 'message': 'provider detail'}})
+
+
+@pytest.mark.parametrize(
+    ('error', 'quota', 'confirmed'),
+    [
+        pytest.param(_zai_error(401, '1000'), _CREDENTIAL_REJECTED, True, id='credential-rejected-by-host'),
+        pytest.param(
+            _zai_error(403, '1000'),
+            health.Quota('unknown', diagnostic='http_error', http_status=403),
+            True,
+            id='forbidden-to-host',
+        ),
+        pytest.param(_zai_error(401, '1000'), health.Quota('healthy'), False, id='credential-accepted-by-host'),
+        pytest.param(
+            _zai_error(401, '1000'), health.Quota('unknown', diagnostic='timeout'), False, id='host-check-unavailable'
+        ),
+        pytest.param(_zai_error(401, '1000'), _PLAN_EXHAUSTED, False, id='credential-accepted-quota-exhausted'),
+        pytest.param(_zai_error(429, '1310'), _PLAN_EXHAUSTED, True, id='plan-exhausted-for-host'),
+        pytest.param(_zai_error(429, '1310'), health.Quota('healthy'), False, id='plan-healthy-for-host'),
+        pytest.param(
+            _zai_error(429, '1310'),
+            health.Quota('unknown', diagnostic='http_error', http_status=429),
+            False,
+            id='plan-unreadable-for-host',
+        ),
+    ],
+)
+def test_record_confirms_a_provider_failure_only_when_its_own_zai_check_observes_it(
+    error: ModelHTTPError,
+    quota: health.Quota,
+    confirmed: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The host record keeps the reported kind and confirms it only from the host's own Z.ai check."""
+    session = _agent_session(tmp_path, monkeypatch, error)
+
+    record, probes = _record(session, tmp_path, monkeypatch, quota)
+
+    assert probes == ['zai-host-key']
+    kind = 'plan_limit' if error.status_code == 429 else 'authentication'
+    assert json.loads(record.read_text()) == {
+        'version': 1,
+        'workflow': _SCHEDULED_RUN[0],
+        'task_key': _SCHEDULED_RUN[1],
+        'trigger_event': _SCHEDULED_RUN[2],
+        'run_attempt': 1,
+        'failure': {'kind': kind, 'http_status': error.status_code, 'retry_at': None},
+        'provider_confirmed': confirmed,
+    }
+
+
+@pytest.mark.parametrize(
+    ('error', 'failure'),
+    [
+        pytest.param(None, None, id='success'),
+        pytest.param(
+            _zai_error(429, '1302'), {'kind': 'rate_limit', 'http_status': 429, 'retry_at': None}, id='rate-limit'
+        ),
+    ],
+)
+def test_record_skips_the_zai_check_for_a_result_without_a_provider_claim(
+    error: ModelHTTPError | None,
+    failure: dict[str, object] | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results that cannot open a provider incident keep their kind without spending a Z.ai request."""
+    session = _agent_session(tmp_path, monkeypatch, error)
+
+    record, probes = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+
+    assert probes == []
+    data = json.loads(record.read_text())
+    assert (data['failure'], data['provider_confirmed']) == (failure, False)
+
+
+@pytest.mark.parametrize('mismatch', ['missing-session', 'other-attempt', 'other-task'])
+def test_record_writes_nothing_without_a_result_for_this_run(
+    mismatch: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The host records only a result that carries this run's identity."""
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    if mismatch == 'missing-session':
+        session.unlink()
+    elif mismatch == 'other-attempt':
+        monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'another-task')
+
+    record, probes = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+
+    assert not record.exists()
+    assert probes == []
+    assert 'No terminal agent result matches this run; recording none' in capsys.readouterr().out
+
+
+def _monitor_scheduled_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, agent_session: Path, run_result: Path | None
+) -> FakeGitHub:
+    workflow, task_key, trigger_event = _SCHEDULED_RUN
+    health_artifact = tmp_path / 'provider-health' / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            trigger_event,
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-22T16:00:00Z',
+            health.Quota('healthy'),
+            run_id='42',
+        ),
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    args = [
+        '--run-id',
+        '42',
+        '--run-attempt',
+        '1',
+        '--conclusion',
+        'failure',
+        '--health-artifact',
+        str(health_artifact),
+    ]
+    if run_result is not None:
+        args += ['--run-result', str(run_result)]
+    assert health.main(['monitor', *args, '--agent-artifact', str(agent_session.parent)]) == 0
+    return client
+
+
+@pytest.mark.parametrize(
+    ('error', 'quota', 'kind'),
+    [
+        pytest.param(_zai_error(401, '1000'), _CREDENTIAL_REJECTED, 'authentication', id='credential'),
+        pytest.param(_zai_error(429, '1310'), _PLAN_EXHAUSTED, 'plan_limit', id='plan-limit'),
+    ],
+)
+@pytest.mark.parametrize('confirmed', [True, False])
+def test_provider_incident_opens_only_from_a_host_confirmed_record(
+    error: ModelHTTPError,
+    quota: health.Quota,
+    kind: str,
+    confirmed: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine provider failure still blocks every workflow; an unconfirmed one stays with its workflow."""
+    session = _agent_session(tmp_path, monkeypatch, error)
+    record, _ = _record(session, tmp_path, monkeypatch, quota if confirmed else health.Quota('healthy'))
+
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=record)
+
+    [issue] = client.issues
+    marker = _marker_from_body(issue.body)
+    assert marker is not None
+    assert (marker.scope, marker.key, marker.kind) == (
+        ('provider', 'zai', kind) if confirmed else ('workflow', _SCHEDULED_RUN[0], kind)
+    )
+    assert ('no host-side Z.ai check confirmed a provider-wide failure' in issue.body) is not confirmed
+    blocked = health.check_health(
+        'Pydantic AI Bug Hunter', 'other-task', 'schedule', 1, health.Quota('healthy'), client.issues
+    )
+    assert blocked.ready is not confirmed
+
+
+@pytest.mark.parametrize(
+    'record',
+    [
+        pytest.param(None, id='absent'),
+        pytest.param('not json', id='not-json'),
+        pytest.param({'workflow': None}, id='incomplete'),
+        pytest.param({'version': 2}, id='unknown-version'),
+        pytest.param({'version': True}, id='boolean-version'),
+        pytest.param({'version': 1.0}, id='float-version'),
+        pytest.param({'provider_confirmed': 'true'}, id='non-boolean-confirmation'),
+    ],
+)
+def test_an_agent_written_result_cannot_open_a_provider_incident_without_host_confirmation(
+    record: str | dict[str, object] | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a valid host record, the agent artifact still types the failure but never confirms a provider."""
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    event = json.loads(session.read_text())
+    event['data']['metadata']['provider_health']['provider_confirmed'] = True
+    session.write_text(json.dumps(event) + '\n')
+    run_result = tmp_path / 'provider-health' / 'run-result.json'
+    if record is not None:
+        # Start from a record the host confirmed, then make it one the monitor cannot validate.
+        run_result, _ = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+        confirmed = json.loads(run_result.read_text())
+        assert confirmed['provider_confirmed'] is True
+        run_result.write_text(record if isinstance(record, str) else json.dumps({**confirmed, **record}))
+
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=run_result)
+
+    [issue] = client.issues
+    assert _marker_from_body(issue.body) == health.IncidentMarker(
+        'workflow', _SCHEDULED_RUN[0], 'authentication', '42', None, run_attempt=1
+    )
 
 
 def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
@@ -2357,6 +2672,7 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
             run_attempt=1,
             conclusion='failure',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=log,
             dry_run=False,
             recover_issue=None,
@@ -2422,6 +2738,7 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
             run_attempt=1,
             conclusion='failure',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=log,
             dry_run=False,
             recover_issue=None,
@@ -2476,6 +2793,24 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
                 None,
             )
             for name in health.AGENT_START_HEALTH_STEPS
+        ),
+        # A failed host record job only leaves the monitor without that record.
+        (
+            [
+                {
+                    'name': 'Record the terminal agent result on the host',
+                    'conclusion': 'failure',
+                    'steps': [
+                        {'name': "Download the agent's terminal session record", 'conclusion': 'success'},
+                        {'name': 'Record the terminal agent result', 'conclusion': 'failure'},
+                        {
+                            'name': 'Add the host-recorded agent result to the health decision artifact',
+                            'conclusion': 'skipped',
+                        },
+                    ],
+                }
+            ],
+            None,
         ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),
@@ -2975,7 +3310,7 @@ def test_gate_rereads_an_incident_less_read_before_passing(tmp_path: Path, monke
 
     output = _run_gate(client, tmp_path, monkeypatch)
 
-    assert output == 'ready=false\nreason=Open operational incident #7 blocks inference\n'
+    assert output == 'ready=false\nreason=Open operational incident #7 blocks inference\naccount=\n'
     assert client.reads == 3
     assert delays == [2, 2]
 
@@ -2984,7 +3319,9 @@ def test_gate_passes_only_after_every_read_finds_no_incident(tmp_path: Path, mon
     """With nothing open, the gate spends its whole re-read budget before it passes."""
     client = DegradedGitHub([], misses=0)
 
-    assert _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\n'
+    assert (
+        _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    )
     assert client.reads == health._INCIDENT_READS  # pyright: ignore[reportPrivateUsage]
 
 
@@ -2995,7 +3332,9 @@ def test_gate_trusts_a_read_that_returns_another_scopes_incident(
     other_task = _issue(8, health.IncidentMarker('task', 'CI Review:other-task', 'execution', '1', None))
     client = DegradedGitHub([other_task], misses=0)
 
-    assert _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\n'
+    assert (
+        _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    )
     assert client.reads == 1
 
 
@@ -3171,6 +3510,7 @@ def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.Monk
             run_attempt=1,
             conclusion='success',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=None,
             dry_run=False,
             recover_issue=None,
@@ -3414,6 +3754,7 @@ def test_monitor_handles_missing_terminal_log(
             run_attempt=1,
             conclusion=conclusion,
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=missing_agent_log,
             dry_run=False,
             recover_issue=None,
@@ -3459,6 +3800,7 @@ def test_blocked_run_without_agent_artifact_creates_provider_incident(
             run_attempt=1,
             conclusion='success',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=None,
             dry_run=False,
             recover_issue=None,
@@ -3517,6 +3859,7 @@ def test_monitor_does_not_classify_untrusted_terminal_metadata_without_host_stag
             run_attempt=1,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=agent_log,
             dry_run=False,
             recover_issue=None,
@@ -3524,3 +3867,579 @@ def test_monitor_does_not_classify_untrusted_terminal_metadata_without_host_stag
     )
 
     assert client.posts == []
+
+
+_PRIMARY_KEY = 'zai-primary-key'
+_BACKUP_KEY = 'zai-backup-key'
+_EXHAUSTED = health.Quota('exhausted', '2026-10-22T18:00:00Z')
+_BACKUP_EXHAUSTED = health.Quota('exhausted', '2026-10-22T19:00:00Z')
+
+
+def _stub_account_quotas(
+    monkeypatch: pytest.MonkeyPatch, primary: health.Quota, backup: health.Quota | None
+) -> list[str]:
+    """Answer each account's Z.ai check by its key, returning the keys checked in order."""
+    quotas = {_PRIMARY_KEY: primary, **({_BACKUP_KEY: backup} if backup is not None else {})}
+    probes: list[str] = []
+
+    def probe(api_key: str) -> health.Quota:
+        probes.append(api_key)
+        return quotas[api_key]
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', probe)
+    monkeypatch.setenv('ZAI_API_KEY', _PRIMARY_KEY)
+    if backup is not None:
+        monkeypatch.setenv('ZAI_BACKUP_API_KEY', _BACKUP_KEY)
+    return probes
+
+
+def _run_account_gate(
+    client: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[health.Health, str, str]:
+    """Run `check` as the CI Review gate, returning its decision, its step outputs and its step summary."""
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    github_output = tmp_path / 'output'
+    summary = tmp_path / 'summary'
+    github_output.write_text('')
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+    artifact = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(artifact)]) == 0
+    return _health_from_json(json.loads(artifact.read_text())), github_output.read_text(), summary.read_text()
+
+
+@pytest.mark.parametrize('blocker', ['quota', 'incident'])
+def test_gate_falls_back_to_the_backup_account_when_the_primary_is_unusable(
+    blocker: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exhausted or incident-blocked primary hands the run to a healthy backup, which the engine key follows."""
+    primary_incident = _issue(5, health.IncidentMarker('provider', 'zai', 'authentication', '5', None))
+    client = FakeGitHub([primary_incident] if blocker == 'incident' else [])
+    primary_quota = _EXHAUSTED if blocker == 'quota' else health.Quota('healthy')
+    probes = _stub_account_quotas(monkeypatch, primary_quota, health.Quota('healthy'))
+
+    decision, outputs, summary = _run_account_gate(client, tmp_path, monkeypatch)
+
+    assert probes == [_PRIMARY_KEY, _BACKUP_KEY]
+    assert (decision.ready, decision.account) == (True, 'backup')
+    assert outputs.endswith('account=backup\n')
+    primary_reason = (
+        'Z.ai quota is exhausted' if blocker == 'quota' else 'Open operational incident #5 blocks inference'
+    )
+    assert (
+        decision.reason == f'Provider health check passed on the backup Z.ai account; primary account: {primary_reason}'
+    )
+    assert decision.accounts == (
+        health.AccountHealth('primary', False, primary_reason, primary_quota),
+        health.AccountHealth('backup', True, 'Provider health check passed', health.Quota('healthy')),
+    )
+    assert _BACKUP_KEY not in outputs + summary
+
+
+def test_gate_checks_only_the_primary_while_it_is_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A usable primary runs without a backup check, and a backup incident does not block it."""
+    backup_incident = _issue(6, health.IncidentMarker('provider', 'zai:backup', 'authentication', '6', None))
+    probes = _stub_account_quotas(monkeypatch, health.Quota('healthy'), _EXHAUSTED)
+
+    decision, outputs, _ = _run_account_gate(FakeGitHub([backup_incident]), tmp_path, monkeypatch)
+
+    assert probes == [_PRIMARY_KEY]
+    assert (decision.ready, decision.account, decision.accounts) == (True, 'primary', ())
+    assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+
+
+@pytest.mark.parametrize('backup_key', [None, ''])
+def test_gate_without_a_backup_key_blocks_as_before(
+    backup_key: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing or empty backup key leaves an exhausted primary blocking the run, with the primary-only decision."""
+    probes = _stub_account_quotas(monkeypatch, _EXHAUSTED, None)
+    if backup_key is not None:
+        monkeypatch.setenv('ZAI_BACKUP_API_KEY', backup_key)
+
+    decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert probes == [_PRIMARY_KEY]
+    assert decision == replace(decision, ready=False, reason='Z.ai quota is exhausted', account=None, accounts=())
+    assert outputs == 'ready=false\nreason=Z.ai quota is exhausted\naccount=\n'
+
+
+@contextmanager
+def _http_server(handler: type[BaseHTTPRequestHandler]) -> Generator[str]:
+    """Serve `handler` on a local port, yielding its base URL."""
+    server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_address[1]}'
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+class _Collector(BaseHTTPRequestHandler):
+    """An OTLP/HTTP endpoint recording each POST's path, `Authorization` header and body."""
+
+    received: list[tuple[str, str | None, bytes]] = []
+    status = 200
+
+    def do_POST(self) -> None:
+        self.received.append(
+            (self.path, self.headers.get('Authorization'), self.rfile.read(int(self.headers['Content-Length'])))
+        )
+        self.send_response(self.status)
+        self.send_header('Location', '/elsewhere')
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+def _otlp(values: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
+    return [{'key': key, 'value': value} for key, value in values.items()]
+
+
+@pytest.mark.parametrize('job', ['agent', 'provider_health'])
+def test_each_decision_exports_one_span_with_both_accounts_quota(
+    job: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backup-account decision reaches the OTLP endpoint as one span with both accounts' quota windows.
+
+    The agent-start recheck joins gh-aw's agent-job trace. The gate runs before that trace exists and starts its own.
+    """
+    _stub_account_quotas(
+        monkeypatch, _parse_zai_quota(_quota_response(interval_percentage=100)), _parse_zai_quota(_quota_response())
+    )
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=logfire%20fixture-token')
+    monkeypatch.setenv('OTEL_SERVICE_NAME', 'gh-aw.pydantic-ai-pr-review')
+    monkeypatch.setenv(
+        'OTEL_RESOURCE_ATTRIBUTES', 'service.name=other,gh-aw.workflow.name=CI%20Review,github.run_id=43'
+    )
+    monkeypatch.setenv('GITHUB_JOB', job)
+    # A default-branch dispatch with a recovery issue, which the span also records.
+    monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', '7')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    if job == 'agent':
+        monkeypatch.setenv('GITHUB_AW_OTEL_TRACE_ID', 'a' * 32)
+        monkeypatch.setenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', 'b' * 16)
+    else:
+        monkeypatch.delenv('GITHUB_AW_OTEL_TRACE_ID', raising=False)
+        monkeypatch.delenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', raising=False)
+
+    with _http_server(_Collector) as endpoint:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint + '/')
+        decision, _, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.account == 'backup'
+    [(path, authorization, body)] = received
+    assert (path, authorization) == ('/v1/traces', 'logfire fixture-token')
+    windows = {
+        'weekly_remaining_percent': {'doubleValue': 84.0},
+        'interval_reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
+        'weekly_reset_at': {'stringValue': '2026-10-08T14:54:29Z'},
+    }
+    attributes = {
+        'github.job': {'stringValue': job},
+        'provider_health.ready': {'boolValue': True},
+        'provider_health.reason': {'stringValue': decision.reason},
+        'provider_health.workflow': {'stringValue': 'CI Review'},
+        'provider_health.task_key': {'stringValue': 'task-1'},
+        'provider_health.trigger_event': {'stringValue': 'workflow_run'},
+        'provider_health.run_attempt': {'intValue': '1'},
+        'provider_health.account': {'stringValue': 'backup'},
+        'provider_health.recovery_issue': {'intValue': '7'},
+        'provider_health.primary.ready': {'boolValue': False},
+        'provider_health.primary.reason': {'stringValue': 'Z.ai quota is exhausted'},
+        'provider_health.primary.quota.status': {'stringValue': 'exhausted'},
+        'provider_health.primary.quota.reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
+        'provider_health.primary.quota.interval_remaining_percent': {'doubleValue': 0.0},
+        **{f'provider_health.primary.quota.{name}': value for name, value in windows.items()},
+        'provider_health.backup.ready': {'boolValue': True},
+        'provider_health.backup.reason': {'stringValue': 'Provider health check passed'},
+        'provider_health.backup.quota.status': {'stringValue': 'healthy'},
+        'provider_health.backup.quota.interval_remaining_percent': {'doubleValue': 99.0},
+        **{f'provider_health.backup.quota.{name}': value for name, value in windows.items()},
+    }
+    resource = {
+        'service.name': {'stringValue': 'gh-aw.pydantic-ai-pr-review'},
+        'gh-aw.workflow.name': {'stringValue': 'CI Review'},
+        'github.run_id': {'stringValue': '43'},
+    }
+    exported = json.loads(body)
+    trace_id = exported['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['traceId']
+    if job == 'agent':
+        trace = {'traceId': 'a' * 32, 'parentSpanId': 'b' * 16}
+    else:
+        assert len(trace_id) == 32 and set(trace_id) <= set('0123456789abcdef')
+        trace = {'traceId': trace_id}
+    span = {
+        **trace,
+        'spanId': ANY,
+        'name': 'Z.AI provider health decision',
+        'kind': 1,
+        'startTimeUnixNano': ANY,
+        'endTimeUnixNano': ANY,
+        'attributes': _otlp(attributes),
+    }
+    scope = {'scope': {'name': 'agent_provider_health'}, 'spans': [span]}
+    assert exported == {'resourceSpans': [{'resource': {'attributes': _otlp(resource)}, 'scopeSpans': [scope]}]}
+
+
+@pytest.mark.parametrize(
+    ('headers', 'status', 'endpoint', 'sent', 'warning'),
+    [
+        ('Authorization=', 200, None, False, None),
+        ('Authorization=token', 302, None, True, 'HTTP 302'),
+        # `http.client` rejects the header with a `ValueError` whose message repeats the header value.
+        ('Authorization=token%0Asecret-fixture', 200, None, False, 'ValueError'),
+        ('Authorization=token', 200, 'localhost:4318', False, 'the OTLP endpoint has no http(s) scheme'),
+        ('Authorization=token', 200, 'https://[::1', False, 'ValueError'),
+    ],
+)
+def test_decision_span_export_never_changes_the_decision(
+    headers: str,
+    status: int,
+    endpoint: str | None,
+    sent: bool,
+    warning: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A run without the token sends nothing; a refused or invalid export only warns, without the token."""
+    _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setattr(_Collector, 'status', status)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', headers)
+
+    with _http_server(_Collector) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint or url)
+        decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.ready
+    assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    assert [path for path, _, _ in received] == (['/v1/traces'] if sent else [])
+    out = capsys.readouterr().out
+    assert 'secret-fixture' not in out
+    warnings = [line for line in out.splitlines() if line.startswith('::warning::')]
+    assert warnings == ([] if warning is None else [f'::warning::Could not export the provider health span: {warning}'])
+
+
+class _BrokenEndpoint(BaseHTTPRequestHandler):
+    """An OTLP endpoint that drops the connection, or answers with a line that is not an HTTP status line."""
+
+    reply = b''
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers['Content-Length']))
+        self.wfile.write(self.reply)
+        self.close_connection = True
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize(('reply', 'error'), [(b'', 'RemoteDisconnected'), (b'not http\r\n', 'BadStatusLine')])
+def test_a_broken_export_connection_only_warns(
+    reply: bytes, error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dropped connection (`OSError`) or a reply that is not HTTP (`HTTPException`) warns, and the decision stands."""
+    _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
+    monkeypatch.setattr(_BrokenEndpoint, 'reply', reply)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=token')
+
+    with _http_server(_BrokenEndpoint) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', url)
+        decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.ready
+    assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith('::warning::')]
+    assert warnings == [f'::warning::Could not export the provider health span: {error}']
+
+
+def test_a_blocked_decision_exports_its_unknown_quota_without_an_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gate blocked by an unreadable primary quota, with no backup key, exports the diagnostic and no account."""
+    _stub_account_quotas(monkeypatch, health.Quota('unknown', diagnostic='http_error', http_status=503), None)
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=token')
+
+    with _http_server(_Collector) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', url)
+        decision, _, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert (decision.ready, decision.account) == (False, None)
+    [(_, _, body)] = received
+    [span] = json.loads(body)['resourceSpans'][0]['scopeSpans'][0]['spans']
+    attributes = {item['key']: item['value'] for item in span['attributes']}
+    assert 'provider_health.account' not in attributes
+    assert {key: value for key, value in attributes.items() if key.startswith('provider_health.primary.')} == {
+        'provider_health.primary.ready': {'boolValue': False},
+        'provider_health.primary.reason': {'stringValue': decision.reason},
+        'provider_health.primary.quota.status': {'stringValue': 'unknown'},
+        'provider_health.primary.quota.diagnostic': {'stringValue': 'http_error'},
+        'provider_health.primary.quota.http_status': {'intValue': '503'},
+    }
+
+
+def _monitor_blocked_gate(decision: health.Health, client: FakeGitHub, tmp_path: Path) -> None:
+    artifact = tmp_path / 'monitor' / 'provider-health.json'
+    _write_health(artifact, replace(decision, run_id='43'))
+    agent_artifact = tmp_path / 'agent'
+    agent_artifact.mkdir(exist_ok=True)
+    (agent_artifact / 'agent-stdio.log').write_text('')
+    args = argparse.Namespace(
+        repository='org/repo',
+        run_id=43,
+        run_attempt=1,
+        conclusion='success',
+        health_artifact=artifact,
+        run_result=None,
+        agent_artifact=agent_artifact,
+        dry_run=False,
+        recover_issue=None,
+    )
+    assert _monitor_command(args) == 0
+
+
+def test_a_run_both_accounts_block_opens_each_accounts_quota_incident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each exhausted account gets its own incident, which blocks only that account."""
+    client = FakeGitHub()
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    _stub_account_quotas(monkeypatch, _EXHAUSTED, _BACKUP_EXHAUSTED)
+    decision, _, summary = _run_account_gate(client, tmp_path, monkeypatch)
+    assert not decision.ready
+    assert (
+        decision.reason == 'Primary Z.ai account: Z.ai quota is exhausted; backup Z.ai account: Z.ai quota is exhausted'
+    )
+    assert '### Provider health: blocked' in summary
+
+    _monitor_blocked_gate(decision, client, tmp_path)
+    _monitor_blocked_gate(decision, client, tmp_path)
+
+    assert [_marker_from_payload(post) for post in client.posts] == [
+        health.IncidentMarker('provider', 'zai', 'quota_exhausted', '43', '2026-10-22T18:00:00Z'),
+        health.IncidentMarker('provider', 'zai:backup', 'quota_exhausted', '43', '2026-10-22T19:00:00Z'),
+    ]
+    assert '- Z.ai account: backup\n' in str((_mapping(client.posts[1]) or {}).get('body'))
+
+
+def test_gate_log_names_each_accounts_quota_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rejected backup key shows its own diagnostic in the step output, next to the backup account."""
+    rejected = health.Quota('unknown', diagnostic='http_error', http_status=401)
+    _stub_account_quotas(monkeypatch, health.Quota('unknown', diagnostic='timeout'), rejected)
+
+    decision, outputs, summary = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    reason = (
+        'Primary Z.ai account: Z.ai quota health is unknown (quota diagnostic: timeout); '
+        'backup Z.ai account: Z.ai quota health is unknown (quota diagnostic: http_error; HTTP status 401)'
+    )
+    assert decision.reason == reason
+    assert outputs == f'ready=false\nreason={reason}\naccount=\n'
+    assert f'{reason}.' in summary
+    assert summary.count('quota diagnostic: timeout') == 1
+
+
+def test_a_run_blocked_by_its_own_incident_opens_no_quota_incident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A workflow incident blocks both accounts, so the gate skips the backup and opens nothing new."""
+    workflow_incident = _issue(7, health.IncidentMarker('workflow', 'CI Review', 'inference', '7', None, 'inference'))
+    client = FakeGitHub([workflow_incident])
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    probes = _stub_account_quotas(monkeypatch, _EXHAUSTED, _BACKUP_EXHAUSTED)
+    decision, _, _ = _run_account_gate(client, tmp_path, monkeypatch)
+
+    _monitor_blocked_gate(decision, client, tmp_path)
+
+    assert (decision.reason, decision.accounts) == ('Open operational incident #7 blocks inference', ())
+    assert probes == [_PRIMARY_KEY]
+    assert client.posts == []
+
+
+def test_scheduled_check_opens_no_incident_while_the_other_account_can_serve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One exhausted account alone opens no incident; once both are, each gets its own."""
+    client = FakeGitHub()
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    args = argparse.Namespace(dry_run=False, recover_issue=None)
+    _stub_account_quotas(monkeypatch, _EXHAUSTED, health.Quota('healthy'))
+
+    assert _reconcile_recovery(client, args) == 0
+    assert client.posts == []
+
+    _stub_account_quotas(monkeypatch, _EXHAUSTED, _BACKUP_EXHAUSTED)
+    assert _reconcile_recovery(client, args) == 0
+    assert _reconcile_recovery(client, args) == 0
+    assert [_marker_from_payload(post) for post in client.posts] == [
+        health.IncidentMarker('provider', 'zai', 'quota_exhausted', None, '2026-10-22T18:00:00Z'),
+        health.IncidentMarker('provider', 'zai:backup', 'quota_exhausted', None, '2026-10-22T19:00:00Z'),
+    ]
+
+
+@pytest.mark.parametrize(('primary_healthy', 'closed'), [(True, [1]), (False, [2])])
+def test_scheduled_recovery_closes_each_incident_only_on_its_own_accounts_health(
+    primary_healthy: bool, closed: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither account's healthy quota closes the other account's incident."""
+    created_at = '2026-10-15T08:00:00Z'
+    client = FakeGitHub(
+        [
+            _issue(1, health.IncidentMarker('provider', 'zai', 'quota_exhausted', '1', None), created_at=created_at),
+            _issue(
+                2, health.IncidentMarker('provider', 'zai:backup', 'quota_exhausted', '2', None), created_at=created_at
+            ),
+        ]
+    )
+    healthy, exhausted = health.Quota('healthy'), health.Quota('exhausted', '2026-10-15T17:00:00Z')
+    _stub_account_quotas(
+        monkeypatch, healthy if primary_healthy else exhausted, exhausted if primary_healthy else healthy
+    )
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+    assert client.closed == closed
+    assert client.posts == []
+
+
+def test_scheduled_recovery_without_the_backup_key_leaves_backup_incidents_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backup incident never closes on the primary's health."""
+    incident = _issue(
+        2,
+        health.IncidentMarker('provider', 'zai:backup', 'quota_unknown', '2', None),
+        created_at='2026-10-15T08:00:00Z',
+    )
+    client = FakeGitHub([incident])
+    probes = _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+    assert (probes, client.closed, client.posts) == ([_PRIMARY_KEY], [], [])
+
+
+def test_manual_recovery_checks_only_the_incidents_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A named backup incident recovers on the backup key's health alone."""
+    client = FakeGitHub([_issue(9, health.IncidentMarker('provider', 'zai:backup', 'authentication', '9', None))])
+    probes = _stub_account_quotas(monkeypatch, health.Quota('unknown', diagnostic='timeout'), health.Quota('healthy'))
+
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=9))
+
+    assert (probes, client.closed) == ([_BACKUP_KEY], [9])
+
+
+def test_a_confirmed_failure_on_the_backup_blocks_only_the_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record confirms with the key the engine used, and its incident leaves the primary usable."""
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    health_artifact = tmp_path / 'provider-health' / 'provider-health.json'
+    workflow, task_key, trigger_event = _SCHEDULED_RUN
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            trigger_event,
+            1,
+            True,
+            'Provider health check passed on the backup Z.ai account; primary account: Z.ai quota is exhausted',
+            '2026-10-22T16:00:00Z',
+            _EXHAUSTED,
+            run_id='42',
+            account='backup',
+        ),
+    )
+    probes = _stub_account_quotas(monkeypatch, health.Quota('healthy'), _CREDENTIAL_REJECTED)
+    record = tmp_path / 'provider-health' / 'run-result.json'
+    assert (
+        health.main(
+            [
+                'record',
+                '--agent-session',
+                str(session),
+                '--health-artifact',
+                str(health_artifact),
+                '--output',
+                str(record),
+            ]
+        )
+        == 0
+    )
+    assert probes == [_BACKUP_KEY]
+    assert json.loads(record.read_text())['provider_confirmed'] is True
+
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monitor = ['--run-id', '42', '--run-attempt', '1', '--conclusion', 'failure', '--health-artifact']
+    assert (
+        health.main(
+            [
+                'monitor',
+                *monitor,
+                str(health_artifact),
+                '--run-result',
+                str(record),
+                '--agent-artifact',
+                str(session.parent),
+            ]
+        )
+        == 0
+    )
+
+    [issue] = client.issues
+    marker = _marker_from_body(issue.body)
+    assert marker is not None
+    assert (marker.scope, marker.key, marker.kind) == ('provider', 'zai:backup', 'authentication')
+    primary = health.check_health(
+        'Pydantic AI Bug Hunter', 'other-task', 'schedule', 1, health.Quota('healthy'), client.issues
+    )
+    assert (primary.ready, primary.account) == (True, 'primary')
+    both = health.check_health(
+        'Pydantic AI Bug Hunter',
+        'other-task',
+        'schedule',
+        1,
+        _EXHAUSTED,
+        client.issues,
+        backup_quota=lambda: health.Quota('healthy'),
+    )
+    assert not both.ready
+
+
+def test_health_artifact_round_trips_account_decisions(tmp_path: Path) -> None:
+    """The monitor reads back each account's decision, and an artifact without them stays a primary-only decision."""
+    decision = health.check_health(
+        'CI Review', 'task-1', 'workflow_run', 1, _EXHAUSTED, [], backup_quota=lambda: _BACKUP_EXHAUSTED
+    )
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(artifact, decision)
+
+    assert _health_from_json(json.loads(artifact.read_text())) == decision
+    legacy = json.loads(artifact.read_text())
+    del legacy['accounts']
+    assert _health_from_json(legacy) == replace(decision, accounts=())
+    with pytest.raises(ValueError, match='invalid account'):
+        _health_from_json({**legacy, 'account': 'tertiary'})

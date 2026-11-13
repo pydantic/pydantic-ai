@@ -3,6 +3,7 @@
 import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
@@ -118,6 +119,21 @@ class ModelSettingsForm(BaseModel):
     custom_params: dict[str, JsonValue] | None = Field(
         default=None, description='Custom request body parameters. Dotted keys nest; custom values win.'
     )
+    base_url: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Endpoint this model's provider is built with, such as a gateway. Wins over its environment variable.",
+    )
+
+    @field_validator('base_url')
+    @classmethod
+    def absolute_url(cls, value: str | None) -> str | None:
+        """Reject a value no provider could send requests to, such as one without `https://`."""
+        if value is not None:
+            url = urlsplit(value)
+            if url.scheme not in ('http', 'https') or not url.netloc:
+                raise ValueError('must be an http:// or https:// URL, such as https://gateway.example/v1')
+        return value
 
     @field_validator('custom_params')
     @classmethod

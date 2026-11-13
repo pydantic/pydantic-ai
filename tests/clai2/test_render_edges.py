@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme
@@ -65,7 +65,7 @@ async def test_render_edge_events(show_tool_output: bool) -> None:
     assert output.getvalue().count('tool did not return text results') == (2 if show_tool_output else 0)
     for operation in ('write', 'create_directory'):
         await renderer.on_stream_event(
-            FileChangeRequestEvent(
+            FileChangeRequestedEvent(
                 path='file',
                 root_dir='/tmp',
                 operation='write' if operation == 'write' else 'create_directory',
@@ -89,7 +89,7 @@ async def test_refused_write_releases_diff(abort: bool, show_tool_output: bool) 
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=show_tool_output)
     for call_id in ('refused', 'pending'):
         await renderer.on_stream_event(
-            FileChangeRequestEvent(
+            FileChangeRequestedEvent(
                 path='file',
                 root_dir='/tmp',
                 operation='write',

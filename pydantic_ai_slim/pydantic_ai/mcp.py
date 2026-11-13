@@ -25,7 +25,6 @@ from typing import (
     cast,
     overload,
 )
-from urllib.parse import urlparse
 
 import anyio
 import pydantic_core
@@ -1048,7 +1047,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
                 The toolset never closes a user-supplied client: the caller owns its lifecycle,
-                and the toolset can reconnect with it across runs.
+                and the toolset can reconnect with it across runs. Every run's session, including
+                with a function passed as `auth`, uses this client and so shares its cookie jar:
+                pass `verify` instead when runs act for different users.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
@@ -1971,9 +1972,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 def _host_derived_id(client: object) -> str | None:
     """The `id` an `MCPToolset` without one takes from its server URL's hostname, or `None` without a URL."""
     url = getattr(getattr(client, 'transport', None), 'url', None)
-    host = urlparse(url).hostname if isinstance(url, str) else None
-    # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
-    return host.replace(':', '-') if host else None
+    return _utils.host_derived_id(url) if isinstance(url, str) else None
 
 
 def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> MessageHandlerT:

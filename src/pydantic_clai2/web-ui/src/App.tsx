@@ -46,11 +46,13 @@ const NO_ATTACHMENTS: readonly Attachment[] = []
 const SessionTranscript = memo(function SessionTranscript({
   id,
   chat,
+  busy,
   onWorker,
   onError,
 }: {
   id: string
   chat: Chat
+  busy: boolean
   onWorker: (id: string) => void
   onError: (message: string) => void
 }) {
@@ -70,7 +72,7 @@ const SessionTranscript = memo(function SessionTranscript({
   return (
     <SessionContext.Provider value={session}>
       <WorkersContext.Provider value={links}>
-        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} />
+        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} busy={busy} />
       </WorkersContext.Provider>
     </SessionContext.Provider>
   )
@@ -845,7 +847,13 @@ export function App() {
           .sort()
           .map((id) => (
             <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
-              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} onError={showError} />
+              <SessionTranscript
+                id={id}
+                chat={chats[id] as Chat}
+                busy={live[id]?.busy ?? false}
+                onWorker={openWorker}
+                onError={showError}
+              />
             </Activity>
           ))}
         {!orchestrating && !workerTask && !fresh && (
