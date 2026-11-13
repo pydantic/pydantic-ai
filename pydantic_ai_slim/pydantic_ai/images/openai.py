@@ -7,6 +7,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
+import httpx2
+
+from pydantic_ai import _model_errors
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
@@ -279,6 +282,9 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+            raise _model_errors.transport_status_error(self.model_name, e.response) from e
 
         return self._map_response(prompt, check_json_response(self.model_name, response))
 

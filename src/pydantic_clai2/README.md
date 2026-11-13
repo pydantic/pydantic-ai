@@ -78,7 +78,7 @@ A few keys to know:
 | Key | What it does |
 |---|---|
 | <kbd>Enter</kbd> | Send. While CLAI works, <kbd>Enter</kbd> queues your message for after the current turn. |
-| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>) | Steer: send your message to the turn that is running now. |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
@@ -207,8 +207,8 @@ Variables already set in your shell win. In a folder you do not trust, start CLA
 Shell commands the agent runs do not see your provider API keys.
 
 `/keys` keeps named API keys in an encrypted store. vLLM and OpenRouter connections,
-`/login PROVIDER@PROFILE`, and plugins such as Linear and Notion can use a saved key by
-name, so you change it in one place. The names are labels: CLAI does not set them as
+`/login PROVIDER@PROFILE`, a model's `api_key` in `/model settings`, and plugins such as
+Linear and Notion can use a saved key by name, so you change it in one place. The names are labels: CLAI does not set them as
 environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
 <kbd>d</kbd> to delete. Values are never shown.
 

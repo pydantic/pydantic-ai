@@ -430,7 +430,7 @@ def _errored(error_type: str, message: str, *, details: dict[str, str] | None = 
         ('billing_error', 'Billing issue.', ModelQuotaExceededError, 402),
         ('permission_error', 'Not allowed.', ModelAuthenticationError, 403),
         ('not_found_error', 'Not found.', ModelNotFoundError, 404),
-        ('request_too_large', 'Request too large.', ModelHTTPError, 413),
+        ('request_too_large', 'Request too large.', ModelRequestRejectedError, 413),
         ('rate_limit_error', 'Rate limited.', ModelRateLimitError, 429),
         ('api_error', 'Internal server error.', ModelServerError, 500),
         ('timeout_error', 'Timed out.', ModelServerError, 504),
@@ -447,8 +447,6 @@ def test_anthropic_batch_errors_raise_the_category_of_the_same_error_outside_a_b
         model.batch_decode(_errored(error_type, message), _request())
     error = exc_info.value
     assert isinstance(error, ModelHTTPError)
-    if error_class is ModelHTTPError:
-        assert type(error) is ModelHTTPError
     assert (error.status_code, error.provider_error_type) == (status_code, error_type)
     assert error.body == {'type': 'error', 'error': {'type': error_type, 'message': message}, 'request_id': 'req_1'}
 

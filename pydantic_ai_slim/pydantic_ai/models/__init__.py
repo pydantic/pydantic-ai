@@ -209,6 +209,7 @@ from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
+from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -1469,6 +1470,33 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if provider is None or response.provider_url is None:
             return True
         return provider.shares_server_state_with(response.provider_url)
+
+    def _restore_response_scoped_tool_call_ids(
+        self, messages: Sequence[ModelMessage], *, previous_response_id: str | None = None
+    ) -> list[ModelMessage]:
+        """Restore the tool call IDs [`tool_call_ids_are_response_scoped`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] qualified to the ones the provider sent.
+
+        A model whose profile sets the flag calls this before mapping a history onto its API. The calls in a response
+        this model [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] from, and the results in the
+        requests that follow it, are restored: another provider or endpoint didn't issue those IDs, so it gets the
+        stored ones, which are unique. `previous_response_id` names the response a request continues on the server,
+        whose results lead `messages` without it. Only the returned copy changes.
+        """
+        if not self.profile.get('tool_call_ids_are_response_scoped', False):
+            return list(messages)
+        restored: list[ModelMessage] = []
+        scopes: tuple[str, ...] = (previous_response_id,) if previous_response_id else ()
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                scopes = (
+                    response_tool_call_id_scopes(message.provider_response_id, message.timestamp)
+                    if self.accepts_server_state(message)
+                    else ()
+                )
+            if scopes:
+                message = with_unqualified_tool_call_ids(message, scopes)
+            restored.append(message)
+        return restored
 
     @property
     def _canonical_system_stamp(self) -> str | None:
@@ -5439,24 +5467,11 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
     return new_messages if changed else messages
 
 
-_BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-
-
-def _hashed_tool_call_id(tool_call_id: str, length: int) -> str:
-    """The low-order `length` base62 digits of the SHA-256 of `tool_call_id`."""
-    number = int.from_bytes(hashlib.sha256(tool_call_id.encode()).digest())
-    digits: list[str] = []
-    for _ in range(length):
-        number, remainder = divmod(number, 62)
-        digits.append(_BASE62_ALPHABET[remainder])
-    return ''.join(digits)
-
-
 def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelMessage]:
     """Replace the function tool call IDs that aren't exactly `length` ASCII alphanumerics with ones that are.
 
     Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
-    replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
+    replaced with `hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
     so a call, its result (a retried one included), and the `<pyai:tool_result>` tags rendered from the result's ID keep
     pairing up.
@@ -5484,11 +5499,11 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
                 "(the profile's `tool_call_id_length`)."
             )
         fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
-        replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
+        replacement = tool_call_id if fits else hashed_tool_call_id(tool_call_id, length)
         attempt = 0
         while replacement in taken:
             attempt += 1
-            replacement = _hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
+            replacement = hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
         replacements[tool_call_id] = replacement
         taken.add(replacement)
         return replacement

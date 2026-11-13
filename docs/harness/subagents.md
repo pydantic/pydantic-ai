@@ -465,8 +465,10 @@ async def converse():
             # Keep this owner open across subsequent parent turns.
 ```
 
-`opened()` drains workers on exit. A task still running when its process exited is
-loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
+`opened()` cancels and drains workers on exit. If a child hasn't released its resources within
+ten seconds, `opened()` raises `RuntimeError`, or only logs it when an error is already closing the
+owner, so that error isn't masked. A task still running when its process exited is loaded as
+cancelled when the owner next opens; if it was waiting for an answer, its output
 names the question, so the parent can resume it with the answer. Keep workspace and plugin
 resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;
 foreground delegation still works. `max_depth=4` counts the main run and allows
@@ -550,6 +552,21 @@ Managed children with `forward_usage=True` share live usage accounting and inher
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
 concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
 parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
+
+A locally run child that inherits `count_tokens_before_request=True` from the run's
+limits checks each child request against the token and cost ceilings before it is
+sent when its model implements `count_tokens`. When a child run raises
+`NotImplementedError` before its first request (such as a child model that does not
+implement `count_tokens`), the delegation starts the child once more without the
+up-front count (under a new run ID when the delegation is recorded as a task), so
+those ceilings are checked against each response's usage instead. There is no second
+start once the `usage` the child counts into has counted a request since the child
+started, so a tool that raises `NotImplementedError` does not run twice; when
+`forward_usage=True`, a sibling's request in that window also rules it out. A
+per-child `usage_limits` that sets `count_tokens_before_request=True` itself is kept,
+so on such a model the child fails as a top-level run would. A remote worker applies
+the announced limits as received, so on a model without `count_tokens` the remote
+task fails.
 
 `agents`, `aliases`, and `instructions` extend the roster and guidance only inside
 the bound scope; they do not add delegation to an agent without `SubAgents`.
