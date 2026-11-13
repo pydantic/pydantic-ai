@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "562"
+      - "625"
       content-type:
       - application/json
       host:
@@ -36,10 +36,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -51,10 +51,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=49
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8bfea4684be8684262dedb6a86e074b5-6ff424159897d1c4-01
+      - 00-4123b80466d10b6ad6640b61cd078599-834a53982dd68b04-01
       transfer-encoding:
       - chunked
       vary:
@@ -63,39 +65,39 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgrDZShgxnXsQZ7Vpe4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":125,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}   }
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cgv3AKbjAid8cC17kNxK9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":151,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}            }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISlQQKxgIIEhgCKkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYmz8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM8EzUbysaf9OyO+lfGgxlLot8rWlFdNyHNboiMHIBvdXKkBnpVuKVV9gT/tHqlcjvdFJPfeQwjSWxHqgvujsg0kdWldc58t0Yl2C+nyp8BZyAi/VjUa14M83dLtOUaIgHNByb6Ot1wHkyMiNV8v9NDfzP1Ei9Uz3iypZWPTFDnfSJN+QgLH4syHuEgvNS7flO6psiPW5Wkv3fruuS3b8nVOYbp0Mt5RyrwCeANJ12ZekMagXSjflGl3cFnc9+pk0KNEbkFVSwz1F3lxgB"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAIS6QMKxgIIExgCKkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAde1ztcGwgFACAYQABoSAexoAb0pAtqKA083BfQqBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIg5KyFaVcrz999JN+IlmfFp37aDSAhClSxMCnPp5dWPjwiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM1Th4kZu2O5pIJhHfGgyl2wRmWwj31sRMMo0iMOVWZDMkuuF476NaT0A7X9D/r9OxoxZu0IYsWB0hcmsrFZexH7MpjMbJNU1d5XKY9SpQgH0tL4BfYSF2DGgbZ2p5kQmgcQTnJ4txs/NPyGBYGq0h7bbtwuzGhpANfta6c8GM8FNWfRz1H96mBdhIs70C8xqXNgmKHMUj+JukRwJkJdkYAQ=="}               }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0}
 
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"A"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"A"}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1            }
+        data: {"type":"content_block_stop","index":1      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":125,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":38,"output_tokens_details":{"thinking_tokens":35}}              }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":151,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":27,"output_tokens_details":{"thinking_tokens":24}}           }
 
         event: message_stop
-        data: {"type":"message_stop"             }
+        data: {"type":"message_stop"}
 
-  recorded_at: 2026-09-30T00:36:25.674706+00:00
+  recorded_at: 2026-11-10T22:29:43.967174+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -107,7 +109,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1650"
+      - "1667"
       content-type:
       - application/json
       host:
@@ -127,7 +129,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISlQQKxgIIEhgCKkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYmz8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM8EzUbysaf9OyO+lfGgxlLot8rWlFdNyHNboiMHIBvdXKkBnpVuKVV9gT/tHqlcjvdFJPfeQwjSWxHqgvujsg0kdWldc58t0Yl2C+nyp8BZyAi/VjUa14M83dLtOUaIgHNByb6Ot1wHkyMiNV8v9NDfzP1Ei9Uz3iypZWPTFDnfSJN+QgLH4syHuEgvNS7flO6psiPW5Wkv3fruuS3b8nVOYbp0Mt5RyrwCeANJ12ZekMagXSjflGl3cFnc9+pk0KNEbkFVSwz1F3lxgB
+              CAIS6QMKxgIIExgCKkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAde1ztcGwgFACAYQABoSAexoAb0pAtqKA083BfQqBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIg5KyFaVcrz999JN+IlmfFp37aDSAhClSxMCnPp5dWPjwiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM1Th4kZu2O5pIJhHfGgyl2wRmWwj31sRMMo0iMOVWZDMkuuF476NaT0A7X9D/r9OxoxZu0IYsWB0hcmsrFZexH7MpjMbJNU1d5XKY9SpQgH0tL4BfYSF2DGgbZ2p5kQmgcQTnJ4txs/NPyGBYGq0h7bbtwuzGhpANfta6c8GM8FNWfRz1H96mBdhIs70C8xqXNgmKHMUj+JukRwJkJdkYAQ==
             type: thinking
           - text: A
             type: text
@@ -138,9 +140,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -151,10 +153,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -166,10 +168,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=60
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-17b722ec5bc3c5f1eff14c3833f42f98-4d1ef50325ee7e62-01
+      - 00-fa32f5f139c69004927fa091d46ab735-d34d66e7bfd7d23e-01
       transfer-encoding:
       - chunked
       vary:
@@ -178,312 +182,39 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgrLNDjLrpKeJxy4G5G","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":225,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}    }
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cgv3AS8sCScimddhqFDk7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":248,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISxAQKlgMIEhgCKkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYuz8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgyMLIZA42qc8E7Z8aAaDBf68n4JBv5P1y/abyIwF+8KAi/ani+f+N1qGMH4UEaPKR3eqdtLoeBKnzqth2QshV0pM2FyGUJze3F2fFPHKlvKuHHt9UpvZFvS/7BuamJ8vyvHxulYUmaYmBfssPu0aSvE0wWuJxo50BpVGgpXIYB88LUnvBviMes9nCGH8/Zd12WvEigSlQIuEgj6dJIksaAT7x7/T1VjieMNGAE="} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISsQQKlgMIExgCKkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdm1ztcGwgFPCAsQABohAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIMVSH9/o7pppHfeFQiZq+VUyN3Lpx3RazjHUO00oy+McIkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy3titN+bK3Wis78/4aDDt9ImC6oAaRAfO1BCIwH7DBOChbSSy5NSzne1L1Tr8Ne+oxCaw1lZoTq1mhkMIErEF+wEU2TPFEJFkDkbp6KkgbBaq++1yXOIHfrGHmd4hNGfOEJ5z1qzrpGYpBBaKNxjiCB3UTqNi42kTkMEjyO3bnj6qWvQn5syV0Sd5gmcJP240mpeKOoYQYAQ=="}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0             }
+        data: {"type":"content_block_stop","index":0    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1              }
+        data: {"type":"content_block_stop","index":1 }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":225,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":27,"output_tokens_details":{"thinking_tokens":24}}}
-
-        event: message_stop
-        data: {"type":"message_stop"            }
-
-  recorded_at: 2026-09-30T00:36:27.091963+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "2654"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 128000
-        messages:
-        - role: user
-          content:
-          - text: >-
-              I have a box of books from the library donation drive. Where should it be
-              routed?
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAISlQQKxgIIEhgCKkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYmz8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM8EzUbysaf9OyO+lfGgxlLot8rWlFdNyHNboiMHIBvdXKkBnpVuKVV9gT/tHqlcjvdFJPfeQwjSWxHqgvujsg0kdWldc58t0Yl2C+nyp8BZyAi/VjUa14M83dLtOUaIgHNByb6Ot1wHkyMiNV8v9NDfzP1Ei9Uz3iypZWPTFDnfSJN+QgLH4syHuEgvNS7flO6psiPW5Wkv3fruuS3b8nVOYbp0Mt5RyrwCeANJ12ZekMagXSjflGl3cFnc9+pk0KNEbkFVSwz1F3lxgB
-            type: thinking
-          - text: A
-            type: text
-        - role: user
-          content:
-          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
-            type: text
-        - role: system
-          content:
-          - text: |-
-              <context id="capability:memory:state">
-              Send parcels to warehouse B.
-              </context>
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAISxAQKlgMIEhgCKkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYuz8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgyMLIZA42qc8E7Z8aAaDBf68n4JBv5P1y/abyIwF+8KAi/ani+f+N1qGMH4UEaPKR3eqdtLoeBKnzqth2QshV0pM2FyGUJze3F2fFPHKlvKuHHt9UpvZFvS/7BuamJ8vyvHxulYUmaYmBfssPu0aSvE0wWuJxo50BpVGgpXIYB88LUnvBviMes9nCGH8/Zd12WvEigSlQIuEgj6dJIksaAT7x7/T1VjieMNGAE=
-            type: thinking
-          - text: B
-            type: text
-        - role: user
-          content:
-          - text: This one is a bicycle frame, oversized. Where does it go?
-            type: text
-        model: claude-opus-5
-        stream: true
-        system:
-        - type: text
-          text: >-
-            You help route parcels. The destination warehouse is specified separately.
-            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-        - type: text
-          text: |-
-            <context id="capability:memory:state">
-            Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-e1b4fe0e159fe990e3f7d7b5b00bb305-a6235f7251ce5a44-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgrSLQKqwp2EDvfHuKP","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":275,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}       }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAIS2wQKogMIEhgCKkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYyz8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxd4y85KqQc+IDhnYAaDLsbqWbpBwXRRpuHSyIwIK+s0GHW1M7ibVzmumHH703uXzK8i7AypnIShfDwf6fhVr7EGkJDsTET2dkhQrQIKma/sMHkoo2rD3TSDra/NkM/2uIYppbfI2a+4ypb77YWAewttIpWtg/3jN6siIx7elnxqkRK29G6sw5hUDJkZ/5MaFDriaOQRuseOiakoSxuVR9ep06lxXEdnnJbVYweWpeTP2W6n6cYAQ=="}       }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0             }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}  }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1   }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":275,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":29,"output_tokens_details":{"thinking_tokens":26}}        }
-
-        event: message_stop
-        data: {"type":"message_stop"         }
-
-  recorded_at: 2026-09-30T00:36:28.669182+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "3814"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 128000
-        messages:
-        - role: user
-          content:
-          - text: >-
-              I have a box of books from the library donation drive. Where should it be
-              routed?
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAISlQQKxgIIEhgCKkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYmz8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM8EzUbysaf9OyO+lfGgxlLot8rWlFdNyHNboiMHIBvdXKkBnpVuKVV9gT/tHqlcjvdFJPfeQwjSWxHqgvujsg0kdWldc58t0Yl2C+nyp8BZyAi/VjUa14M83dLtOUaIgHNByb6Ot1wHkyMiNV8v9NDfzP1Ei9Uz3iypZWPTFDnfSJN+QgLH4syHuEgvNS7flO6psiPW5Wkv3fruuS3b8nVOYbp0Mt5RyrwCeANJ12ZekMagXSjflGl3cFnc9+pk0KNEbkFVSwz1F3lxgB
-            type: thinking
-          - text: A
-            type: text
-        - role: user
-          content:
-          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
-            type: text
-        - role: system
-          content:
-          - text: |-
-              <context id="capability:memory:state">
-              Send parcels to warehouse B.
-              </context>
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAISxAQKlgMIEhgCKkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYuz8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgyMLIZA42qc8E7Z8aAaDBf68n4JBv5P1y/abyIwF+8KAi/ani+f+N1qGMH4UEaPKR3eqdtLoeBKnzqth2QshV0pM2FyGUJze3F2fFPHKlvKuHHt9UpvZFvS/7BuamJ8vyvHxulYUmaYmBfssPu0aSvE0wWuJxo50BpVGgpXIYB88LUnvBviMes9nCGH8/Zd12WvEigSlQIuEgj6dJIksaAT7x7/T1VjieMNGAE=
-            type: thinking
-          - text: B
-            type: text
-        - role: user
-          content:
-          - text: This one is a bicycle frame, oversized. Where does it go?
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAIS2wQKogMIEhgCKkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYyz8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxd4y85KqQc+IDhnYAaDLsbqWbpBwXRRpuHSyIwIK+s0GHW1M7ibVzmumHH703uXzK8i7AypnIShfDwf6fhVr7EGkJDsTET2dkhQrQIKma/sMHkoo2rD3TSDra/NkM/2uIYppbfI2a+4ypb77YWAewttIpWtg/3jN6siIx7elnxqkRK29G6sw5hUDJkZ/5MaFDriaOQRuseOiakoSxuVR9ep06lxXEdnnJbVYweWpeTP2W6n6cYAQ==
-            type: thinking
-          - text: B
-            type: text
-        - role: user
-          content:
-          - text: An envelope with signed contracts. Routing?
-            type: text
-        - role: system
-          content:
-          - text: |-
-              <context id="capability:memory:state">
-              Send parcels to warehouse A.
-              </context>
-            type: text
-        model: claude-opus-5
-        stream: true
-        system:
-        - type: text
-          text: >-
-            You help route parcels. The destination warehouse is specified separately.
-            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-        - type: text
-          text: |-
-            <context id="capability:memory:state">
-            Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-c7ea7cbff8e85dec21e327f81fb48f8a-2ddcb7d6ee83ec2a-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgrZBu9jd7yHfjSXD1v","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":352,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}      }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAIStgQKsQMIEhgCKkAZltHtlPVatq0gAHQN6kpaqekMaE5607V8dEElFo2ataDcDTs4KR2ZHZqoBLIi+V/uycJH16ooM94/8smJw5pKMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAY2z8dUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxG88DhjPc5V8xrmqsaDIQ4iNvHYJ/f+EoddiIwgevEttfNKAT+gSY3bjkr5oMrCx3Pnc7CIylWEpwlUkBGLeix8bZaE/J1tSuxMfiWKjKx6V2ZHG2+pvy0speT/QSn+qzA7dXZjG3QKu5VHOJmGTmfUnK3eSgHAx7ToEwN7d7FJxgB"}     }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0              }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"A"}        }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1               }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":352,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":17,"output_tokens_details":{"thinking_tokens":14}}               }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":248,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":24,"output_tokens_details":{"thinking_tokens":21}}       }
 
         event: message_stop
         data: {"type":"message_stop"   }
 
-  recorded_at: 2026-09-30T00:36:30.029825+00:00
+  recorded_at: 2026-11-10T22:29:45.415076+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -495,7 +226,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "4939"
+      - "2647"
       content-type:
       - application/json
       host:
@@ -515,7 +246,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISlQQKxgIIEhgCKkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYmz8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM8EzUbysaf9OyO+lfGgxlLot8rWlFdNyHNboiMHIBvdXKkBnpVuKVV9gT/tHqlcjvdFJPfeQwjSWxHqgvujsg0kdWldc58t0Yl2C+nyp8BZyAi/VjUa14M83dLtOUaIgHNByb6Ot1wHkyMiNV8v9NDfzP1Ei9Uz3iypZWPTFDnfSJN+QgLH4syHuEgvNS7flO6psiPW5Wkv3fruuS3b8nVOYbp0Mt5RyrwCeANJ12ZekMagXSjflGl3cFnc9+pk0KNEbkFVSwz1F3lxgB
+              CAIS6QMKxgIIExgCKkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAde1ztcGwgFACAYQABoSAexoAb0pAtqKA083BfQqBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIg5KyFaVcrz999JN+IlmfFp37aDSAhClSxMCnPp5dWPjwiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM1Th4kZu2O5pIJhHfGgyl2wRmWwj31sRMMo0iMOVWZDMkuuF476NaT0A7X9D/r9OxoxZu0IYsWB0hcmsrFZexH7MpjMbJNU1d5XKY9SpQgH0tL4BfYSF2DGgbZ2p5kQmgcQTnJ4txs/NPyGBYGq0h7bbtwuzGhpANfta6c8GM8FNWfRz1H96mBdhIs70C8xqXNgmKHMUj+JukRwJkJdkYAQ==
             type: thinking
           - text: A
             type: text
@@ -526,59 +257,21 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
           - thinking: ""
             signature: >-
-              CAISxAQKlgMIEhgCKkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYuz8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgyMLIZA42qc8E7Z8aAaDBf68n4JBv5P1y/abyIwF+8KAi/ani+f+N1qGMH4UEaPKR3eqdtLoeBKnzqth2QshV0pM2FyGUJze3F2fFPHKlvKuHHt9UpvZFvS/7BuamJ8vyvHxulYUmaYmBfssPu0aSvE0wWuJxo50BpVGgpXIYB88LUnvBviMes9nCGH8/Zd12WvEigSlQIuEgj6dJIksaAT7x7/T1VjieMNGAE=
+              CAISsQQKlgMIExgCKkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdm1ztcGwgFPCAsQABohAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIMVSH9/o7pppHfeFQiZq+VUyN3Lpx3RazjHUO00oy+McIkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy3titN+bK3Wis78/4aDDt9ImC6oAaRAfO1BCIwH7DBOChbSSy5NSzne1L1Tr8Ne+oxCaw1lZoTq1mhkMIErEF+wEU2TPFEJFkDkbp6KkgbBaq++1yXOIHfrGHmd4hNGfOEJ5z1qzrpGYpBBaKNxjiCB3UTqNi42kTkMEjyO3bnj6qWvQn5syV0Sd5gmcJP240mpeKOoYQYAQ==
             type: thinking
           - text: B
             type: text
         - role: user
           content:
           - text: This one is a bicycle frame, oversized. Where does it go?
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAIS2wQKogMIEhgCKkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYyz8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxd4y85KqQc+IDhnYAaDLsbqWbpBwXRRpuHSyIwIK+s0GHW1M7ibVzmumHH703uXzK8i7AypnIShfDwf6fhVr7EGkJDsTET2dkhQrQIKma/sMHkoo2rD3TSDra/NkM/2uIYppbfI2a+4ypb77YWAewttIpWtg/3jN6siIx7elnxqkRK29G6sw5hUDJkZ/5MaFDriaOQRuseOiakoSxuVR9ep06lxXEdnnJbVYweWpeTP2W6n6cYAQ==
-            type: thinking
-          - text: B
-            type: text
-        - role: user
-          content:
-          - text: An envelope with signed contracts. Routing?
-            type: text
-        - role: system
-          content:
-          - text: |-
-              <context id="capability:memory:state">
-              Send parcels to warehouse A.
-              </context>
-            type: text
-        - role: assistant
-          content:
-          - thinking: ""
-            signature: >-
-              CAIStgQKsQMIEhgCKkAZltHtlPVatq0gAHQN6kpaqekMaE5607V8dEElFo2ataDcDTs4KR2ZHZqoBLIi+V/uycJH16ooM94/8smJw5pKMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAY2z8dUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxG88DhjPc5V8xrmqsaDIQ4iNvHYJ/f+EoddiIwgevEttfNKAT+gSY3bjkr5oMrCx3Pnc7CIylWEpwlUkBGLeix8bZaE/J1tSuxMfiWKjKx6V2ZHG2+pvy0speT/QSn+qzA7dXZjG3QKu5VHOJmGTmfUnK3eSgHAx7ToEwN7d7FJxgB
-            type: thinking
-          - text: A
-            type: text
-        - role: user
-          content:
-          - text: A pallet of bottled water arrived at the dock. Where to?
-            type: text
-        - role: system
-          content:
-          - text: |-
-              <context id="capability:memory:state">
-              This context has been withdrawn.
-              </context>
             type: text
         model: claude-opus-5
         stream: true
@@ -589,10 +282,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -604,10 +297,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=49
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a759169ecd89116be41d8fe8ea28aea9-5e96dc2a9314b2b8-01
+      - 00-a731bd5b086f24c80237d8fb6c2773e2-7795c9bcd52f75f4-01
       transfer-encoding:
       - chunked
       vary:
@@ -616,7 +311,7 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgresiKf8Rpi3TcaTwf","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":421,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cgv3AYHhrzGWdczsU1cpX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":295,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
@@ -625,33 +320,30 @@ interactions:
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAIS8QQKwAMIEhgCKkD1wXHbxB+0KeHbSqFzyIbcQZHYf6FesLSGV+ve1/oC+CnCw/fq321T1RSZIvvPEELx16ZC3WejrUCemQaCNuZ/Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAY6z8dUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkAZltHtlPVatq0gAHQN6kpaqekMaE5607V8dEElFo2ataDcDTs4KR2ZHZqoBLIi+V/uycJH16ooM94/8smJw5pKMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy09HiujIXzVKv+zRsaDNa3r9JlHxVMjXdtryIwuUBK2ExU4Uxoupjqef0zIonPLr+FLkAqLvh47e4tD3/2HytqakHedVFKIkUxpqG6Kl5hOi4MbGpvcoNKUIqhkmMtgAgxdbcgqy8tVe+PtsHSIYftTeFE64yuJuy1FnltudOMUK7/YNkvZzSus/ccVFn1GTxQsgtLnYXKRbnB6ngbFw8YPtrHHALVjYDCsZSdGAE="}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISzQQKogMIExgCKkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdq1ztcGwgFbCA8QABotAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIIxL8Jc5KVNMsffW0I22w1bWUwD6l1eYeWyc+TL+S6+EIkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgz1Dw1iDdYomcQVS0QaDEfWXQ2j3OlaZPhoZiIw5MX+LbErQPK7vyYyeXTizM3wIQ45SejpOE3LRT4eG7qudVRhEd9TljqPoqt4CTItKlj7SXRDYvdHgOPsa9XeTUuYyNDwkiMRHZfgg5aXTOMLSMkUIq2JRGzjA9xgW72oVDutsqzKIQVs+OzpxS33Jn8dAABANFztUm620lk6O3OiDvdAhbWXrn+yGAE="}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0       }
+        data: {"type":"content_block_stop","index":0}
 
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"UNASSIGN"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ED"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1             }
+        data: {"type":"content_block_stop","index":1      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":421,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":44,"output_tokens_details":{"thinking_tokens":34}}             }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":295,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":28,"output_tokens_details":{"thinking_tokens":25}}    }
 
         event: message_stop
-        data: {"type":"message_stop"  }
+        data: {"type":"message_stop"}
 
-  recorded_at: 2026-09-30T00:36:31.583265+00:00
+  recorded_at: 2026-11-10T22:29:46.992193+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -663,7 +355,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "6166"
+      - "3797"
       content-type:
       - application/json
       host:
@@ -683,7 +375,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISlQQKxgIIEhgCKkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYmz8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM8EzUbysaf9OyO+lfGgxlLot8rWlFdNyHNboiMHIBvdXKkBnpVuKVV9gT/tHqlcjvdFJPfeQwjSWxHqgvujsg0kdWldc58t0Yl2C+nyp8BZyAi/VjUa14M83dLtOUaIgHNByb6Ot1wHkyMiNV8v9NDfzP1Ei9Uz3iypZWPTFDnfSJN+QgLH4syHuEgvNS7flO6psiPW5Wkv3fruuS3b8nVOYbp0Mt5RyrwCeANJ12ZekMagXSjflGl3cFnc9+pk0KNEbkFVSwz1F3lxgB
+              CAIS6QMKxgIIExgCKkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAde1ztcGwgFACAYQABoSAexoAb0pAtqKA083BfQqBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIg5KyFaVcrz999JN+IlmfFp37aDSAhClSxMCnPp5dWPjwiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM1Th4kZu2O5pIJhHfGgyl2wRmWwj31sRMMo0iMOVWZDMkuuF476NaT0A7X9D/r9OxoxZu0IYsWB0hcmsrFZexH7MpjMbJNU1d5XKY9SpQgH0tL4BfYSF2DGgbZ2p5kQmgcQTnJ4txs/NPyGBYGq0h7bbtwuzGhpANfta6c8GM8FNWfRz1H96mBdhIs70C8xqXNgmKHMUj+JukRwJkJdkYAQ==
             type: thinking
           - text: A
             type: text
@@ -694,15 +386,15 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
           - thinking: ""
             signature: >-
-              CAISxAQKlgMIEhgCKkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYuz8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkBqOYuznxZxyQWNc2HbPNq6zxZKkx2lvAucjkDqwoIrS0IOnT8ctVIHvMwOE1xN4Ne20xzohImzqVhyvr3hIy4uMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgyMLIZA42qc8E7Z8aAaDBf68n4JBv5P1y/abyIwF+8KAi/ani+f+N1qGMH4UEaPKR3eqdtLoeBKnzqth2QshV0pM2FyGUJze3F2fFPHKlvKuHHt9UpvZFvS/7BuamJ8vyvHxulYUmaYmBfssPu0aSvE0wWuJxo50BpVGgpXIYB88LUnvBviMes9nCGH8/Zd12WvEigSlQIuEgj6dJIksaAT7x7/T1VjieMNGAE=
+              CAISsQQKlgMIExgCKkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdm1ztcGwgFPCAsQABohAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIMVSH9/o7pppHfeFQiZq+VUyN3Lpx3RazjHUO00oy+McIkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy3titN+bK3Wis78/4aDDt9ImC6oAaRAfO1BCIwH7DBOChbSSy5NSzne1L1Tr8Ne+oxCaw1lZoTq1mhkMIErEF+wEU2TPFEJFkDkbp6KkgbBaq++1yXOIHfrGHmd4hNGfOEJ5z1qzrpGYpBBaKNxjiCB3UTqNi42kTkMEjyO3bnj6qWvQn5syV0Sd5gmcJP240mpeKOoYQYAQ==
             type: thinking
           - text: B
             type: text
@@ -714,7 +406,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIS2wQKogMIEhgCKkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAYyz8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkAbju3MEYk/948uYQ4eDumAAEPyCWlaoezwB8UN4X4OyyQzXeZk7sxi5dCJedXJJplQEkQ5OmwLA0ZnYh/jvtJNMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxd4y85KqQc+IDhnYAaDLsbqWbpBwXRRpuHSyIwIK+s0GHW1M7ibVzmumHH703uXzK8i7AypnIShfDwf6fhVr7EGkJDsTET2dkhQrQIKma/sMHkoo2rD3TSDra/NkM/2uIYppbfI2a+4ypb77YWAewttIpWtg/3jN6siIx7elnxqkRK29G6sw5hUDJkZ/5MaFDriaOQRuseOiakoSxuVR9ep06lxXEdnnJbVYweWpeTP2W6n6cYAQ==
+              CAISzQQKogMIExgCKkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdq1ztcGwgFbCA8QABotAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIIxL8Jc5KVNMsffW0I22w1bWUwD6l1eYeWyc+TL+S6+EIkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgz1Dw1iDdYomcQVS0QaDEfWXQ2j3OlaZPhoZiIw5MX+LbErQPK7vyYyeXTizM3wIQ45SejpOE3LRT4eG7qudVRhEd9TljqPoqt4CTItKlj7SXRDYvdHgOPsa9XeTUuYyNDwkiMRHZfgg5aXTOMLSMkUIq2JRGzjA9xgW72oVDutsqzKIQVs+OzpxS33Jn8dAABANFztUm620lk6O3OiDvdAhbWXrn+yGAE=
             type: thinking
           - text: B
             type: text
@@ -725,15 +417,163 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context>
+              </pyai:context>
+            type: text
+        model: claude-opus-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <pyai:context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=68
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-49467273d239b34018fa5ec2726a2001-00b3e45ad0772d35-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cgv3Af6jWjHkNfjaCYNh1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":379,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISxwQKsQMIExgCKkCGUak3YaxlhHfO10j+hsndHqu6qDbVD0qPyp6dmbiomGeP6RO1PnY7qz+5f9JRQUuyfVZX4XAljY8/jzqL5YyfMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdy1ztcGwgFqCBQQABo8AexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatBYlpA083BUpgERHBBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESINiacTWUIStYtxAOdwtY28q8VTYau9vpapKqZvQmSOflIkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwZTz5/c3s3amwbeigaDFiubd35JWlQa92GYiIwoscRSBEYAFt4IUrIzO6aX93WqODbjeoYsWGCJlmOrrlY4H7cKC3NNfUb4Os6kg/cKkNrcsv03MB8ZgPjzBtCgXe3dm471zfaWm3E7vuZg5aJaMJTHSNpBFTCQ3hX4G9K4FuqigRMcEGs3uA9xocnN3TxusgjGAE="}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"A"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":379,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":21,"output_tokens_details":{"thinking_tokens":18}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-11-10T22:29:48.359804+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4956"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
             type: text
         - role: assistant
           content:
           - thinking: ""
             signature: >-
-              CAIStgQKsQMIEhgCKkAZltHtlPVatq0gAHQN6kpaqekMaE5607V8dEElFo2ataDcDTs4KR2ZHZqoBLIi+V/uycJH16ooM94/8smJw5pKMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAY2z8dUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkBEPTqRH5EkIfe0Cx2BeGs9VepztMNejSsjPTWAXObcR8y7ZA1Oo2O5WbMC4NQyHrVmLPgv9Z3J/7i+alaPm1O9MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxG88DhjPc5V8xrmqsaDIQ4iNvHYJ/f+EoddiIwgevEttfNKAT+gSY3bjkr5oMrCx3Pnc7CIylWEpwlUkBGLeix8bZaE/J1tSuxMfiWKjKx6V2ZHG2+pvy0speT/QSn+qzA7dXZjG3QKu5VHOJmGTmfUnK3eSgHAx7ToEwN7d7FJxgB
+              CAIS6QMKxgIIExgCKkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAde1ztcGwgFACAYQABoSAexoAb0pAtqKA083BfQqBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIg5KyFaVcrz999JN+IlmfFp37aDSAhClSxMCnPp5dWPjwiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM1Th4kZu2O5pIJhHfGgyl2wRmWwj31sRMMo0iMOVWZDMkuuF476NaT0A7X9D/r9OxoxZu0IYsWB0hcmsrFZexH7MpjMbJNU1d5XKY9SpQgH0tL4BfYSF2DGgbZ2p5kQmgcQTnJ4txs/NPyGBYGq0h7bbtwuzGhpANfta6c8GM8FNWfRz1H96mBdhIs70C8xqXNgmKHMUj+JukRwJkJdkYAQ==
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <pyai:context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </pyai:context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISsQQKlgMIExgCKkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdm1ztcGwgFPCAsQABohAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIMVSH9/o7pppHfeFQiZq+VUyN3Lpx3RazjHUO00oy+McIkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy3titN+bK3Wis78/4aDDt9ImC6oAaRAfO1BCIwH7DBOChbSSy5NSzne1L1Tr8Ne+oxCaw1lZoTq1mhkMIErEF+wEU2TPFEJFkDkbp6KkgbBaq++1yXOIHfrGHmd4hNGfOEJ5z1qzrpGYpBBaKNxjiCB3UTqNi42kTkMEjyO3bnj6qWvQn5syV0Sd5gmcJP240mpeKOoYQYAQ==
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISzQQKogMIExgCKkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdq1ztcGwgFbCA8QABotAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIIxL8Jc5KVNMsffW0I22w1bWUwD6l1eYeWyc+TL+S6+EIkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgz1Dw1iDdYomcQVS0QaDEfWXQ2j3OlaZPhoZiIw5MX+LbErQPK7vyYyeXTizM3wIQ45SejpOE3LRT4eG7qudVRhEd9TljqPoqt4CTItKlj7SXRDYvdHgOPsa9XeTUuYyNDwkiMRHZfgg5aXTOMLSMkUIq2JRGzjA9xgW72oVDutsqzKIQVs+OzpxS33Jn8dAABANFztUm620lk6O3OiDvdAhbWXrn+yGAE=
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <pyai:context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </pyai:context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISxwQKsQMIExgCKkCGUak3YaxlhHfO10j+hsndHqu6qDbVD0qPyp6dmbiomGeP6RO1PnY7qz+5f9JRQUuyfVZX4XAljY8/jzqL5YyfMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdy1ztcGwgFqCBQQABo8AexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatBYlpA083BUpgERHBBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESINiacTWUIStYtxAOdwtY28q8VTYau9vpapKqZvQmSOflIkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwZTz5/c3s3amwbeigaDFiubd35JWlQa92GYiIwoscRSBEYAFt4IUrIzO6aX93WqODbjeoYsWGCJlmOrrlY4H7cKC3NNfUb4Os6kg/cKkNrcsv03MB8ZgPjzBtCgXe3dm471zfaWm3E7vuZg5aJaMJTHSNpBFTCQ3hX4G9K4FuqigRMcEGs3uA9xocnN3TxusgjGAE=
             type: thinking
           - text: A
             type: text
@@ -744,15 +584,185 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               This context has been withdrawn.
-              </context>
+              </pyai:context>
+            type: text
+        model: claude-opus-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <pyai:context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=64
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-2c8c750bce9c2f9446625438598103d7-4c236277c8da9f02-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cgv3AktzSuKDWCdC6m1Yi","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":460,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAIS6AQKwAMIExgCKkAaQKiSefkdPYGAXWrI5abkahKX0gG0aGFzJg837kgci/8X/8DEgLKfMtmwD32tth0968IFRh13m1dmKGFsecNQMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAd21ztcGwgF5CBkQABpLAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatBYlpA083BUpgERHBBCatBUscA083BZWUEZsMBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIIjHjjAK7a569ywXuzd59bxzRe7MkghZlx17Fe9DvCeMIkCGUak3YaxlhHfO10j+hsndHqu6qDbVD0qPyp6dmbiomGeP6RO1PnY7qz+5f9JRQUuyfVZX4XAljY8/jzqL5YyfMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy0G4+89H0X1tqrjOMaDHPe68JJkKUBODd8liIwNV7K+RNBmgPRQ4pLysq8P97e0oRX5U7KxZyn5v1ujy6aYuibTHgiCP884muyqKGpKlWLARmNeFm12BzPGBQpRa6IG5zQZclnyyVxbH/6PTxuWv2MCd+nBp18BFPemVgfFUbiIB+OdCf3JuW9RVf10vISzBFGj7EBKJUUORylDkjzsQY7X+3VGAE="}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"UNAS"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"SIGNED"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":460,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":42,"output_tokens_details":{"thinking_tokens":32}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-11-10T22:29:49.802680+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6181"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
             type: text
         - role: assistant
           content:
           - thinking: ""
             signature: >-
-              CAIS8QQKwAMIEhgCKkD1wXHbxB+0KeHbSqFzyIbcQZHYf6FesLSGV+ve1/oC+CnCw/fq321T1RSZIvvPEELx16ZC3WejrUCemQaCNuZ/Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAY6z8dUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkAZltHtlPVatq0gAHQN6kpaqekMaE5607V8dEElFo2ataDcDTs4KR2ZHZqoBLIi+V/uycJH16ooM94/8smJw5pKMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy09HiujIXzVKv+zRsaDNa3r9JlHxVMjXdtryIwuUBK2ExU4Uxoupjqef0zIonPLr+FLkAqLvh47e4tD3/2HytqakHedVFKIkUxpqG6Kl5hOi4MbGpvcoNKUIqhkmMtgAgxdbcgqy8tVe+PtsHSIYftTeFE64yuJuy1FnltudOMUK7/YNkvZzSus/ccVFn1GTxQsgtLnYXKRbnB6ngbFw8YPtrHHALVjYDCsZSdGAE=
+              CAIS6QMKxgIIExgCKkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAde1ztcGwgFACAYQABoSAexoAb0pAtqKA083BfQqBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIg5KyFaVcrz999JN+IlmfFp37aDSAhClSxMCnPp5dWPjwiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM1Th4kZu2O5pIJhHfGgyl2wRmWwj31sRMMo0iMOVWZDMkuuF476NaT0A7X9D/r9OxoxZu0IYsWB0hcmsrFZexH7MpjMbJNU1d5XKY9SpQgH0tL4BfYSF2DGgbZ2p5kQmgcQTnJ4txs/NPyGBYGq0h7bbtwuzGhpANfta6c8GM8FNWfRz1H96mBdhIs70C8xqXNgmKHMUj+JukRwJkJdkYAQ==
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <pyai:context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </pyai:context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISsQQKlgMIExgCKkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdm1ztcGwgFPCAsQABohAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIMVSH9/o7pppHfeFQiZq+VUyN3Lpx3RazjHUO00oy+McIkD8soWGlHnyiwGyfAUJqRnpQBnxUqnc84sJRMkGQ7jBlyXsoxFKF9/OQpnMKs3lg5UKk3OBhHJDiSxzhr+D+KDCMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy3titN+bK3Wis78/4aDDt9ImC6oAaRAfO1BCIwH7DBOChbSSy5NSzne1L1Tr8Ne+oxCaw1lZoTq1mhkMIErEF+wEU2TPFEJFkDkbp6KkgbBaq++1yXOIHfrGHmd4hNGfOEJ5z1qzrpGYpBBaKNxjiCB3UTqNi42kTkMEjyO3bnj6qWvQn5syV0Sd5gmcJP240mpeKOoYQYAQ==
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISzQQKogMIExgCKkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdq1ztcGwgFbCA8QABotAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIIxL8Jc5KVNMsffW0I22w1bWUwD6l1eYeWyc+TL+S6+EIkAhSPttjf8rm8vTKrT1MriV9SQCKV6obOoIlyFvYkZWP4YEGDM3mMa6ADxl6s/5MYlApcEww2GyuO6WTaS4QSVEMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgz1Dw1iDdYomcQVS0QaDEfWXQ2j3OlaZPhoZiIw5MX+LbErQPK7vyYyeXTizM3wIQ45SejpOE3LRT4eG7qudVRhEd9TljqPoqt4CTItKlj7SXRDYvdHgOPsa9XeTUuYyNDwkiMRHZfgg5aXTOMLSMkUIq2JRGzjA9xgW72oVDutsqzKIQVs+OzpxS33Jn8dAABANFztUm620lk6O3OiDvdAhbWXrn+yGAE=
+            type: thinking
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <pyai:context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </pyai:context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAISxwQKsQMIExgCKkCGUak3YaxlhHfO10j+hsndHqu6qDbVD0qPyp6dmbiomGeP6RO1PnY7qz+5f9JRQUuyfVZX4XAljY8/jzqL5YyfMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAdy1ztcGwgFqCBQQABo8AexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatBYlpA083BUpgERHBBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESINiacTWUIStYtxAOdwtY28q8VTYau9vpapKqZvQmSOflIkAq3LHv1L3+kqC6RqxTiRVmnAfhujMRZQhzfcLjuoJjc6qZASkKv+K/6KzSIorQ6+QzzbqqQx+Mwq/qheEtCqqoMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwZTz5/c3s3amwbeigaDFiubd35JWlQa92GYiIwoscRSBEYAFt4IUrIzO6aX93WqODbjeoYsWGCJlmOrrlY4H7cKC3NNfUb4Os6kg/cKkNrcsv03MB8ZgPjzBtCgXe3dm471zfaWm3E7vuZg5aJaMJTHSNpBFTCQ3hX4G9K4FuqigRMcEGs3uA9xocnN3TxusgjGAE=
+            type: thinking
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <pyai:context id="capability:memory:state">
+              This context has been withdrawn.
+              </pyai:context>
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAIS6AQKwAMIExgCKkAaQKiSefkdPYGAXWrI5abkahKX0gG0aGFzJg837kgci/8X/8DEgLKfMtmwD32tth0968IFRh13m1dmKGFsecNQMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAd21ztcGwgF5CBkQABpLAexoAb0pAtqKA083BfQqBCatBUscA083BXiOEXLwBCatBYlpA083BdVWBCatBYlpA083BUpgERHBBCatBUscA083BZWUEZsMBCatIAMyBBJxzyU6BNhD+YVCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIIjHjjAK7a569ywXuzd59bxzRe7MkghZlx17Fe9DvCeMIkCGUak3YaxlhHfO10j+hsndHqu6qDbVD0qPyp6dmbiomGeP6RO1PnY7qz+5f9JRQUuyfVZX4XAljY8/jzqL5YyfMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy0G4+89H0X1tqrjOMaDHPe68JJkKUBODd8liIwNV7K+RNBmgPRQ4pLysq8P97e0oRX5U7KxZyn5v1ujy6aYuibTHgiCP884muyqKGpKlWLARmNeFm12BzPGBQpRa6IG5zQZclnyyVxbH/6PTxuWv2MCd+nBp18BFPemVgfFUbiIB+OdCf3JuW9RVf10vISzBFGj7EBKJUUORylDkjzsQY7X+3VGAE=
             type: thinking
           - text: UNASSIGNED
             type: text
@@ -763,9 +773,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse C.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -776,10 +786,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -791,10 +801,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=75
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8751b68aed80b801182f5a6a28a951a4-51df7400de4cfebb-01
+      - 00-ae78ce45e2a5eaa82e7d3eea5e64298f-9ccf343815b8989f-01
       transfer-encoding:
       - chunked
       vary:
@@ -803,24 +815,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgrmd1PgVbCUnBvdYDv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":525,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}}
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cgv3As4KZKbBNdXzhmqrf","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":570,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}         }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}      }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0          }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":525,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}  }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":570,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}      }
 
         event: message_stop
-        data: {"type":"message_stop"   }
+        data: {"type":"message_stop"       }
 
-  recorded_at: 2026-09-30T00:36:32.852039+00:00
+  recorded_at: 2026-11-10T22:29:51.182281+00:00

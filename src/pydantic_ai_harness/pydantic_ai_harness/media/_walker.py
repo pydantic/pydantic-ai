@@ -421,31 +421,10 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
             raise ValueError(f'externalized media marker has an unsupported escaped-keys format: {marker_format!r}')
         escaped = escaped_value
         dropped.update({_MARKER_FORMAT, _ESCAPED_KEYS})
-    if _URI_KEY in node:
-        uri_value = node[_URI_KEY]
-        dropped.add(_URI_KEY)
-        # `_write_reference` mirrors the reference to `uri` only when the source
-        # node had none, so a `uri` equal to the reference is that mirror and
-        # goes; anything else is the node's own data and stays.
-        if node.get('uri') == uri_value:
-            dropped.add('uri')
-    else:
-        # Markers written before `_URI_KEY` existed stored the blob reference
-        # under a plain `uri`. Falling back keyed on `_URI_KEY` being absent (not
-        # on its value being unusable) keeps a genuine `uri` from ever being read
-        # as a reference -- the bug `_URI_KEY` was introduced to fix.
-        uri_value = node.get('uri')
-        dropped.add('uri')
-    if not isinstance(uri_value, str):
-        raise ValueError(f'externalized media marker missing string uri: {node!r}')
+    uri_value, reference_keys = _read_reference(node)
+    dropped.update(reference_keys)
     is_text = node.get(_TEXT_MARKER) is True
-    if is_text:
-        context = MediaContext(media_type='text/plain')
-    else:
-        media_type_value = node.get('media_type')
-        media_type = media_type_value if isinstance(media_type_value, str) else None
-        context = MediaContext(media_type=media_type)
-    raw = await media_store.get(uri_value, context=context)
+    raw = await media_store.get(uri_value, context=_restore_context(node, is_text))
     # Inverse of `_maybe_externalize_*`: drop the marker and reference keys,
     # restore the externalized field, keep every other field the original part
     # carried. Preserved fields are recursively restored so a nested marker
@@ -464,3 +443,33 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
         altchars = b'-_' if urlsafe else None
         restored['data'] = base64.b64encode(raw, altchars=altchars).decode('ascii')
     return restored
+
+
+def _read_reference(node: dict[str, object]) -> tuple[str, set[str]]:
+    """The blob reference on marker `node`, and the keys that hold it."""
+    if _URI_KEY in node:
+        uri_value = node[_URI_KEY]
+        reference_keys = {_URI_KEY}
+        # `_write_reference` mirrors the reference to `uri` only when the source
+        # node had none, so a `uri` equal to the reference is that mirror and
+        # goes; anything else is the node's own data and stays.
+        if node.get('uri') == uri_value:
+            reference_keys.add('uri')
+    else:
+        # Markers written before `_URI_KEY` existed stored the blob reference
+        # under a plain `uri`. Falling back keyed on `_URI_KEY` being absent (not
+        # on its value being unusable) keeps a genuine `uri` from ever being read
+        # as a reference -- the bug `_URI_KEY` was introduced to fix.
+        uri_value = node.get('uri')
+        reference_keys = {'uri'}
+    if not isinstance(uri_value, str):
+        raise ValueError(f'externalized media marker missing string uri: {node!r}')
+    return uri_value, reference_keys
+
+
+def _restore_context(node: dict[str, object], is_text: bool) -> MediaContext:
+    if is_text:
+        return MediaContext(media_type='text/plain')
+    media_type_value = node.get('media_type')
+    media_type = media_type_value if isinstance(media_type_value, str) else None
+    return MediaContext(media_type=media_type)

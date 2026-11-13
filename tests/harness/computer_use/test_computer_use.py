@@ -458,6 +458,30 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         # gets the function tool.
         assert natives == ([ComputerTool(display_size=(1920, 1080), optional=True)] if native else [])
 
+    async def test_a_request_after_a_screenshot_does_not_read_the_display(self) -> None:
+        # The native tool takes the latest screenshot's size, so a reply that doesn't use the screen doesn't start it.
+        reads: list[None] = []
+
+        class Counted(ScreenBackend):
+            async def display_size(self) -> tuple[int, int]:
+                reads.append(None)
+                return await super().display_size()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Counted(self, ref)
+
+        agent = Agent(_scripted([{'type': 'screenshot'}]), capabilities=[Provider().capability(), ComputerUse()])
+        first = await agent.run('Look.')
+        assert reads
+        reads.clear()
+        later = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+            capabilities=[Provider().capability(), ComputerUse()],
+        )
+        await later.run('Thanks.', message_history=first.all_messages())
+        assert reads == []
+
     async def test_each_call_emits_what_it_did(self, durability: list[AbstractCapability[Any]]) -> None:
         model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
         agent = Agent(

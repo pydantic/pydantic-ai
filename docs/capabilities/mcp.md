@@ -61,6 +61,22 @@ agent = Agent(
 !!! note
     Prefixing MCP tool names by default is planned for v3.
 
+## Server instructions
+
+An MCP server can send instructions on how to use its tools, and by default the capability adds them to the agent's instructions, as described in [server instructions](../mcp/client.md#server-instructions). The server writes this text, and the model receives it with the same authority as the instructions you write yourself. For a server you don't trust, such as one your end users supply, pass `include_instructions=False` to leave them out:
+
+```python {title="mcp_capability_include_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[MCP('https://mcp.example.com/api', include_instructions=False)],
+)
+```
+
+This applies to the local toolset the capability builds. A pre-built [`MCPToolset`][pydantic_ai.mcp.MCPToolset] you pass as `local=` keeps its own [`include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions], and with [native MCP](../native-tools.md#mcp-server-tool) the model provider decides what to do with the server's instructions.
+
 ## Per-user credentials
 
 In an app where each user has their own credentials for the MCP server, one agent serves all of them, so `authorization_token` and `headers` can't be fixed when the capability is created. Pass a function instead: it's called with the [run context][pydantic_ai.tools.RunContext] at the start of each run, so it can read the current user's token from the run's [dependencies](../dependencies.md):
