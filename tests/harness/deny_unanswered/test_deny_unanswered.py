@@ -58,7 +58,7 @@ class TestDenyUnanswered:
         ]
 
     async def test_asker_listed_after_still_asks_first(self):
-        """`DenyUnanswered` runs after a token-taking `HandleDeferredToolCalls` whatever the list order, so a present person still answers."""
+        """A present person still answers: `DenyUnanswered` runs after `HandleDeferredToolCalls` in any list order."""
         ran: list[int] = []
         asked: list[str] = []
 
