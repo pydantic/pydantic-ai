@@ -617,6 +617,33 @@ def test_report_evaluator_build_serialization_arguments_excludes_defaults():
     assert args == {}
 
 
+def test_build_serialization_arguments_excludes_init_false_fields():
+    """build_serialization_arguments must not include fields declared with init=False.
+
+    Fields computed in __post_init__ are not accepted by __init__, so serializing them
+    causes Dataset.from_file() to raise TypeError on round-trip. Regression for #13351.
+    """
+    from dataclasses import field as dc_field
+
+    @dataclass
+    class _EvaluatorWithComputedField(Evaluator[Any, Any, None]):
+        threshold: float = 0.5
+        _derived: str = dc_field(init=False, default='')
+
+        def __post_init__(self) -> None:
+            self._derived = f'threshold={self.threshold}'
+
+        def evaluate(self, ctx: EvaluatorContext[Any, Any, None]) -> EvaluatorOutput:
+            return True  # pragma: no cover
+
+    evaluator = _EvaluatorWithComputedField(threshold=0.8)
+    assert evaluator._derived == 'threshold=0.8'
+
+    args = evaluator.build_serialization_arguments()
+    assert '_derived' not in args
+    assert args == {'threshold': 0.8}
+
+
 def test_report_evaluator_serializes_in_model_dump():
     """Dataset with report evaluators includes them in model_dump output."""
     dataset = Dataset[str, str, None](
