@@ -127,7 +127,7 @@ async def test_shell_line_limit_across_chunks(limit: int) -> None:
             status_path='/tmp/status',
             exit_code=0,
             truncated=False,
-            total_lines=4,
+            line_count=4,
         )
     )
     text = output.getvalue()
@@ -157,7 +157,7 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
             status_path='/tmp/status',
             exit_code=0,
             truncated=False,
-            total_lines=3,
+            line_count=3,
         )
     )
     text = output.getvalue()

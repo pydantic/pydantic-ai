@@ -18,7 +18,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Literal
 
 from anyio import fail_after, run_process, to_thread
@@ -28,6 +27,7 @@ from pydantic_ai_harness.filesystem import EditFileCallPart, ReplacementArgs, Wr
 from pydantic_clai2.builtin_plugins.web.protocol import Diff
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.session import STEERING
+from pydantic_clai2.runtime.temporary_directory import temporary_directory
 
 ChangeScope = Literal['turn', 'session', 'uncommitted', 'branch']
 FileStatus = Literal['A', 'M', 'D']
@@ -479,9 +479,9 @@ async def _uncommitted(workspace: Path, options: tuple[str, ...], *, diffs: bool
     (`git add --intent-to-add`), leaving the repository's own index untouched.
     """
     own = workspace / (await _git(workspace, 'rev-parse', '--git-path', 'index')).strip()
-    with TemporaryDirectory() as folder:
-        index = Path(folder) / 'index'
-        if own.exists():
+    async with temporary_directory() as folder:
+        index = folder / 'index'
+        if await to_thread.run_sync(own.exists):
             await to_thread.run_sync(shutil.copyfile, own, index)
         await _git(workspace, 'add', '--intent-to-add', '--', ':/', index=index)
         listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, 'HEAD', index=index)

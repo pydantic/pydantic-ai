@@ -11,7 +11,22 @@ Give an executor model a way to consult a separate advisor model before it answe
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Advisor gives the executor model an advisor tool. On the local path, calling advisor(prompt) runs a separate agent with the advisor model, and its answer comes back as the tool result. When the executor and advisor are both on Anthropic, or both on OpenRouter, the provider's native AdvisorTool runs the consultation inside the model request instead.](../img/harness/advisor.svg)
+```mermaid
+flowchart TB
+    accTitle: Advisor: let the model consult a second model
+    accDescr: The executor model consults the advisor tool of the Advisor capability and gets an answer. On the local fallback, for any other pairing, an advisor agent run with its own instructions and no access to your tools prompts the advisor model and gets an answer. On the native path, for the same provider, Anthropic or OpenRouter, the provider runs AdvisorTool in the model request.
+    executor(["executor model"])
+    advisor["Advisor()<br/>advisor tool"]:::capability
+    run["advisor agent run<br/>own instructions,<br/>no access to your tools"]:::capability
+    advmodel(["advisor model"])
+    native["AdvisorTool<br/>the provider runs it<br/>in the model request"]:::external
+    executor <-->|"consultation, answer"| advisor
+    advisor -->|"local fallback:<br/>any other pairing"| run
+    run <-->|"prompt, answer"| advmodel
+    advisor -->|"native: same provider,<br/>Anthropic or OpenRouter"| native
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Usage
 
@@ -124,7 +139,7 @@ Local consultations go to the advisor model's provider. With `forward_history=Tr
 
 ## Usage, failures, and observability
 
-Local advisor requests share the parent run's [`RunUsage`][pydantic_ai.usage.RunUsage] and [`UsageLimits`][pydantic_ai.usage.UsageLimits], so their requests and tokens count toward the agent tree's normal limits. A local advisor run is also filed under the parent run's `conversation_id`, so its requests and spans group with the conversation it advises. Native providers report advisor usage according to their own protocol. Anthropic records advisor-specific values in `RequestUsage.details`, while OpenRouter exposes aggregate server-tool counts in response provider details.
+Local advisor requests share the parent run's [`RunUsage`][pydantic_ai.usage.RunUsage] and [`UsageLimits`][pydantic_ai.usage.UsageLimits], so their requests and tokens count toward the agent tree's normal limits. With `count_tokens_before_request=True`, an advisor model that implements `count_tokens` has the consultation checked before it is sent. When the consultation raises `NotImplementedError` before a request is counted (such as an advisor model that does not implement `count_tokens`), the consultation is retried once without the up-front count and the token and cost limits are checked against the advisor's response instead, rather than the run failing with `NotImplementedError` (unless the shared `usage` has counted a request since the consultation started, such as from a concurrent sibling call). A local advisor run is also filed under the parent run's `conversation_id`, so its requests and spans group with the conversation it advises. Native providers report advisor usage according to their own protocol. Anthropic records advisor-specific values in `RequestUsage.details`, while OpenRouter exposes aggregate server-tool counts in response provider details.
 
 Invalid option combinations fail when `Advisor` is constructed. Executor and provider compatibility is validated when a run prepares its model request. Anthropic reports native advisor errors as tool results so the executor can continue. If a local advisor produces invalid model behavior, the executor receives a normal tool retry, matching Pydantic AI's other subagent-backed tools. Local model resolution, authentication, provider, request, and usage-limit errors otherwise propagate and can stop the run. When a local call exceeds `max_uses`, the tool returns a bounded message telling the executor to continue without more advice.
 

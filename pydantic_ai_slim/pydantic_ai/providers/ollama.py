@@ -5,6 +5,7 @@ import os
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -76,6 +77,7 @@ class OllamaProvider(_OpenAISDKProvider):
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
             ),
+            special_token_route_profile('ollama', model_name),
         )
 
     def __init__(

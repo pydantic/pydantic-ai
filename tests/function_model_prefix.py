@@ -79,7 +79,7 @@ class RequestRecorder:
             # Anthropic renders the output mode the test model resolved for its own profile, the one the
             # conversation was actually run with (a `final_result` tool, say), rather than the one it would pick.
             # The rest of the preparation is left to `AnthropicModel`: preparing twice would render the instructions'
-            # `<context>` blocks twice. The test model prepares the request again when it runs it, and warns about
+            # `<pyai:context>` blocks twice. The test model prepares the request again when it runs it, and warns about
             # ignored settings then.
             with suppress_warnings():
                 _, prepared = model.prepare_request(model_settings, model_request_parameters)
@@ -142,6 +142,10 @@ class _CapturingAnthropicClient:
 
         return DEFAULT_TIMEOUT
 
+    @property
+    def default_headers(self) -> dict[str, str]:
+        return {}
+
     # `AnthropicModel` sends a request that sets `max_retries` through `with_options(http_client=self._client, ...)`.
     # The retry count isn't part of the body, so the copy can be this same client.
     _client = None
@@ -165,7 +169,7 @@ class _CapturingAnthropicClient:
         )
 
 
-def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
+def render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
     """The body `AnthropicModel` would send for each request, without `cache_control`, or `None` if it can't."""
     try:
         from anthropic import AsyncAnthropic
@@ -282,7 +286,7 @@ def _content_blocks(body: dict[str, Any]) -> list[PrefixBlock]:
 
 def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[CassettePrefixViolation]:
     """The prefix violations between each request and the request it follows in its conversation."""
-    bodies = _render_anthropic_bodies(requests)
+    bodies = render_anthropic_bodies(requests)
     violations: list[CassettePrefixViolation] = []
     for later_index, later_body in enumerate(bodies):
         earlier_index = _previous_request(requests, later_index)

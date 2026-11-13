@@ -8,6 +8,7 @@ import shlex
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
@@ -16,6 +17,7 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, Mock
 
+import anyio
 import httpx
 import pytest
 from packaging.requirements import Requirement
@@ -293,7 +295,8 @@ def _updates(
             await output(line)
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
-            text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
+            overrides = Path(command[command.index('--overrides') + 1])
+            text = await anyio.to_thread.run_sync(partial(overrides.read_text, encoding='utf-8'))
             assert 'pydantic-ai-harness[coder,skills] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
@@ -1151,6 +1154,7 @@ def test_update_flag_rejects_session_options_before_installing(
         ['--worktree'],
         ['config'],
         ['plugins'],
+        ['sessions'],
     ],
 )
 @pytest.mark.parametrize('update', ['--update', 'update'])
@@ -1161,7 +1165,10 @@ def test_update_flag_rejects_other_modes(
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
-    assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err
+    assert (
+        '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume'
+        in capsys.readouterr().err
+    )
 
 
 @pytest.mark.parametrize('argv', [['-m', 'test', 'update'], ['update', 'update', '-m', 'test']])
@@ -1182,5 +1189,5 @@ def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captu
         cli_module.run()
     assert exited.value.code == 0
     text = capsys.readouterr().out
-    assert '{config,plugins,update}' in text
+    assert '{config,plugins,sessions,update}' in text
     assert '--update' in text
