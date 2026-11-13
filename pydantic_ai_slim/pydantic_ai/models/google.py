@@ -177,6 +177,7 @@ _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TY
 LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
+    'gemini-4-hydrogen',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
@@ -542,6 +543,47 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
     return True
 
 
+def _request_http_options(client: Client, model_settings: ModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
+    """The per-request HTTP options for `client`: headers, plus the `timeout` and `max_retries` settings."""
+    # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
+    # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
+    # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
+    # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
+    # unless the caller sent their own in `extra_headers`.
+    if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
+        headers['X-Server-Timeout'] = headers.pop(caller_name)
+    elif client_timeout_ms := client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
+        server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
+        headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
+    # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
+    # a value the user set on a client they built, and add ours unless the client has it.
+    client_headers = client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
+    client_user_agent = client_headers.get('user-agent', '')
+    if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
+        headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
+    http_options: HttpOptionsDict = {'headers': headers}
+    if (timeout := model_settings.get('timeout')) is not None:
+        if isinstance(timeout, int | float):
+            http_options['timeout'] = int(1000 * timeout)
+        else:
+            raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+    if (max_retries := model_settings.get('max_retries')) is not None:
+        # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
+        client_retry_options = (
+            client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
+            or HttpRetryOptions()
+        )
+        http_options['retry_options'] = {
+            'attempts': max_retries + 1,
+            'initial_delay': client_retry_options.initial_delay,
+            'max_delay': client_retry_options.max_delay,
+            'exp_base': client_retry_options.exp_base,
+            'jitter': client_retry_options.jitter,
+            'http_status_codes': client_retry_options.http_status_codes,
+        }
+    return http_options
+
+
 def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
     level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
@@ -549,9 +591,10 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        # Gemini has nothing above `HIGH`; map the higher levels to it.
-        'xhigh': 'HIGH',
-        'max': 'HIGH',
+        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` doesn't list
+        # `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends it anyway.
+        'xhigh': 'XHIGH',
+        'max': 'XHIGH',
     }
     return level_by_effort[thinking]
 
@@ -570,20 +613,20 @@ _GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
 def _snap_thinking_level(
     level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
 ) -> GoogleThinkingLevel:
-    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH < XHIGH` scale.
 
-    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
-    the level passes through. Shared with the Live path, which differs only in where its level set
+    Equidistant levels round down to the cheaper one. `None` means the model takes the default
+    `GOOGLE_THINKING_LEVELS`. Shared with the Live path, which differs only in where its level set
     comes from.
     """
     if levels is None:
-        return level
+        levels = GOOGLE_THINKING_LEVELS
     if not levels:
         raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - GOOGLE_THINKING_LEVELS:
+    if unknown := levels - frozenset(GOOGLE_THINKING_LEVEL_SCALE):
         raise UserError(
             f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVEL_SCALE)!r}'
         )
     requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
     return min(
@@ -630,6 +673,10 @@ class GoogleModel(Model[Client]):
     """
 
     unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -720,7 +767,7 @@ class GoogleModel(Model[Client]):
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the default levels. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
@@ -925,7 +972,7 @@ class GoogleModel(Model[Client]):
                     contents=contents,
                     config=config,
                 )
-        except errors.APIError as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -1159,46 +1206,6 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
-    def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
-        """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
-        # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
-        # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
-        # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
-        # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
-        # unless the caller sent their own in `extra_headers`.
-        if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
-            headers['X-Server-Timeout'] = headers.pop(caller_name)
-        elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
-            server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
-            headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
-        # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
-        # a value the user set on a client they built, and add ours unless the client has it.
-        client_headers = self.client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
-        client_user_agent = client_headers.get('user-agent', '')
-        if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
-            headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
-        http_options: HttpOptionsDict = {'headers': headers}
-        if (timeout := model_settings.get('timeout')) is not None:
-            if isinstance(timeout, int | float):
-                http_options['timeout'] = int(1000 * timeout)
-            else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
-        if (max_retries := model_settings.get('max_retries')) is not None:
-            # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
-            client_retry_options = (
-                self.client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
-                or HttpRetryOptions()
-            )
-            http_options['retry_options'] = {
-                'attempts': max_retries + 1,
-                'initial_delay': client_retry_options.initial_delay,
-                'max_delay': client_retry_options.max_delay,
-                'exp_base': client_retry_options.exp_base,
-                'jitter': client_retry_options.jitter,
-                'http_status_codes': client_retry_options.http_status_codes,
-            }
-        return http_options
-
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1280,7 +1287,7 @@ class GoogleModel(Model[Client]):
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
-        http_options = self._build_http_options(model_settings, headers)
+        http_options = _request_http_options(self.client, model_settings, headers)
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
