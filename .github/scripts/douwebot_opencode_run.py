@@ -12,14 +12,18 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO, TypeVar
+from urllib.parse import quote
 
 from publish_douwebot_review import ReviewEngine, ReviewResult
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 T = TypeVar('T')
 _EVENT = TypeAdapter(dict[str, object])
 # The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
 ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
+# The shape of a provider's own error code, such as Z.AI's `1302` request-rate limit or `1305` overload.
+PROVIDER_CODE = re.compile(r'[0-9]{1,6}')
+LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,8 @@ class Provider:
     review_engine: ReviewEngine
     handover_errors: frozenset[str]
     """OpenCode error types that hand a run this provider refused to the next provider in the chain."""
+    restart_on_rate_limit: bool = False
+    """Whether a `provider.rate-limit` after the run finished a step hands the run to the next provider anew."""
 
 
 # OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
@@ -53,7 +59,8 @@ OPENCODE_GO = Provider(
     'opencode',
     frozenset({'provider.go-limit', 'provider.quota'}),
 )
-# Each Coding Plan account hands a run its quota or rate limit refused to the other account.
+# Each Coding Plan account hands a run its quota or rate limit refused to the other account. A rate limit after the
+# run took steps restarts the run on the other account too.
 CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'})
 # The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
@@ -64,6 +71,7 @@ ZAI = Provider(
     'the primary Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
+    restart_on_rate_limit=True,
 )
 ZAI_BACKUP = Provider(
     'zai-coding-plan',
@@ -73,7 +81,26 @@ ZAI_BACKUP = Provider(
     'the backup Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
+    restart_on_rate_limit=True,
 )
+
+
+@dataclass
+class Attempt:
+    """One run of the fallback chain. A run whose process failed also records its stream's last `error` event."""
+
+    provider: Provider
+    error_type: str | None = None
+    status: int | None = None
+    code: str | None = None
+    """The provider's own error code from the response body, such as Z.AI's `1302`."""
+    finished: bool | None = None
+    """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
+
+
+def logfire_endpoint() -> str:
+    """The Logfire base URL from `LOGFIRE_URL`, or Logfire's default."""
+    return (os.environ.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
 
 
 def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
@@ -139,21 +166,32 @@ def run_with_fallback(
     agent: str,
     output: Path,
     steps: int | None = None,
-    extra_env: Mapping[str, str] | None = None,
+    attributes: Mapping[str, str] | None = None,
     matrix_index: int = 0,
+    attempts: list[Attempt] | None = None,
 ) -> tuple[T, Provider]:
     """Launch OpenCode on Go, then on one Z.AI Coding Plan account, then on the other, while each refuses the run.
 
     A provider hands the run to the next one whose key is set only when it refused the run with one of its
-    `handover_errors` before the run finished a step. The workflow's run number plus `matrix_index`, the run's place in
-    its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
-    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
-    which `output` holds after each run. Each run gets a config that allows only its provider,
-    and an environment that holds only that account's key. A run whose process fails prints its model and OpenCode
-    error type.
+    `handover_errors` before the run finished a step, or, with `restart_on_rate_limit`, rate-limited it after. The next
+    provider runs it from scratch, and each provider runs it at most once. The workflow's run number plus
+    `matrix_index`, the run's place in its job matrix, picks the account tried first: the primary when the sum is even,
+    the backup when it is odd. `launch` runs the command in the environment it is given and writes the event stream to
+    the stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
+    and an environment whose only provider key is that account's. A run whose process fails prints its model, OpenCode
+    error type, status and provider code. Each run appends an `Attempt` to `attempts`, so a caller can report a chain
+    that raised. The returned result and `output` come from the run that served, so a run the chain moved past shows
+    only as its `Attempt`, whatever steps and tokens it spent.
+
+    With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
+    name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in
+    `attempts`, counting from 1, as `opencode_fallback.plan` and `opencode_fallback.attempt`.
     """
+    token = os.environ.get('LOGFIRE_TOKEN', '')
+    attempts = [] if attempts is None else attempts
 
     def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
+        attempts.append(Attempt(provider))
         with (
             tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp,
             output.open('w', encoding='utf-8') as stream,
@@ -170,8 +208,23 @@ def run_with_fallback(
                 'XDG_DATA_HOME': str(temp_root / 'data'),
                 'XDG_CACHE_HOME': str(temp_root / 'cache'),
                 provider.key_variable: api_key,
-                **(extra_env or {}),
             }
+            if token:
+                # OpenCode's spans and logs carry no prompt or completion text.
+                resource = {
+                    'github.repository': os.environ['GITHUB_REPOSITORY'],
+                    'github.run_id': os.environ['GITHUB_RUN_ID'],
+                    'github.run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                    'github.job': os.environ['GITHUB_JOB'],
+                    **(attributes or {}),
+                    'opencode_fallback.plan': provider.plan,
+                    'opencode_fallback.attempt': str(len(attempts)),
+                }
+                env |= {
+                    'OTEL_EXPORTER_OTLP_ENDPOINT': logfire_endpoint(),
+                    'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
+                    'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in resource.items()),
+                }
             command = [
                 'opencode',
                 'run',
@@ -187,8 +240,8 @@ def run_with_fallback(
         print(f'OpenCode run served by {provider.model} on {provider.plan}.')
         return result, provider
 
-    def report_failure(provider: Provider) -> tuple[str | None, bool]:
-        """Print the failed run's model, error type and status; return that type and whether the run finished a step."""
+    def report_failure(attempt: Attempt) -> None:
+        """Print the failed run's error type, status and provider code; record them and whether it finished a step."""
         try:
             # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
             events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
@@ -198,16 +251,25 @@ def run_with_fallback(
             # A validation error would copy the stream into the public log.
             events, errors = [], []
         error = errors[-1] if errors else {}
+        try:
+            # Z.AI's response body is `{"error": {"code": "1302", "message": ...}}`.
+            body = _EVENT.validate_json(str(_EVENT.validate_python(error.get('response')).get('body')))
+            code = str(_EVENT.validate_python(body.get('error')).get('code'))
+        except ValidationError:
+            code = ''
         # Job logs are public, and the error's message and response body can repeat the provider's response.
-        # OpenCode names its own error types; print only a value shaped like one.
+        # OpenCode names its own error types; print only a value shaped like one, and only a code of one to six digits.
         kind, status = error.get('type'), error.get('status')
-        if not isinstance(kind, str) or not ERROR_TYPE.fullmatch(kind):
-            kind = None
-        described = f'error type {kind}' if kind else 'no error type'
-        if isinstance(status, int):
-            described += f', status {status}'
-        print(f'OpenCode run on {provider.model} on {provider.plan} failed with {described}.')
-        return kind, any(event.get('type') == 'step_finish' for event in events)
+        attempt.error_type = kind if isinstance(kind, str) and ERROR_TYPE.fullmatch(kind) else None
+        attempt.status = status if isinstance(status, int) else None
+        attempt.code = code if PROVIDER_CODE.fullmatch(code) else None
+        attempt.finished = any(event.get('type') == 'step_finish' for event in events)
+        described = f'error type {attempt.error_type}' if attempt.error_type else 'no error type'
+        if attempt.status is not None:
+            described += f', status {attempt.status}'
+        if attempt.code:
+            described += f', code {attempt.code}'
+        print(f'OpenCode run on {attempt.provider.model} on {attempt.provider.plan} failed with {described}.')
 
     if not os.environ[OPENCODE_GO.secret_variable]:
         raise ValueError(f'{OPENCODE_GO.secret_variable} is empty')
@@ -221,27 +283,43 @@ def run_with_fallback(
         try:
             return run_on(provider, os.environ[provider.secret_variable])
         except subprocess.CalledProcessError:
-            kind, finished = report_failure(provider)
+            attempt = attempts[-1]
+            report_failure(attempt)
             # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose
             # type `toSessionError` sets, and no `step_finish`:
             # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
-            if finished or kind not in provider.handover_errors:
+            if not attempt.finished and attempt.error_type in provider.handover_errors:
+                print(
+                    f'{provider.model} refused the run before its first step; '
+                    f'retrying on {successor.model} on {successor.plan}.'
+                )
+            elif attempt.finished and provider.restart_on_rate_limit and attempt.error_type == 'provider.rate-limit':
+                print(
+                    f'{provider.model} rate-limited the run after it took steps; '
+                    f'restarting the run on {successor.model} on {successor.plan}.'
+                )
+            else:
                 raise
-            print(
-                f'{provider.model} refused the run before its first step; '
-                f'retrying on {successor.model} on {successor.plan}.'
-            )
     try:
         return run_on(chain[-1], os.environ[chain[-1].secret_variable])
     except subprocess.CalledProcessError:
-        report_failure(chain[-1])
+        report_failure(attempts[-1])
         raise
 
 
-def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> Provider:
+def run_read_only(
+    prompt: str,
+    *,
+    cwd: Path,
+    agent: str,
+    output: Path,
+    timeout: float | None = None,
+    attempts: list[Attempt] | None = None,
+) -> Provider:
     """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`.
 
-    `timeout` bounds every run of the fallback chain together. Returns the provider that served the run.
+    `timeout` bounds every run of the fallback chain together. Returns the provider that served the run, and appends
+    each run to `attempts` as `run_with_fallback` does.
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     _, provider = run_with_fallback(
@@ -257,6 +335,7 @@ def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: 
         ),
         agent=agent,
         output=output,
+        attempts=attempts,
     )
     return provider
 
