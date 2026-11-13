@@ -60,7 +60,6 @@ class FakeComputer(AbstractCapability[Any]):
         summary = f'Ran {result["performed"]} of {len(actions)} actions.'
         if 'error' in result:
             summary += f' The next one failed: {result["error"]}'
-        result['screenshot_size'] = FAKE_DISPLAY_SIZE
         return ToolReturn([summary, BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')], metadata=result)
 
     def get_toolset(self) -> FunctionToolset[Any]:

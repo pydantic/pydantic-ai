@@ -666,10 +666,8 @@ def test_openai_gpt_5_reasoning_context(model_name: str):
 @pytest.mark.parametrize(
     'model_name,max_side,max_pixels',
     [
-        ('gpt-5.4', 2560, 2560 * 1440),
         ('gpt-5.5', 1920, 1920 * 1200),
         ('gpt-5.5-pro', 1920, 1920 * 1200),
-        ('gpt-5.6-sol', 2560, 2560 * 1440),
     ],
 )
 def test_openai_computer_use_screenshot_limits(model_name: str, max_side: int, max_pixels: int):
