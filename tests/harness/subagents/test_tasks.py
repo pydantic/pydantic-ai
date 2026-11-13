@@ -1335,6 +1335,36 @@ async def test_stuck_child_does_not_mask_the_closing_error(
     await worker
 
 
+async def test_close_logs_a_worker_that_failed_while_closing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    started = anyio.Event()
+
+    async def wait(record: DelegationTask) -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return 'unreachable'  # pragma: no cover
+
+    async def fail(record: DelegationTask) -> None:
+        raise OSError('disk full')
+
+    owner = DelegationTasks()
+    async with owner.opened():
+        await owner.delegate(
+            agent_name='worker',
+            prompt='go',
+            conversation_id='root',
+            model=None,
+            background=True,
+            resume=None,
+            run=wait,
+        )
+        await started.wait()
+        # The cancelled worker's final save fails, ending it with that error.
+        monkeypatch.setattr(owner, 'save', fail)
+    assert 'failed while closing' in caplog.text and 'disk full' in caplog.text
+
+
 async def test_close_drains_many_children_concurrently(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:

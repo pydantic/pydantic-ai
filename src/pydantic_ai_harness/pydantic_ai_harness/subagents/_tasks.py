@@ -354,7 +354,7 @@ class DelegationTasks:
                 await self._drain()
             if cleanup.cancel_called:
                 stuck = [task_id for task_id, worker in self._workers.items() if not worker.done()]
-                message = f'Delegation cleanup timed out; children {stuck} did not release their resources'
+                message = f'Delegation cleanup timed out; children still running: {", ".join(stuck) or "none"}'
                 # Also set while the closer handles an error, as when it closes an `AsyncExitStack` in a `finally`.
                 if sys.exc_info()[1] is None:
                     raise RuntimeError(message)
@@ -370,6 +370,10 @@ class DelegationTasks:
         if self._workers:
             # Unlike `gather`, a timed-out `wait` doesn't wait for a child that ignores cancellation.
             await asyncio.wait(self._workers.values())
+            for task_id, worker in self._workers.items():
+                # Retrieved, as `gather` did, so asyncio doesn't report it when the worker is collected.
+                if not worker.cancelled() and (exc := worker.exception()) is not None:
+                    logging.getLogger(__name__).error('Delegation task %s failed while closing', task_id, exc_info=exc)
         # Every other record saved itself when it settled.
         for record in self.records.values():
             if record.status == 'running':
