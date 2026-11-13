@@ -2262,10 +2262,10 @@ async def test_xai_image_url_no_force_download(allow_model_requests: None) -> No
 
 
 @pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
-async def test_xai_document_url_with_data_type_adds_extension(
+async def test_xai_document_url_known_media_type_adds_extension(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ):
-    """Test DocumentUrl handling when download returns a data_type (extension should be added)."""
+    """Test DocumentUrl handling when the downloaded media type has a known extension."""
     response = create_response(content='Document processed')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
