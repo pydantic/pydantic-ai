@@ -1,5 +1,6 @@
 """`SessionRuntime`: live sessions built over the `ClaiProcess` whose stores and services they share."""
 
+import asyncio
 import io
 import signal
 from collections.abc import AsyncIterator
@@ -13,7 +14,12 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import DelegationFinishedEvent, DelegationStartedEvent, DelegationTaskEvent
+from pydantic_ai_harness.subagents import (
+    DelegationFinishedEvent,
+    DelegationStartedEvent,
+    DelegationTask,
+    DelegationTaskEvent,
+)
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -223,6 +229,40 @@ async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path) -> Non
     assert (tmp_path / 'tasks' / f'{record.id}.json').exists()
     async with router.opened(view=first) as reopened:
         assert reopened.records[record.id].outcome == 'cancelled'
+
+
+async def test_a_task_that_ignores_cancellation_does_not_crash_closing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The last session's close logs a task that outlives the owner's drain bound, instead of raising."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(0.01, shield=shield)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    router = TaskRouter(directory=tmp_path / 'tasks')
+    view = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', router=router)
+    started, release = anyio.Event(), anyio.Event()
+
+    async def stuck(record: DelegationTask) -> str:
+        started.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                pass
+        return 'done'
+
+    async with router.opened(view=view) as owner:
+        await owner.delegate(
+            agent_name='self', prompt='go', conversation_id='root', model=None, background=True, resume=None, run=stuck
+        )
+        await started.wait()
+    assert 'Delegated tasks did not close cleanly' in caplog.text and 'cleanup timed out' in caplog.text
+    release.set()
+    (worker,) = [task for task in asyncio.all_tasks() if task.get_name().startswith('delegate-')]
+    await worker
 
 
 async def test_only_the_signalling_session_installs_the_ctrl_c_handler() -> None:

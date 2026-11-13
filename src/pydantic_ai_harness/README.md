@@ -12,7 +12,7 @@
 
 **Pydantic AI Harness** is the official [capability](https://ai.pydantic.dev/capabilities/overview/) and harness library for [Pydantic AI](https://ai.pydantic.dev/). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](https://ai.pydantic.dev/models/), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](pydantic_ai_harness/filesystem/) to act in, a [plan](pydantic_ai_harness/planning/) it keeps current, [memory](pydantic_ai_harness/memory/) that carries across sessions, [sub-agents](pydantic_ai_harness/subagents/) to hand work to, [context management](pydantic_ai_harness/compaction/) for long runs, and [durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) that survives a restart. **Pydantic AI Harness** ships that harness.
 
-Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [80+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out. [Build your own coding agent in Python](https://pydantic.dev/docs/ai/guides/build-your-own-coding-agent/) walks through all three.
+Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [90+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out. [Build your own coding agent in Python](https://pydantic.dev/docs/ai/guides/build-your-own-coding-agent/) walks through all three.
 
 ## Quick start
 
@@ -126,7 +126,7 @@ Upgrading from an earlier release? The [Coder page](pydantic_ai_harness/coder/#u
 
 ## Capabilities
 
-Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) itself, the rest with this package; the **Package** column says which. 80+ in all, grouped by what they give your agent:
+Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) itself, the rest with this package; the **Package** column says which. 90+ in all, grouped by what they give your agent:
 
 ### Harnesses
 
@@ -215,6 +215,7 @@ How the agent thinks and divides the work.
 | [Thinking](https://ai.pydantic.dev/capabilities/thinking/) | Core | Provider-adaptive extended thinking at configurable effort |
 | [Planning](pydantic_ai_harness/planning/) | Harness | Model-owned task plans with a cache-safe live reminder |
 | [Subagents](pydantic_ai_harness/subagents/) | Harness | Delegate self-contained tasks to named child agents |
+| [Peers](pydantic_ai_harness/peers/) | Harness | Discover and message other agent sessions without controlling their runs |
 | [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](pydantic_ai_harness/advisor/) | Harness | Let an executor consult a stronger model mid-run |
 | [Background Tools](pydantic_ai_harness/background_tools/) | Harness | Run selected tools concurrently; results arrive as follow-up messages |
