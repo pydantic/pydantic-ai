@@ -72,14 +72,20 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 _INSTRUCTIONS = """\
-You can see and control a computer screen with the `computer` tool. Each call runs a list of actions in order and \
-returns a screenshot of the result. If you have no screenshot yet, call the tool with a single \
-`screenshot` action first.
+You can see and control the screen of the computer you work on with the `computer` tool. Your shell and file \
+tools, if you have any, run on this same computer, so a program with a window that you start from the shell opens on \
+this screen. Start such a program in the background with its output redirected, such as \
+`setsid <program> >/dev/null 2>&1 &`, or the shell command waits for the program to exit.
+Each call runs a list of actions in order and returns a screenshot of the result. If you have no screenshot yet, call \
+the tool with a single `screenshot` action first.
 - Batch steps whose outcome you can predict, such as clicking a field, typing, and pressing Enter. End the batch \
 where you need to see the result before deciding what to do next.
 - Check each returned screenshot to confirm the previous actions did what you intended before continuing.
 - Prefer keyboard shortcuts and typing over clicking small targets, and scroll to bring targets into view.
-- Prefer your other tools (shell, files, web) when they can do the job; use the screen for work only a GUI can do.
+- When the user asks for something to be done on the screen, do it on the screen, even when another tool could do \
+it. You may start the program it needs from the shell.
+- Otherwise, prefer your other tools (shell, files, web) when they can do the job, and use the screen only for work \
+that needs a GUI.
 - A key is a single character or one of these names, and other names are refused: the modifiers ctrl, shift, alt \
 and super (the Windows key, or cmd on macOS); enter, tab, escape, backspace, delete, insert, space, up, down, left, \
 right, home, end, pageup, pagedown, f1 to f24, printscreen, pause, menu, capslock, numlock, scrolllock; numpad0 to \
@@ -532,6 +538,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     id: str | None = 'computer'
     """Stable capability ID: an agent controls one display."""
+
+    description: str | None = (
+        'See and control the screen of the computer you work on. Needed for work that needs a GUI, and for anything '
+        'the user asks to do on the screen.'
+    )
+    """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
 

@@ -39,6 +39,16 @@ async def main():
 
 On a [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
 
+## What the model is told
+
+The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
+it starts from the shell opens on the screen. They tell it to prefer those tools, unless the user asks for the work to
+be done on the screen.
+
+With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default says
+the screen is for GUI work and for anything the user asks to do on the screen. Pass `description=` to change when the
+model loads it.
+
 ## Models
 
 The model must accept images.
