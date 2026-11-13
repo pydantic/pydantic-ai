@@ -177,6 +177,7 @@ _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TY
 LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
+    'gemini-4-hydrogen',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
@@ -590,9 +591,10 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        # Gemini has nothing above `HIGH`; map the higher levels to it.
-        'xhigh': 'HIGH',
-        'max': 'HIGH',
+        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` doesn't list
+        # `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends it anyway.
+        'xhigh': 'XHIGH',
+        'max': 'XHIGH',
     }
     return level_by_effort[thinking]
 
@@ -611,20 +613,20 @@ _GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
 def _snap_thinking_level(
     level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
 ) -> GoogleThinkingLevel:
-    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH < XHIGH` scale.
 
-    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
-    the level passes through. Shared with the Live path, which differs only in where its level set
+    Equidistant levels round down to the cheaper one. `None` means the model takes the default
+    `GOOGLE_THINKING_LEVELS`. Shared with the Live path, which differs only in where its level set
     comes from.
     """
     if levels is None:
-        return level
+        levels = GOOGLE_THINKING_LEVELS
     if not levels:
         raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - GOOGLE_THINKING_LEVELS:
+    if unknown := levels - frozenset(GOOGLE_THINKING_LEVEL_SCALE):
         raise UserError(
             f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVEL_SCALE)!r}'
         )
     requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
     return min(
@@ -765,7 +767,7 @@ class GoogleModel(Model[Client]):
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the default levels. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
