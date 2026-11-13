@@ -832,6 +832,7 @@ class SessionPlugins(Generic[DepsT]):
         loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
+            # The pre-load declaration: the refreshed entry may describe a replacement saved during the load.
             self._process.store.update_plugin_requirements(entry.declaration, requires=host.requirements)
 
     async def disable(self, name: str) -> None:
