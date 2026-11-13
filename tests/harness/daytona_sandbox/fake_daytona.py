@@ -391,6 +391,9 @@ class FakeComputerUse:
         self.broken = False
         self.proxy_unavailable = 0
         """How many of the next desktop requests the proxy refuses with a 503 before passing them on."""
+        self.request_gate: asyncio.Event | None = None
+        """When set, each desktop request is accepted, setting `request_accepted`, and takes effect once it is set."""
+        self.request_accepted = asyncio.Event()
         self.png = FAKE_SCREENSHOT
         self.position = SimpleNamespace(x=7, y=8)
         self.displays = [SimpleNamespace(width=1280, height=800, is_active=True)]
@@ -408,6 +411,9 @@ class FakeComputerUse:
 
     async def _call(self, line: str) -> None:
         await anyio.lowlevel.checkpoint()
+        if self.request_gate is not None:
+            self.request_accepted.set()
+            await self.request_gate.wait()
         self.owner.check_alive()
         self._check_broken()
         assert self.started, f'{line} before the desktop started'
