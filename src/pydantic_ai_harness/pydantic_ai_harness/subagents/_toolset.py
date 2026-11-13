@@ -18,7 +18,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
-from pydantic_ai.durable_exec import DurableRunContext
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -65,22 +65,22 @@ from pydantic_ai_harness.subagents._control import (
 )
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
-    DelegationEndEvent,
+    DelegationFinishedEvent,
     DelegationOutcome,
-    DelegationStartEvent,
-    ParentMessage,
-    TaskAnswerEvent,
+    DelegationStartedEvent,
+    ParentMessageEvent,
+    TaskAnsweredEvent,
     TaskAssignedEvent,
     TaskBackgroundedEvent,
-    TaskCancelRequestEvent,
+    TaskCancelRequestedEvent,
     TaskCompletedEvent,
     TaskFailedEvent,
-    TaskFollowUpEvent,
-    TaskForceCancelEvent,
-    TaskMessageEvent,
+    TaskForceCancelRequestedEvent,
     TaskProgressEvent,
     TaskRequestEvent,
+    TaskResumedEvent,
     TaskStartedEvent,
+    TaskSteeredEvent,
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
@@ -107,6 +107,11 @@ Set around each child run, so every run started inside a delegation -- including
 of a delegation -- reads its own level, and sibling delegations running concurrently in one
 parent step each read the level their parent set.
 """
+
+
+def delegation_depth() -> int:
+    """How deep in a delegation tree the current run is, counting the top-level run as 1."""
+    return _depth.get()
 
 
 @contextmanager
@@ -156,7 +161,7 @@ def _backgroundable(workspace: Workspace) -> bool:
     return not workspace.attached or isinstance(workspace.backend, LocalWorkspaceBackend)
 
 
-def _vetoed_reply(what: str, event: ParentMessage | AgentCreatedEvent) -> str:
+def _vetoed_reply(what: str, event: ParentMessageEvent | AgentCreatedEvent) -> str:
     """What the model is told when a listener vetoed `event`: `what` happened, and why."""
     return f'{what}: {event.veto_reason or "a policy refused it"}.'
 
@@ -308,7 +313,7 @@ class _Ended:
 
 
 async def _send_to_owner(
-    owner: DelegationTasks, record: DelegationTask, event: DelegationStartEvent | DelegationEndEvent
+    owner: DelegationTasks, record: DelegationTask, event: DelegationStartedEvent | DelegationFinishedEvent
 ) -> None:
     """Send a managed delegation's start or end to the application's observer.
 
@@ -350,15 +355,19 @@ async def _emit_delegation(
     owner: DelegationTasks | None,
     record: DelegationTask | None,
     emits: bool,
-    event: DelegationStartEvent | DelegationEndEvent,
+    event: DelegationStartedEvent | DelegationFinishedEvent,
 ) -> None:
     """Send a delegation's start or end to its owner, or emit it from the delegating run."""
     if owner is not None and record is not None:
-        event.task_id, event.parent_id = record.id, record.parent_id
+        event.task_id, event.parent_task_id = record.id, record.parent_id
         await _send_to_owner(owner, record, event)
     # Only called when `emits` holds or an owner exists, and an owner always comes with a record.
     elif emits:  # pragma: no branch
         await ctx.emit(event)
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000
 
 
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
@@ -427,7 +436,9 @@ def _descendants(ctx: RunContext[Any], owner: DelegationTasks) -> list[Delegatio
     def descends(record: DelegationTask) -> bool:
         parent = record.parent_id
         while parent is not None and parent != ancestor:
-            parent = owner.records[parent].parent_id
+            # A parent whose saved file was skipped as damaged is not in the records.
+            above = owner.records.get(parent)
+            parent = above.parent_id if above is not None else None
         return parent == ancestor and record.id != ancestor
 
     return [r for r in owner.records.values() if r.conversation_id == conversation_id and descends(r)]
@@ -693,6 +704,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             working_directory: Start the child in this directory using the configured workspace resolver.
                 On resume, omit it to keep the saved directory, or supply the same resolved directory.
         """
+        self._check_child_workflow(ctx)
         owner = DelegationTasks.current()
         if owner is not None:
             agent_name = owner.aliases.get(agent_name, agent_name)
@@ -753,6 +765,30 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ended is None:
             ended = await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
         return ended.result()
+
+    def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject options that need the parent run when the delegate tool runs as a child workflow."""
+        # Temporal runs a restored context in workflow code, and DBOS a restored context at all, only in a child workflow.
+        if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context and ctx.agent is not None):
+            return
+        durability = BaseDurabilityCapability.from_agent(ctx.agent)
+        if durability is None or durability.engine_spec.engine_name not in ('Temporal', 'DBOS'):
+            return
+        if (
+            self._include_self
+            or self._inherit_tools
+            or self._models
+            or self._shared_capabilities
+            or self._event_stream_handler is not None
+            or self._dynamic_agents is not None
+            or self._task_control is not None
+            or any(sub.max_calls is not None for sub in self._agents.values())
+        ):
+            raise UserError(
+                'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
+                '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
+                "`task_control`, or a delegate's `max_calls`."
+            )
 
     async def _delegate_recorded(
         self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, *, managed: bool = False
@@ -876,7 +912,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             resumable, can_ask = _local_abilities(ctx, sub_agent)
         self._check_running_limit(ctx, owner, agent_name, conversation_id)
         task_id = resume or _new_task_id(ctx, owner)
-        start_type = TaskAssignedEvent if previous is None else TaskFollowUpEvent
+        start_type = TaskAssignedEvent if previous is None else TaskResumedEvent
         # The task counts as running while listeners see it, so concurrent delegations can't overrun the limit.
         with owner.starting(conversation_id):
             # The observer gets the start once the task runs, so a vetoed start reaches only listeners.
@@ -1037,7 +1073,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Emit a task event from one of this toolset's tool calls, then send it to the observer."""
         if _emits_events(ctx):
             await ctx.emit(event)
-        if isinstance(event, ParentMessage) and event.vetoed:
+        if isinstance(event, ParentMessageEvent) and event.vetoed:
             self._telemetry(ctx).vetoed(event)
         elif isinstance(event, TaskBackgroundedEvent):
             self._telemetry(ctx).backgrounded(event)
@@ -1114,7 +1150,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 'To continue it, delegate again with `resume`.'
             )
         event = await self._announce(
-            ctx, owner, record, TaskMessageEvent(task_id=task_id, agent_name=record.agent_name, message=message)
+            ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
         )
         if event.vetoed:
             return _vetoed_reply('The message was not sent', event)
@@ -1144,7 +1180,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             ctx,
             owner,
             record,
-            TaskAnswerEvent(task_id=task_id, agent_name=record.agent_name, question_id=question[0], answer=answer),
+            TaskAnsweredEvent(task_id=task_id, agent_name=record.agent_name, question_id=question[0], answer=answer),
         )
         if event.vetoed:
             return _vetoed_reply('The answer was not sent', event)
@@ -1167,7 +1203,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return f'Task {task_id} already finished ({record.outcome}); there is nothing to cancel.'
         # A task in a durable unit of its own can only be stopped right away.
         force = force or ctx.in_durable_context
-        event_type = TaskForceCancelEvent if force else TaskCancelRequestEvent
+        event_type = TaskForceCancelRequestedEvent if force else TaskCancelRequestedEvent
         event = await self._announce(ctx, owner, record, event_type(task_id=task_id, agent_name=record.agent_name))
         if event.vetoed:
             return _vetoed_reply('The cancellation was not sent', event)
@@ -1221,7 +1257,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'Model {model!r} is not allowed. Choose one of: {", ".join(dynamic.models)}.')
         elif model is not None:
             raise ModelRetry('You cannot choose a model; omit `model` to use your own.')
-        event = AgentCreatedEvent(name=name, description=description, instructions=instructions, model=model)
+        event = AgentCreatedEvent(agent_name=name, description=description, instructions=instructions, model=model)
         # Reserved before listeners see it, so a parallel call cannot take the name or the last place meanwhile.
         creating = self._creating.setdefault(run_key, set())
         creating.add(name)
@@ -1280,7 +1316,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if emits:
             text, truncated = bounded_text(task)
             await emit(
-                DelegationStartEvent(
+                DelegationStartedEvent(
                     agent_name=agent_name, task=text, truncated=truncated, model=key, inherits_tools=inherit_tools
                 )
             )
@@ -1321,13 +1357,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
-                        DelegationEndEvent(
+                        DelegationFinishedEvent(
                             agent_name=agent_name,
                             outcome=outcome,
                             output=str(exc),
                             truncated=False,
                             usage=child_usage,
-                            duration_seconds=time.perf_counter() - started,
+                            duration_ms=_elapsed_ms(started),
                         )
                     )
             raise
@@ -1340,13 +1376,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if emits:
             text, truncated = bounded_text(ended.output)
             await emit(
-                DelegationEndEvent(
+                DelegationFinishedEvent(
                     agent_name=agent_name,
                     outcome=ended.outcome,
                     output=text,
                     truncated=truncated,
                     usage=child_usage,
-                    duration_seconds=time.perf_counter() - started,
+                    duration_ms=_elapsed_ms(started),
                 )
             )
         return ended

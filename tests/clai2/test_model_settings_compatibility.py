@@ -29,6 +29,21 @@ def test_legacy_reader_ignores_custom_params(monkeypatch: pytest.MonkeyPatch) ->
     assert saved['custom_params'] == {'chat_template_kwargs.reasoning_level': 30}
 
 
+def test_a_reader_without_base_url_keeps_it_saved_and_ignores_it(tmp_path: Path) -> None:
+    # A build from before `base_url` reads only its own fields, so it sends to the provider's default endpoint.
+    context, _ = make_context(tmp_path)
+    model = 'openai:gpt-4o'
+    context.store.save_model_settings(model, {'base_url': 'https://gateway.example/v1'})
+    legacy = {key: value for key, value in context.store.model_settings(model).items() if key != 'base_url'}
+    assert model_settings_from_json(legacy).model_dump(exclude_none=True) == {}
+    source = ModelSettingsSource(context.store, model)
+    row = FieldMenu(source).row_for('temperature')
+    assert row is not None
+    source.apply(row, '0.5')
+    source.reset(row)
+    assert context.store.model_settings(model) == {'base_url': 'https://gateway.example/v1'}
+
+
 def test_reads_keep_known_overrides_and_ignore_future_fields(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     saved: dict[str, JsonValue] = {'temperature': 0.5, 'future_setting': {'nested': [1, None, False]}}

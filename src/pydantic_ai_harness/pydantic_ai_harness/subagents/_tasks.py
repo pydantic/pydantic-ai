@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
-from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
+from pydantic import SerializerFunctionWrapHandler, TypeAdapter, ValidationError, WrapSerializer
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
@@ -37,8 +37,8 @@ from pydantic_ai_harness.subagents._events import DelegationOutcome
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._toolset import SubAgent
 
-_CURRENT: ContextVar[DelegationTasks | None] = ContextVar('delegation_tasks', default=None)
-_CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
+_CURRENT: ContextVar[DelegationTasks | None] = ContextVar('pydantic_ai_harness.subagents.current', default=None)
+_CHILD: ContextVar[str | None] = ContextVar('pydantic_ai_harness.subagents.child', default=None)
 
 NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
 """Why a delegation can't run in the background."""
@@ -116,6 +116,24 @@ class DelegationTaskEvent:
     """That model's context window, when its profile knows one, so a UI can show the child's context usage."""
 
 
+@dataclass(kw_only=True)
+class SavedTaskProblem:
+    """A saved task file that discovery skipped. The file is left on disk for inspection."""
+
+    path: Path
+    reason: str
+
+
+@dataclass(kw_only=True)
+class SavedTasks:
+    """The tasks saved under a `DelegationTasks` directory, read without opening an owner or resuming any task."""
+
+    tasks: dict[str, DelegationTask]
+    """The tasks that loaded, by ID. Use `parent_id` to walk the tree; a parent that did not load is absent."""
+    problems: list[SavedTaskProblem]
+    """One entry per skipped file, so a damaged task does not hide its siblings."""
+
+
 Observer = Callable[[DelegationTaskEvent], Awaitable[None]]
 Runner = Callable[[DelegationTask], Awaitable[str]]
 Emitter = Callable[[CapabilityEvent], Awaitable[object]]
@@ -170,6 +188,59 @@ async def _read(path: anyio.Path) -> DelegationTask:
     return record
 
 
+def _ancestry_loops(record: DelegationTask, tasks: Mapping[str, DelegationTask]) -> bool:
+    """Whether following `parent_id` from `record` through `tasks` comes back to a task already passed."""
+    ancestors = {record.id}
+    parent = record.parent_id
+    while parent is not None and parent in tasks:
+        if parent in ancestors:
+            return True
+        ancestors.add(parent)
+        parent = tasks[parent].parent_id
+    return False
+
+
+async def _discover(directory: Path, *, keep_history: Callable[[DelegationTask], bool]) -> SavedTasks:
+    """`DelegationTasks.discover`, emptying each task's `messages` as it loads unless `keep_history` says to keep them.
+
+    A saved history can be far larger than the rest of its task, so emptying it per file keeps a large task
+    directory from being held in memory at once.
+    """
+    tasks: dict[str, DelegationTask] = {}
+    problems: list[SavedTaskProblem] = []
+    paths = sorted([path async for path in anyio.Path(directory).glob('*.json')], key=lambda path: path.name)
+    for path in paths:
+        try:
+            record = await _read(path)
+        except ValidationError as exc:
+            problems.append(SavedTaskProblem(path=Path(path), reason=_validation_reason(exc)))
+        except OSError as exc:
+            problems.append(SavedTaskProblem(path=Path(path), reason=f'{type(exc).__name__}: {exc}'))
+        except ValueError:
+            problems.append(SavedTaskProblem(path=Path(path), reason='Invalid saved task identity'))
+        else:
+            if not keep_history(record):
+                record.messages = []
+            tasks[record.id] = record
+
+    for task_id in [task_id for task_id, record in tasks.items() if _ancestry_loops(record, tasks)]:
+        del tasks[task_id]
+        problems.append(SavedTaskProblem(path=directory / f'{task_id}.json', reason='Cyclic saved task ancestry'))
+    return SavedTasks(tasks=tasks, problems=problems)
+
+
+def _validation_reason(exc: ValidationError) -> str:
+    """Describe `exc` by error type and saved-task field only.
+
+    Its message quotes the saved prompt and history, and a deeper location can hold a key from them.
+    """
+    reasons = dict.fromkeys(
+        f'{error["type"]} at {error["loc"][0]}' if error['loc'] else error['type']
+        for error in exc.errors(include_url=False, include_context=False, include_input=False)
+    )
+    return f'ValidationError: {"; ".join(reasons)}'
+
+
 class DelegationTasks:
     """Own detached children until `opened` exits; bind to runs with `bind`.
 
@@ -201,6 +272,8 @@ class DelegationTasks:
         self.one_shot = one_shot
         self.max_depth = max_depth
         self.records: dict[str, DelegationTask] = {}
+        self.problems: list[SavedTaskProblem] = []
+        """Saved task files that `opened()` skipped, from the most recent `opened()`."""
         self._workers: dict[str, asyncio.Task[str]] = {}
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
@@ -210,6 +283,13 @@ class DelegationTasks:
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
+        self._holding: set[str] = set()
+        """Settling tasks whose history `save` keeps in memory until their observers have been told."""
+        self._history_on_disk: dict[str, tuple[Path, bytes]] = {}
+        """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory.
+
+        Maps its ID to that file and to the rest of the task as saved, so closing saves only a task changed since.
+        """
         self._questions: dict[str, _Question] = {}
         self._queued_questions: dict[str, str] = {}
         self._woken = anyio.Event()
@@ -228,6 +308,17 @@ class DelegationTasks:
         """The child whose tools are currently executing, including permission tools."""
         return _CHILD.get()
 
+    @staticmethod
+    async def discover(directory: Path) -> SavedTasks:
+        """Read the task tree saved under `directory` without opening an owner or resuming any task.
+
+        Each file is checked on its own. An unreadable or invalid file, a file whose name does not match its
+        task ID, and a task whose saved ancestry loops are reported in `SavedTasks.problems`; the other tasks
+        still load. Nothing is written. A task saved as `running` is returned as saved, since the process that
+        owns it may still be running it.
+        """
+        return await _discover(directory, keep_history=lambda _: True)
+
     @contextmanager
     def bind(self) -> Generator[None]:
         """Route this run's delegations to the owner without taking ownership of the run."""
@@ -245,20 +336,16 @@ class DelegationTasks:
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
-        """Restore saved children, then cancel and drain workers before releasing resources."""
+        """Restore saved children, then cancel and drain workers before releasing resources.
+
+        Saved files that `discover` reports as problems are skipped, logged, and kept in `problems`.
+        """
         if self._open:
             raise RuntimeError('Delegation task owner is already open')
         self._open = True
         try:
             if self.directory is not None:
-                directory = anyio.Path(self.directory)
-                await directory.mkdir(parents=True, exist_ok=True)
-                async for path in directory.glob('*.json'):
-                    record = await _read(path)
-                    if record.status == 'running':
-                        await self._settle_interrupted(record)
-                    self.records[record.id] = record
-                self._check_ancestry()
+                await self._load_saved(self.directory)
             yield self
         finally:
             # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
@@ -271,9 +358,26 @@ class DelegationTasks:
                     if record.status == 'running':
                         record.status, record.outcome = 'finished', 'cancelled'
                         record.finished_at = time.time()
-                    await self.save(record)
+                    if not self._unchanged_since_saved(record):
+                        await self.save(record)
             if cleanup.cancel_called:
                 raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
+
+    async def _load_saved(self, directory: Path) -> None:
+        """Load the tasks saved under `directory`, leaving each settled one's history in its file."""
+        await anyio.Path(directory).mkdir(parents=True, exist_ok=True)
+        saved = await _discover(directory, keep_history=lambda record: record.status == 'running')
+        self.problems = saved.problems
+        for problem in saved.problems:
+            logging.getLogger(__name__).warning(
+                'Skipping saved delegation task %r: %r', str(problem.path), problem.reason
+            )
+        for record in saved.tasks.values():
+            if record.status == 'running':
+                await self._settle_interrupted(record)
+            else:
+                self._history_on_disk[record.id] = (directory / f'{record.id}.json', _ADAPTER.dump_json(record))
+            self.records[record.id] = record
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
         """Settle a saved child that was still running when its process exited."""
@@ -290,17 +394,6 @@ class DelegationTasks:
         )
         record.pending_question = None
         record.finished_at = time.time()
-
-    def _check_ancestry(self) -> None:
-        """Refuse saved tasks whose parent chain loops."""
-        for record in self.records.values():
-            ancestors = {record.id}
-            parent = record.parent_id
-            while parent is not None and parent in self.records:
-                if parent in ancestors:
-                    raise ValueError('Cyclic saved task ancestry')
-                ancestors.add(parent)
-                parent = self.records[parent].parent_id
 
     def persistence_capabilities(self) -> list[AbstractCapability[object]]:
         """Capture child steps using the application's existing persistence store."""
@@ -321,15 +414,43 @@ class DelegationTasks:
             )
 
     async def save(self, record: DelegationTask) -> None:
-        """Atomically replace one child's persisted history."""
+        """Atomically replace one child's persisted history.
+
+        Once a settled task is saved, its history is kept in the file only: `history` reads it from there, and
+        a resume loads it back first.
+        """
+        await self._write(record)
+        if record.id not in self._holding:
+            self._release(record)
+
+    async def _write(self, record: DelegationTask) -> None:
+        """Save `record` with its history, loading that back first when it is in the saved file only."""
         if not _SAFE_ID.fullmatch(record.id):
             raise ValueError('Invalid task identity')
         if self.directory is not None:
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
+                if (saved := self._saved_history(record)) is not None:
+                    record.messages = (await _read(anyio.Path(saved))).messages
+                self._history_on_disk.pop(record.id, None)
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
+
+    @contextmanager
+    def _holding_history(self, record: DelegationTask) -> Generator[None]:
+        """Keep `record`'s history in memory through `save` while the block runs."""
+        self._holding.add(record.id)
+        try:
+            yield
+        finally:
+            self._holding.discard(record.id)
+
+    def _release(self, record: DelegationTask) -> None:
+        """Keep a settled, saved task's history in its file only."""
+        if self.directory is not None and record.status == 'finished':
+            record.messages = []
+            self._history_on_disk[record.id] = (self.directory / f'{record.id}.json', _ADAPTER.dump_json(record))
 
     async def restore(self, record: DelegationTask) -> bool:
         """Add a finished task made elsewhere, such as one imported from another agent's session.
@@ -346,12 +467,18 @@ class DelegationTasks:
             current = await _read(path) if await path.exists() else None
         if current is not None and current.run_id != record.run_id:
             return False
+        if current is not None and current.messages and not record.messages:
+            # Handed out without its history, as an owner's settled tasks are: keep the saved one.
+            record.messages = current.messages
         if self.directory is not None:
             await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
         self.records[record.id] = record
-        await self.save(record)
-        if self._open:
-            await self.notify(record)
+        # Observers are told with its history, which it then keeps in the file only.
+        with self._holding_history(record):
+            await self.save(record)
+            if self._open:
+                await self.notify(record)
+        self._release(record)
         return True
 
     async def delegate(
@@ -524,11 +651,14 @@ class DelegationTasks:
                     if child.parent_id == record.id and child.status == 'running':
                         await self.cancel(child.id, user=record.user_stopped)
             with anyio.move_on_after(5, shield=True):
-                await self.save(record)
-                try:
-                    await self.notify(record)
-                except Exception:
-                    logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
+                # Observers are told it settled with its history, which it then keeps in the file only.
+                with self._holding_history(record):
+                    await self.save(record)
+                    try:
+                        await self.notify(record)
+                    except Exception:
+                        logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
+                self._release(record)
                 self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         return f'Task {record.id} ({record.outcome}):\n{record.output}'
 
@@ -614,8 +744,28 @@ class DelegationTasks:
         return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
-        """Independent replay history; callers cannot mutate the saved child through it."""
-        return copy.deepcopy(self.records[task_id].messages)
+        """Independent replay history; callers cannot mutate the saved child through it.
+
+        A settled task's history is read from its saved file, since the owner doesn't keep it in memory,
+        so async code should call this in a worker thread, as `anyio.to_thread.run_sync(owner.history, task_id)`.
+        """
+        record = self.records[task_id]
+        if (path := self._saved_history(record)) is not None:
+            return _ADAPTER.validate_json(path.read_bytes(), context=STORED_HISTORY_CONTEXT).messages
+        return copy.deepcopy(record.messages)
+
+    def _saved_history(self, record: DelegationTask) -> Path | None:
+        """The file holding `record`'s history when the owner doesn't hold it, as after a settled task was saved.
+
+        History a caller has set on the record since replaces the saved one.
+        """
+        saved = None if record.messages else self._history_on_disk.get(record.id)
+        return None if saved is None else saved[0]
+
+    def _unchanged_since_saved(self, record: DelegationTask) -> bool:
+        """Whether `record`'s history is in its saved file only and the rest of it is as saved there."""
+        saved = None if record.messages else self._history_on_disk.get(record.id)
+        return saved is not None and _ADAPTER.dump_json(record) == saved[1]
 
     async def allow_resume(self, task_id: str) -> None:
         """Explicit user authorization to resume a stopped, resumable child."""

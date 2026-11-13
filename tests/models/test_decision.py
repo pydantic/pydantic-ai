@@ -59,6 +59,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part, try_import
+from .conftest import items_serialized_differently_inside_a_list
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -225,6 +226,64 @@ async def test_decision_model_preserves_image_evidence_in_state(allow_model_requ
         'text': 'Current prompt.\n\n<image 6>',
     }
     assert request.state == expected_state
+
+
+async def test_decision_model_keeps_structured_tool_return_items_beside_an_image(allow_model_requests: None):
+    """A dict a tool returns beside an image is history as the JSON object it is without the image, failed or not."""
+    image = BinaryContent(b'tool', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Check the weather.')]),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-1')]),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-2')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-2', outcome='failed')]),
+    ]
+    model = ImageEnabledDecisionModel()
+
+    await Agent(model, output_type=bool, instructions='Is it warm?').run('Decide.', message_history=history)
+
+    [request] = model.requests
+    assert request.state == snapshot(
+        {
+            'history': [
+                {'user': 'Check the weather.'},
+                {'tool_call': {'name': 'weather', 'args': {}}},
+                {'tool_return': {'name': 'weather', 'content': '[{"temp":20},"<image 1>"]'}},
+                {'tool_call': {'name': 'weather', 'args': {}}},
+                {'tool_return': {'name': 'weather', 'content': '{"error":"[{\\"temp\\":20},\\"<image 2>\\"]"}'}},
+            ],
+            'text': 'Decide.',
+        }
+    )
+
+
+async def test_decision_model_serializes_tool_return_items_beside_an_image_as_alone(allow_model_requests: None):
+    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level."""
+    items = items_serialized_differently_inside_a_list()
+    alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
+    image = BinaryContent(b'tool', media_type='image/png')
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Check the readings.')])]
+    for index, outcome in enumerate(('success', 'failed', 'retried'), start=1):
+        history.append(ModelResponse(parts=[ToolCallPart('read', {}, tool_call_id=f'tool-{index}')]))
+        history.append(
+            ModelRequest(parts=[ToolReturnPart('read', [*items, image], tool_call_id=f'tool-{index}', outcome=outcome)])
+        )
+    model = ImageEnabledDecisionModel()
+
+    await Agent(model, output_type=bool, instructions='Are they valid?').run('Decide.', message_history=history)
+
+    [request] = model.requests
+    assert isinstance(request.state, dict) and isinstance(request.state['history'], list)
+    assert [entry for entry in request.state['history'] if isinstance(entry, dict) and 'tool_return' in entry] == [
+        {'tool_return': {'name': 'read', 'content': f'[{alone},"<image 1>"]'}},
+        {
+            'tool_return': {
+                'name': 'read',
+                'content': json.dumps({'error': f'[{alone},"<image 2>"]'}, separators=(',', ':')),
+            }
+        },
+        {'tool_return': {'name': 'read', 'content': f'{{"error":[{alone},"<image 3>"]}}'}},
+    ]
 
 
 class Release(BaseModel):
@@ -981,9 +1040,9 @@ async def test_a_legacy_retry_prompt_part_on_a_direct_request_is_judged_as_what_
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in one word
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
             ]
@@ -2117,9 +2176,9 @@ Please refund it.\
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Pick something else.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
                 {'thinking': 'A refund, then.'},
@@ -2376,9 +2435,9 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                         {
                             'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                         },
                     ],
@@ -2416,9 +2475,9 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer with a tool call.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
             ],
@@ -2455,9 +2514,9 @@ async def test_feedback_after_a_tool_returned_is_a_retry_entry(allow_model_reque
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                 },
             ],

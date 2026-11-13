@@ -197,6 +197,9 @@ def test_public_engine_builder_exports() -> None:
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',
+        'ExternalEventError',
+        'ExternalEventWaiter',
+        'external_event_scope',
         'record_durable_unit',
         'replay_scope',
     ]
@@ -663,6 +666,10 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_ToolReturn('ok'), {'result': 'ok', 'kind': 'tool_return'}),
         (_ApprovalRequired({'scope': 'write'}), {'metadata': {'scope': 'write'}, 'kind': 'approval_required'}),
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
+        (
+            _CallDeferred({'ticket': 7}, call_kind='question'),
+            {'metadata': {'ticket': 7}, 'call_kind': 'question', 'kind': 'call_deferred'},
+        ),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
         (
             _ValidationError(

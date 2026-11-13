@@ -153,7 +153,7 @@ jobs:
       - name: Set up OpenCode and review tools
         uses: ./.github/actions/setup-douwebot-tools
 
-      - name: Review with OpenCode Go
+      - name: Review with OpenCode
         run: |
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
           python3 .github/scripts/run_pr_review_check.py
@@ -162,7 +162,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only this key and the Logfire token
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only the key of the provider it runs on, and the Logfire token
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- used only when OpenCode Go refuses the review before its first step
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }} # zizmor: ignore[secrets-outside-env] -- used only when OpenCode Go refuses the review before its first step
           TRIAGE_WEBHOOK_URL: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }} # zizmor: ignore[secrets-outside-env] -- only the default-branch runner reads it; OpenCode never does
           LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }} # zizmor: ignore[secrets-outside-env] -- a write-only ingest token; OpenCode exports with it, and has no tool that reads its environment
           LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
