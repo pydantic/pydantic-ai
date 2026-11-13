@@ -193,8 +193,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_computer_tool_version: AnthropicComputerToolVersion | None
     """The computer use tool a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as.
 
-    Default: `None`, meaning a function tool. `AnthropicModel` narrows it by client: Bedrock and Foundry serve only
-    the earlier beta versions.
+    Default: `None`, meaning a function tool. On Bedrock, `AnthropicModel` sends `computer_20251124` for the
+    toolset.
     """
 
     anthropic_supports_on_demand_compaction: bool

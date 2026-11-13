@@ -401,7 +401,7 @@ async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_
         await agent.run('Go.')
 
 
-def test_bedrock_and_foundry_get_the_earlier_beta_tool() -> None:
+def test_bedrock_gets_the_earlier_beta_tool() -> None:
     pytest.importorskip('botocore')
     native: dict[str, Any] = {}
     for name, client in (
@@ -413,13 +413,12 @@ def test_bedrock_and_foundry_get_the_earlier_beta_tool() -> None:
     ):
         model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         native[name] = model.profile.get('anthropic_computer_tool_version')
-    # Foundry doesn't list the Claude 5.5 models for the earlier tool, so they get a function tool there.
     assert native == {
         'direct': 'computer_toolset_20260801',
         'vertex': 'computer_toolset_20260801',
         'bedrock': 'computer_20251124',
         'mantle': 'computer_20251124',
-        'foundry': None,
+        'foundry': 'computer_toolset_20260801',
     }
 
 
