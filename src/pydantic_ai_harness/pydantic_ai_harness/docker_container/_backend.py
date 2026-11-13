@@ -51,7 +51,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, START_LOCK, wait_until_ready, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, DISPLAY_NUMBER, START_LOCK, wait_until_ready, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
@@ -271,8 +271,8 @@ windows fill the screen."""
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
 
-_X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
-_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
+_X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 _START_DESKTOP = (
     f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '

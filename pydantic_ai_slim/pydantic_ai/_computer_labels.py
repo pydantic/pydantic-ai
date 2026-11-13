@@ -55,6 +55,8 @@ def _smallest_limit(
 
 def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
     """Tell a model that points on a grid so in each `computer` tool's description."""
+    if not any(tool.tool_kind == COMPUTER_KIND.id for tool in params.function_tools):
+        return params
     if (grid := shared_grid(model)) is None:
         return params
     hint = _grid_hint(grid)

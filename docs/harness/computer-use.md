@@ -62,8 +62,9 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude 4 and later get Anthropic's own computer use tool; see [Anthropic](../models/anthropic.md#computer-use).
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool on the Responses API; see
+- Claude 4 and later get Anthropic's own computer use tool through `AnthropicModel`, and the function tool
+  through other APIs such as Bedrock Converse; see [Anthropic](../models/anthropic.md#computer-use).
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
@@ -152,7 +153,7 @@ Some models only take screenshots up to a size, set by
 `computer_use_screenshot_max_pixels` in their profile:
 
 - Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and 3.6 megapixels.
-- Earlier Claude models and Claude Mythos Preview: 1568 pixels and about 1.15 megapixels.
+- Other Claude 4 models and Claude Mythos Preview: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
 
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
@@ -195,8 +196,8 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
   repeat a finished call. A call cut off before its step was recorded can run again under the engine's retry settings
   for capability steps. On Temporal those are `TemporalDurability`'s `activity_config`, which defaults to a 60-second
   timeout and unlimited retries: raise `start_to_close_timeout` above your longest call, and set
-  `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`,
-  `PrefectDurability` or `DBOSDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
+  `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`
+  or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](../durable_execution/temporal.md#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen.

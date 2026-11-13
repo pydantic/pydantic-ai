@@ -877,6 +877,15 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [['OK'], ['Ran 2 actions. [Older screenshot removed.]']],
             id='screenshot-dropped',
         ),
+        # As a history processor that removes old screenshots outright leaves it: the summary still reaches the model.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            ['Ran 2 actions.'],
+            {'performed': 2},
+            [['OK'], ['Ran 2 actions.']],
+            id='screenshot-removed',
+        ),
         # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
         pytest.param(_CLICK_TYPE, [1, 1], [_REFUSED], None, [[_REFUSED], [_REFUSED]], id='a-guardrail-refusal'),
         pytest.param(

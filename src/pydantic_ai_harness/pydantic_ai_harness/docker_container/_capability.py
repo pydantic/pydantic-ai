@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.docker_container._backend import (
     PROVIDER,
@@ -70,6 +71,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
+        desktop_size(self.desktop)  # a bad size fails here, not when a run starts
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
