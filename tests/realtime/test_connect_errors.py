@@ -80,6 +80,11 @@ GOOGLE_RESOURCE_EXHAUSTED = (
     b'{"error": {"code": 429, "message": "Resource has been exhausted (e.g. check quota).", '
     b'"status": "RESOURCE_EXHAUSTED"}}'
 )
+GOOGLE_DAILY_QUOTA = (
+    b'{"error": {"code": 429, "message": "You exceeded your current quota.", "status": "RESOURCE_EXHAUSTED", '
+    b'"details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", '
+    b'"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}'
+)
 RETRY_AFTER_5 = (('Retry-After', '5'),)
 REPEATED_SET_COOKIE = (('Set-Cookie', 'a=1'), ('Set-Cookie', 'b=2'))
 MESSAGES = [ModelRequest(parts=[])]
@@ -375,6 +380,23 @@ UPGRADE_CASES = [
                 'retry_after': 5.0,
                 'body': '{"error": {"code": 429, "message": "Resource has been exhausted (e.g. check quota).", "status": "RESOURCE_EXHAUSTED"}}',
                 'headers': {'retry-after': '5', 'content-length': '118'},
+            }
+        ),
+    ),
+    # The body's `QuotaFailure` tells an exhausted daily quota from a rate limit, as for a Gemini API error response.
+    UpgradeCase(
+        id='google-429-daily-quota',
+        model='google',
+        rejection=Rejection(429, GOOGLE_DAILY_QUOTA),
+        expected=snapshot(
+            {
+                'class': 'ModelQuotaExceededError',
+                'status_code': 429,
+                'provider_error_code': 'RESOURCE_EXHAUSTED',
+                'provider_error_type': None,
+                'retry_after': None,
+                'body': '{"error": {"code": 429, "message": "You exceeded your current quota.", "status": "RESOURCE_EXHAUSTED", "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}',
+                'headers': {'content-length': '256'},
             }
         ),
     ),
