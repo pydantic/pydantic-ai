@@ -133,9 +133,9 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
         self.add_function(self.send_message)
 
     async def list_peers(self, query: str = '') -> str:
-        """List other sessions that are reachable now, optionally filtering by name, title, folder or branch.
+        """List other sessions that are reachable now, optionally filtering by handle, title, workspace or branch.
 
-        Each entry includes its address, name, activity, and count of messages it has not read yet.
+        Each entry includes its id, handle, status, and count of messages it has not read yet.
         """
         peers = await self.capability.network.peers()
         filtered = [
@@ -177,9 +177,9 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'No peer {to!r}. Call `list_peers` for current names.')
         identity = (recipient.id, text)
         if identity in self._sent:
-            return 'That message was already sent to this peer in this turn.'
+            return 'That message was already sent to this peer in this run.'
         if self._count >= capability.max_messages_per_run:
-            return 'Peer message limit reached for this turn.'
+            return 'Peer message limit reached for this run.'
         self._count += 1
         self._sent.add(identity)
         accepted = False

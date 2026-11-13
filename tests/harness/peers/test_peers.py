@@ -457,8 +457,8 @@ class TestPeers:
         assert tool_results(result.all_messages()) == snapshot(
             [
                 'api has no active run: message queued (1 pending). It reads it at its next model request. id <id>',
-                'That message was already sent to this peer in this turn.',
-                'Peer message limit reached for this turn.',
+                'That message was already sent to this peer in this run.',
+                'Peer message limit reached for this run.',
             ]
         )
         assert len(await inbox.pending()) == 1
