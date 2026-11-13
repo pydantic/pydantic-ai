@@ -13,7 +13,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
@@ -69,6 +68,7 @@ from pydantic_ai_harness.planning._toolset import (
 from tests.conftest import IsStr, RequestCapture, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness._rendering import sent_messages
 from tests.models.conftest import cache_breakpoints, json_objects
 
 with try_import() as anthropic_imports:
@@ -1189,7 +1189,7 @@ def _plan_return(plan: str, tool_call_id: str = 'c1') -> ToolReturnPart:
 def _plan_records_in(parts: Iterable[ModelRequestPart | ModelResponsePart]) -> list[str]:
     """The text of every plan `Planning` recorded in `parts`, in its frame as the model is sent it, in order."""
     records: list[ModelRequestPart] = [part for part in parts if isinstance(part, PlanReminderPart)]
-    [rendered] = render_capability_parts([ModelRequest(parts=records)])
+    [rendered] = sent_messages([ModelRequest(parts=records)])
     assert isinstance(rendered, ModelRequest)
     return [
         part.content

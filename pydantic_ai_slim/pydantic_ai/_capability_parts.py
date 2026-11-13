@@ -22,6 +22,7 @@ from ._framing import (
     capability_frame_tags,
     frame_tag_lookalike,
     lookalike_tags,
+    neutralize_tags,
     resembles_frame,
 )
 from .exceptions import UserError
@@ -314,6 +315,48 @@ def render_capability_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
         else message
         for message in messages
     ]
+
+
+def render_capability_parts_for_live_channel(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` rendered as [`render_capability_parts`][pydantic_ai._capability_parts.render_capability_parts] does, for a realtime session.
+
+    The live channel puts the rendered text in the conversation's own turn, where no lookalike note can say who wrote
+    a framing tag in a body. So in the body of a part with less than operator authority, every framing tag (`<system>`
+    included) is neutralized as `&lt;`, as the harness's frames did before they became capability parts. The stored
+    parts are left as they are.
+
+    TODO(#12507): give the live channel lookalike notes instead, and send these bodies as written.
+    """
+    if not has_capability_parts(messages):
+        return messages
+    return render_capability_parts(
+        [
+            replace(message, parts=[_neutralized(part) for part in message.parts])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+    )
+
+
+def _neutralized(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with the framing tags in its body neutralized, if it's a capability part below operator authority."""
+    if not isinstance(part, CapabilityPart) or effective_authority(part) == 'operator':
+        return part
+    content = part.model_content()
+    if isinstance(content, str):
+        return replace(part, content=neutralize_tags(content))
+    if isinstance(content, StructuredContent):
+        return part
+    items = [
+        neutralize_tags(item)
+        if isinstance(item, str)
+        else replace(item, content=neutralize_tags(item.content))
+        if isinstance(item, TextContent)
+        else item
+        for item in content
+    ]
+    return replace(part, content=items)
 
 
 def _has_capability_parts(message: ModelMessage) -> bool:

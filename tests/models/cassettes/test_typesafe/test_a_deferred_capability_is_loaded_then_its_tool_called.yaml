@@ -1,0 +1,247 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.typesafe.ai/v1/systemone
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "841"
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    body:
+      type: json
+      content:
+        state: Has the refund for my returned blender gone through?
+        model: jev-latest
+        questions:
+          Resolution.resolved:
+            type: noul
+            instructions:
+              field: resolved
+              premise: "If the user's request calls for Resolution: Close the conversation once the customer's question has been answered."
+              question: Has the customer's question been answered?
+              background: You are a customer support assistant for an online store.
+          route:
+            type: choice
+            criteria:
+              Resolution: Close the conversation once the customer's question has been answered.
+              refunds: Use for refund eligibility, refund status, or processing a refund.
+              shipping: Use for where an order is, delivery dates, and tracking.
+            instructions:
+              question: Which of these does this call for?
+              background: You are a customer support assistant for an online store.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      x-typesafe-request-id:
+      - req_01a1d28d1cc573baabcc6c03df2fd25e
+    body:
+      type: json
+      content:
+        model: jev-1.14.0
+        answers:
+          Resolution.resolved:
+            type: noul
+            noul: 0.07
+          route:
+            type: choice
+            choice: refunds
+            confidence: 1.0
+            probabilities:
+              Resolution: 0.0
+              refunds: 1.0
+              shipping: 0.0
+        usage:
+          input_tokens: 466
+          output_tokens: 59
+  recorded_at: 2026-11-13T01:37:05.795056+00:00
+- request:
+    method: POST
+    uri: https://api.typesafe.ai/v1/systemone
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1239"
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    body:
+      type: json
+      content:
+        state:
+          text: Has the refund for my returned blender gone through?
+          done:
+          - tool_call:
+              name: load_capability
+              args:
+                id: refunds
+          - tool_return:
+              name: load_capability
+              content: "{\"message\":\"Capability 'refunds' loaded. Its instructions, if any, follow.\"}"
+          - system: "The following tool(s) are now available: `refund_status`"
+          - system: |-
+              <pyai:context id="capability:refunds">
+              Confirm the order ID before issuing a refund.
+              </pyai:context>
+        model: jev-latest
+        questions:
+          Resolution.resolved:
+            type: noul
+            instructions:
+              field: resolved
+              premise: "If the user's request calls for Resolution: Close the conversation once the customer's question has been answered."
+              question: Has the customer's question been answered?
+              background: You are a customer support assistant for an online store.
+          route:
+            type: choice
+            criteria:
+              Resolution: Close the conversation once the customer's question has been answered.
+              shipping: Use for where an order is, delivery dates, and tracking.
+              refund_status: Look up the status of the customer's latest refund.
+            instructions:
+              question: Which of these does this call for?
+              background: You are a customer support assistant for an online store.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      x-typesafe-request-id:
+      - req_01a1d28d1d327c30aa819fb278989209
+    body:
+      type: json
+      content:
+        model: jev-1.14.0
+        answers:
+          Resolution.resolved:
+            type: noul
+            noul: 0.04
+          route:
+            type: choice
+            choice: refund_status
+            confidence: 1.0
+            probabilities:
+              Resolution: 0.0
+              shipping: 0.0
+              refund_status: 1.0
+        usage:
+          input_tokens: 619
+          output_tokens: 59
+  recorded_at: 2026-11-13T01:37:05.899190+00:00
+- request:
+    method: POST
+    uri: https://api.typesafe.ai/v1/systemone
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1307"
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    body:
+      type: json
+      content:
+        state:
+          text: Has the refund for my returned blender gone through?
+          done:
+          - tool_call:
+              name: load_capability
+              args:
+                id: refunds
+          - tool_return:
+              name: load_capability
+              content: "{\"message\":\"Capability 'refunds' loaded. Its instructions, if any, follow.\"}"
+          - system: "The following tool(s) are now available: `refund_status`"
+          - system: |-
+              <pyai:context id="capability:refunds">
+              Confirm the order ID before issuing a refund.
+              </pyai:context>
+          - tool_call:
+              name: refund_status
+              args: {}
+          - tool_return:
+              name: refund_status
+              content: Refund of $40 issued on 2026-05-01.
+        model: jev-latest
+        questions:
+          Resolution.resolved:
+            type: noul
+            instructions:
+              field: resolved
+              premise: "If the user's request calls for Resolution: Close the conversation once the customer's question has been answered."
+              question: Has the customer's question been answered?
+              background: You are a customer support assistant for an online store.
+          route:
+            type: choice
+            criteria:
+              Resolution: Close the conversation once the customer's question has been answered.
+              shipping: Use for where an order is, delivery dates, and tracking.
+            instructions:
+              question: Which of these does this call for?
+              background: You are a customer support assistant for an online store.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      x-typesafe-request-id:
+      - req_01a1d28d1da076d1951e07b59c5eaa32
+    body:
+      type: json
+      content:
+        model: jev-1.14.0
+        answers:
+          Resolution.resolved:
+            type: noul
+            noul: 0.82
+          route:
+            type: choice
+            choice: Resolution
+            confidence: 0.98
+            probabilities:
+              Resolution: 0.99
+              shipping: 0.01
+        usage:
+          input_tokens: 666
+          output_tokens: 50
+  recorded_at: 2026-11-13T01:37:06.024785+00:00

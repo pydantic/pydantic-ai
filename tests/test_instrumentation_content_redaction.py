@@ -50,7 +50,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
@@ -115,6 +115,7 @@ SECRETS = {
     'prompted_output_template': 'SENTINEL-prompted-output-template',
     'capability_instruction': 'SENTINEL-capability-instruction',
     'capability_data': 'SENTINEL-capability-data',
+    'capability_description': 'SENTINEL-capability-description',
 }
 
 
@@ -849,6 +850,23 @@ async def test_no_content_reaches_telemetry_on_a_successful_run(include_content:
             'final_output',
         },
     )
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_deferred_capability_catalog(include_content: bool) -> None:
+    """A deferred capability's description, in the catalog instructions and in the request parameters' catalog."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    capability = Capability[object](
+        id='secret', description=lambda: SECRETS['capability_description'], defer_loading=True
+    )
+    agent = Agent(FunctionModel(respond), capabilities=[capability, Instrumentation(settings=settings)])
+    await agent.run(SECRETS['user_prompt'])
+
+    check(exporter, include_content, {'user_prompt', 'model_text', 'capability_description'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])
