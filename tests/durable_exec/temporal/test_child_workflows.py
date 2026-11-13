@@ -693,16 +693,24 @@ async def test_activity_only_worker_registers_no_child_workflows(client: Client)
     default_config = AgentPlugin(delegating_agent).configure_worker({'workflows': []})
     assert default_config.get('workflows') == child_workflows  # pyright: ignore[reportUnknownMemberType]
 
+    # An activity-only plugin doesn't record the child workflow as registered in this process, so the workflow-side
+    # guard still fails a run whose workflow worker lacks it. The `worker_registrations` call above recorded it for
+    # the workflow worker below, which registers the child workflow classes itself.
+    registered = set(registered_child_workflow_names)
+    registered_child_workflow_names.clear()
+    try:
+        activity_plugin = AgentPlugin(delegating_agent, register_workflows=False)
+        assert registered_child_workflow_names == set()
+    finally:
+        registered_child_workflow_names.update(registered)
+
     workflow_worker = Worker(
         client, task_queue=TASK_QUEUE, workflows=[SplitWorkersDelegatingWorkflow, *child_workflows]
     )
     activity_worker = Worker(
         client,
         task_queue=TASK_QUEUE,
-        plugins=[
-            AgentPlugin(delegating_agent, register_workflows=False),
-            AgentPlugin(sub_agent, register_workflows=False),
-        ],
+        plugins=[activity_plugin, AgentPlugin(sub_agent, register_workflows=False)],
     )
     assert workflow_worker.config(active_config=True).get('activities') == []  # pyright: ignore[reportUnknownMemberType]
     assert activity_worker.config(active_config=True).get('workflows') == []  # pyright: ignore[reportUnknownMemberType]

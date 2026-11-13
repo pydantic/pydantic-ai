@@ -300,9 +300,7 @@ class AgentPlugin(SimplePlugin):
                     f'Agent {agent.name!r} has no `TemporalDurability` capability; '
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
-            activities, child_workflows = worker_registrations(durability)
-            if register_workflows:
-                workflows = child_workflows
+            activities, workflows = worker_registrations(durability, include_workflows=register_workflows)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,

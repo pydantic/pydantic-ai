@@ -1025,11 +1025,12 @@ without such tools register only their activities, as before. Metadata that firs
 for example from a capability that rewrites tool definitions during a run, fails the tool call
 with a `UserError`.
 
-`AgentPlugin` registers an agent's child workflows on every worker it's passed to, including a
-worker that only runs activities, created without `workflows`, which then also polls the task
-queue for workflow tasks. For such a worker, use `AgentPlugin(agent, register_workflows=False)`
-to register only the agent's activities, and register the child workflows on the worker that runs
-your workflows, through `PydanticAIPlugin` or `AgentPlugin(agent)`.
+[`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] registers an agent's child
+workflows on every worker it's passed to, including a worker that only runs activities, created
+without `workflows`, which then also polls the task queue for workflow tasks. For such a worker,
+use `AgentPlugin(agent, register_workflows=False)` to register only the agent's activities, and
+register the child workflows on the worker that runs your workflows, through
+[`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] or `AgentPlugin(agent)`.
 
 ## Activity Retries
 
