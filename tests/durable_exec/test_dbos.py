@@ -5149,9 +5149,9 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
 
 
-@pytest.mark.parametrize('nested', [False, True])
+@pytest.mark.parametrize('variant', ['copy', 'nested', 'inplace'])
 async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
-    dbos: DBOS, nested: bool
+    dbos: DBOS, variant: Literal['copy', 'nested', 'inplace']
 ) -> None:
     """Parallel tool-call units each call through the stepped toolset they listed their tool on.
 
@@ -5194,6 +5194,13 @@ async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dyn
             called[ctx.tool_call_id] = self.serial
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
+    @dataclass
+    class InPlaceStepStateToolset(StepStateToolset):
+        async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+            # Updates its own step state and returns `self`, as `docs/toolsets.md` describes.
+            self.serial = next(serials)
+            return self
+
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) > 1:
             return ModelResponse(parts=[TextPart('done')])
@@ -5205,20 +5212,22 @@ async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dyn
         )
 
     def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
-        if nested:
+        if variant == 'nested':
             # As `PrefixTools(Toolset(factory))` contributes from inside a dynamic capability.
             return DynamicToolset(lambda ctx: StepStateToolset(FunctionToolset([echo])))
+        if variant == 'inplace':
+            return InPlaceStepStateToolset(FunctionToolset([echo]))
         return StepStateToolset(FunctionToolset([echo]))
 
     agent = Agent(
         FunctionModel(model),
         deps_type=type(None),
-        name=f'dbos_parallel_run_held_dynamic_{nested}',
+        name=f'dbos_parallel_run_held_dynamic_{variant}',
         toolsets=[DynamicToolset(factory, per_run_step=False, id='step_state')],
         capabilities=[DBOSDurability()],
     )
 
-    @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{nested}')
+    @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{variant}')
     async def run_agent() -> str:
         return (await agent.run('go')).output
 
