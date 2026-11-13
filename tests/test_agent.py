@@ -2366,6 +2366,27 @@ async def test_output_type_text_output_function_str_arg(output_function: Callabl
         assert (await agent.run('hi')).output == 'text=hello'
 
 
+def text_alias_named_like_hidden_arg(
+    text: Annotated[str, Field(alias='b')] = 'default', b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'
+
+
+def test_output_type_text_output_function_alias_named_like_hidden_arg():
+    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, as on `main`.
+
+    The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
+    after a Python name keeps naming that arg. A known gap, kept so the call matches `main`.
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg))
+    assert agent.run_sync('hi').output == 'text=default b=hello'
+
+
 def test_output_type_handoff_to_agent():
     class Weather(BaseModel):
         temperature: float
