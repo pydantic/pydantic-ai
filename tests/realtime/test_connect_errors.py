@@ -268,20 +268,20 @@ UPGRADE_CASES = [
             }
         ),
     ),
-    # A status with no error category still raises a plain `ModelHTTPError`, whatever its body's error code.
+    # A status below 400 isn't an error response, so it raises a plain `ModelHTTPError`, whatever its body's error code.
     UpgradeCase(
         id='openai-200-not-upgraded',
         model='openai',
-        rejection=Rejection(200, OPENAI_RATE_LIMIT),
+        rejection=Rejection(200, OPENAI_QUOTA),
         expected=snapshot(
             {
                 'class': 'ModelHTTPError',
                 'status_code': 200,
-                'provider_error_code': 'rate_limit_exceeded',
-                'provider_error_type': 'requests',
+                'provider_error_code': 'insufficient_quota',
+                'provider_error_type': 'insufficient_quota',
                 'retry_after': None,
-                'body': '{"error": {"message": "Rate limit reached.", "type": "requests", "param": null, "code": "rate_limit_exceeded"}}',
-                'headers': {'content-length': '111'},
+                'body': '{"error": {"message": "You exceeded your current quota.", "type": "insufficient_quota", "param": null, "code": "insufficient_quota"}}',
+                'headers': {'content-length': '133'},
             }
         ),
     ),
@@ -397,6 +397,22 @@ UPGRADE_CASES = [
                 'retry_after': None,
                 'body': '{"error": {"code": 429, "message": "You exceeded your current quota.", "status": "RESOURCE_EXHAUSTED", "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}',
                 'headers': {'content-length': '256'},
+            }
+        ),
+    ),
+    UpgradeCase(
+        id='google-200-not-upgraded',
+        model='google',
+        rejection=Rejection(200, GOOGLE_RESOURCE_EXHAUSTED),
+        expected=snapshot(
+            {
+                'class': 'ModelHTTPError',
+                'status_code': 200,
+                'provider_error_code': 'RESOURCE_EXHAUSTED',
+                'provider_error_type': None,
+                'retry_after': None,
+                'body': '{"error": {"code": 429, "message": "Resource has been exhausted (e.g. check quota).", "status": "RESOURCE_EXHAUSTED"}}',
+                'headers': {'content-length': '118'},
             }
         ),
     ),

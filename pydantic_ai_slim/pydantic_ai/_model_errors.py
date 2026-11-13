@@ -150,12 +150,13 @@ def openai_compatible_response_error(
     """The error for an OpenAI-compatible error response that no SDK read, like a rejected WebSocket upgrade.
 
     It gets the category, error code and error type the SDK's error for the same response gets, and keeps `body` as
-    the response text.
+    the response text. A status below 400 isn't an error response, so it gets no category.
     """
     _, fields = parse_error_body(body)
     code, error_type = fields.get('code'), fields.get('type')
+    category = openai_compatible_category(status_code, code, error_type, fields.get('message', body))
     return ModelHTTPError.for_category(
-        openai_compatible_category(status_code, code, error_type, fields.get('message', body)),
+        category if status_code >= 400 else None,
         status_code=status_code,
         model_name=model_name,
         body=body,

@@ -1034,15 +1034,19 @@ def _rejected_upgrade_error(error: websockets.InvalidStatus, model_name: str) ->
     """The error for a rejected Gemini Live WebSocket upgrade, in the category a Gemini API error response gets.
 
     `google-genai` doesn't read the response, so its body is parsed here, and stays the response text on the error.
+    A status below 400 isn't an error response, so it gets no category.
     """
     body, headers = read_rejected_upgrade(error)
     parsed, fields = _model_errors.parse_error_body(body)
     status = fields.get('status')
     message = fields.get('message', body)
+    status_code = error.response.status_code
+    category = _model_errors.google_status_category(status, message, parsed) or _model_errors.http_status_category(
+        status_code, message
+    )
     return ModelHTTPError.for_category(
-        _model_errors.google_status_category(status, message, parsed)
-        or _model_errors.http_status_category(error.response.status_code, message),
-        status_code=error.response.status_code,
+        category if status_code >= 400 else None,
+        status_code=status_code,
         model_name=model_name,
         body=body,
         headers=headers,
