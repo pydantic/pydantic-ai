@@ -1070,9 +1070,9 @@ def _map_connect_error(
             return mapped_error
         return RealtimeError(model_name=model_name, message=str(error))  # pragma: no cover
     if isinstance(error, websockets.InvalidStatus):
-        # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
-        # `websockets` error rather than an `APIError`; the WebSocket is the API here, so it raises what
-        # the same response to a regular request raises.
+        # A rejected WebSocket upgrade surfaces from `google-genai` as a raw `websockets` error rather than an
+        # `APIError`; the WebSocket is the API here, so it raises what the same response to a regular request
+        # raises.
         return _rejected_upgrade_error(error, model_name)
     if isinstance(error, websockets.WebSocketException):
         # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP

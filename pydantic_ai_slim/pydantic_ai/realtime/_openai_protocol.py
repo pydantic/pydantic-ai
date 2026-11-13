@@ -1157,8 +1157,8 @@ def map_connect_errors(model_name: str) -> Generator[None]:
         # carry no HTTP status, so they map to `RealtimeError` like a regular non-status provider error.
         raise RealtimeError(model_name=model_name, message=str(e)) from e
     except websockets.InvalidStatus as e:
-        # The WebSocket upgrade itself was rejected (bad key → 401, unknown model → 404); this carries a
-        # real HTTP status, so it raises what the same response to a regular request raises.
+        # The WebSocket upgrade itself was rejected with a real HTTP status, so it raises what the same
+        # response to a regular request raises.
         body, headers = read_rejected_upgrade(e)
         raise _model_errors.openai_compatible_response_error(model_name, e.response.status_code, body, headers) from e
     except websockets.WebSocketException as e:
