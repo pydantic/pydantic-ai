@@ -73,6 +73,13 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
             return len(ctx.output) >= self.minimum['length']
 
+    @dataclass
+    class IntKeyed(Evaluator[str, str, str]):
+        minimum: dict[int, int]
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum[1]  # pragma: no cover
+
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
         value: float
@@ -152,6 +159,15 @@ def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'],
     assert forms == case.schema_forms
     report = loaded.evaluate_sync(lambda value: value)
     assert all(result.value is True for result in report.cases[0].assertions.values())
+
+
+def test_non_string_keyed_short_form():
+    """A YAML mapping with a non-string key is a positional short-form value, in the schema as in the loader."""
+    raw = yaml.safe_load('name: int-keyed\ncases: [{inputs: hello}]\nevaluators:\n- IntKeyed: {1: 4}\n')
+    schema = Dataset[str, str, str].model_json_schema_with_evaluators([IntKeyed])
+    assert list(validator_for(schema)(schema).iter_errors(raw)) == []
+    loaded = Dataset[str, str, str].from_dict(raw, custom_evaluator_types=[IntKeyed])
+    assert loaded.evaluators == [IntKeyed(minimum={1: 4})]
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])

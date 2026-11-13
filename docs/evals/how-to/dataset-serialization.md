@@ -429,7 +429,7 @@ evaluators:
     minimum: 4
 ```
 
-A mapping in the short form is read as keyword arguments, so a single parameter whose value is a mapping, such as a `dict` or a Pydantic model, uses the dict form too.
+The short form reads a mapping with string keys as keyword arguments, so a single parameter whose value is such a mapping, like a `dict` or a Pydantic model, uses the dict form too.
 
 ### 3. Multiple Parameters (Dict Form)
 
