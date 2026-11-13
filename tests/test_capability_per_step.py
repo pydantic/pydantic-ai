@@ -974,16 +974,12 @@ async def test_hooks_and_event_listeners_apply_while_loaded_and_present() -> Non
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         # A run with an event listener streams its steps, from the step the listener appears on.
+        # Only the tool-calling steps stream: the listener is gone again by the final text step.
         for part in model_fn(messages, info).parts:
-            if isinstance(part, ToolCallPart):
-                yield {
-                    0: DeltaToolCall(
-                        name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id
-                    )
-                }
-            else:
-                assert isinstance(part, TextPart)
-                yield part.content
+            assert isinstance(part, ToolCallPart)
+            yield {
+                0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id)
+            }
 
     agent = Agent(
         FunctionModel(model_fn, stream_function=stream_fn),
