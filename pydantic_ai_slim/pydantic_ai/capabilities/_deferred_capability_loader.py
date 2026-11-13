@@ -80,8 +80,11 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self._render_catalog
 
-    async def _render_catalog(self, ctx: RunContext[AgentDepsT]) -> str:
-        return await _render_deferred_capability_catalog(ctx, await self.catalog(ctx))
+    async def _render_catalog(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        # Empty while a per-step `DynamicCapability` has returned no on-demand capability yet, or no longer returns any.
+        if not (catalog := await self.catalog(ctx)):
+            return None
+        return await _render_deferred_capability_catalog(ctx, catalog)
 
     async def catalog(self, ctx: RunContext[AgentDepsT]) -> list[DeferredCapabilityEntry]:
         """Every deferred capability, with its description and whether it's active, for the current run step.

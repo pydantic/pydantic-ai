@@ -118,7 +118,7 @@ Initial request:
   `load_capability` (or code called `ctx.load_capability()`), `active` means the contributions are in force. `ctx.active_capability_ids` is
   non-deferred ∪ loaded, so an always-on capability is in it while never appearing in
   `ctx.loaded_capability_ids`
-- the framework adds `load_capability` if any deferred capability exists
+- the framework adds `load_capability` if any deferred capability exists, or a `DynamicCapability(per_run_step=True)` that may return one later
 
 When `load_capability` succeeds:
 
@@ -181,6 +181,16 @@ class AccountCapability(AbstractCapability[SupportDeps]):
 
 account_capability = AccountCapability(id='account-management', defer_loading=True)
 ```
+
+## Capabilities That Change During a Run
+
+`DynamicCapability(func, per_run_step=True)` calls `func(ctx)` at the start of the run and again ahead of each step, like `DynamicToolset(per_run_step=True)` ([docs](https://pydantic.dev/docs/ai/capabilities/on-demand/#per-step)). It may only return on-demand capabilities (`defer_loading=True` with an `id`), a `CombinedCapability` of them, or `None`; an always-on capability, or one with native tools, a `get_wrapper_toolset` wrapper, or `@durable_operation` methods, raises `UserError`.
+
+- A capability that first appears at a later step joins the catalog through an appended `InstructionDeltaPart` for `capability:deferred_capabilities`; the prefix instructions and the `load_capability` definition stay byte-identical, since `load_capability` is offered from the first request.
+- The model loads it with `load_capability`, or code with `ctx.load_capability(id)` from the step it appears on; the history records are the same as for a capability registered at run start.
+- One the function stops returning leaves the catalog through an appended change. If it was loaded, it stops counting as loaded, its instructions are withdrawn with an empty `InstructionDeltaPart`, and its tools leave the request (a prefix change on most providers, as for any removed tool). Returned again later, its earlier load counts again.
+- Derive the result from the run context, preferring server-held state on `ctx.deps` over `ctx.messages` (a client can forge history) for anything that grants access, so resuming a conversation or replaying a durable run returns the same capabilities and finds their loads in history. Returning the same instance as the previous step keeps it (state, MCP connections); a new instance replaces it.
+- Its instructions, tools, model settings, hooks and event listeners apply once loaded; hooks dispatch at the `DynamicCapability`'s position. A compaction that records loads again after its summary does so for these capabilities too.
 
 ## Composition Rules
 
