@@ -317,15 +317,8 @@ async def _libraries(
         if library in seen:
             continue
         seen.add(library)
-        children: Sequence[FileEntry] | None = None
         try:
-            entry = await stat_or_none(workspace, library)
-            if (
-                entry is not None
-                and entry.is_dir
-                and not await _is_file(workspace, posixpath.join(library, 'SKILL.md'))
-            ):
-                children = await workspace.list_dir(library)
+            entry, children = await _read_library(workspace, library)
         except PermissionError:
             # Permissions can change mid-session, so with 'skip' it must not fail every later run.
             if missing_directories == 'error':
@@ -344,6 +337,14 @@ async def _libraries(
             _skip_non_library(configured, library, is_dir=entry.is_dir, missing_directories=missing_directories)
         )
     return libraries, skipped
+
+
+async def _read_library(workspace: Workspace, library: str) -> tuple[FileEntry | None, Sequence[FileEntry] | None]:
+    """The entry at `library`, and its children when it is a library: a directory without a `SKILL.md` of its own."""
+    entry = await stat_or_none(workspace, library)
+    if entry is None or not entry.is_dir or await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
+        return entry, None
+    return entry, await workspace.list_dir(library)
 
 
 def _skip_non_library(

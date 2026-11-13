@@ -787,7 +787,7 @@ class TestSkillLibraryLayering:
         _write_skill(tmp_path / '.agents' / 'skills', 'deploy')
         unreadable = tmp_path / locked
         _write_skill(tmp_path / '.claude' / 'skills', 'review')
-        skills: Skills[Any] = Skills(['.agents/skills', '.claude/skills'], missing_directories='skip')
+        skills: Skills[None] = Skills(['.agents/skills', '.claude/skills'], missing_directories='skip')
         unreadable.chmod(mode)
         try:
             with pytest.warns(UserWarning) as caught:
