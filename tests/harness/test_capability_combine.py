@@ -207,7 +207,7 @@ def _check_background_tools(merged: Any) -> None:
     assert callable(merged.tools)
 
 
-def _check_benchmark_instructions(merged: BenchmarkInstructions[Any]) -> None:
+def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
@@ -311,7 +311,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'BenchmarkInstructions': Combines(
         'one fixed text; two would state it twice',
-        lambda: (BenchmarkInstructions[Any](), BenchmarkInstructions[Any]()),
+        lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
         _check_benchmark_instructions,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
