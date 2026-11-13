@@ -34,9 +34,13 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelTimeoutError,
     UnexpectedModelBehavior,
     UserError,
@@ -1988,12 +1992,13 @@ async def test_google_image_generation_maps_non_http_api_error():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.parametrize(
-    ('status_code', 'headers', 'error', 'expected_retry_after'),
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'),
     [
         pytest.param(
             400,
             {'retry-after': '12'},
             {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'},
+            ModelRequestRejectedError,
             12,
             id='retry-after-header',
         ),
@@ -2006,19 +2011,53 @@ async def test_google_image_generation_maps_non_http_api_error():
                 'status': 'RESOURCE_EXHAUSTED',
                 'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
             },
+            ModelRateLimitError,
             14.0,
             id='retry-info-body',
+        ),
+        pytest.param(
+            503,
+            None,
+            {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'},
+            ModelOverloadedError,
+            None,
+            id='overloaded',
+        ),
+        pytest.param(
+            400,
+            None,
+            {
+                'code': 400,
+                'message': 'API key not valid. Please pass a valid API key.',
+                'status': 'INVALID_ARGUMENT',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'}],
+            },
+            ModelAuthenticationError,
+            None,
+            id='api-key-invalid',
+        ),
+        pytest.param(
+            404,
+            None,
+            {'code': 404, 'message': 'models/gemini-2.5-flash-image is not found.', 'status': 'NOT_FOUND'},
+            ModelNotFoundError,
+            None,
+            id='not-found',
         ),
     ],
 )
 async def test_google_image_generation_status_error(
-    status_code: int, headers: dict[str, str] | None, error: dict[str, object], expected_retry_after: float
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[ModelAPIError],
+    expected_retry_after: float | None,
 ):
-    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and the wait the provider reported.
+    """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
 
-    Not a VCR test because a 4xx is easy to provoke but its wait is not: a `retry-after` header and a structured
-    error body both depend on Google's live quota state, and a recording would pin whatever that happened to be.
-    The responses here are fixed from Google's documented error format instead.
+    Not a VCR test because an error status is easy to provoke but its wait is not: a `retry-after` header and a
+    structured error body both depend on Google's live quota state, and a recording would pin whatever that happened to
+    be. The responses here are fixed from Google's documented error format instead.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
@@ -2030,7 +2069,10 @@ async def test_google_image_generation_status_error(
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
 
+    assert isinstance(exc_info.value, expected_error)
+    assert type(exc_info.value).__name__ == expected_error.__name__
     assert exc_info.value.status_code == status_code
+    assert exc_info.value.provider_error_code == error['status']
     assert exc_info.value.body == {'error': error}
     assert exc_info.value.retry_after == expected_retry_after
 

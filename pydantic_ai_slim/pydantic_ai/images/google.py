@@ -6,7 +6,13 @@ from typing import Literal, assert_never, cast
 
 import httpx2
 
-from pydantic_ai._model_errors import connection_error, google_retry_after, transport_status_error
+from pydantic_ai._model_errors import (
+    connection_error,
+    google_retry_after,
+    google_status_category,
+    http_status_category,
+    transport_status_error,
+)
 from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -235,12 +241,15 @@ class GoogleImageGenerationModel(ImageGenerationModel):
                 )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
+                status = e.status if isinstance(e.status, str) else None
                 body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
-                error = ModelHTTPError(
+                error = ModelHTTPError.for_category(
+                    google_status_category(status, e.message, body) or http_status_category(status_code, e.message),
                     status_code=status_code,
                     model_name=self.model_name,
                     body=body,
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    provider_error_code=status,
                 )
                 error.retry_after = google_retry_after(error)
                 raise error from e
