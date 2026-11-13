@@ -132,9 +132,10 @@ def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
     """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
 
     An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
-    `search_tools` function tool, which `function_tools` already carries.
+    `search_tools` function tool, which `function_tools` already carries. A `ComputerTool` replaces the
+    `computer` function tool, so it is a tools entry only when that function tool is declared.
     """
-    if isinstance(tool, MCPServerTool):
+    if isinstance(tool, MCPServerTool | ComputerTool):
         return False
     return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
 

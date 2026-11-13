@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai import Agent, RunContext, Tool, capture_run_messages
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
@@ -464,6 +464,26 @@ async def test_a_grid_model_is_told_its_grid_and_its_calls_record_it(streamed: b
     assert call.coordinate_grid == 1000
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
     assert [part.coordinate_grid for part in _computer_calls(restored)] == [1000]
+
+
+async def test_a_computer_call_a_stream_ended_on_records_its_grid_for_the_run_that_resumes_it() -> None:
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='computer', json_args='{"actions": [{"type": "click", "x": 500, "y": 500}]}')}
+        raise RuntimeError('Connection dropped.')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = _grid_agent(FunctionModel(respond, stream_function=stream, profile=GRID_PROFILE))
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='Connection dropped'):
+            async with agent.run_stream('Click.') as result:
+                await result.get_output()
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    # A run resuming the interrupted response executes its call, so the call must say it points on the grid.
+    [call] = _computer_calls(history)
+    assert call.coordinate_grid == 1000
+    assert (await agent.run(message_history=history)).output == 'ok'
 
 
 @pytest.mark.parametrize(

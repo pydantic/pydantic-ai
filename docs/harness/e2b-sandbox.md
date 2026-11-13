@@ -272,7 +272,7 @@ async def watch_the_agent() -> None:
             await E2BSandbox().destroy(backend.ref)
 ```
 
-The link includes the viewer's password, so anyone with it can see and use the desktop while the sandbox runs: don't log it or share it. The password is after the `#`, so the browser doesn't send it to E2B's servers. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC` for the link to work.
+The link includes the viewer's password, so anyone with it can see and use the desktop while the sandbox runs: don't log it or share it. The password is after the `#`, so the browser doesn't send it to E2B's servers. The viewer needs [public traffic](https://docs.e2b.dev/network/restrict-public-access), which new E2B projects turn off by default: on a sandbox without it, `live_view_url()` raises a `WorkspaceError`. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC`, with no TLS certificate (`utils/self.pem`) under it, since the viewer serves that directory to anyone.
 
 ## Clean up
 

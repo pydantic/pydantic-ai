@@ -9,7 +9,14 @@ from types import SimpleNamespace
 import anyio
 import anyio.lowlevel
 import pytest
-from daytona import DaytonaInternalServerError, DaytonaRateLimitError, DaytonaTimeoutError
+from daytona import (
+    DaytonaBadRequestError,
+    DaytonaConnectionError,
+    DaytonaError,
+    DaytonaInternalServerError,
+    DaytonaRateLimitError,
+    DaytonaTimeoutError,
+)
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import (
@@ -267,6 +274,31 @@ async def test_a_failed_release_after_a_failed_action_says_what_may_still_be_hel
         await screen(backend).act(action)
 
 
+@pytest.mark.parametrize(
+    ('error', 'ends_run'),
+    [
+        pytest.param(DaytonaTimeoutError('request timeout'), True, id='timeout'),
+        pytest.param(DaytonaConnectionError('Server disconnected'), True, id='connection-lost'),
+        pytest.param(DaytonaBadRequestError('invalid key', status_code=400), False, id='refused'),
+    ],
+)
+async def test_input_daytona_did_not_confirm_ends_the_run(
+    fake_daytona: FakeDaytona, error: DaytonaError, ends_run: bool
+) -> None:
+    """Daytona may still be carrying out input it didn't confirm, so later input must not race it; a refusal didn't run."""
+    backend, sandbox = await _started(fake_daytona)
+
+    async def unconfirmed(*args: object, **kwargs: object) -> None:
+        raise error
+
+    sandbox.computer_use.move = unconfirmed
+    with pytest.raises(WorkspaceError) as raised:
+        await screen(backend).act(MoveMouse(x=1, y=1, modifiers=('ctrl',)))
+
+    assert isinstance(raised.value, WorkspaceUnavailableError) is ends_run
+    assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
+
+
 async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona, no_pauses: None) -> None:
     backend, sandbox = await _started(fake_daytona)
 
@@ -292,6 +324,17 @@ async def test_the_live_view_url_is_a_signed_link_to_the_desktops_viewer(fake_da
 
     assert url == 'https://6080-signed.proxy.example/vnc.html?autoconnect=true&resize=scale'
     assert sandbox.desktop_calls == ['signed_preview 6080 60']
+
+
+async def test_the_live_view_url_signs_the_viewer_port_the_sandbox_sets(fake_daytona: FakeDaytona) -> None:
+    """Daytona's desktop serves its viewer on `NO_VNC_PORT`, read from the sandbox, so an attached one counts too."""
+    created = DaytonaSandboxBackend(desktop=True, env={'NO_VNC_PORT': '6090'})
+    sandbox_id = (await created.get_sandbox()).id
+    attached = DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id=sandbox_id), desktop=True)
+
+    url = await attached.live_view_url(expires_in=60)
+
+    assert url == 'https://6090-signed.proxy.example/vnc.html?autoconnect=true&resize=scale'
 
 
 async def test_looks_come_from_the_desktop(fake_daytona: FakeDaytona) -> None:
