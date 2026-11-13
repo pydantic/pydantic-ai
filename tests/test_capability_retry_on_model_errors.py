@@ -491,6 +491,26 @@ async def test_retries_share_the_request_deadline():
     assert timeouts[1] is not None and 0 < timeouts[1] < 60
 
 
+async def test_a_fallback_model_gets_a_fresh_request_deadline():
+    """The model a `ModelFallback` moves on to is sent the whole `request_timeout`, not what the last one left."""
+    primary_settings: list[ModelSettings | None] = []
+    backup_settings: list[ModelSettings | None] = []
+    primary = _recording('primary', [ModelConnectionError('primary', 'reset')] * 2, primary_settings)
+    backup = _recording('backup', [], backup_settings)
+    agent = Agent(
+        primary,
+        model_settings={'request_timeout': 60},
+        capabilities=[RetryOnModelErrors(max_attempts=2, initial_delay=0), ModelFallback(backup)],
+    )
+    with _recorded_sleeps():
+        result = await agent.run('x')
+    assert result.output == 'backup answered'
+    primary_timeouts = [(s or {}).get('request_timeout') for s in primary_settings]
+    assert primary_timeouts[0] == 60
+    assert primary_timeouts[1] is not None and 0 < primary_timeouts[1] < 60
+    assert [(s or {}).get('request_timeout') for s in backup_settings] == [60]
+
+
 async def test_a_retry_that_runs_out_of_time_reports_what_was_left(monkeypatch: pytest.MonkeyPatch):
     """The `ModelRequestTimeout` of a retry names the rest of the deadline it was sent with, as the docs say."""
     calls: list[str] = []
