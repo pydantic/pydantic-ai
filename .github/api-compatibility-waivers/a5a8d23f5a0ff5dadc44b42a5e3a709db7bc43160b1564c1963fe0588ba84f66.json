@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`clai2`'s `INCLUDED` matrix adds the `pydantic_ai_harness.sub_agents:SubAgents` factory for the renamed `sub_agents` module (#11321) and keeps the old `subagents` factory, so saved plugin rows still match.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13401"
+}

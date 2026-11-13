@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 0.x, experimental: `AcpTerminalToolset` is renamed to `ACPTerminalToolset` (#11321); the old name still imports through the module `__getattr__`, with a `HarnessDeprecationWarning`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13401"
+}
