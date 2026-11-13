@@ -142,7 +142,8 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
                 raise UserError(
                     f'Toolset {toolset_id!r} has a tool configured to run as a Temporal child workflow, but its '
                     'child workflow was not registered with the worker, because no tool in the toolset had '
-                    '`child_workflow` metadata when the worker was configured. Set the metadata on the tool, or with '
+                    '`child_workflow` metadata when the worker was configured, or because the worker was configured '
+                    'with `AgentPlugin(agent, register_workflows=False)`. Set the metadata on the tool, or with '
                     'a `SetToolMetadata` capability, before creating the worker, and register the worker through '
                     '`PydanticAIPlugin` or `AgentPlugin`.'
                 )

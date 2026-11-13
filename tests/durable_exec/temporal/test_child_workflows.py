@@ -170,8 +170,9 @@ async def test_child_workflow_metadata_added_after_worker_configured(client: Cli
     assert cause.message == snapshot(
         "Toolset 'late_child_tools' has a tool configured to run as a Temporal child workflow, but its child "
         'workflow was not registered with the worker, because no tool in the toolset had `child_workflow` metadata '
-        'when the worker was configured. Set the metadata on the tool, or with a `SetToolMetadata` capability, '
-        'before creating the worker, and register the worker through `PydanticAIPlugin` or `AgentPlugin`.'
+        'when the worker was configured, or because the worker was configured with '
+        '`AgentPlugin(agent, register_workflows=False)`. Set the metadata on the tool, or with a `SetToolMetadata` '
+        'capability, before creating the worker, and register the worker through `PydanticAIPlugin` or `AgentPlugin`.'
     )
 
 
