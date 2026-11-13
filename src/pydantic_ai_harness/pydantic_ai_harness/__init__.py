@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
+    from .capability_storage import CapabilityStorage
     from .code_mode import CodeMode
     from .coder import Coder
     from .compaction import (
@@ -111,6 +112,7 @@ __all__ = [
     'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
+    'CapabilityStorage',
     'ClampOversizedMessages',
     'ClearToolResults',
     'CodeMode',
@@ -217,6 +219,7 @@ _LAZY_EXPORTS = {
     'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
+    'CapabilityStorage': 'capability_storage',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',

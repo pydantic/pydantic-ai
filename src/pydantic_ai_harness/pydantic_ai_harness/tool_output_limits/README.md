@@ -286,16 +286,21 @@ spills_elsewhere = ToolOutputLimits(store=WorkspaceStore(workspace=LocalWorkspac
 `workspace=` takes a backend, not the `LocalWorkspace` capability. Under a durable engine such
 as Temporal it is written in-process, not through the workflow.
 
+To set one location for the files harness capabilities keep for themselves, add
+[Capability Storage](../capability_storage/) to the agent instead. The default `WorkspaceStore` then
+writes there, outside the model's file tools, so the model reads spills with `read_tool_result`.
+A store's own `workspace=` takes precedence.
+
 Spilled files are kept for the life of the workspace; they are not pruned by this capability.
 
 ### Reading spills with `FileSystem`
 
-When spills are files in the run's workspace (the default `WorkspaceStore()`, without a
-`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
-`FileSystem`'s `read_file`. The tool is marked with
+When spills are files in the run's workspace (the default `WorkspaceStore()`, without a `workspace=`
+of its own or a `CapabilityStorage` on the run) and `FileSystem` is on the agent, `read_tool_result`
+steps aside for `FileSystem`'s `read_file`. The tool is marked with
 [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
-spill marker then names that tool as it is called in the run, with the spill's path:
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The spill
+marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
 [Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
@@ -320,8 +325,8 @@ Two gaps to know about:
 
 A read-only workspace cannot take spills: the spill warns and falls back to its `then` action (a
 bounded truncation by default). When a band can spill and the run has no workspace for the store
-to write to, the run fails at its start. For runs without a workspace, use `LocalFileStore`, which
-writes to the host's temp directory:
+to write to, the run fails at its start. For runs without a workspace, add a `CapabilityStorage`,
+or use `LocalFileStore`, which writes to the host's temp directory:
 
 ```python
 from datetime import timedelta

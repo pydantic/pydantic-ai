@@ -27,12 +27,14 @@ from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolRe
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     ApprovalReviewer,
     AskUser,
     BubblewrappedWorkspace,
     CapabilityCreation,
+    CapabilityStorage,
     ClampOversizedMessages,
     ClearToolResults,
     CodeMode,
@@ -303,6 +305,7 @@ FIXTURES: dict[str, Fixture] = {
     'AskUser': lambda _: AskUser(answerer=None),
     'BubblewrappedWorkspace': lambda tmp_path: BubblewrappedWorkspace(LocalWorkspace(tmp_path)),
     'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
+    'CapabilityStorage': lambda tmp_path: CapabilityStorage(LocalWorkspaceBackend(tmp_path)),
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),

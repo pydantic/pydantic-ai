@@ -89,6 +89,7 @@ def _call_big_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
 @dataclasses.dataclass
 class _Ctx:
     workspace: Workspace
+    root_capability: None = None
 
 
 class TestDefaultStore:

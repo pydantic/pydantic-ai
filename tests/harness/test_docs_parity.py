@@ -192,6 +192,7 @@ _CAPABILITY_PAGE_META = {
     'permissions.md': ('permissions', 'Permissions'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
+    'capability-storage.md': ('capability_storage', 'Capability Storage'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
     'subagents.md': ('subagents', 'Subagents'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),

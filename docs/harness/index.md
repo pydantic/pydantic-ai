@@ -11,7 +11,7 @@ description: "Pydantic AI Harness is the official capability library for Pydanti
 
 **Pydantic AI Harness** is the official [capability](../capabilities/overview.md) and harness library for [Pydantic AI](../index.md). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](../models/overview.md), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](filesystem.md) to act in, a [plan](planning.md) it keeps current, [memory](memory.md) that carries across sessions, [sub-agents](subagents.md) to hand work to, [context management](compaction.md) for long runs, and [durable execution](../durable_execution/overview.md) that survives a restart. **Pydantic AI Harness** ships that harness.
 
-Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [80+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
+Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [90+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
 ## Quick start
 
@@ -101,7 +101,7 @@ memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/m
 limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
 ```
 
-By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored. When the workspace user cannot write to the working directory, Shell keeps its job files in a directory private to that user under the workspace's temp directory (`$TMPDIR` in its environment, or `/tmp`) instead.
+By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored. When the workspace user cannot write to the working directory, Shell keeps its job files in a directory private to that user under the workspace's temp directory (`$TMPDIR` in its environment, or `/tmp`) instead. To keep tool-output spills in a workspace of their own instead, add [Capability Storage](capability-storage.md).
 
 Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and Code Mode mounts use paths on the machine running the agent, not the run's workspace.
 
@@ -111,7 +111,7 @@ Upgrading from an earlier release? The [Coder page](coder.md#upgrading) lists wh
 
 ## Capabilities
 
-Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 80+ in all, grouped by what they give your agent:
+Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 90+ in all, grouped by what they give your agent:
 
 ### Harnesses
 
@@ -272,6 +272,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Azure Durable Task durability](azure-durable-task.md) | Harness | Run model requests, tool calls and durable operations as activities in Durable Task Scheduler orchestrations |
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
+| [Capability Storage](capability-storage.md) | Harness | Keep the files harness capabilities store for themselves, such as tool-output spills, outside the run's workspace |
 | [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
