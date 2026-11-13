@@ -72,9 +72,10 @@ class FunctionSchema:
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
     parameter_names: dict[str, str] = field(default_factory=dict[str, str])
-    """Maps the JSON schema property name of each parameter, its validation alias if it has one, to its Python name.
+    """Maps each JSON schema property named after a parameter's validation alias to that parameter's Python name.
 
-    Empty for a model-like single arg (`single_arg_name`), whose JSON schema properties are the model's fields.
+    A property named after a parameter's Python name is left out. Empty for a model-like single arg
+    (`single_arg_name`), whose JSON schema properties are the model's fields.
     """
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
@@ -269,7 +270,9 @@ def _parameter_names(fields: dict[str, core_schema.TypedDictField], single_arg_n
         alias = td_field.get('validation_alias', name)
         if not isinstance(alias, str):
             alias = next((p[0] for p in alias if isinstance(p, list) and len(p) == 1 and isinstance(p[0], str)), name)
-        parameter_names[alias] = name
+        # A property named after a parameter's Python name keeps naming that parameter, even if another's alias matches.
+        if alias not in fields:
+            parameter_names[alias] = name
     return parameter_names
 
 

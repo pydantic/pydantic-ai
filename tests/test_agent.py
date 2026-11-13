@@ -2267,6 +2267,10 @@ def text_with_var_kwargs(text: str, **kwargs: int) -> str:
     return f'text={text}'
 
 
+def text_with_hidden_arg_aliased_as_text(text: str, b: SkipJsonSchema[Annotated[int, Field(alias='text')]] = 1) -> str:
+    return f'text={text}'
+
+
 def text_alias_with_hidden_arg(text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[int] = 1) -> str:
     return f'text={text}'
 
@@ -2294,6 +2298,7 @@ def text_alias_positional_only_with_hidden_arg(
         text_alias,
         text_with_hidden_arg,
         text_with_var_kwargs,
+        text_with_hidden_arg_aliased_as_text,
         text_alias_with_hidden_arg,
         text_alias_choices_with_hidden_arg,
         text_alias_with_var_kwargs,
