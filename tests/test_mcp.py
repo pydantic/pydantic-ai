@@ -2983,7 +2983,7 @@ class TestLoadMCPToolsets:
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
-            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
+            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either `command` or `url`$"):
                 load_mcp_toolsets(config_path)
 
     async def test_load_mcp_toolsets_rejects_server_entry_with_command_and_url(self):
