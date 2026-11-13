@@ -310,6 +310,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
+    '_CoderGuidance': Rejected(
+        'Coder-local guidance; its `coder_instructions` id is set per instance, so a second copy raises rather than merging'
+    ),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
     '_ReportExhaustedRetries': Anonymous(
@@ -317,7 +320,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'OpenSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
-    'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
@@ -325,7 +329,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'BoxdSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BoxLiteSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
-    'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
+    'BubblewrappedWorkspace': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
@@ -364,6 +368,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
+    'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
@@ -482,6 +487,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'YouSearch': Narrows(
         'one You.com search configuration per id, and its domain lists are an access boundary',
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
+    'KeenableSearch': Narrows(
+        'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(), cls(num_results=3)),
     ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and tool prefixes',

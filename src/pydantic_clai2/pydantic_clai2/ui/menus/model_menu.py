@@ -56,6 +56,8 @@ class ModelSettingsSource:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
         options = model_options(model=self._settings_as)
+        if self.model != self._settings_as:  # A chain, or a plugin model shown with another's controls.
+            options.pop('base_url', None)
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
@@ -144,6 +146,7 @@ def setting_label(key: str) -> str:
         'max_tokens': 'Max Output Tokens',
         'top_p': 'Top-P (Nucleus Sampling)',
         'cache': 'Prompt Caching',
+        'base_url': 'Base URL',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
@@ -362,8 +365,11 @@ async def _connect(
 ) -> str | None:
     """Connect `provider` and pick one of its models; what `/model add` returns, or `None` to reopen the providers."""
     if provider == 'github-copilot':
-        await github_copilot.ensure_login(console=console)
+        signed_in = await github_copilot.ensure_login(console=console)
         models = await github_copilot_models()
+        if signed_in:
+            for model in models:
+                context.store.add_model(name=model.name)
         provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
         if await _browse(provider_menu, runners, messages):
             return '\n'.join(messages) or 'No changes.'

@@ -113,6 +113,10 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)'
             )
             connection.execute('CREATE TABLE IF NOT EXISTS models (name TEXT PRIMARY KEY)')
+            # Older builds never read cleanup preferences, so this table needs no schema version bump.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS kept_worktrees (path TEXT PRIMARY KEY, checkout TEXT NOT NULL)'
+            )
             # Requirement tags sit beside `plugins`, never inside a declaration: older builds validate
             # declarations strictly and never look at this table. It needs no schema version bump,
             # which those builds would refuse.
@@ -163,6 +167,20 @@ class SettingsStore:
     def load(self) -> Settings:
         """Resolve persisted overrides against built-in defaults."""
         return resolve_settings(self.overrides())
+
+    def kept_worktree(self, path: Path) -> str | None:
+        """The checkout identity whose exit cleanup was declined permanently, if saved."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT checkout FROM kept_worktrees WHERE path = ?', (str(path),)).fetchone()
+        return row[0] if row else None
+
+    def keep_worktree(self, path: Path, *, checkout: str) -> None:
+        """Suppress exit cleanup for this checkout, replacing any earlier checkout at the same path."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO kept_worktrees VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET checkout = excluded.checkout',
+                (str(path), checkout),
+            )
 
     def worktree_remove_commands(self) -> dict[str, list[str]]:
         """Read only cleanup configuration on exit; `ValueError` if it is invalid or cannot be read."""
