@@ -571,9 +571,9 @@ queued messages that history already holds. A recalled queued message leaves the
 queue while you edit it, so it does not run when the turn ends; the messages around
 it still do. Its queue row shows `(editing)` at the place it keeps, and the input
 box shows `Enter: save | Esc: stop editing | Clear it to remove`. Enter puts the
-edited message back in its place. Esc puts it back unchanged and restores the
-draft you had before pressing Up; it does not interrupt the turn, so a second Esc
-does. To remove the message, clear the draft and press Enter or Esc. If the turn
+edited message back in its place. Esc puts it back unchanged; it does not interrupt
+the turn, so a second Esc does. To remove the message, clear the draft and press
+Enter or Esc. Each of these restores the draft you had before pressing Up. If the turn
 ends and nothing else is queued, the message stays in the input as an unsent
 draft. With nothing queued, Up/down only walk history.
 While you walk history, Up/down stay on history even when a recalled slash

@@ -508,6 +508,10 @@ class LivePrompt:
         recalled = self.buffer.history_index is not None
         self.buffer.history_index = None
         self.buffer.reset()
+        if target is not None:
+            # Every way out of an edit brings back the draft set aside to make it, as Esc does.
+            self.buffer.replace(self._shelved_draft)
+            self.refresh_completions()
         if target is not None and not text:
             self.queue_changed()
             telemetry.record('prompt submitted', route='discarded queued')

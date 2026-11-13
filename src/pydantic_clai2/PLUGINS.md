@@ -2965,7 +2965,7 @@ prompt the keyboard does:
   prompt runs as a turn and a `/command` as a command, each echoed in the transcript; while a turn
   runs it queues behind it like a typed follow-up, and a `during_turn` command such as `/plugins`
   opens over it at once. Like a typed follow-up, a queued prompt moves into the user's draft
-  instead of running if they interrupt the turn with Esc or Ctrl-C; a queued `/command` stays queued. Input entered before the prompt opens, such as from `on_session_start`,
+  instead of running if they interrupt the turn with Esc or Ctrl-C; a queued `/command` or `!` shell line stays queued. Input entered before the prompt opens, such as from `on_session_start`,
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,

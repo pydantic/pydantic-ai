@@ -977,3 +977,17 @@ async def test_removing_the_front_prompt_returns_the_one_edited_after_it_to_the_
             live.feed('escape')
             assert live.queued_messages == ('b', 'c')
             live.feed('ctrl-c')
+
+
+@pytest.mark.parametrize(('edit', 'queued'), [('a2', ('a2',)), ('a', ('a',)), ('', ())])
+async def test_enter_on_an_edited_queued_prompt_brings_back_the_draft(edit: str, queued: tuple[str, ...]) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a')
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.replace(edit)
+            live.feed('enter')
+            # Saved, unchanged, or removed: the draft set aside by Up comes back, as Esc brings it back.
+            assert (live.buffer.text, live.queued_messages) == ('draft', queued)
+            live.feed('ctrl-c')
