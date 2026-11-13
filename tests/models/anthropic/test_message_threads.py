@@ -396,7 +396,7 @@ async def test_mcp_authorization_token_is_not_fixed_for_the_thread(allow_model_r
     def agent(url: str, token: str) -> Agent[None, str]:
         if in_extra_body:
             server = {'type': 'url', 'name': 'clock', 'url': url, 'authorization_token': token}
-            settings: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'mcp_servers': [server]}}
+            settings: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'mcp_servers': (server,)}}
             return Agent(model, model_settings=settings)
         tool = MCPServerTool(id='clock', url=url, authorization_token=token)
         return Agent(model, capabilities=[NativeTool(tool)], model_settings=_SETTINGS)

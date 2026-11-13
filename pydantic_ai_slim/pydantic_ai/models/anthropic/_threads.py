@@ -46,12 +46,13 @@ def thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     overrides: Mapping[str, object] = extra_body if is_str_mapping(extra_body) else {}
     # A field `extra_body` sets replaces the request's own on the wire, so the thread fixes that value instead.
     fixed.update({name: overrides[name] for name in _THREAD_FIXED_PARAMS if name in overrides})
-    servers = fixed['mcp_servers']
+    mcp_servers = fixed['mcp_servers']
+    servers: list[object] = [*mcp_servers] if isinstance(mcp_servers, list | tuple) else []
     fixed['mcp_servers'] = [
         {key: value for key, value in server.items() if key != 'authorization_token'}
         if is_str_mapping(server)
         else server
-        for server in (servers if isinstance(servers, list) else ())
+        for server in servers
     ]
     container = overrides.get('container', params['container'])
     fixed['skills'] = container.get('skills') if is_str_mapping(container) else None
