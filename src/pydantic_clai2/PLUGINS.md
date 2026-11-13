@@ -1268,7 +1268,7 @@ tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
-`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url`, which is
+`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url` and `api_key`, which are
 set in `/model settings`). For example,
 `{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
 Models, accounts, saved chains, and saved settings
@@ -2835,6 +2835,14 @@ The ones people reach for:
 
 The full list and every signature are in the
 [hooks reference](https://pydantic.dev/docs/ai/core-concepts/hooks/).
+
+Which tools a `Hooks` checks can't be read before the run, so with any `Hooks`
+bound, [code mode](docs/reference.md#code-mode-and-speculative-execution) does
+not mount the workspace: `pathlib` in `run_code` can't read or write files a
+`before_tool_execute` hook would have stopped, and file access goes through the
+file tools. A plugin that only observes keeps the mount by returning its own
+`AbstractCapability` subclass, with `@on_event` or the hook method, instead of a
+`Hooks`.
 
 ### React to a typed event: `hooks.on.event(EventClass)`
 

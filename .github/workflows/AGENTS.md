@@ -280,8 +280,17 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   tokens and duration. A validated answer adds the outcome and the number of findings. A review that
   raised has the outcome `FAILED`, the exception's class name and an error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
-  `error` event, and whether the stream holds a `step_finish`.
-  OpenCode's spans carry no prompt or completion text
+  `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
+  ends, a run the chain moved past included, it exports a child
+  [`OpenCode run` span](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan) with the same
+  failure fields and its own steps and tokens. When Actions cancels a job, it sends SIGINT to the
+  step's entry process and SIGTERM 7.5 s later, then kills the process tree 2.5 s after that; see
+  [workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
+  The review step `exec`s the runner, so the runner is that process. The first signal raises
+  `KeyboardInterrupt` in it and the runner ignores the rest, so a cancelled review exports its run
+  span and then its review span in those 10 s. The run span's export waits up to 5 s and the
+  review span's up to 30 s, so a Logfire that answers slowly can still lose the review span.
+  OpenCode's own spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
   artifacts are public, so they carry no private report. A
@@ -395,6 +404,17 @@ caller's attributes. They end with the run's plan as `opencode_fallback.plan`, a
 from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
 accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
 attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
+
+As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
+`opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
+`opencode_fallback.provider`. It also counts the `step_finish` events in the run's stream and the tokens they report,
+every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
+or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
+adds the error type, status and provider code the job log names, as `opencode_fallback.error_type`,
+`opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the stream holds a `step_finish`, as
+`opencode_fallback.step_finish`. Outside the job log, these spans are the only record of how a run the chain moved past
+failed. A `PR Review Checks` review's run spans are children of its review span; every other chain's runs share a trace
+of their own.
 
 Threat detection does not set the token. Its `gh-aw.detector.result` span records each detection's usage and outcome,
 and the provider and plan of its last run, which the detector step writes as its `provider` and `plan` outputs.

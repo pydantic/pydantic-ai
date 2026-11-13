@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
-    from .coder import Coder
+    from .coder import BenchmarkInstructions, Coder
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
@@ -103,6 +103,7 @@ __all__ = [
     'AskUser',
     'AzureDurableTaskDurability',
     'BackgroundTools',
+    'BenchmarkInstructions',
     'BoxdSandbox',
     'BoxdSandboxBackend',
     'BoxLiteSandbox',
@@ -209,6 +210,7 @@ _LAZY_EXPORTS = {
     'AskUser': 'ask_user',
     'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
+    'BenchmarkInstructions': 'coder',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
