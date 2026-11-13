@@ -551,7 +551,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             result = await self._probe(
                 ['sh', '-c', 'printf %s "$1"; exec pwd -P', 'sh', marker], 'Could not determine the working directory'
             )
-            printed = result.stdout.rpartition(marker)[2].removesuffix('\n')
+            _, found, after = result.stdout.rpartition(marker)
+            printed = after.removesuffix('\n') if found else ''
             if result.exit_code != 0 or not posixpath.isabs(printed):
                 sandbox = await self._sandbox_for_operation()
                 raise WorkspaceError(
