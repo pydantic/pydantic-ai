@@ -8,6 +8,7 @@ from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartEndE
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     RetryFeedbackPart,
     TextPart,
     ThinkingPart,
@@ -68,17 +69,33 @@ async def render_history(
         if message.run_id is not None:
             seen_runs.add(message.run_id)
         if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if is_typed_prompt(part) and not steered:
-                    await renderer.finish()
-                    print_prompt(console, prompt_text(part))
-                elif isinstance(part, ToolReturnPart):
-                    await renderer.on_stream_event(FunctionToolResultEvent(part))
+            await _render_request(message, steered=steered, console=console, renderer=renderer)
             continue
-        for index, part in enumerate(message.parts):
-            if isinstance(part, (TextPart, ThinkingPart)):
+        await _render_response(message, renderer=renderer)
+    await renderer.finish()
+
+
+async def _render_request(request: ModelRequest, *, steered: bool, console: Console, renderer: StreamRenderer) -> None:
+    """Echo `request`'s typed prompts, unless it is a steer, and show its tool results."""
+    for part in request.parts:
+        match part:
+            case UserPromptPart() if is_typed_prompt(part) and not steered:
+                await renderer.finish()
+                print_prompt(console, prompt_text(part))
+            case ToolReturnPart():
+                await renderer.on_stream_event(FunctionToolResultEvent(part))
+            case _:
+                pass
+
+
+async def _render_response(response: ModelResponse, *, renderer: StreamRenderer) -> None:
+    """Show `response`'s text, thinking, and tool calls as their parts streamed."""
+    for index, part in enumerate(response.parts):
+        match part:
+            case TextPart() | ThinkingPart():
                 await renderer.on_stream_event(PartStartEvent(index=index, part=part))
                 await renderer.on_stream_event(PartEndEvent(index=index, part=part))
-            elif isinstance(part, ToolCallPart):
+            case ToolCallPart():
                 await renderer.on_stream_event(FunctionToolCallEvent(part))
-    await renderer.finish()
+            case _:
+                pass

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import is_dataclass
+from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic import JsonValue
 
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
+from pydantic_ai.durable_exec import ExternalEventWaiter, external_event_scope
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -498,6 +501,19 @@ class TestToolSelection:
         assert reviews == []
 
 
+class _DecidingWaiter(ExternalEventWaiter):
+    """Stands in for a durable engine: passes a token to `ask` and returns a fixed decision."""
+
+    def __init__(self, decision: JsonValue) -> None:
+        self.decision = decision
+
+    async def wait(
+        self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
+    ) -> JsonValue:
+        await ask('token')
+        return self.decision
+
+
 class TestComposition:
     async def test_the_reviewer_answers_before_a_human_handler_listed_ahead_of_it(self) -> None:
         handed_to_person: list[str] = []
@@ -517,6 +533,27 @@ class TestComposition:
         result = await agent.run('go')
         assert result.output == 'done'
         assert handed_to_person == ['call-2'], 'the person only sees what the reviewer did not approve'
+        assert sorted(ran) == ['danger:1', 'danger:2']
+
+    async def test_a_durable_approval_waits_only_for_what_the_reviewer_did_not_approve(self) -> None:
+        asked: list[str] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            asked.extend(call.tool_call_id for call in requests.approvals)
+
+        waiter = _DecidingWaiter({'approvals': {'call-2': True}})
+        ran: list[str] = []
+        model = _reviewer_model(lambda prompt: 'no' if '"x": 1' in prompt else 'yes')
+        agent = _agent(
+            HandleDeferredToolCalls[None](ask),
+            _reviewer(model),
+            outer=_outer_model(_danger(1, 'call-1'), _danger(2, 'call-2')),
+            ran=ran,
+        )
+        with external_event_scope(waiter):
+            result = await agent.run('go')
+        assert result.output == 'done'
+        assert asked == ['call-2'], 'the person is only asked about what the reviewer did not approve'
         assert sorted(ran) == ['danger:1', 'danger:2']
 
     async def test_a_tool_call_judge_still_blocks_a_call_the_reviewer_approved(self) -> None:

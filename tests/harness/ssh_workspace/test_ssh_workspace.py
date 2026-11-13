@@ -25,7 +25,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox
+from pydantic_ai_harness.bubblewrap_sandbox import BubblewrappedWorkspace
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend, _backend as ssh_backend
 from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
@@ -237,7 +237,7 @@ async def test_a_long_quote_heavy_shell_command_starts(tools: FakeRemoteTools, t
     """
     remote = SSHWorkspace[None]('box', working_dir=str(tmp_path))
     output = await call_tool(
-        [BubblewrapSandbox[None](remote) if sandboxed else remote, Shell[None](tools=['shell'])],
+        [BubblewrappedWorkspace[None](remote) if sandboxed else remote, Shell[None](tools=['shell'])],
         'shell',
         {'command': ': ' + "'a' " * 15_000 + '\necho started'},
     )
