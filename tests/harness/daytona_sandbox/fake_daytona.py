@@ -505,6 +505,7 @@ class FakeSandbox:
         self.id = sandbox_id
         self.name: str | None = None
         self.state = SandboxState.STARTED
+        self.env: dict[str, str] | None = None
         self.public = False
         # Whether the control plane has it public; `public` only learns it on `refresh_data`, as in the SDK.
         self.server_public = False
@@ -606,6 +607,7 @@ class FakeClient:
         sandbox = FakeSandbox(f'sb-{len(self.owner.create_params) + 1}', host_root=self.owner.host_root)
         sandbox.client = self
         sandbox.name = params.name
+        sandbox.env = params.env_vars
         self.owner.sandboxes.append(sandbox)
         self.owner.create_params.append(params)
         self.owner.create_started.set()
