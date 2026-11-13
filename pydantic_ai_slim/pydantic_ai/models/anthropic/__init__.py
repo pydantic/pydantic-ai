@@ -1105,8 +1105,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] and `'thread_fingerprint'`
                 with (an HMAC-SHA256), so stored history can't be used to test guesses at content redacted from
                 it later, and a client sending the history can't swap in another conversation's response ID, or
-                another configuration's fingerprint, to continue a thread. Every model continuing the same conversations needs the same key; a response
-                recorded with another key, or none, starts a new thread rather than being continued.
+                another configuration's fingerprint, to continue a thread. Every model continuing the same
+                conversations needs the same key; a response recorded with another key, or none, starts a new
+                thread rather than being continued.
         """
         self._model_name = model_name
         self._history_digest_key = history_digest_key

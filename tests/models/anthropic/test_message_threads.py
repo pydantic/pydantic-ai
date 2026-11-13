@@ -774,7 +774,7 @@ async def test_history_digest_key_binds_the_response_id(
 async def test_history_digest_key_binds_the_fingerprint(
     allow_model_requests: None, copied: bool, thread: dict[str, str]
 ):
-    """With `history_digest_key`, a client can't copy another configuration's fingerprint to continue a thread under it."""
+    """With `history_digest_key`, a fingerprint copied from another configuration doesn't continue a thread."""
     api = _Api()
     async with _model(api, history_digest_key=b'secret') as model:
         brief = Agent(model, instructions='Be brief.', model_settings=_SETTINGS)
