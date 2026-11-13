@@ -31,6 +31,39 @@ In the environment, which only you can read, rather than on the command line `ps
 """
 
 
+def _list_live_sessions() -> None:
+    from pydantic_clai2.runtime.live_registry import ControlProtocolError, listing
+    from pydantic_clai2.ui.rendering.tool_output import terminal_text
+
+    if sys.platform == 'win32':
+        raise SystemExit('`clai2 sessions` requires Unix sockets.')
+    try:
+        sessions = [session for record in asyncio.run(listing()) for session in record.sessions]
+    except (ControlProtocolError, OSError) as exc:
+        raise SystemExit(terminal_text(str(exc), keep='')) from exc
+    prefixes = _unique_prefixes({session.id for session in sessions})
+    if sessions:
+        print('ID\tName\tStatus\tTitle\tWorkspace')
+        for session in sessions:
+            fields = (prefixes[session.id], session.name, session.status, session.title, session.workspace)
+            print('\t'.join(terminal_text(value, keep='') for value in fields))
+    else:
+        print('No live sessions.')
+
+
+def _unique_prefixes(identifiers: set[str]) -> dict[str, str]:
+    """The shortest prefix of each ID, from eight characters up, that no other ID shares."""
+    prefixes: dict[str, str] = {}
+    for identifier in identifiers:
+        length = min(8, len(identifier))
+        while length < len(identifier) and any(
+            other != identifier and other.startswith(identifier[:length]) for other in identifiers
+        ):
+            length += 1
+        prefixes[identifier] = identifier[:length]
+    return prefixes
+
+
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
@@ -95,11 +128,19 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
-    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'update'))
+    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'sessions', 'update'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = _parse_args(parser)
     _resume_source(args)
     _validate_args(args, parser)
+    if args.command == 'sessions':
+        _list_live_sessions()
+        return
+    _launch(args, parser, splash)
+
+
+def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: Splash | None) -> None:
+    """Run the parsed command, or start the session it asks for."""
     _resolve_paths(args)
     try:
         from pydantic_ai.usage import UsageLimits
@@ -128,7 +169,7 @@ def run(*, splash: Splash | None = None) -> None:
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
+            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
         project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
@@ -225,10 +266,12 @@ def _resolve_paths(args: argparse.Namespace) -> None:
 
 def _run_command(args: argparse.Namespace, store: 'SettingsStore') -> str:
     """Run `clai2 config` or `clai2 plugins` with its arguments, returning what to print."""
-    from pydantic_clai2.commands import config_command, plugins_command
+    from pydantic_clai2.commands import config_command, plugins_command, refuse_widening
 
-    handler = config_command if args.command == 'config' else plugins_command
-    return handler(store, args.arguments)
+    if args.command == 'plugins':
+        return plugins_command(store, args.arguments)
+    refuse_widening(store, args.arguments)
+    return config_command(store, args.arguments)
 
 
 def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Worktree | None') -> None:
@@ -323,9 +366,12 @@ def _settings_for(
     return settings_for
 
 
-def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
-    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run."""
-    from pydantic_clai2.runtime.worktrees import open_worktree
+def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Worktree':
+    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run.
+
+    A checkout a saved choice keeps, or whose choice cannot be read, is not marked for removal once pushed.
+    """
+    from pydantic_clai2.runtime.worktrees import kept_checkout, open_worktree
 
     worktree = open_worktree(name=name)
     if headless:
@@ -333,7 +379,12 @@ def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
         print(worktree.notice, file=sys.stderr)
     else:
         # Exit cleanup needs a terminal; piped input keeps even an unchanged checkout.
-        worktree = replace(worktree, remove_if_unchanged=worktree.created and sys.stdin.isatty())
+        terminal = sys.stdin.isatty()
+        worktree = replace(
+            worktree,
+            remove_if_unchanged=worktree.created and terminal,
+            remove_if_pushed=terminal and kept_checkout(worktree.path, store=store) is False,
+        )
     os.chdir(worktree.path)
     return worktree
 
@@ -345,16 +396,27 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
     worktree = current_worktree()
     if worktree is None or relaunched is None:
         return worktree
-    head, _, new_branch = relaunched.partition(' ')
+    first, _, second = relaunched.partition(' ')
+    created, terminal = first != 'reopened', sys.stdin.isatty()
     return replace(
-        worktree, head=head, created=True, new_branch=new_branch == 'new-branch', remove_if_unchanged=sys.stdin.isatty()
+        worktree,
+        head=first if created else second,
+        created=created,
+        new_branch=second == 'new-branch',
+        remove_if_unchanged=created and terminal,
+        remove_if_pushed=terminal,
     )
 
 
 def _remember_worktree(worktree: 'Worktree | None') -> None:
-    """Hand a checkout exit would remove to the relaunched build, which starts without `--worktree`."""
-    if worktree is not None and worktree.remove_if_unchanged:
-        os.environ[_RELAUNCH_WORKTREE] = f'{worktree.head} new-branch' if worktree.new_branch else worktree.head
+    """Hand a checkout exit may remove to the relaunched build, which starts without `--worktree`."""
+    if worktree is None or not (worktree.remove_if_unchanged or worktree.remove_if_pushed):
+        return
+    head = worktree.head
+    # An older build takes the first word as the commit of a checkout it created; `reopened` never matches, so it asks.
+    os.environ[_RELAUNCH_WORKTREE] = (
+        f'{head} new-branch' if worktree.new_branch else head if worktree.created else f'reopened {head}'
+    )
 
 
 def relaunch_argv(
@@ -423,10 +485,12 @@ def _continue_session(args: argparse.Namespace, store: 'SettingsStore') -> None:
 
 async def _latest_session(store: 'SettingsStore') -> str | None:
     """The ID of the newest unarchived conversation saved in this directory, for `--continue`; `None` when there is none."""
+    from anyio import to_thread
+
     from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
-    workspace = str(Path.cwd().resolve())  # As `Session.workspace` saves it.
+    workspace = str(await to_thread.run_sync(lambda: Path.cwd().resolve()))  # As `Session.workspace` saves it.
     offset = 0
     # The listing spans every directory, newest first, so page through it until one was saved here.
     while page := await conversations.listing(limit=200, offset=offset, archived=False):
@@ -467,7 +531,22 @@ def _resume_source(args: argparse.Namespace) -> None:
             args.resume_from, args.resume = source, session_id
 
 
+def _validate_session_listing(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.command == 'sessions' and (
+        args.arguments
+        or args.model is not None
+        or args.prompt is not None
+        or args.request_limit is not None
+        or args.database is not None
+        or args.web
+        or args.port is not None
+        or args.token_file is not None
+    ):
+        parser.error('`sessions` does not accept arguments or chat/settings options')
+
+
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    _validate_session_listing(args, parser)
     if args.command and (
         args.resume is not None
         or args.continue_session
@@ -478,7 +557,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     ):
         parser.error(
             '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
-            ' config or plugins'
+            ' config, plugins, or sessions'
         )
     if args.update and (
         args.command
@@ -493,7 +572,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.request_limit is not None
     ):
         parser.error(
-            '--update cannot be combined with config, plugins, --prompt, --web, --resume, --continue, '
+            '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume, --continue, '
             '--session-id, --agent, --worktree, --model, or --request-limit'
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
@@ -515,7 +594,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 def _validate_web_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.web:
         if args.command or args.prompt is not None or args.agent is not None:
-            parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
+            parser.error('--web cannot be combined with config, plugins, sessions, --prompt, or --agent')
         if args.resume == '':
             parser.error('--web requires an explicit --resume SESSION-ID')
     elif args.port is not None or args.token_file is not None:
@@ -528,7 +607,7 @@ def _validate_prompt_args(args: argparse.Namespace, parser: argparse.ArgumentPar
     if args.prompt is None:
         return
     if args.command:
-        parser.error('--prompt cannot be combined with config or plugins')
+        parser.error('--prompt cannot be combined with config, plugins, or sessions')
     if not args.prompt.strip():
         parser.error('--prompt requires non-empty text')
     if args.resume == '':
