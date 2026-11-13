@@ -31,6 +31,7 @@ from typing import Any
 
 import pytest
 from anyio.from_thread import start_blocking_portal
+from pydantic import BaseModel
 from pydantic_monty import MontyRefusedError
 
 try:
@@ -265,6 +266,32 @@ class RemoteCodeModeWorkflow:
         _request_id.set('req-42')  # pragma: no cover
         result = await remote_code_mode_agent.run(prompt)  # pragma: no cover
         return str(result.output)  # pragma: no cover
+
+
+class Total(BaseModel):
+    total: int
+
+
+def _submit_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    code = 'total = await add(a=40, b=2)\nfinal_result(total=total)'
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='submit')])
+
+
+submit_agent = Agent(
+    FunctionModel(_submit_model),
+    name='code_mode_temporal_submit_agent',
+    output_type=Total,
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[CodeMode(allow_final_output=True), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SubmitWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> dict[str, int]:
+        result = await submit_agent.run(prompt)
+        return {'total': result.output.total, 'requests': result.usage.requests}
 
 
 @workflow.defn
@@ -556,3 +583,21 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
     assert replay_result.replay_failure is None
+
+
+async def test_code_mode_submits_final_output_in_temporal_workflow(client: Client) -> None:
+    """`run_code` runs in the workflow under Temporal, so the code can submit the run's output."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitWorkflow],
+        plugins=[AgentPlugin(submit_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        result = await client.execute_workflow(
+            SubmitWorkflow.run,
+            args=['Add 40 and 2'],
+            id='test_code_mode_temporal_submit',
+            task_queue=TASK_QUEUE,
+        )
+    assert result == {'total': 42, 'requests': 1}

@@ -22,7 +22,7 @@ from typing_extensions import TypedDict, TypeIs
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -78,6 +78,8 @@ from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
+from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -613,6 +615,12 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     )
 
 
+_OUTPUT_FUNCTION_NOTE = (
+    'Calling this submits the final output of the agent run and stops the code. If the output is rejected, '
+    'the errors are returned instead, and variables defined so far are kept, so you can fix the value and call it again.'
+)
+
+
 _SEARCH_TOOLS_MODIFIER = (
     ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
 )
@@ -687,6 +695,9 @@ class _RunCodeTool(ToolsetTool[AgentDepsT]):
     wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
     """The wrapped toolset's tools, keyed by original name."""
 
+    output_names: dict[str, str] = field(default_factory=dict[str, str])
+    """Maps the sandbox names of output functions (`allow_final_output`) to the output tools they submit to."""
+
 
 @dataclass
 class RunCodeExecution:
@@ -705,8 +716,17 @@ class RunCodeExecution:
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
     user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
-    # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
-    usage_limit_exceeded: UsageLimitExceeded | None = None
+    # An error that ends the run, like a usage limit a nested call hit or an output guardrail blocking a
+    # submission. Snippet code can catch it at the call site, so the feed re-raises it once it stops.
+    run_ending_error: UsageLimitExceeded | OutputBlocked | None = None
+    # Set once the snippet calls an output function (`allow_final_output`): `'accepted'`, or the
+    # retry the rejected output answers `run_code` with. The snippet stops there either way.
+    output_submission: Literal['accepted'] | ToolReturnPart | None = None
+
+    @property
+    def output_accepted(self) -> bool:
+        """Whether the snippet submitted an output that was accepted."""
+        return self.output_submission == 'accepted'
 
     def next_tool_call_id(self, *, max_tool_calls: int) -> str:
         """Reserve nested-call budget and return the next stable child call ID."""
@@ -729,7 +749,7 @@ class RunCodeExecution:
         )
         if outcome.error is not None:
             if outcome.usage_limit_exceeded is not None:
-                self.usage_limit_exceeded = outcome.usage_limit_exceeded
+                self.run_ending_error = outcome.usage_limit_exceeded
             raise outcome.error
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
@@ -766,10 +786,10 @@ def _started_calls_note(execution: RunCodeExecution) -> str:
     return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
 
 
-def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
-    """Re-raise the usage limit a nested call hit, which the snippet may have caught at its call site."""
-    if execution.usage_limit_exceeded is not None:
-        raise execution.usage_limit_exceeded
+def _raise_run_ending_error(execution: RunCodeExecution) -> None:
+    """Re-raise the error that ends the run, which the snippet may have caught at its call site."""
+    if execution.run_ending_error is not None:
+        raise execution.run_ending_error
 
 
 def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
@@ -802,7 +822,7 @@ def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution
             'Check the calls already started before continuing, and do not replay '
             'completed side effects.'
         )
-    _raise_usage_limit_exceeded(execution)
+    _raise_run_ending_error(execution)
     return ModelRetry(message)
 
 
@@ -887,6 +907,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     The [`CodeMode`][pydantic_ai_harness.CodeMode] capability defaults to `True`; this toolset
     deliberately keeps `False` for direct construction, so a hand-built toolset keeps its behavior.
+    """
+
+    allow_final_output: bool = field(default=False, kw_only=True)
+    """Make the agent's outputs callable from the sandbox, so code can submit the run's final output.
+
+    See [`CodeMode.allow_final_output`][pydantic_ai_harness.CodeMode.allow_final_output].
     """
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
@@ -1086,6 +1112,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 callable_defs=callable_defs,
             )
 
+        output_names = self._add_output_functions(ctx, callable_defs) if self.allow_final_output else {}
+
         # `dynamic_catalog` keeps the catalog out of `run_code.description` (cache-stable
         # tool-defs block) and surfaces it via `get_instructions` instead. Stash it for the
         # `get_instructions` call later this step; empty string means "nothing to surface".
@@ -1139,8 +1167,34 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             callable_defs=callable_defs,
             sanitized_to_original=sanitized_to_original,
             wrapped_tools=wrapped_tools,
+            output_names=output_names,
         )
         return result
+
+    @staticmethod
+    def _add_output_functions(ctx: RunContext[AgentDepsT], callable_defs: dict[str, ToolDefinition]) -> dict[str, str]:
+        """Add a sandbox function per output the run can submit, returning their sandbox names mapped to the output's.
+
+        They're rendered as `def`, so a call completes before the next statement, and declared to
+        return `None`, since a call stops the snippet instead of returning.
+        """
+        output_names: dict[str, str] = {}
+        for tool_def in ctx.output_tool_defs:
+            safe_name = sanitize_tool_name(tool_def.name)
+            if safe_name in callable_defs or safe_name == RUN_CODE_TOOL_NAME:
+                raise UserError(
+                    f'Output tool {tool_def.name!r} conflicts with a function already available in the code mode '
+                    'sandbox. Rename one of them, for example with `ToolOutput(name=...)`.'
+                )
+            callable_defs[safe_name] = replace(
+                tool_def,
+                name=safe_name,
+                description=f'{tool_def.description or ""}\n\n{_OUTPUT_FUNCTION_NOTE}'.strip(),
+                return_schema={'type': 'null'},
+                sequential=True,
+            )
+            output_names[safe_name] = tool_def.name
+        return output_names
 
     async def _place_tool(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> _Placement:
         """Where `get_tools` puts one wrapped tool, before `_place_hidden_tools` settles the hidden ones."""
@@ -1224,7 +1278,43 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         tool: _RunCodeTool[AgentDepsT],
         execution: RunCodeExecution,
     ) -> Any:
-        """Execute one REPL feed and accumulate it into a logical `run_code` call."""
+        """Execute one REPL feed and accumulate it into a logical `run_code` call.
+
+        Once the snippet has called an output function, the outcome of that call decides the result,
+        whatever happened in the feed after it: an accepted output completes `run_code` (and later eager
+        feeds of the same call don't run), and a rejected one answers it with the rejection.
+        """
+        if execution.output_accepted:
+            return None
+        result: Any = None
+        try:
+            result = await self._run_feed(code, ctx, tool, execution)
+        except UsageLimitExceeded:
+            raise
+        except Exception:
+            if execution.output_submission is None:
+                raise
+        if isinstance(rejection := execution.output_submission, ToolReturnPart):
+            # The history keeps the calls the snippet made, the rejected output call among them.
+            rejection = replace(rejection, metadata=execution.make_tool_return(None).metadata)
+            if execution.capture.joined:
+                # Keep what the snippet printed before it was stopped, as for any other failed snippet.
+                content = rejection.content
+                feedback = content if isinstance(content, str) else to_json(content, indent=2).decode()
+                rejection = replace(
+                    rejection, content=execution.capture.prepend_to(f'The output was rejected:\n{feedback}')
+                )
+            raise ToolRetryError(rejection)
+        return None if execution.output_accepted else result
+
+    async def _run_feed(
+        self,
+        code: str,
+        ctx: RunContext[AgentDepsT],
+        tool: _RunCodeTool[AgentDepsT],
+        execution: RunCodeExecution,
+    ) -> Any:
+        """Run one REPL feed, turning sandbox failures into retries for the model."""
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
@@ -1313,7 +1403,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 raise
             raise retry from exc
 
-        _raise_usage_limit_exceeded(execution)
+        _raise_run_ending_error(execution)
         result = completed.output
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
@@ -1389,13 +1479,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # worker transparently. Reset so the retry starts from a fresh,
                 # type-checked session.
                 await run_state.reset()
-                _raise_usage_limit_exceeded(execution)
+                _raise_run_ending_error(execution)
                 return ModelRetry(f'{self._worker_failure_message(error)}{_started_calls_note(execution)}')
             case Exception():
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.
                 await run_state.reset()
-                _raise_usage_limit_exceeded(execution)
+                _raise_run_ending_error(execution)
                 error_text = (
                     type(error).__name__ if self.monty_sandbox is not None else f'{type(error).__name__}: {error}'
                 )
@@ -1411,7 +1501,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 if not is_sandbox_panic(error):
                     return None
-                _raise_usage_limit_exceeded(execution)
+                _raise_run_ending_error(execution)
                 return ModelRetry(
                     'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
                     f'{_started_calls_note(execution)}'
@@ -1435,13 +1525,21 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Refusing here means no task is created; the executor hands the error to the sandbox at
         the call site, so calls that already completed keep their recorded results.
         """
+        if execution.output_submission is not None or isinstance(execution.run_ending_error, OutputBlocked):
+            # Code that caught the stop doesn't get to run more tools after submitting, including a submission an
+            # output guardrail blocked, which only `_submit_output` records.
+            raise RuntimeError(
+                'This code already submitted the final output, or had a submission blocked, so it cannot call more '
+                'functions.'
+            )
         original_name = tool.sanitized_to_original.get(sandbox_name, sandbox_name)
         tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
-        call_part = ToolCallPart(
-            tool_name=original_name,
-            args=schema_arg_names(tool.callable_defs[sandbox_name], kwargs),
-            tool_call_id=tool_call_id,
-        )
+        args = schema_arg_names(tool.callable_defs[sandbox_name], kwargs)
+        if (output_name := tool.output_names.get(sandbox_name)) is not None:
+            return self._submit_output(
+                ctx, execution, ToolCallPart(tool_name=output_name, args=args, tool_call_id=tool_call_id)
+            )
+        call_part = ToolCallPart(tool_name=original_name, args=args, tool_call_id=tool_call_id)
         speculation = self.speculation
         if speculation is not None:
             claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
@@ -1472,6 +1570,41 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             guard = speculation.unsafe_call()
         with guard:
             return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
+
+    @staticmethod
+    async def _submit_output(ctx: RunContext[AgentDepsT], execution: RunCodeExecution, call_part: ToolCallPart) -> None:
+        """Submit the run's output from the sandbox, then stop the snippet by raising at its call site.
+
+        Raising a regular exception (rather than one Monty can't deliver into the sandbox) keeps the
+        REPL usable, so after a rejection the model can fix the variables it built and call again.
+        """
+        tool_call_id = call_part.tool_call_id
+        execution.nested_calls[tool_call_id] = call_part
+        # An output function can have side effects, so it waits for a parallel input guard like any tool.
+        if not await input_guardrails_allow(ctx):
+            raise RuntimeError(
+                f'Output {call_part.tool_name!r} was not submitted: an input guardrail did not allow the prompt.'
+            )
+        try:
+            await ctx.submit_output(call_part.tool_name, call_part.args_as_dict())
+        except ToolRetryError as e:
+            rejection = e.tool_retry
+            assert isinstance(rejection, ToolReturnPart), '`submit_output` answers the `run_code` call'
+            execution.output_submission = rejection
+            execution.nested_returns[tool_call_id] = replace(
+                rejection, tool_name=call_part.tool_name, tool_call_id=tool_call_id
+            )
+            raise RuntimeError('The output was rejected, so the code stopped here.') from None
+        except (UsageLimitExceeded, OutputBlocked) as e:
+            # Both end the run, as they would outside the sandbox. Snippet code can catch them at the call
+            # site, so the feed re-raises them once it stops.
+            execution.run_ending_error = e
+            raise
+        execution.output_submission = 'accepted'
+        execution.nested_returns[tool_call_id] = ToolReturnPart(
+            tool_name=call_part.tool_name, content='Final output submitted.', tool_call_id=tool_call_id
+        )
+        raise RuntimeError('The final output was submitted, so the code stopped here.')
 
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
