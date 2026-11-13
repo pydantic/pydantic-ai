@@ -174,10 +174,6 @@ largest size that fits. A 1280x800 screen fits every model.
 
 ## Watching a run
 
-A cloud desktop's `live_view_url()` gives a link to watch the run live, or take over; see
-[Daytona](../daytona_sandbox/#give-the-agent-a-desktop), [E2B](../e2b_sandbox/#give-the-agent-a-desktop) and
-[boxd](../boxd_sandbox/#give-the-agent-a-desktop).
-
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-all-events) can save or show them as the run goes.
 

@@ -124,27 +124,7 @@ Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 128
 
 Daytona's desktop can't press F13 to F24, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type emoji; the agent is told when it asks. On Daytona's Tier 1 and 2, a sandbox can only reach package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 
-To watch the agent, or take over, open the desktop in your browser. Build the backend yourself and get a link from it before the run:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
-from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
-
-agent = Agent('{{ anthropic:medium }}', capabilities=[DaytonaSandbox(desktop=True), ComputerUse()])
-
-
-async def watch_the_agent() -> None:
-    backend = DaytonaSandboxBackend(desktop=True)
-    try:
-        print(await backend.live_view_url())  # starts the sandbox and its desktop
-        result = await agent.run('Open a terminal and find out which Python version is installed.', workspace=backend)
-        print(result.output)
-    finally:
-        await backend.aclose()
-```
-
-Anyone with the link can see and use the desktop. The link works for an hour by default, or for `expires_in` seconds if you pass it. A browser that opened it stays signed in to the desktop for up to an hour after that, whatever `expires_in` is. A public sandbox's preview links need no token, so its desktop is refused: make it private with `set_public(False)` first.
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run). A public sandbox's desktop is refused, since anyone could open it through the sandbox's preview link: make it private with `set_public(False)` first.
 
 ## Reattach later
 

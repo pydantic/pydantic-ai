@@ -1,7 +1,7 @@
-"""Runs the shell scripts `E2BSandboxBackend(desktop=True)` sends, captured from the fake SDK, in a real shell.
+"""Runs the desktop start script `E2BSandboxBackend(desktop=True)` sends, captured from the fake SDK, in a real shell.
 
-The other E2B desktop tests answer the scripts by matching their text, so these check that the scripts parse and do
-what they should, with stub programs for the sandbox's own.
+The other E2B desktop tests answer the scripts by matching their text, so these check that the start script parses and
+does what it should, with stub programs for the sandbox's own.
 """
 
 from __future__ import annotations
@@ -21,37 +21,29 @@ from .fake_e2b import FakeE2B
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
-    # `-x NAME` prints the PIDs the test listed; `-f PATTERN` matches the command lines in `starts`.
-    'pgrep': '[ "$1" = -f ] && exec grep -- "$2" "$bin/starts" 2>/dev/null; cat "$bin/pgrep-$2" 2>/dev/null',
+    # `-x NAME` prints the PIDs the test listed.
+    'pgrep': 'cat "$bin/pgrep-$2" 2>/dev/null',
     # Stays up, as XFCE's session does; `startxfce4-fails` makes it exit with an error instead.
     'startxfce4': '[ -e "$bin/startxfce4-fails" ] && { echo no session bus; exit 17; }; '
     'touch "$bin/xfce-started"; exec sleep 1',
-    # The viewer's two programs: each logs its command line, the one novnc_proxy runs websockify with, prints its
-    # ready line and stays up.
-    'x11vnc': '[ "$1" = -storepasswd ] && { echo "$2" > "$3"; exit; }; '
-    'echo "x11vnc $*" >> "$bin/starts"; echo PORT=5900; exec sleep 1',
-    'novnc_proxy': 'echo "websockify --web $6 $4 $2" >> "$bin/starts"; echo Navigate to this URL; exec sleep 1',
 }
 
 
-async def _scripts(fake_e2b: FakeE2B) -> tuple[str, str]:
-    """The desktop start script and the viewer script, as the backend sends them."""
+async def _start_script(fake_e2b: FakeE2B) -> str:
+    """The desktop start script, as the backend sends it."""
     scripts: list[str] = []
 
     def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
         args = shlex.split(command)
         if args[:2] == ['sh', '-c']:
             scripts.append(args[2])
-        return ('  Width: 1280\n  Height: 800\n' if 'xwininfo' in command else 'password'), '', 0
+        return ('  Width: 1280\n  Height: 800\n' if 'xwininfo' in command else ''), '', 0
 
     fake_e2b.responder = respond
-    backend = E2BSandboxBackend(desktop=True)
-    await screen(backend).display_size()
-    await backend.live_view_url()
-    # The viewer starts the display again first, with the same script.
-    start, again, viewer = scripts
-    assert again == start and 'Xvfb' in start and 'novnc_proxy' in viewer
-    return start, viewer
+    await screen(E2BSandboxBackend(desktop=True)).display_size()
+    (start,) = scripts
+    assert 'Xvfb' in start
+    return start
 
 
 def _run(script: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -62,72 +54,28 @@ def _run(script: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess
         for name, body in _STUBS.items():
             (bin_dir / name).write_text(f'#!/bin/sh\nbin={bin_dir}\n{body}\n')
             (bin_dir / name).chmod(0o755)
-    for old, new in [('/tmp/', f'{tmp_path}/'), ('/proc/', f'{tmp_path}/proc/'), ('/opt/noVNC/utils/', f'{bin_dir}/')]:
+    for old, new in [('/tmp/', f'{tmp_path}/'), ('/proc/', f'{tmp_path}/proc/')]:
         script = script.replace(old, new)
     env = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'LC_ALL': 'C'}  # `C`, so `tr` takes `/dev/urandom`'s bytes
     return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
 
 
-async def test_the_scripts_are_valid_shell(fake_e2b: FakeE2B) -> None:
-    for script in await _scripts(fake_e2b):
-        if shutil.which('dash'):  # pragma: no branch - CI has it; a laptop may not
-            assert subprocess.run(['dash', '-n', '-c', script], capture_output=True, text=True).stderr == ''
-        if shutil.which('shellcheck'):  # pragma: no branch - CI has it; a laptop may not
-            # SC2046 and SC2086 flag the unquoted `/proc/$(...)` and `/proc/$p` paths, which hold a PID or nothing.
-            check = ['shellcheck', '-s', 'sh', '-e', 'SC2046,SC2086', '-']
-            result = subprocess.run(check, input=script, capture_output=True, text=True)
-            assert result.returncode == 0, result.stdout
-
-
-async def test_the_viewer_keeps_its_password_and_starts_once(fake_e2b: FakeE2B, tmp_path: Path) -> None:
-    _, viewer = await _scripts(fake_e2b)
-
-    first, second = _run(viewer, tmp_path), _run(viewer, tmp_path)
-
-    assert (first.returncode, second.returncode) == (0, 0), first.stderr + second.stderr
-    password = (tmp_path / 'pydantic-ai-viewer' / 'password').read_text()
-    assert len(password) == 8 and password.isalnum()
-    assert first.stdout == second.stdout == password
-    assert (tmp_path / 'pydantic-ai-viewer' / 'passwd').read_text() == f'{password}\n'
-    x11vnc, websockify = (tmp_path / 'bin' / 'starts').read_text().splitlines()
-    assert x11vnc.startswith('x11vnc -display :1 ')
-    # `--web`, else novnc_proxy serves its working directory if that has a `vnc.html`.
-    assert websockify == 'websockify --web /opt/noVNC 6080 127.0.0.1:5900'
-
-
-async def test_the_viewer_starts_its_own_beside_a_foreign_one(fake_e2b: FakeE2B, tmp_path: Path) -> None:
-    """A VNC server without our password, such as one `e2b_desktop` started, and a viewer serving another web root,
-    which would hand out its files without the password, don't count as ours."""
-    _, viewer = await _scripts(fake_e2b)
-    _run('true', tmp_path)  # writes the stubs
-    foreign = 'x11vnc -display :0 -nopw -forever\nwebsockify --web /home/user 6080 127.0.0.1:5900\n'
-    (tmp_path / 'bin' / 'starts').write_text(foreign)
-
-    result = _run(viewer, tmp_path)
-
-    assert result.returncode == 0, result.stderr
-    started = (tmp_path / 'bin' / 'starts').read_text().removeprefix(foreign).splitlines()
-    assert [line.split()[0] for line in started] == ['x11vnc', 'websockify']
-
-
-async def test_the_viewer_refuses_to_serve_a_certificate_key(fake_e2b: FakeE2B, tmp_path: Path) -> None:
-    """A `self.pem` beside novnc_proxy is under the web root, so the viewer would hand its private key to anyone."""
-    _, viewer = await _scripts(fake_e2b)
-    _run('true', tmp_path)  # writes the stubs
-    (tmp_path / 'bin' / 'self.pem').write_text('-----BEGIN PRIVATE KEY-----\n')
-
-    result = _run(viewer, tmp_path)
-
-    assert result.returncode == 1
-    assert 'move the certificate out of /opt/noVNC' in result.stderr
-    assert not (tmp_path / 'bin' / 'starts').exists()
+async def test_the_start_script_is_valid_shell(fake_e2b: FakeE2B) -> None:
+    script = await _start_script(fake_e2b)
+    if shutil.which('dash'):  # pragma: no branch - CI has it; a laptop may not
+        assert subprocess.run(['dash', '-n', '-c', script], capture_output=True, text=True).stderr == ''
+    if shutil.which('shellcheck'):  # pragma: no branch - CI has it; a laptop may not
+        # SC2046 and SC2086 flag the unquoted `/proc/$(...)` and `/proc/$p` paths, which hold a PID or nothing.
+        check = ['shellcheck', '-s', 'sh', '-e', 'SC2046,SC2086', '-']
+        result = subprocess.run(check, input=script, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout
 
 
 @pytest.mark.parametrize(('session_display', 'starts'), [(':1', False), (':0', True)])
 async def test_xfce_starts_unless_its_session_runs_on_the_display(
     fake_e2b: FakeE2B, tmp_path: Path, session_display: str, starts: bool
 ) -> None:
-    start, _ = await _scripts(fake_e2b)
+    start = await _start_script(fake_e2b)
     (tmp_path / 'proc' / '42').mkdir(parents=True)
     (tmp_path / 'proc' / '42' / 'environ').write_bytes(f'HOME=/root\0DISPLAY={session_display}\0'.encode())
     _run('true', tmp_path)  # writes the stubs
@@ -140,7 +88,7 @@ async def test_xfce_starts_unless_its_session_runs_on_the_display(
 
 
 async def test_xfce_exiting_fails_the_start_with_its_output(fake_e2b: FakeE2B, tmp_path: Path) -> None:
-    start, _ = await _scripts(fake_e2b)
+    start = await _start_script(fake_e2b)
     _run('true', tmp_path)  # writes the stubs
     (tmp_path / 'bin' / 'startxfce4-fails').touch()
 

@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -63,7 +62,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, START_LOCK, start_x_server, wait_until_ready, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, start_x_server, wait_until_ready, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
@@ -133,43 +132,6 @@ _DESKTOP_TEMPLATE = 'desktop'
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
 _XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
-
-_VIEWER_PORT = 6080
-
-_START_VIEWER = (
-    # Under the display's lock, else two calls at once could each write a password or start a viewer.
-    f'{START_LOCK}d=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
-    # novnc_proxy takes this file as its certificate, and the viewer would serve its private key to anyone, password
-    # or not, from its web root.
-    "if [ -e /opt/noVNC/utils/self.pem ]; then echo '/opt/noVNC/utils/self.pem is in the viewer web root, which "
-    "anyone can download: move the certificate out of /opt/noVNC.' >&2; exit 1; fi; "
-    '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
-    # Only our own server and viewer count: one started without our password, such as `e2b_desktop`'s, holds the
-    # port, so ours fails to start and says so.
-    'if ! pgrep -f "[x]11vnc .*-rfbauth $d/passwd" >/dev/null; then '
-    'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
-    # Empty each log before its program starts: the redirect runs in the background child, so the check could read
-    # an earlier run's line first.
-    ': >"$d/x11vnc.log"; '
-    f'setsid x11vnc -display {DISPLAY} -forever -shared -localhost -noipv6 -rfbport 5900 -rfbauth "$d/passwd" '
-    '>"$d/x11vnc.log" 2>&1 9>&- & '
-    # x11vnc writes its port once it listens, and exits without one if the port is taken. `-noipv6`: with the IPv4
-    # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
-    + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
-    # A viewer counts only with our web root: a foreign one, such as `--web /home/user`, would serve those files
-    # without the password, so ours starts instead and fails while that one holds the port.
-    + f"fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
-    ': >"$d/novnc.log"; '
-    # Run from its own directory, as `e2b_desktop` does. `--web`, else it serves its working directory's files.
-    '(cd /opt/noVNC/utils/ && exec setsid ./novnc_proxy --vnc 127.0.0.1:5900 '
-    f'--listen {_VIEWER_PORT} --web /opt/noVNC) >"$d/novnc.log" 2>&1 9>&- & '
-    + wait_until_ready(
-        'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
-    )
-    + 'fi; cat "$d/password"'
-)
-"""Starts the template's VNC server and noVNC viewer behind a password, unless they run, and prints the password.
-Both outlive the script, so they close the lock."""
 
 _XFCE_ON_DISPLAY = (
     '(for p in $(pgrep -x xfce4-session); do '
@@ -822,32 +784,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     def display(self) -> Display | None:
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
-
-    async def live_view_url(self) -> str:
-        """A link to watch and use the desktop in a browser, through the template's noVNC viewer.
-
-        The link carries the viewer's password, so anyone with it can see and use the desktop while the sandbox
-        runs. The password is after the `#`, which the browser doesn't send to E2B's servers.
-        """
-        if self._display is None:
-            raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
-        sandbox = await self.get_sandbox()
-        # A browser can't send the `e2b-traffic-access-token` header a private sandbox's ports need.
-        if ((await sandbox.get_info()).network or {}).get('allow_public_traffic') is False:
-            raise WorkspaceError(
-                'The desktop viewer needs public traffic, which this E2B sandbox has off, so its link would return 403. '
-                "Allow public traffic in the E2B project's settings, or pass a sandbox created with "
-                "`network={'allow_public_traffic': True}` as `sandbox`."
-            )
-        await self._display.start()
-        result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
-        if result.exit_code != 0:
-            raise WorkspaceError(
-                f'Could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
-                f'({(result.stderr or result.stdout).strip()})'
-            )
-        host = sandbox.get_host(_VIEWER_PORT)
-        return f'https://{host}/vnc.html?autoconnect=true&resize=scale#password={result.stdout.strip()}'
 
     async def _stop_command(
         self, sandbox: e2b.AsyncSandbox, *, claim: str, pgid_file: str, identify: str, isolated: bool

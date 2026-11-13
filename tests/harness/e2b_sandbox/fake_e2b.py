@@ -640,9 +640,6 @@ class FakeSandbox:
             self.commands = _HostCommands(self, control)
         self.killed = False
 
-    def get_host(self, port: int) -> str:
-        return f'{port}-{self.sandbox_id}.e2b.example'
-
     async def kill(self) -> bool:
         # Real `kill` is a DELETE on the control plane that returns once E2B has removed the
         # sandbox, and `False` when it was already gone (a 404). From then on the SDK's own
@@ -681,9 +678,7 @@ class FakeSandbox:
             raise self._control.get_info_error
         if self.killed:
             raise SandboxNotFoundException(f'Sandbox {self.sandbox_id} not found')
-        return types.SimpleNamespace(
-            state='paused' if self._control.sandbox_paused else 'running', network=self._control.sandbox_network
-        )
+        return types.SimpleNamespace(state='paused' if self._control.sandbox_paused else 'running')
 
 
 class FakeAsyncSandboxFactory:
@@ -767,8 +762,6 @@ class FakeE2B:
     # What a sandbox's `get_info()` reports for a sandbox that isn't killed, unless it raises `get_info_error`.
     sandbox_paused: bool = False
     get_info_error: Exception | None = None
-    # The `network` a sandbox's `get_info()` reports: E2B omits it for a sandbox created without one.
-    sandbox_network: dict[str, bool] | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 

@@ -252,30 +252,7 @@ The agent can type only ASCII: an action that types or presses a character such 
 
 `sandbox_timeout` is the sandbox's total lifetime, an hour by default, not an idle timeout. A run still going when the timeout ends fails, so set it longer than your longest task.
 
-To watch the agent, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
-from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
-
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(desktop=True), ComputerUse()])
-
-
-async def watch_the_agent() -> None:
-    backend = E2BSandboxBackend(desktop=True)
-    try:
-        print(await backend.live_view_url())  # starts the sandbox, its desktop and the template's noVNC viewer
-        result = await agent.run(
-            'Open the terminal from the dock, run `uname -a` and tell me what it printed.', workspace=backend
-        )
-        print(result.output)
-    finally:
-        if backend.ref is not None:
-            await E2BSandbox().destroy(backend.ref)
-```
-
-The link includes the viewer's password, so anyone with it can see and use the desktop while the sandbox runs: don't log it or share it. The password is after the `#`, so the browser doesn't send it to E2B's servers. The viewer needs [public traffic](https://docs.e2b.dev/network/restrict-public-access), which new E2B projects turn off by default: on a sandbox without it, `live_view_url()` raises a `WorkspaceError`. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC`, with no TLS certificate (`utils/self.pem`) under it, since the viewer serves that directory to anyone.
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
 
 ## Clean up
 
