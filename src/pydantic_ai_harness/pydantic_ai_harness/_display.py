@@ -24,6 +24,8 @@ DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
     """The display size `desktop=` asks for, or `None` for no display."""
+    if isinstance(desktop, tuple) and min(desktop) < 1:
+        raise ValueError(f'`desktop` must be a positive width and height, got {desktop}.')
     return DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
 
 
