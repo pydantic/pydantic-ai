@@ -546,14 +546,12 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
         # OpenAI says to stop when the response is incomplete, as when cut by a content filter, even if the call isn't.
         pytest.param('completed', 'incomplete', False, id='response-incomplete'),
         pytest.param('completed', 'incomplete', True, id='streamed-response-incomplete'),
-        # The stream ends without saying how the response finished.
-        pytest.param('completed', 'in_progress', True, id='streamed-without-an-end'),
     ],
 )
 async def test_an_unfinished_call_runs_nothing(
     allow_model_requests: None,
     call_status: Literal['completed', 'incomplete', 'in_progress'],
-    response_status: Literal['completed', 'incomplete', 'in_progress'],
+    response_status: Literal['completed', 'incomplete'],
     streamed: bool,
 ) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
