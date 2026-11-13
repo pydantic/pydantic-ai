@@ -155,7 +155,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
@@ -178,6 +178,8 @@ pytestmark = [
     pytest.mark.xdist_group(name='dbos'),
     pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'),
 ]
+
+READINESS_WAIT_TIMEOUT = 10
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
@@ -5147,6 +5149,78 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
         return [result.output for result in results]
 
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
+
+
+async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(dbos: DBOS) -> None:
+    """Parallel tool-call units each call through the stepped toolset they listed their tool on.
+
+    A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit,
+    and each unit prepares it for the step. When its toolset's `for_run_step` returns a new instance,
+    one unit's preparation must not replace the instance another unit already listed its tool on.
+    `FunctionModel` drives it rather than a cassette: the race is between the tool-call units, after the
+    model response that requests both calls.
+    """
+    serials = iter(range(1, 100))
+    listed: dict[str, int] = {}
+    called: dict[str, int] = {}
+    both_listed = asyncio.Event()
+
+    def echo(text: str) -> str:
+        return text
+
+    @dataclass
+    class StepStateToolset(WrapperToolset[None]):
+        serial: int = 0
+
+        async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+            return StepStateToolset(await self.wrapped.for_run_step(ctx), serial=next(serials))
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            tools = await self.wrapped.get_tools(ctx)
+            if ctx.tool_call_id is not None:
+                # Hold each call unit here until both have listed, as a listing that does I/O would.
+                listed[ctx.tool_call_id] = self.serial
+                if len(listed) == 2:
+                    both_listed.set()
+                async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                    await both_listed.wait()
+            return tools
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            assert ctx.tool_call_id is not None
+            called[ctx.tool_call_id] = self.serial
+            return await self.wrapped.call_tool(name, tool_args, ctx, tool)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('echo', {'text': 'a'}, tool_call_id='call-a'),
+                ToolCallPart('echo', {'text': 'b'}, tool_call_id='call-b'),
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        name='dbos_parallel_run_held_dynamic',
+        toolsets=[
+            DynamicToolset(lambda ctx: StepStateToolset(FunctionToolset([echo])), per_run_step=False, id='step_state')
+        ],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'done'
+    assert called == listed
+    assert listed.keys() == {'call-a', 'call-b'}
 
 
 async def test_dbos_durability_nested_agent_in_tool_routes_to_inner_registrations(dbos: DBOS) -> None:

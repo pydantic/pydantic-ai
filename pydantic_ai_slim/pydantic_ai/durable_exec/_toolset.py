@@ -870,13 +870,11 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # run, so resolve it here like a non-durable run does, leaving entry to the first
             # durable unit that needs the toolset. This runs the factory in container code, where
             # it must be deterministic and leave its I/O to the units. Every unit calls
-            # `for_run_step` on the held toolset, which swaps the factory result's operational
-            # toolset in place. Parallel tool-call units can share it while that result's
-            # `for_run_step` returns `self`, as default-hook toolsets do, and `CombinedToolset` and
-            # `WrapperToolset` do when their children don't change. A result whose `for_run_step`
-            # returns a new instance on every step is swapped by parallel units concurrently.
-            # A `per_run_step=True` factory is re-evaluated per unit as before: its `for_run_step`
-            # swaps the inner toolset in place, which parallel tool-call units must not share.
+            # `for_run_step` on the held toolset, which leaves it unchanged and returns a copy when
+            # the factory result's step preparation produces a new toolset, so parallel tool-call
+            # units can share it. A `per_run_step=True` factory is re-evaluated per unit as before:
+            # its `for_run_step` swaps the inner toolset in place, which parallel tool-call units
+            # must not share.
             run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 
