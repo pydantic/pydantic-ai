@@ -25,7 +25,6 @@ from typing import (
     cast,
     overload,
 )
-from urllib.parse import urlparse
 
 import anyio
 import pydantic_core
@@ -1973,9 +1972,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 def _host_derived_id(client: object) -> str | None:
     """The `id` an `MCPToolset` without one takes from its server URL's hostname, or `None` without a URL."""
     url = getattr(getattr(client, 'transport', None), 'url', None)
-    host = urlparse(url).hostname if isinstance(url, str) else None
-    # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
-    return host.replace(':', '-') if host else None
+    return _utils.host_derived_id(url) if isinstance(url, str) else None
 
 
 def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> MessageHandlerT:
