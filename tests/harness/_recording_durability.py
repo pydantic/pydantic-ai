@@ -54,12 +54,14 @@ class _RecordingBackend(CallableOperationBackend[None]):
         isolated: bool,
         journal: Mapping[str, object],
         failure: type[Exception] = RuntimeError,
+        wraps_errors: bool = False,
     ) -> None:
         super().__init__(namer=JournalOperationNamer(agent_name), config=_RecordingConfig())
         self.isolated = isolated
         self.calls = calls
         self.fail_operations = fail_operations
         self.failure = failure
+        self.wraps_errors = wraps_errors
         self.results = results
         self.journal = journal
 
@@ -78,14 +80,20 @@ class _RecordingBackend(CallableOperationBackend[None]):
             return self.journal[name]
         if name in self.fail_operations:
             raise self.failure(f'{name} failed')
-        if self.isolated:
-            # As on a worker, the operation doesn't see the caller's context variables.
-            async def run() -> object:
-                return await body()
+        try:
+            if self.isolated:
+                # As on a worker, the operation doesn't see the caller's context variables.
+                async def run() -> object:
+                    return await body()
 
-            result = await asyncio.create_task(run(), context=contextvars.Context())
-        else:
-            result = await body()
+                result = await asyncio.create_task(run(), context=contextvars.Context())
+            else:
+                result = await body()
+        except Exception as e:  # pragma: no cover - reached only by an operation that lets an error escape
+            if not self.wraps_errors:
+                raise
+            # As a real engine reports an operation that raised: as its own error, losing the original's type.
+            raise RuntimeError(f'{name} failed') from e
         self.results.append((name, result))
         return result
 
@@ -106,6 +114,7 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         isolated: bool = False,
         journal: Mapping[str, object] | None = None,
         failure: type[Exception] = RuntimeError,
+        wraps_errors: bool = False,
     ) -> None:
         super().__init__()
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -117,6 +126,9 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         """Results by operation name, replayed instead of running the operation."""
         self.failure = failure
         """What the engine raises for an operation in `fail_operations`."""
+        self.wraps_errors = wraps_errors
+        """Whether an error an operation raises reaches the caller as the engine's own `RuntimeError`, as on a real
+        engine, rather than as itself."""
 
     @property
     def in_durable_context(self) -> bool:
@@ -124,5 +136,12 @@ class RecordingDurability(BaseDurabilityCapability[object]):
 
     def get_durable_operation_backend(self) -> _RecordingBackend:
         return _RecordingBackend(
-            self.name, self.calls, self.fail_operations, self.results, self.isolated, self.journal, self.failure
+            self.name,
+            self.calls,
+            self.fail_operations,
+            self.results,
+            self.isolated,
+            self.journal,
+            self.failure,
+            self.wraps_errors,
         )

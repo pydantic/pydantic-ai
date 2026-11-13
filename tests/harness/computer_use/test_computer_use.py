@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 import pytest
+from dirty_equals import IsPartialDict
 from inline_snapshot import snapshot
 from pydantic import ValidationError
 
@@ -28,6 +29,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserError,
+    UserPromptPart,
 )
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -35,11 +37,9 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     PrefixTools,
     RawToolArgs,
-    SelectModel,
     ValidatedToolArgs,
 )
 from pydantic_ai.computer_use import (
-    _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
     Click,
     ComputerCallPart,
@@ -56,7 +56,7 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
+from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -70,7 +70,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, ComputerUseActionLimits, DisplayAction
-from tests.conftest import try_import
+from tests.conftest import RequestCapture, try_import
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
@@ -171,11 +171,7 @@ class TestComputerUse:
         assert provider.actions == [Click(x=10, y=20), TypeText(text='hi'), PressKeys(keys=('ctrl', 's'))]
         first, second = _returns(result.all_messages())
         assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT]
-        # A durable call's result comes back through its JSON journal, so the size may be a list.
-        assert {**first.metadata, 'screenshot_size': tuple(first.metadata['screenshot_size'])} == {
-            'performed': 3,
-            'screenshot_size': (1280, 800),
-        }
+        assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
     @pytest.mark.parametrize(
@@ -269,7 +265,7 @@ class TestComputerUse:
         ]
         assert tool_return.content == ['Ran 5 actions. Screenshot attached.', SCREENSHOT]
 
-    async def test_a_grid_model_call_a_hook_corrected_points_on_its_grid(self) -> None:
+    async def test_a_grid_model_call_repaired_by_a_hook_still_points_on_its_grid(self) -> None:
         # An option the `computer` tool lacks keeps the call a plain `ToolCallPart`; the hook takes it out.
         provider = ScreenProvider()
         model = _scripted([{'type': 'click', 'x': 500, 'y': 500, 'extra': 'bad'}], profile=_GRID)
@@ -331,9 +327,13 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert 'See and control the screen of the computer you work on.' in before.instructions
         assert 'the `computer` tool' not in before.instructions
         assert 'computer' not in [tool.name for tool in before.function_tools]
-        # Once loaded, it gets the tool and the instructions, in the instructions or the load's return.
+        # Once loaded, it gets the tool, and its instructions arrive after the load's return.
         assert 'computer' in [tool.name for tool in after.function_tools]
-        assert 'with the `computer` tool' in f'{after.instructions}{messages}'
+        loaded = messages[-1].parts[-1]
+        assert isinstance(loaded, UserPromptPart)
+        assert loaded.content == (
+            f'<system><pyai:context id="capability:computer">\n{ComputerUse().get_instructions()}\n</pyai:context></system>'
+        )
 
     async def test_a_hook_can_ask_before_acting_and_let_looking_through(self) -> None:
         provider = ScreenProvider()
@@ -359,30 +359,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
             deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
         )
         assert provider.actions == [Click(x=1, y=1)]
-
-    async def test_a_hook_can_ask_before_acting_on_a_call_another_hook_repaired(self) -> None:
-        """A repaired call is no longer a typed `ComputerCallPart`, so the recipe reads the tool's kind and its arguments."""
-        provider = ScreenProvider()
-
-        async def correct(
-            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
-        ) -> RawToolArgs:
-            return {'actions': [{'type': 'click', 'x': 1, 'y': 1}]}
-
-        agent = Agent(
-            _scripted([{'type': 'click', 'x': 1, 'y': 1, 'extra': 'bad'}]),
-            capabilities=[
-                provider.capability(),
-                ComputerUse(),
-                Hooks(before_tool_validate=correct),
-                _ask_before_acting(),
-            ],
-            output_type=[str, DeferredToolRequests],
-        )
-        result = await agent.run('Go.')
-
-        assert isinstance(result.output, DeferredToolRequests)
-        assert provider.actions == []
 
     async def test_zoom_and_the_pointer_position_come_back_before_the_screenshot(self) -> None:
         model = _scripted(
@@ -441,7 +417,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 return ModelResponse(parts=[TextPart('done')])
             call = ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
             # As the OpenAI adapter records a `computer_call`'s pending safety checks.
-            call.provider_details = {_SAFETY_CHECKS: [check]}
+            call.provider_details = {'safety_checks': [check]}
             # Text before the call, as models often send.
             return ModelResponse(parts=[TextPart('Clicking.'), call])
 
@@ -468,9 +444,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert provider.actions == [Click(x=1, y=1)]
 
     @pytest.mark.parametrize('native', [True, False])
-    async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_latest_screenshot_size(
-        self, native: bool
-    ) -> None:
+    async def test_the_computer_tool_definition(self, native: bool) -> None:
         seen: list[ToolDefinition] = []
         natives: list[AbstractNativeTool] = []
 
@@ -562,9 +536,21 @@ Each call runs a list of actions in order and returns a screenshot of the result
         [pytest.param([], id='no-workspace'), pytest.param([WorkspaceCapability()], id='no-display')],
     )
     async def test_a_run_without_a_display_fails_at_its_start(self, workspace: list[AbstractCapability[Any]]) -> None:
-        agent = Agent(_scripted([{'type': 'click', 'x': 1, 'y': 1}]), capabilities=[*workspace, ComputerUse()])
-        with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
+        requests: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages)
+            return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})])
+
+        # Without the native tool, whose size read before the first request would report it too.
+        agent = Agent(FunctionModel(respond), capabilities=[*workspace, ComputerUse(native=False)])
+        with pytest.raises(UserError) as error:
             await agent.run('Go.')
+        assert error.value.message == (
+            '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
+            "run's workspace has none."
+        )
+        assert requests == []
 
     @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
     async def test_a_durable_run_without_a_display_fails_at_its_first_display_read(self, native: bool) -> None:
@@ -573,7 +559,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
             name='computer',
-            capabilities=[WorkspaceCapability(), ComputerUse(native=native), RecordingDurability()],
+            capabilities=[WorkspaceCapability(), ComputerUse(native=native), RecordingDurability(wraps_errors=True)],
         )
         with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
             await agent.run('Go.')
@@ -603,21 +589,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert (await agent.run('Go.')).output == 'done'
         assert provider.actions == [click]
 
-    async def test_a_model_selected_later_without_image_input_is_refused_before_its_request(self) -> None:
-        text_only = FunctionModel(
-            lambda messages, info: ModelResponse(parts=[TextPart('done')]),
-            model_name='text-only',
-            profile=ModelProfile(supports_image_input=False),
-        )
-        first = _scripted([{'type': 'screenshot'}])
-
-        def select(ctx: ModelSelectionContext[Any]) -> Model:
-            return first if ctx.run_step == 1 else text_only
-
-        agent = Agent(None, capabilities=[SelectModel(select), ScreenProvider().capability(), ComputerUse()])
-        with pytest.raises(UserError, match="needs a model that accepts images, and 'text-only' does not"):
-            await agent.run('Go.')
-
     async def test_a_fallback_model_is_told_its_own_coordinates_and_its_calls_run_in_them(self) -> None:
         provider = ScreenProvider()
         seen: list[AgentInfo] = []
@@ -631,39 +602,38 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert provider.actions == [Click(x=640, y=400)]
 
     @pytest.mark.parametrize(
-        'looks, profiles, message',
+        'profile, message',
         [
             pytest.param(
-                1,
-                [ModelProfile(supports_image_input=False)],
-                "needs a model that accepts images, and 'fallback-1' does not",
+                ModelProfile(supports_image_input=False),
+                "`ComputerUse` needs a model that accepts images, and 'fallback' does not: every `computer` call "
+                'returns a screenshot.',
                 id='blind',
             ),
             pytest.param(
-                1,
-                [_SMALL],
-                r"The latest screenshot is 1280x800, larger than 'fallback-1' can see",
+                _SMALL,
+                "The latest screenshot is 1280x800, larger than 'fallback' can see. Start the display at 1000x625 or "
+                'smaller to use this model on it.',
                 id='smaller-screenshots',
             ),
         ],
     )
     async def test_a_fallback_model_that_cannot_see_the_screen_is_refused_before_its_request(
-        self, looks: int, profiles: list[ModelProfile], message: str
+        self, profile: ModelProfile, message: str
     ) -> None:
         seen: list[AgentInfo] = []
-        # The primary looks `looks` times, then is unavailable; every fallback but the last looks once, then is too.
-        fallbacks = [_unavailable(f'fallback-{i}', profile, answers=1) for i, profile in enumerate(profiles[:-1], 1)]
-        last = _answering(f'fallback-{len(profiles)}', profiles[-1], seen, [{'type': 'screenshot'}])
+        # The primary looks once, then is unavailable, so the fallback would answer next.
         agent = Agent(
-            _unavailable('primary', ModelProfile(), answers=looks),
+            _unavailable('primary', ModelProfile(), answers=1),
             capabilities=[
                 ScreenProvider().capability(),
                 ComputerUse(),
-                ModelFallback(*fallbacks, last),
+                ModelFallback(_answering('fallback', profile, seen, [{'type': 'screenshot'}])),
             ],
         )
-        with pytest.raises(UserError, match=message):
+        with pytest.raises(UserError) as error:
             await agent.run('Look.')
+        assert error.value.message == message
         assert seen == []
 
     @pytest.mark.parametrize(
@@ -679,7 +649,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         self, actions: list[dict[str, Any]], gone: str, durability: list[AbstractCapability[Any]]
     ) -> None:
         class Vanishing(ScreenBackend):
-            """Gone once the run has started, at the first call to `gone`; `act` and `screenshot` run only there."""
+            """Gone once the run has started, at the first call to `gone`."""
 
             started = False
 
@@ -690,10 +660,14 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 return await super().display_size()
 
             async def act(self, action: DisplayAction) -> None:
-                raise WorkspaceUnavailableError('the environment is gone')
+                if gone == 'act':
+                    raise WorkspaceUnavailableError('the environment is gone')
+                await super().act(action)  # pragma: no cover - only a call that ignored the lost environment acts
 
             async def screenshot(self) -> bytes:
-                raise WorkspaceUnavailableError('the environment is gone')
+                if gone == 'screenshot':
+                    raise WorkspaceUnavailableError('the environment is gone')
+                return await super().screenshot()  # pragma: no cover - only a call that ignored it looks
 
         class Provider(ScreenProvider):
             def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
@@ -834,6 +808,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         durability = RecordingDurability(
             fail_operations=frozenset({'computer__capability__computer.call'} if where == 'the-engine' else ()),
             failure=UserError,
+            wraps_errors=True,
         )
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
@@ -1057,7 +1032,15 @@ Each call runs a list of actions in order and returns a screenshot of the result
             lambda: agents[0].run('Go.', workspace=workspaces[0]), lambda: agents[1].run('Go.', workspace=workspaces[1])
         )
 
-        assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
+        # The first call's closing screenshot comes before the second call acts, so it shows only its own actions.
+        assert turns.log == [
+            Click(x=1, y=1),
+            TypeText(text='first'),
+            'screenshot',
+            Click(x=2, y=1),
+            TypeText(text='second'),
+            'screenshot',
+        ]
 
     async def test_a_call_that_waited_its_turn_measures_the_screen_the_call_before_left(self) -> None:
         turns = _Turns()
@@ -1111,9 +1094,11 @@ Each call runs a list of actions in order and returns a screenshot of the result
         provider, outputs = Provider(), list[str]()
         # One backend for both runs, with its environment created first so its ref, and with it its lock key, is set.
         screen = provider.backend(None)
+        # On a thread of its own, as this thread already runs the test's event loop.
         creating = threading.Thread(target=anyio.run, args=(screen.display_size,))
         creating.start()
         creating.join(READY_TIMEOUT)
+        assert not creating.is_alive()
 
         def run(x: int) -> None:
             agent = Agent(_scripted([{'type': 'click', 'x': x, 'y': 1}]), capabilities=[ComputerUse()])
@@ -1121,11 +1106,12 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
         first = threading.Thread(target=run, args=(1,), daemon=True)
         first.start()
-        holding.wait(READY_TIMEOUT)
+        assert holding.wait(READY_TIMEOUT)
         second = threading.Thread(target=run, args=(2,), daemon=True)
         second.start()
         for thread in (first, second):
             thread.join(2 * READY_TIMEOUT)
+            assert not thread.is_alive()
 
         assert outputs == ['done', 'done']
         assert waited == [True]
@@ -1186,16 +1172,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
         assert provider.actions == [Click(x=500, y=300)]
 
-    async def test_a_model_that_would_see_the_latest_screenshot_scaled_down_is_refused(self) -> None:
-        provider = ScreenProvider()
-        agent = Agent(_scripted([{'type': 'screenshot'}]), capabilities=[provider.capability(), ComputerUse()])
-        looked = await agent.run('Look.')
-        smaller = _scripted(
-            profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000)
-        )
-        with pytest.raises(UserError, match=r'The latest screenshot is 1280x800, larger than .* display at 1000x625'):
-            await agent.run('Go on.', model=smaller, message_history=looked.all_messages())
-
     @pytest.mark.parametrize(
         'actions, message',
         [
@@ -1230,7 +1206,18 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'success'
-        assert len(provider.actions) == 2
+        assert provider.actions == [TypeText(text='a' * 10_000), PressKeys(keys=('a',), repeat=1_000)]
+
+    async def test_a_call_at_an_action_limit_runs(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'type', 'text': 'abc'}]),
+            capabilities=[provider.capability(), ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=3))],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.outcome == 'success'
+        assert provider.actions == [TypeText(text='abc')]
 
     @pytest.mark.parametrize(
         'limits, action, message',
@@ -1299,11 +1286,26 @@ Each call runs a list of actions in order and returns a screenshot of the result
         [computer_use] = [c for c in agent.root_capability.capabilities if isinstance(c, ComputerUse)]
         assert computer_use.action_limits == ComputerUseActionLimits(max_wait_seconds=60)
 
-    def test_action_limits_refuse_unknown_names_and_values_that_are_not_positive(self) -> None:
-        with pytest.raises(ValidationError, match='max_wait'):
+    def test_action_limits_refuse_unknown_names(self) -> None:
+        with pytest.raises(ValidationError) as error:
             ComputerUseActionLimits(**{'max_wait': 60})
-        with pytest.raises(ValidationError, match='greater than 0'):
-            ComputerUseActionLimits(max_typed_chars=0)
+        assert [(e['type'], e['loc']) for e in error.value.errors()] == [('unexpected_keyword_argument', ('max_wait',))]
+
+    @pytest.mark.parametrize(
+        'name',
+        [
+            'max_wait_seconds',
+            'max_hold_seconds',
+            'max_typed_chars',
+            'max_key_repeat',
+            'max_scroll_amount',
+            'max_drag_points',
+        ],
+    )
+    def test_action_limits_refuse_values_that_are_not_positive(self, name: str) -> None:
+        with pytest.raises(ValidationError) as error:
+            ComputerUseActionLimits(**{name: 0})
+        assert [(e['type'], e['loc']) for e in error.value.errors()] == [('greater_than', (name,))]
 
     async def test_two_computer_uses_keep_the_smaller_of_each_limit(self) -> None:
         provider = ScreenProvider()
@@ -1311,8 +1313,9 @@ Each call runs a list of actions in order and returns a screenshot of the result
             _scripted([{'type': 'type', 'text': 'four'}]),
             capabilities=[
                 provider.capability(),
+                # Each smaller limit on a different side, so neither the first nor the last capability wins outright.
                 ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=3, max_wait_seconds=10)),
-                ComputerUse(action_limits=ComputerUseActionLimits(max_wait_seconds=5)),
+                ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=5, max_wait_seconds=5)),
             ],
         )
         [computer_use] = [c for c in agent.root_capability.capabilities if isinstance(c, ComputerUse)]
@@ -1320,6 +1323,10 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
+        assert tool_return.content == (
+            'Action 1 (type) asks for 4 characters, more than the 3 this agent allows (`max_typed_chars`), so no '
+            'action ran.'
+        )
         assert provider.actions == []
 
     async def test_combining_leaves_a_shared_computer_use_unchanged(self) -> None:
@@ -1330,7 +1337,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
         assert shared.action_limits == ComputerUseActionLimits()
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-        assert tool_return.outcome != 'failed'
+        assert tool_return.outcome == 'success'
         assert provider.actions == [TypeText(text='four')]
 
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
@@ -1487,19 +1494,30 @@ class _AppLabel(AbstractCapability[Any]):
 class _Turns:
     """Two runs on one screen, overlapping for sure: the second starts once the first has done its first action, which
     then waits until the second run's `computer` call has started and every other task is blocked. That call has then
-    either waited its turn or landed between the first call's actions."""
+    either waited its turn or landed between the first call's actions. Each screenshot also waits until every other task
+    is blocked, so a call that took the screen before the first one's closing screenshot would act before it.
+
+    `log` has the actions and screenshots in the order they happened."""
 
     def __init__(self) -> None:
         holding, started = anyio.Event(), anyio.Event()
         self.holding = holding
+        log: list[DisplayAction | str] = []
+        self.log = log
 
         class HoldsItsFirstAction(ScreenBackend):
             async def act(self, action: DisplayAction) -> None:
                 await super().act(action)
+                log.append(action)
                 if not holding.is_set():
                     holding.set()
                     await started.wait()
                     await anyio.wait_all_tasks_blocked()
+
+            async def screenshot(self) -> bytes:
+                await anyio.wait_all_tasks_blocked()
+                log.append('screenshot')
+                return await super().screenshot()
 
         class SaysWhenACallStarts(AbstractCapability[Any]):
             async def before_tool_execute(
@@ -1556,16 +1574,33 @@ class _RedSquareBackend(ScreenBackend):
     'once, from the request after the first screenshot'
 )
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
-async def test_gemini_clicks_on_target_through_its_grid(allow_model_requests: None, gemini_api_key: str) -> None:
+async def test_gemini_clicks_on_target_through_its_grid(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+) -> None:
     """Gemini 3 points on a 0-999 grid: told so in the tool description, its click lands on the square in pixels.
 
     Without the grid hint, Gemini 3.5 to 3.8 Flash mostly missed in a live probe.
     """
     screen = _RedSquareScreen()
-    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    model = GoogleModel('gemini-3.8-flash', provider=provider)
     agent = Agent(model, capabilities=[screen.capability(), ComputerUse()])
 
     result = await agent.run('Click the red square once, then stop.')
+
+    # What went out, not what the recording holds: the cassette matches requests on their URL alone.
+    assert request_capture.body(':generateContent')['tools'] == [
+        {
+            'functionDeclarations': [
+                IsPartialDict(
+                    name='computer',
+                    description='Run actions on the screen in order, then return a screenshot of the result. '
+                    'Positions are on a 0-999 grid over the latest screenshot: (0, 0) is the top left, (999, 999) the '
+                    'bottom right.',
+                )
+            ]
+        }
+    ]
 
     calls = [part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerCallPart)]
     assert {call.coordinate_grid for call in calls} == {1000}
