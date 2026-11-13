@@ -12,7 +12,21 @@ checkpointing, a resumed run would repeat every model request and tool call.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.](https://pydantic.dev/docs/ai/img/harness/aws-lambda.svg)
+```mermaid
+sequenceDiagram
+    accTitle: AWS Lambda Durability: resume an agent run from its last completed step
+    accDescr: AWSLambdaDurability runs each model request and tool call as a durable step. Invocation 1 records a model request and a get_weather call in the checkpoint log, then its next model request times out. Invocation 2 gets both replayed from the log without running them again, then a model request runs now and is recorded.
+    participant one as Invocation 1
+    participant log as Checkpoint log
+    participant two as Invocation 2
+    Note over one,two: AWSLambdaDurability() runs each model request<br/>and tool call as a durable step
+    one->>log: model request<br/>recorded
+    one->>log: get_weather call<br/>recorded
+    one->>one: model request<br/>times out
+    log-->>two: model request<br/>replayed, not run again
+    log-->>two: get_weather call<br/>replayed, not run again
+    two->>log: model request<br/>runs now and is recorded
+```
 
 ## Installation
 
@@ -157,10 +171,10 @@ is not covered by durable execution's guarantees, and it can outlive the invocat
 
 ## Approvals
 
-To have a person approve a tool call, add [`RequestInput`](https://pydantic.dev/docs/ai/capabilities/request-input/) next to `AWSLambdaDurability`.
+To have a person approve a tool call, add a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/#a-handler-that-takes-a-token) whose handler takes a resume token next to `AWSLambdaDurability`.
 When the model calls a tool that needs approval (`requires_approval=True` or `ApprovalRequired`),
 external execution (`CallDeferred`) or an answer to a question, the run creates a Lambda callback and
-calls your `ask` function with the callback ID inside a step. `ask` can answer right away, and the
+calls your `ask` handler with the callback ID inside a step. `ask` can answer right away, and the
 step records its answer, so the run continues without suspending and a replay reuses the answer. To
 let a person answer, `ask` writes the callback ID where the approver will see it and returns `None`,
 and the run suspends: the invocation returns, and no compute is billed while the execution waits.
@@ -178,7 +192,7 @@ import boto3
 from aws_durable_execution_sdk_python import DurableContext, durable_execution
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import RequestInput
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, durable_agent_handler
 
 lambda_client = boto3.client('lambda')
@@ -191,7 +205,7 @@ def ask(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> No
 agent = Agent(
     'bedrock:us.amazon.nova-pro-v1:0',
     name='support',
-    capabilities=[AWSLambdaDurability(), RequestInput(ask, timeout=timedelta(days=1))],
+    capabilities=[AWSLambdaDurability(), HandleDeferredToolCalls(ask, timeout=timedelta(days=1))],
 )
 
 
@@ -226,17 +240,17 @@ aws lambda send-durable-execution-callback-success \
 
 The decision is the JSON form of `DeferredToolResults` keyed by tool call ID: an approval can also
 deny the call with a message for the model, or approve it with different arguments, and
-[The answer](https://pydantic.dev/docs/ai/capabilities/request-input/#the-answer) lists every form. `send-durable-execution-callback-failure` ends
+[The answer](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/#the-answer) lists every form. `send-durable-execution-callback-failure` ends
 the wait without a decision, like a timeout: every pending approval is denied and every pending
 external call fails, with a message saying why, and the run continues.
 
-The callback's `timeout` is set from `RequestInput(timeout=...)`, rounded up to whole seconds, and
+The callback's `timeout` is set from `HandleDeferredToolCalls(timeout=...)`, rounded up to whole seconds, and
 counts from when the callback is created, just before `ask` runs. Without one, the execution waits
 until its `ExecutionTimeout`. When `ask` answers right away, nothing waits on the callback: it stays
 open until its timeout, and resolving it has no effect on the run. Without a `timeout`, that callback
 has none, so it is never closed; when `ask` may answer in place, set `timeout` so it expires. The `ask` step is a step like any
 other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
-run it again when it fails, so make it idempotent. Both are named after `RequestInput(name=...)`,
+run it again when it fails, so make it idempotent. Both are named after `HandleDeferredToolCalls(name=...)`,
 `deferred_tool_calls` by default. An approved call's tool appears twice in the history as
 `call_tool:<tool>` steps: once for the attempt that asked for approval, and once for the approved
 run. A decision must cover every pending call unless `DeferredToolRequests` is in the agent's
@@ -249,7 +263,7 @@ through the callback.
 
 Outside a durable handler, as in local development, the same agent waits in process instead, and
 `resolve_external_event` from `pydantic_ai.external_events` resolves its token: see
-[A round trip in one process](https://pydantic.dev/docs/ai/capabilities/request-input/#a-round-trip-in-one-process). A `HandleDeferredToolCalls` handler
+[A round trip in one process](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/#a-round-trip-in-one-process). A handler without a token
 that waited for the approver itself would hold the invocation, and its 15-minute timeout, for the
 whole wait, and would ask again on every replay; ending the run with `DeferredToolRequests` output and
 starting a second run with the results also still works.
@@ -274,7 +288,7 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__dynamic_toolset__{id}.validate_args` | validating a dynamic toolset call's arguments |
 | `{name}__dynamic_toolset__{id}.call_tool:{tool}` | a dynamic toolset's tool call |
 | `{name}__event_stream_handler` | one event delivered to an `event_stream_handler` |
-| `{name}__external_event.deferred_tool_calls` | the callback a [`RequestInput`](#approvals) wait suspends on |
+| `{name}__external_event.deferred_tool_calls` | the callback a [`HandleDeferredToolCalls`](#approvals) wait suspends on |
 | `{name}__external_event.deferred_tool_calls.ask` | calling `ask` with that callback's ID, and its answer |
 | `{name}__external_event.ask_user_question` | the callback an `AskUser` question waits on |
 | `{name}__external_event.ask_user_question.ask` | calling the `AskUser` answerer, and its answer |
