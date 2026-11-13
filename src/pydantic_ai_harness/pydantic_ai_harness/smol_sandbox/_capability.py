@@ -33,7 +33,8 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     """
 
     image: str | None = None
-    """OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own Alpine Linux without pulling anything."""
+    """OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own Alpine Linux without pulling
+    anything, unless `desktop` is set."""
 
     cpus: int | None = None
     """vCPUs for a new VM; smolvm's default when `None`."""
@@ -50,6 +51,11 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached VM; nothing is read from the host."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the VM a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for
+    1280x800, or its `(width, height)`. Without an `image`, a new VM runs `debian:bookworm-slim`, and the first start
+    installs the display programs, which needs `allow_internet_access`."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('SmolSandbox', self.defer_loading)
         check_integer('cpus', self.cpus, optional=True)
@@ -59,7 +65,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> SmolSandboxBackend:
         """Attach lazily to an existing VM, one `SmolSandbox` created."""
         _backend.check_ref(ref)
-        return SmolSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
+        return SmolSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a VM by ref; one that is already gone returns quietly.
@@ -88,6 +94,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=self.allow_internet_access,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
 

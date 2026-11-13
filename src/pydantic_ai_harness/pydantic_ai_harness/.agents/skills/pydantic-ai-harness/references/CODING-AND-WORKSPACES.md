@@ -17,7 +17,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
-| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display (or a BoxLite micro-VM with `BoxLiteSandbox(desktop=True, allow_internet_access=True)`); `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud, watchable through `live_view_url()`; `ModalSandbox(desktop=True)` or `SpritesSandbox(desktop=True)` with no viewer |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display (or a micro-VM: `BoxLiteSandbox` or `SmolSandbox` with `desktop=True, allow_internet_access=True`); `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud, watchable through `live_view_url()`; `ModalSandbox(desktop=True)` or `SpritesSandbox(desktop=True)` with no viewer |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -402,11 +402,12 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 ### SmolSandbox
 
 `SmolSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False,
-working_dir='/workspace', env=None)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
+working_dir='/workspace', env=None, desktop=False)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
 [smolvm](https://github.com/smol-machines/smolvm) microVM on first use. No credentials; needs macOS on
 Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`.
 
-- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
+- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`), or `debian:bookworm-slim` with
+  `desktop`; pass an OCI image such as
   `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
   egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
 - The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
