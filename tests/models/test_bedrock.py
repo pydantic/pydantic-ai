@@ -9686,8 +9686,8 @@ async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content
 ):
     """GPT-5.6's encrypted reasoning on Bedrock is not replayed into Claude on Bedrock.
 
-    The client is mocked because the claim is about what the Claude request leaves out, and cassette
-    matching doesn't pin the request body.
+    The client is mocked: the claim is about what the adapter renders from history, which no provider response
+    affects. The GPT-5.6 turn has the reasoning shape recorded for `test_bedrock_thinking_openai_responses_variant`.
     """
     gpt_model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
     mocker.patch.object(gpt_model.client, 'converse').return_value = _converse_response(
@@ -9715,8 +9715,8 @@ async def test_bedrock_same_family_history_replay_keeps_thinking(
 ):
     """Same-family history replay keeps thinking: Claude re-sends its signature; GPT-OSS keeps the text.
 
-    The client is mocked because the claim is about the replayed request body, which cassette matching
-    doesn't pin.
+    The client is mocked: the claim is about what the adapter renders from history, which no provider response
+    affects.
     """
     thinking: dict[str, object] = {
         'reasoningContent': {
