@@ -42,6 +42,7 @@ from pydantic_ai.exceptions import (
     ModelRateLimitError,
     ModelRequestRejectedError,
     ModelTimeoutError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -2050,7 +2051,7 @@ async def test_google_image_generation_status_error(
     status_code: int,
     headers: dict[str, str] | None,
     error: dict[str, object],
-    expected_error: type[ModelAPIError],
+    expected_error: type[ModelRateLimitError | ModelUnavailableError | ModelRequestRejectedError],
     expected_retry_after: float | None,
 ):
     """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
@@ -2069,8 +2070,9 @@ async def test_google_image_generation_status_error(
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
 
-    assert isinstance(exc_info.value, expected_error)
-    assert type(exc_info.value).__name__ == expected_error.__name__
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gemini-2.5-flash-image')
+    )
     assert exc_info.value.status_code == status_code
     assert exc_info.value.provider_error_code == error['status']
     assert exc_info.value.body == {'error': error}
