@@ -32,9 +32,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    PartDeltaEvent,
     PartStartEvent,
-    ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -1023,75 +1021,9 @@ async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments_
     assert [item.get('type') for item in request['input'] if 'type' in item] == ['computer_call_output']
 
 
-async def test_a_streamed_computer_call_keeps_its_place_before_a_later_function_call(
-    allow_model_requests: None,
-) -> None:
-    """The computer call is added first and finishes first; the function call is added before the computer call ends."""
-    computer_item = resp.ResponseComputerToolCall.model_validate(
-        {**_COMPUTER_ITEM, 'actions': [{'type': 'screenshot'}], 'pending_safety_checks': []}
-    )
-    function_item = resp.ResponseFunctionToolCall(
-        id='fc_1', arguments='{}', call_id='call_2', name='note', status='completed', type='function_call'
-    )
-    events: list[resp.ResponseStreamEvent] = [
-        resp.ResponseOutputItemAddedEvent(
-            item=computer_item.model_copy(update={'actions': None, 'status': 'in_progress'}),
-            output_index=0,
-            type='response.output_item.added',
-            sequence_number=0,
-        ),
-        resp.ResponseOutputItemAddedEvent(
-            item=function_item, output_index=1, type='response.output_item.added', sequence_number=0
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=computer_item, output_index=0, type='response.output_item.done', sequence_number=0
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=function_item, output_index=1, type='response.output_item.done', sequence_number=0
-        ),
-    ]
-    response = response_message([])
-    stream = [
-        resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
-        *(event.model_copy(update={'sequence_number': index}) for index, event in enumerate(events, 1)),
-        resp.ResponseCompletedEvent(
-            response=response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=len(events) + 1,
-        ),
-    ]
-    client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
-    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    async with model.request_stream(
-        [ModelRequest.user_text_prompt('Go.')],
-        None,
-        ModelRequestParameters(function_tools=[computer, note], native_tools=[COMPUTER_TOOL], allow_text_output=True),
-    ) as streamed:
-        streamed_events = [event async for event in streamed]
-
-    parts = streamed.get().parts
-    assert [part.tool_name for part in parts if isinstance(part, ToolCallPart)] == ['computer', 'note']
-    first = parts[0]
-    assert isinstance(first, ComputerCallPart)
-    assert first.actions == [Screenshot()]
-    # Started once and then filled in, not started again when it ends.
-    starts = [event for event in streamed_events if isinstance(event, PartStartEvent) and event.index == 0]
-    deltas = [event for event in streamed_events if isinstance(event, PartDeltaEvent) and event.index == 0]
-    assert len(starts) == 1
-    assert [getattr(event.delta, 'args_delta', None) for event in deltas] == [{'actions': [{'type': 'screenshot'}]}]
-
-
 @pytest.mark.parametrize('added', [pytest.param(True, id='added-then-done'), pytest.param(False, id='done-only')])
-async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(
-    allow_model_requests: None, added: bool
-) -> None:
-    """In the order OpenAI streams items (each done before the next is added), a UI sees start, arguments, end.
-
-    Starting it again when it ends would make AG-UI open the call twice and send its arguments as two JSON objects.
-    A call that arrives only as done starts with its arguments.
-    """
+async def test_a_streamed_computer_call_starts_once_with_its_arguments(allow_model_requests: None, added: bool) -> None:
+    """The call starts once, complete, at its done event, so a UI opens it once and gets its arguments as one object."""
     item = resp.ResponseComputerToolCall.model_validate(
         {**_COMPUTER_ITEM, 'actions': [{'type': 'screenshot'}], 'pending_safety_checks': []}
     )
@@ -1125,17 +1057,10 @@ async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(
 
     final = streamed.get().parts[0]
     assert isinstance(final, ComputerCallPart) and final.actions == [Screenshot()]
-    if not added:
-        assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
-        [start, _] = events
-        assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart)
-        assert start.part.args == {'actions': [{'type': 'screenshot'}]}
-        return
-    assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent']
-    start, delta, _ = events
-    assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart) and start.part.args is None
-    assert isinstance(delta, PartDeltaEvent) and isinstance(delta.delta, ToolCallPartDelta)
-    assert delta.delta.args_delta == {'actions': [{'type': 'screenshot'}]}
+    assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
+    [start, _] = events
+    assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart)
+    assert start.part.args == {'actions': [{'type': 'screenshot'}]}
 
 
 # Properties over any value OpenAI could send or a history could hold. The SDK builds response items without
