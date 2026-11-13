@@ -1217,7 +1217,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     items.extend(map_mcp_list_tools(item, self.system))
                 case _:
                     warnings.warn(
-                        f'Handling of this item type is not yet implemented. Please report on our GitHub: {item}',
+                        f'Handling of this item type is not yet implemented. Please report on our GitHub: {type(item).__name__}',
                         UserWarning,
                     )
         return items
