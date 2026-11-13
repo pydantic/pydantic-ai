@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
+    ToolPair,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -137,9 +138,9 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     tools: Sequence[str] | None = field(default=None, kw_only=True)
     """Tool names whose results are cleared; the results of other tools are kept. `None` clears every tool's.
 
-    The `keep_pairs` window counts every tool's calls before this decides which are cleared, so other
-    tools' recent calls can push an older listed result out of it; `keep_turns` keeps by turn instead.
-    Mutually exclusive with `exclude_tools`."""
+    When set, `keep_pairs` counts only the listed tools' pairs, so `tools=['retrieve'], keep_pairs=2`
+    keeps the newest two `retrieve` results whatever other tools ran in between. With several listed
+    tools, the window is shared across them. Mutually exclusive with `exclude_tools`."""
 
     keep_turns: int | None = field(default=None, kw_only=True)
     """Keep the tool results of the last `keep_turns` completed user turns, plus the current one.
@@ -178,9 +179,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         """Blank the oldest tool results beyond the most recent `keep_pairs`, or before the last `keep_turns`."""
         older, kept = messages, list[ModelMessage]()
         if self.keep_turns is None:
-            # Clears by tool call id across the whole history, as it always has.
-            pairs = iter_tool_pairs(messages)
-            clearable = pairs[: max(0, len(pairs) - self.keep_pairs)]
+            clearable = self._outside_kept_pairs(messages)
         else:
             # Only the messages before the kept turns are rebuilt, so a tool call id a provider reuses
             # in a kept turn can't reach back into it.
@@ -240,6 +239,17 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             estimate_token_count(compacted, self.tokenizer),
         )
         return replace(request_context, messages=compacted)
+
+    def _outside_kept_pairs(self, messages: list[ModelMessage]) -> list[ToolPair]:
+        """The pairs older than the newest `keep_pairs`, matched by tool call id across the whole history.
+
+        With `tools`, the window holds only the listed tools' pairs, so other tools' calls can't push a
+        listed result out of it.
+        """
+        pairs = iter_tool_pairs(messages)
+        if self.tools is not None:
+            pairs = [pair for pair in pairs if pair.tool_name in self.tools]
+        return pairs[: max(0, len(pairs) - self.keep_pairs)]
 
     @staticmethod
     def _kept_turns_start(messages: list[ModelMessage], keep_turns: int) -> int:

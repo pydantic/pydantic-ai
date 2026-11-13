@@ -1063,7 +1063,7 @@ non-JSON placeholder would reach the provider as malformed function arguments.
 
 
 @dataclass(frozen=True)
-class _ToolPair:
+class ToolPair:
     """A matched tool call and its return, with the order the return appeared."""
 
     tool_call_id: str
@@ -1072,7 +1072,7 @@ class _ToolPair:
     order: int
 
 
-def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
+def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
     """Return matched tool-call / tool-return pairs in return-appearance order.
 
     A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
@@ -1094,7 +1094,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
         if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls
     ]
     return [
-        _ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
+        ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
         for order, part in enumerate(returns)
     ]
 

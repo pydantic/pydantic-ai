@@ -116,11 +116,64 @@ class TestClearToolResultsTargeting:
         cleared = await ClearToolResults[None](max_tokens=1, keep_pairs=0, tools=['search']).compact(messages, _ctx())
         assert _contents(cleared) == {'a': CLEARED, 'b': 'b result'}
 
-    async def test_keep_pairs_window_counts_every_tool_before_tools_filters(self):
-        """The newest pair kept is another tool's, so the older listed result falls out of the window and is cleared."""
-        messages = [*_turn('go', 'a'), *_turn('more', 'b', tool_name='fetch')]
+    async def test_keep_pairs_counts_only_the_listed_tools_pairs(self):
+        """Another tool's newer pair doesn't take a slot in the window, so the listed result is kept."""
+        messages = [*_turn('go', 'a', 'b'), *_turn('more', 'c', tool_name='fetch')]
         cleared = await ClearToolResults[None](max_tokens=1, keep_pairs=1, tools=['search']).compact(messages, _ctx())
-        assert _contents(cleared) == {'a': CLEARED, 'b': 'b result'}
+        assert _contents(cleared) == {'a': CLEARED, 'b': 'b result', 'c': 'c result'}
+
+    async def test_keep_pairs_window_is_shared_across_the_listed_tools(self):
+        messages: list[ModelMessage] = [
+            _user('go'),
+            *(
+                message
+                for tool_name, tool_call_id in [('search', 's1'), ('fetch', 'f1'), ('lookup', 'l1'), ('search', 's2')]
+                for message in (_call(tool_name, tool_call_id), _return(tool_name, tool_call_id, tool_call_id))
+            ),
+        ]
+        cap = ClearToolResults[None](max_tokens=1, keep_pairs=2, tools=['search', 'fetch'])
+        assert _contents(await cap.compact(messages, _ctx())) == {'s1': CLEARED, 'f1': 'f1', 'l1': 'l1', 's2': 's2'}
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_cheap_calls_after_a_retrieval_keep_its_result(self):
+        """One retrieval, then three cheap lookups: the retrieval result stays, since only `retrieve` pairs count."""
+        script = [('retrieve', {'query': 'grills'}), *(('lookup_price', {'sku': f'A{n}'}) for n in (1, 2, 3))]
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(list(messages))
+            step = len(sent) - 1
+            if step < len(script):
+                tool_name, args = script[step]
+                return ModelResponse(parts=[ToolCallPart(tool_name, args, tool_call_id=f'call_{step}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[ClearToolResults(max_messages=1, keep_pairs=1, tools=['retrieve'])],
+        )
+
+        @agent.tool_plain
+        def retrieve(query: str) -> str:
+            return 'CHUNK ' * 200
+
+        @agent.tool_plain
+        def lookup_price(sku: str) -> str:
+            return '19.90'
+
+        await agent.run('Find grills and price the top three')
+        contents = _contents(sent[-1])
+        assert contents['call_0'] == 'CHUNK ' * 200
+        assert [contents[f'call_{n}'] for n in (1, 2, 3)] == ['19.90'] * 3
+
+        # A second retrieval pushes the first out of the one-pair window; the lookups are never cleared.
+        script.append(('retrieve', {'query': 'smokers'}))
+        sent.clear()
+        await agent.run('Find grills and smokers')
+        contents = _contents(sent[-1])
+        assert contents['call_0'] == CLEARED
+        assert contents['call_4'] == 'CHUNK ' * 200
+        assert [contents[f'call_{n}'] for n in (1, 2, 3)] == ['19.90'] * 3
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_first_line_placeholder_on_earlier_turns(self):
