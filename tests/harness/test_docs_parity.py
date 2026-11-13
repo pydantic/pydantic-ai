@@ -381,6 +381,18 @@ def test_graduated_doc_page_has_no_experimental_framing(page: Path) -> None:
     )
 
 
+_MERMAID_FENCE = re.compile(r'^```mermaid\n(.*?)^```', flags=re.DOTALL | re.MULTILINE)
+
+
+@pytest.mark.parametrize('page', _CAPABILITY_DOC_PAGES, ids=lambda p: p.name)
+def test_doc_page_diagrams_match_readme(page: Path) -> None:
+    module, _ = _CAPABILITY_PAGE_META[page.name]
+    readme = _PACKAGE / module / 'README.md'
+    assert _MERMAID_FENCE.findall(readme.read_text(encoding='utf-8')) == _MERMAID_FENCE.findall(
+        page.read_text(encoding='utf-8')
+    ), f'{page.name} and {readme.relative_to(_ROOT)} must carry the same Mermaid diagrams.'
+
+
 @pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
 def test_capability_readme_heading_matches_capability(package: Path) -> None:
     problem = _heading_problem(_h1((package / 'README.md').read_text(encoding='utf-8')))
