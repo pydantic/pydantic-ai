@@ -1,3 +1,10 @@
+"""Lifecycle of the toolsets a `DynamicToolset` factory returns, through agent runs.
+
+These tests drive runs with `TestModel` and `FunctionModel` rather than cassettes: the toolset lifecycle runs
+before and around each model request, and they assert the tool definitions the model receives and the order of
+the hooks, which no recorded provider response can change.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
