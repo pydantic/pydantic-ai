@@ -2358,8 +2358,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         return events
 
     def _map_tool_call_cancellation(self, cancelled_ids: list[str]) -> ToolCallCancelled:
-        # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
-        # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
+        # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s `_map_tool_calls`
+        # emitted whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
         # A cancelled call never sends a result, so nothing else will ever pop it: forget it here
         # or every barge-in leaks an entry for the life of the connection.
         for call_id in cancelled_ids:
