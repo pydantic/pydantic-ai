@@ -4,7 +4,8 @@
 profile's account. `/login openai@work` saves a key (or a `/keys` reference) for any Pydantic AI
 provider that takes `api_key`; `openai@work:gpt-5` then runs with it. Models without a profile keep
 their existing setup: `/model add` connections, or core's environment variables. Any core model with
-a `base_url` saved in `/model settings` is built here too, with its provider sending requests there.
+a `base_url` or an `api_key` saved in `/model settings` is built here too, with that endpoint and the
+named `/keys` entry instead of the environment's.
 """
 
 import inspect
