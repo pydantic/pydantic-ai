@@ -38,18 +38,21 @@ _THREAD_FIXED_PARAMS = (
 def thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     """A digest of the fields a request must share with the thread's create request to continue it.
 
-    MCP authorization tokens may change between requests of a thread, so they're left out, unless `extra_body` sets
-    the servers. `fallbacks`, which only `extra_body` sends, may change too: only whether it's sent is fixed.
+    MCP authorization tokens may change between requests of a thread, so they're left out, also from servers that
+    `extra_body` sets. `fallbacks`, which only `extra_body` sends, may change too: only whether it's sent is fixed.
     """
     fixed: dict[str, object] = {name: params[name] for name in _THREAD_FIXED_PARAMS}
-    fixed['mcp_servers'] = [
-        {key: value for key, value in server.items() if key != 'authorization_token'}
-        for server in params['mcp_servers'] or ()
-    ]
     extra_body = params['extra_body']
     overrides: Mapping[str, object] = extra_body if is_str_mapping(extra_body) else {}
     # A field `extra_body` sets replaces the request's own on the wire, so the thread fixes that value instead.
     fixed.update({name: overrides[name] for name in _THREAD_FIXED_PARAMS if name in overrides})
+    servers = fixed['mcp_servers']
+    fixed['mcp_servers'] = [
+        {key: value for key, value in server.items() if key != 'authorization_token'}
+        if is_str_mapping(server)
+        else server
+        for server in (servers if isinstance(servers, list) else ())
+    ]
     container = overrides.get('container', params['container'])
     fixed['skills'] = container.get('skills') if is_str_mapping(container) else None
     fixed['fallbacks'] = 'fallbacks' in overrides

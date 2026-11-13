@@ -388,13 +388,18 @@ async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
     assert api.bodies[1]['thread'] == {'type': 'create'}
 
 
-async def test_mcp_authorization_token_is_not_fixed_for_the_thread(allow_model_requests: None):
-    """A new MCP authorization token continues the thread; a new server URL creates one."""
+@pytest.mark.parametrize('in_extra_body', [False, True])
+async def test_mcp_authorization_token_is_not_fixed_for_the_thread(allow_model_requests: None, in_extra_body: bool):
+    """A new MCP authorization token continues the thread, also when `extra_body` sets the servers; a new URL creates one."""
     api = _Api()
 
     def agent(url: str, token: str) -> Agent[None, str]:
-        server = MCPServerTool(id='clock', url=url, authorization_token=token)
-        return Agent(model, capabilities=[NativeTool(server)], model_settings=_SETTINGS)
+        if in_extra_body:
+            server = {'type': 'url', 'name': 'clock', 'url': url, 'authorization_token': token}
+            settings: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'mcp_servers': [server]}}
+            return Agent(model, model_settings=settings)
+        tool = MCPServerTool(id='clock', url=url, authorization_token=token)
+        return Agent(model, capabilities=[NativeTool(tool)], model_settings=_SETTINGS)
 
     async with _model(api) as model:
         first = await agent('https://example.com/mcp', 'token-1').run('Hi')
