@@ -1322,6 +1322,17 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert tool_return.outcome == 'failed'
         assert provider.actions == []
 
+    async def test_combining_leaves_a_shared_computer_use_unchanged(self) -> None:
+        shared = ComputerUse()
+        provider = ScreenProvider()
+        agent = Agent(_scripted([{'type': 'type', 'text': 'four'}]), capabilities=[provider.capability(), shared])
+        Agent('test', capabilities=[ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=3)), shared])
+
+        assert shared.action_limits == ComputerUseActionLimits()
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+        assert tool_return.outcome != 'failed'
+        assert provider.actions == [TypeText(text='four')]
+
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
@@ -1400,6 +1411,26 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert tool_return.content == snapshot(
             "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. Releasing the left mouse button failed too, so it may still be held."
         )
+
+    async def test_losing_the_environment_while_releasing_a_button_ends_the_run(self) -> None:
+        class LostOnRelease(ScreenBackend):
+            async def act(self, action: DisplayAction) -> None:
+                if isinstance(action, MouseUp):
+                    raise WorkspaceUnavailableError('the environment was deleted')
+                await super().act(action)
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return LostOnRelease(self, ref)
+
+        agent = Agent(
+            _scripted(
+                [{'type': 'mouse_down'}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}, {'type': 'mouse_up'}]
+            ),
+            capabilities=[Provider().capability(), ComputerUse()],
+        )
+        with pytest.raises(WorkspaceUnavailableError, match='the environment was deleted'):
+            await agent.run('Go.')
 
     @pytest.mark.parametrize(
         'looking, error',

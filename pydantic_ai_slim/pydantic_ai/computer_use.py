@@ -504,14 +504,14 @@ class ComputerResult(TypedDict):
 
 @dataclass(frozen=True, kw_only=True)
 class SafetyCheck:
-    """A check a provider asks a person to make before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
+    """A check a provider asks for before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
 
     A call with safety checks waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), whichever
     tool runs it. If that tool is external or deferred, the call raises a `UserError`, since approval can't reach it.
     """
 
     message: str | None = None
-    """What the person should check, in the provider's words."""
+    """What whoever approves the call should check, in the provider's words."""
 
     code: str | None = None
     """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
@@ -529,14 +529,13 @@ _SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
 def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]:
     """The safety checks kept on a call.
 
-    Checks in a shape that can't be read, such as from a history a UI rebuilt, count as one empty check, so the call
-    still waits for approval.
+    Checks in a shape that can't be read, `None` included, such as from a history a UI rebuilt, count as one empty
+    check, so the call still waits for approval.
     """
-    checks = (provider_details or {}).get(_SAFETY_CHECKS)
-    if checks is None:
+    if provider_details is None or _SAFETY_CHECKS not in provider_details:
         return []
     try:
-        return _SAFETY_CHECKS_TA.validate_python(checks)
+        return _SAFETY_CHECKS_TA.validate_python(provider_details[_SAFETY_CHECKS])
     except pydantic.ValidationError:
         return [SafetyCheck()]
 
@@ -579,7 +578,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
 
     @property
     def safety_checks(self) -> list[SafetyCheck]:
-        """The checks the provider asks a person to make before this call runs; empty when there are none."""
+        """The checks the provider asks for before this call runs; empty when there are none."""
         return _safety_checks(self.provider_details)
 
     @property

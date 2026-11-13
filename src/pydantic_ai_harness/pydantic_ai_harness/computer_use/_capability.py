@@ -6,7 +6,7 @@ import math
 import weakref
 from collections import Counter
 from collections.abc import AsyncGenerator, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import KW_ONLY, asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
@@ -402,10 +402,7 @@ async def _perform(
             performed += 1
     finally:
         # A call releases every button it presses, so one is still pressed only after a failure or cancellation.
-        for button in list(held):
-            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                await display.act(MouseUp(button=button))
-                held.remove(button)
+        await _release(display, held)
     if held:
         raise ToolFailed(
             f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}. '
@@ -413,6 +410,22 @@ async def _perform(
         )
     await steps.settle()
     return performed, error, steps.outputs
+
+
+async def _release(display: Display, held: list[MouseButton]) -> None:
+    """Release each button in `held`, removing it once released; one whose release fails stays.
+
+    A lost environment ends the run, so `WorkspaceUnavailableError` propagates instead.
+    """
+    for button in list(held):
+        with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
+            try:
+                await display.act(MouseUp(button=button))
+            except WorkspaceUnavailableError:
+                raise
+            except Exception:
+                continue
+            held.remove(button)
 
 
 def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
@@ -588,10 +601,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             for name, value in asdict(capability.action_limits).items():
                 if value is not None:
                     limits[name] = min(value, limits.get(name, value))
-        merged.action_limits = _ACTION_LIMITS.validate_python(limits)
-        # The tool was built for the last capability, so it would read that one's fields.
-        merged.__post_init__()
-        return merged
+        # A copy, since `merged` can be a caller's instance that another agent also uses.
+        # `replace` re-runs `__post_init__`, which rebuilds the tool from the merged fields.
+        return replace(merged, action_limits=_ACTION_LIMITS.validate_python(limits))
 
     def __post_init__(self) -> None:
         if self.settle_seconds < 0:
