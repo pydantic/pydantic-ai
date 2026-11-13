@@ -4059,25 +4059,25 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
-def _executor_kinds(params: ModelRequestParameters, native_tool: AbstractNativeTool) -> Counter[str | None]:
-    """How many tools of each kind could run `native_tool`'s calls: ones not deferred, or revealed by history.
+def _executor_kinds(params: ModelRequestParameters, sent_ids: set[str]) -> Counter[str | None]:
+    """How many tools of each kind could run a native tool's calls: ones not deferred, or revealed by history.
 
-    A tool dropped when this native tool is sent can't run its calls.
+    A tool dropped because a native tool in `sent_ids` is sent in its place can't run any calls.
     """
     return Counter(
         t.tool_kind
         for t in params.function_tools
-        if (not t.defer_loading or t.name in params.revealed_tool_names) and t.unless_native != native_tool.unique_id
+        if (not t.defer_loading or t.name in params.revealed_tool_names) and t.unless_native not in sent_ids
     )
 
 
-def _has_executors(params: ModelRequestParameters, native_tool: AbstractNativeTool) -> bool:
+def _has_executors(params: ModelRequestParameters, native_tool: AbstractNativeTool, sent_ids: set[str]) -> bool:
     """Whether the request has exactly one tool of each kind that runs `native_tool`'s calls.
 
     An optional native tool without them is dropped; a required one raises `UserError`, as does one with more than one
     tool of a kind.
     """
-    executor_kinds = _executor_kinds(params, native_tool)
+    executor_kinds = _executor_kinds(params, sent_ids)
     if missing := sorted(kind.id for kind in native_tool.executed_by if kind.id not in executor_kinds):
         # Its calls would have no tool to run them.
         if native_tool.optional:
@@ -4113,8 +4113,10 @@ def _supported_native_tools(
         elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
             unsupported_natives.append(native_tool)
             unapplied_settings[native_tool.unique_id] = settings
-        elif _has_executors(params, native_tool):
+        else:
             supported_natives.append(native_tool)
+    sent_ids = {t.unique_id for t in supported_natives}
+    supported_natives = [t for t in supported_natives if _has_executors(params, t, sent_ids)]
 
     unsupported_ids = {t.unique_id for t in unsupported_natives}
     optional_ids = {t.unique_id for t in unsupported_natives if t.optional}

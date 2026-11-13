@@ -36,6 +36,7 @@ with try_import() as imports_successful:
     from pydantic_ai.native_tools import (
         AdvisorTool,
         CodeExecutionTool,
+        ComputerTool,
         MCPServerTool,
         MemoryTool,
         WebFetchTool,
@@ -650,7 +651,16 @@ def test_model_profile_fable_5_1():
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'computer_use_screenshot_max_side': 2576,
             'computer_use_screenshot_max_pixels': 3600000,
@@ -758,7 +768,16 @@ def test_model_profile_opus_5():
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'computer_use_screenshot_max_side': 2576,
             'computer_use_screenshot_max_pixels': 3600000,

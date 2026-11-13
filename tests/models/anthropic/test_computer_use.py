@@ -366,12 +366,13 @@ def _without_computer_tool(profile: ModelProfile) -> ModelProfile:
     'native, profile',
     [
         pytest.param(True, _without_computer_tool, id='a-model-without-a-computer-use-tool'),
+        pytest.param(True, ModelProfile(supported_native_tools=frozenset()), id='a-profile-without-native-tools'),
         # As `ComputerUse(native=False)` asks, so Claude gets the tool's own actions.
         pytest.param(False, None, id='a-tool-that-opts-out'),
     ],
 )
 async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when_it_opts_out(
-    allow_model_requests: None, native: bool, profile: Callable[[ModelProfile], ModelProfile] | None
+    allow_model_requests: None, native: bool, profile: ModelProfile | Callable[[ModelProfile], ModelProfile] | None
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client), profile=profile)
@@ -665,7 +666,7 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
 
 
 # Input that isn't an object has nothing to map either.
-@pytest.mark.parametrize('streamed', ['{"text": "unfinished', 'null', '[]', '"hello"', 'n'])
+@pytest.mark.parametrize('streamed', ['', '{"text": "unfinished', 'null', '[]', '"hello"', 'n'])
 async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requests: None, streamed: str) -> None:
     events = _stream(_tool_use('toolu_1', 'type', {'text': 'hello'}))
     (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
@@ -683,6 +684,23 @@ async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requ
     assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
 
 
+async def test_a_streamed_member_that_takes_no_input_runs(allow_model_requests: None) -> None:
+    # Anthropic streams no input for it, as for any tool without arguments.
+    events = _stream(_tool_use('toolu_1', 'screenshot', {}))
+    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
+    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='')
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
+    )
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
+        async for _ in stream:
+            pass
+
+    (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
+
+
 @pytest.mark.parametrize('received', [None, [], 'hello'])
 async def test_a_member_whose_input_is_not_an_object_runs_nothing(allow_model_requests: None, received: Any) -> None:
     block = _tool_use('toolu_1', 'type', {'text': 'hello'})
@@ -698,12 +716,20 @@ async def test_a_member_whose_input_is_not_an_object_runs_nothing(allow_model_re
     assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
 
 
-@pytest.mark.parametrize('settings', [None, {'tool_choice': ['computer']}], ids=['auto', 'forcing-the-function'])
+@pytest.mark.parametrize(
+    'model_name, settings',
+    [
+        pytest.param('claude-sonnet-4-6', None, id='auto'),
+        pytest.param('claude-sonnet-4-6', {'tool_choice': ['computer']}, id='forcing-the-function'),
+        # The toolset is named `computer` too, and Anthropic refuses a tool of that name beside it.
+        pytest.param('claude-sonnet-5-5', None, id='toolset'),
+    ],
+)
 async def test_a_function_tool_named_computer_beside_a_computer_tool_of_another_name_is_refused(
-    allow_model_requests: None, settings: ModelSettings | None
+    allow_model_requests: None, model_name: str, settings: ModelSettings | None
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
     function = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'})
     desktop = ToolDefinition(name='desktop', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     params = ModelRequestParameters(

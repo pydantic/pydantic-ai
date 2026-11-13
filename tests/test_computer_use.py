@@ -34,7 +34,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, MemoryTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -167,6 +167,32 @@ def test_computer_tool_refuses_two_computer_tools_that_could_run_its_calls() -> 
                 native_tools=[ComputerTool(display_size=(1, 1), optional=True)],
             )
         )
+
+
+def test_computer_tool_does_not_count_a_computer_tool_another_native_tool_replaces() -> None:
+    # `MemoryTool` is sent, so the tool standing in for it is dropped and can't run the computer's calls.
+    replaced = ToolDefinition(name='memory_computer', tool_kind=COMPUTER_KIND, unless_native='memory')
+    natives: list[AbstractNativeTool] = [ComputerTool(display_size=(1, 1)), MemoryTool()]
+    params = _prepare(ModelRequestParameters(function_tools=[replaced, _computer_tool_def()], native_tools=natives))
+    assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
+    with pytest.raises(UserError, match=r'needs a tool of each of the kinds .* has none the model can call'):
+        _prepare(ModelRequestParameters(function_tools=[replaced], native_tools=natives))
+
+
+async def test_a_grid_model_is_told_its_grid_in_every_computer_tool() -> None:
+    descriptions: list[list[str | None]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descriptions.append([tool.description for tool in info.function_tools])
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(parts=[ToolCallPart(name, {'actions': []}) for name in ('left', 'right')])
+
+    tools = [Tool(lambda actions: ['Done.', SCREEN], name=name, tool_kind=COMPUTER_KIND) for name in ('left', 'right')]
+    agent = Agent(FunctionModel(respond, profile=GRID_PROFILE), tools=tools)
+    messages = (await agent.run('Click.')).all_messages()
+    assert descriptions == [[GRID_SENTENCE, GRID_SENTENCE]] * 2
+    assert [call.coordinate_grid for call in _computer_calls(messages)] == [1000, 1000]
 
 
 @pytest.mark.parametrize('size', [(0, 800), (1280, -1)])
