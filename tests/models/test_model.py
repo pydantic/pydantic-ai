@@ -354,6 +354,22 @@ def test_infer_str_unknown(model_name: str, message: str):
         infer_model(model_name)
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'provider_name'),
+    [
+        ('elevenlabs:eleven_realtime_v1_mini', 'elevenlabs'),
+        ('sentence-transformers:all-MiniLM-L6-v2', 'sentence-transformers'),
+        ('voyageai:voyage-3', 'voyageai'),
+        ('gateway/voyageai:voyage-3', 'voyageai'),
+    ],
+)
+def test_infer_model_non_chat_provider(model_name: str, provider_name: str):
+    """A provider with no chat models is named in the error, before its package or API key is asked for."""
+    message = f'Unknown model: {model_name}. Provider {provider_name!r} has no chat models.'
+    with pytest.raises(UserError, match=f'^{re.escape(message)}$'):
+        infer_model(model_name)
+
+
 def test_agent_suggests_known_model_name():
     with pytest.raises(UserError, match="Did you mean 'anthropic:claude-sonnet-5-5'"):
         Agent('claude:sonnet-5-5')
