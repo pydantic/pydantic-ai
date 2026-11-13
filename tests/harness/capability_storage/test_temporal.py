@@ -103,26 +103,28 @@ def _spill(root: Path) -> str:
     return spill.read_text(encoding='utf-8')
 
 
-async def test_spills_go_to_storage_inside_a_workflow(temporal_env: WorkflowEnvironment, tmp_path: Path) -> None:
-    work = tmp_path / 'work'
-    storage = tmp_path / 'storage'
-    work.mkdir()
-    storage.mkdir()
+class TestCapabilityStorageUnderTemporal:
+    async def test_spills_go_to_storage_inside_a_workflow(
+        self, temporal_env: WorkflowEnvironment, tmp_path: Path
+    ) -> None:
+        work = tmp_path / 'work'
+        storage = tmp_path / 'storage'
+        work.mkdir()
+        storage.mkdir()
 
-    spilled, read = await _run(
-        temporal_env, LocalWorkspace(work), FileSystem(), CapabilityStorage(LocalWorkspaceBackend(storage))
-    )
+        spilled, read = await _run(
+            temporal_env, LocalWorkspace(work), FileSystem(), CapabilityStorage(LocalWorkspaceBackend(storage))
+        )
 
-    assert _spill(storage) == PAYLOAD
-    assert f'{READ_TOOL_NAME}(handle=' in spilled
-    assert read.endswith('line 0\nline 1')
-    assert list(work.iterdir()) == []
+        assert _spill(storage) == PAYLOAD
+        assert f'{READ_TOOL_NAME}(handle=' in spilled
+        assert read.endswith('line 0\nline 1')
+        assert list(work.iterdir()) == []
 
+    async def test_spills_go_to_the_run_workspace_without_a_storage(
+        self, temporal_env: WorkflowEnvironment, tmp_path: Path
+    ) -> None:
+        _, read = await _run(temporal_env, LocalWorkspace(tmp_path))
 
-async def test_spills_go_to_the_run_workspace_without_a_storage(
-    temporal_env: WorkflowEnvironment, tmp_path: Path
-) -> None:
-    _, read = await _run(temporal_env, LocalWorkspace(tmp_path))
-
-    assert _spill(tmp_path) == PAYLOAD
-    assert read.endswith('line 0\nline 1')
+        assert _spill(tmp_path) == PAYLOAD
+        assert read.endswith('line 0\nline 1')
