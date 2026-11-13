@@ -80,6 +80,21 @@ async def test_binary_content_document_uploaded_once_per_instance(allow_model_re
     assert other_client.upload_calls == [(document_content.data, document_content.identifier)]
 
 
+async def test_cache_is_keyed_by_bytes_alone(allow_model_requests: None):
+    """Identical bytes under a different identifier reuse the first upload and keep its file name."""
+    response = create_response(content='ok')
+    counting_client = CountingMockXai(responses=[response, response])
+    mock_client = cast(AsyncClient, counting_client)
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+    data = b'%PDF-1.4\nshared content'
+
+    await agent.run(['First', BinaryContent(data=data, media_type='application/pdf', identifier='first')])
+    await agent.run(['Second', BinaryContent(data=data, media_type='application/pdf', identifier='second')])
+
+    assert counting_client.upload_calls == [(data, 'first')]
+    assert _sent_file_ids(mock_client) == [['file-1'], ['file-1']]
+
+
 @pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
 async def test_document_url_uploaded_once_per_instance(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """A DocumentUrl replayed across requests is downloaded every time but uploaded only once per model instance.
