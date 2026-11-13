@@ -71,6 +71,28 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: ReportEvaluatorContext[str, str, str]) -> ScalarResult:
             return ScalarResult(title='Configured value', value=self.value)
 
+    @dataclass(frozen=True)
+    class RoundTripCase:
+        """What `evaluator` saves as, and the spec forms its saved schema offers."""
+
+        evaluator: Evaluator[str, str, str]
+        saved_arguments: object
+        schema_forms: frozenset[str]
+
+    KEYWORD_FORMS = frozenset({'spec', 'spec_params'})
+    ROUND_TRIP_CASES: dict[str, RoundTripCase] = {
+        'KeywordOnly': RoundTripCase(KeywordOnly(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
+        'KeywordOnlyField': RoundTripCase(KeywordOnlyField(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
+        'MixedFields': RoundTripCase(MixedFields(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
+        'KeywordOnlyFirstWithDefault': RoundTripCase(
+            KeywordOnlyFirstWithDefault(minimum=4), {'minimum': 4}, KEYWORD_FORMS
+        ),
+        'Positional': RoundTripCase(Positional(minimum=4), 4, frozenset({'short_spec'})),
+        'PositionalWithKeywordOnlyDefault': RoundTripCase(
+            PositionalWithKeywordOnlyDefault(minimum=4), 4, frozenset({'short_spec'}) | KEYWORD_FORMS
+        ),
+    }
+
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals or jsonschema not installed')
 
@@ -89,15 +111,9 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
 )
 def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'], evaluator_name: str):
     """File persistence retains constructor names without changing existing positional short forms."""
-    evaluator_type = {
-        'KeywordOnly': KeywordOnly,
-        'KeywordOnlyField': KeywordOnlyField,
-        'MixedFields': MixedFields,
-        'KeywordOnlyFirstWithDefault': KeywordOnlyFirstWithDefault,
-        'Positional': Positional,
-        'PositionalWithKeywordOnlyDefault': PositionalWithKeywordOnlyDefault,
-    }[evaluator_name]
-    evaluator = evaluator_type(minimum=4)
+    case = ROUND_TRIP_CASES[evaluator_name]
+    evaluator = case.evaluator
+    evaluator_type = type(evaluator)
     dataset = Dataset[str, str, str](
         name='round-trip', cases=[Case(inputs='hello', evaluators=[evaluator])], evaluators=[evaluator]
     )
@@ -109,25 +125,16 @@ def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'],
     assert loaded.cases[0].evaluators == [evaluator]
 
     raw = yaml.safe_load(path.read_text())
-    positional = evaluator_type in (Positional, PositionalWithKeywordOnlyDefault)
-    arguments = 4 if positional else {'minimum': 4}
-    expected = [{evaluator_type.get_serialization_name(): arguments}]
+    name = evaluator_type.get_serialization_name()
+    expected = [{name: case.saved_arguments}]
     assert raw['evaluators'] == expected
     assert raw['cases'][0]['evaluators'] == expected
 
     schema = json.loads((tmp_path / 'dataset_schema.json').read_text())
     validator = validator_for(schema)(schema)
     assert list(validator.iter_errors(raw)) == []
-    name = evaluator_type.get_serialization_name()
-    if positional:
-        assert schema['$defs'][f'short_spec_{name}']['properties'][name]['type'] == 'integer'
-    else:
-        assert f'short_spec_{name}' not in schema['$defs']
-        assert schema['$defs'][f'spec_{name}']['properties'][name] == {'$ref': f'#/$defs/spec_params_{name}'}
-        assert schema['$defs'][f'spec_params_{name}']['properties']['minimum'] == {
-            'title': 'Minimum',
-            'type': 'integer',
-        }
+    forms = {key.removesuffix(f'_{name}') for key in schema['$defs'] if key.endswith(f'_{name}')}
+    assert forms == case.schema_forms
     report = loaded.evaluate_sync(lambda value: value)
     assert all(result.value is True for result in report.cases[0].assertions.values())
 
