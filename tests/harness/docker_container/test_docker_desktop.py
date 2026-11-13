@@ -221,6 +221,24 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     assert docker.x_lock_exists(backend.ref.id)
 
 
+@pytest.mark.parametrize('ours', [True, False], ids=['started-by-us', 'already-running'])
+async def test_a_display_we_started_gets_its_panel_even_after_a_cancelled_start(
+    docker: FakeDocker, container_dir: Path, ours: bool
+) -> None:
+    """A start cancelled after the X server came up leaves the panel to the next start; an image's own display gets none."""
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    panel = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'panel'
+    if ours:
+        # As a cancelled start leaves it: the X server runs, and the panel was never started.
+        panel.touch()
+
+    await _screen(backend).display_size()
+    # The panel's process ID, written when the start launched it.
+    assert panel.read_text().strip().isdigit() if ours else not panel.exists()
+
+
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
     (docker.bin_dir / 'scrot').unlink()
     workspace = _screen(_desktop(container_dir, image='my-desktop'))

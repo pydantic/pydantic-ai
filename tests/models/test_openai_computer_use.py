@@ -424,18 +424,33 @@ async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_re
     assert 'Ran 0 of 1 actions. The next one failed: ' in str(second['input'])
 
 
-@pytest.mark.parametrize('checklist', [pytest.param({'pending_safety_checks': []}, id='with-a-checklist'), {}])
-async def test_a_call_with_a_single_action_runs_it_only_with_its_safety_checklist(
-    allow_model_requests: None, checklist: dict[str, Any]
+@pytest.mark.parametrize(
+    ('fields', 'runs'),
+    [
+        pytest.param({'pending_safety_checks': []}, True, id='with-a-checklist'),
+        pytest.param({}, False, id='without-a-checklist'),
+        pytest.param(
+            {
+                'pending_safety_checks': [],
+                'actions': [resp.response_computer_tool_call.ActionClick(type='click', x=7, y=8, button='left')],
+            },
+            False,
+            id='with-actions-too',
+        ),
+    ],
+)
+async def test_a_call_with_a_single_action_runs_it_only_with_its_safety_checklist_and_no_actions(
+    allow_model_requests: None, fields: dict[str, Any], runs: bool
 ) -> None:
-    # Built as the SDK builds a response, unvalidated: OpenAI's SDK refuses this shape without its checklist.
+    # Built as the SDK builds a response, unvalidated: OpenAI's SDK refuses this shape without its checklist, or with
+    # `actions` too.
     item = resp.ResponseComputerToolCall.model_construct(
         id='cu_1',
         call_id='call_1',
         type='computer_call',
         status='completed',
         action=resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left'),
-        **checklist,
+        **fields,
     )
     response = response_message([item])
     provider, computer = InMemoryProvider(), FakeComputer()
@@ -443,7 +458,7 @@ async def test_a_call_with_a_single_action_runs_it_only_with_its_safety_checklis
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     result = await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
     assert result.output == 'done'
-    assert computer.actions == ([Click(x=5, y=6)] if checklist else [])
+    assert computer.actions == ([Click(x=5, y=6)] if runs else [])
 
 
 _DROPPED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
