@@ -1,4 +1,5 @@
-"""Record what streamed model responses emit and the requests tests send, per test node, to prove a refactor keeps them.
+"""Record what streamed model responses and UI adapters emit and the requests tests send, per test node, to prove a
+refactor keeps them.
 
 The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
 other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
@@ -49,33 +50,51 @@ without calling `super()` escapes it. When a capture starts, it runs an agent ov
 not, and stops the run if a call on a listed method wasn't recorded, so an agent that stops calling a model through
 them fails loudly.
 
+What the UI adapters produce is recorded as lines of kind `ui`, each with the target that produced it. A
+`UIEventStream.transform_stream` call is recorded under the class of the event stream it's called on, Vercel AI's,
+AG-UI's or a test's own, with the events it hands the consumer and the error iteration raised if any. The capture wraps
+`transform_stream` on `UIEventStream` and on every subclass that overrides it, whether the subclass is defined before
+the capture starts or after, and closes the stream it wraps when the consumer closes the recording, so the stream's
+cleanup runs when it would without the capture. An override that calls `super()` is recorded once itself and once for
+the call it makes. A call on a method `UI_MESSAGE_METHODS` lists, wrapped the same way on `UIAdapter` and its
+subclasses, is recorded with what it returns or the error it raises, and with the fields equality skips on each
+dataclass in what it returns, like `FileUrl._media_type` and `_identifier`: serializing a file shows the media type and
+identifier it resolves to, not whether they were set. Each request an app `create_api_app` built answers, like the one
+`create_web_app` mounts under `/api` and a test drives with Starlette's `TestClient`, is recorded with its method and
+path as the target and the status, headers and body of the response, the body parsed when it's JSON.
+
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
 recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
 test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), the trace and span ids of a W3C trace
 context, like the `traceparent` an MCP client or Prefect puts in a request body, object addresses (the decimal one a
 `unittest.mock` repr gives too), timestamps within a day of the capture (ones in the basic format of a SigV4
-`x-amz-date` header too), history digests (which hash those timestamps), attempt durations, local server ports,
-multipart boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id`
-gets, `PromptInjectionDefender`'s measured `latency_ms`, `Planning`'s step ids where its plan and its reply to an added
-step render them, the code hash a Prefect `task_key` ends in, which hashes the file the task function was compiled from,
-and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized, so
-two runs of the same code compare equal. A step id a model echoes back isn't, in a tool call's arguments or where
-`Planning` renders it from them, as a subtask's parent or a dependency. Cassette playback hands a response's headers
-back in a different order each run, so the `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are
-sorted where an error message renders them.
+`x-amz-date` header, an AG-UI event's milliseconds since the epoch, and ones in JSON a value holds as text, like an
+AG-UI message's `encryptedValue` or a web API response's event stream, too), history digests (which hash those
+timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
+random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`,
+`Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
+in, which hashes the file the task function was compiled from, and the `custom_id` of each batch request
+`InMemoryBatchModel` encodes, which hashes a random token, are normalized, so two runs of the same code compare equal. A
+step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
+parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
+`HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
+them.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
 the base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams
-reach each module that defines a `StreamedResponse` subclass and the nodes that send to each request target, and names
-the selected nodes that recorded no request, so the capture's reach over the changed code shows.
+reach each module that defines a `StreamedResponse` subclass, the nodes that send to each request target and the nodes
+with a UI record from each UI target, and names the selected nodes that recorded no request, so the capture's reach
+over the changed code shows.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
+import functools
 import importlib.util
 import io
 import json
@@ -88,7 +107,7 @@ import tarfile
 import tempfile
 import weakref
 from collections import Counter, defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Iterable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -99,10 +118,14 @@ import pytest
 from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
 from botocore.endpoint import Endpoint
 from pydantic_core import to_json
-from typing_extensions import TypedDict
+from starlette.applications import Starlette
+from starlette.types import Message, Receive, Scope, Send
+from typing_extensions import TypedDict, TypeVar
 from urllib3 import HTTPResponse
 
 import pydantic_ai
+import pydantic_ai.ui._web.api as web_api
+import pydantic_ai.ui._web.app as web_app
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart
@@ -116,6 +139,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.bedrock import BedrockProvider
 from pydantic_ai.providers.groq import GroqProvider
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.ui import UIAdapter, UIEventStream
 
 CAPTURE_OPTION = '--refactor-capture'
 SOURCE_FILE = 'source.json'
@@ -180,8 +204,11 @@ GENERATED_VALUES = [
 # and CSRF token fetches; the module docstring says why a capture leaves them and the client's retries out.
 PREFECT_API_VERSION_HEADER = 'x-prefect-api-version'
 PREFECT_OWN_PATHS = re.compile(r'/api/(?:logs/|admin/version|csrf-token)$')
-# The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with.
-ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}Z)"')
+# The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with. A timestamp quoted
+# `\"` is in JSON a value holds as text, like an AG-UI message's `encryptedValue` or a web API response's event stream.
+ISO_DATETIME = re.compile(r'(\\?")(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}Z)\1')
+# AG-UI stamps each event with the milliseconds since the epoch.
+EPOCH_MILLISECONDS = re.compile(r'"timestamp":(\d{13})(?![\d.])')
 # Cassette playback hands a response's headers back in a different order each run, and botocore copies them into an
 # error response's `ResponseMetadata`, which an error message renders with `repr`.
 BOTOCORE_ERROR_HEADERS = re.compile(r"'HTTPHeaders': \{([^{}]*)\}")
@@ -205,6 +232,10 @@ IN_PROCESS_MODELS: list[tuple[type[Model], tuple[str, ...]]] = [
     (FunctionModel, ('request', 'request_stream')),
     (TestModel, ('request', 'request_stream')),
 ]
+# The `UIAdapter` class methods that convert messages, whose results a capture records.
+UI_MESSAGE_METHODS = ('load_messages', 'dump_messages')
+
+WrappedT = TypeVar('WrappedT')
 
 
 class BotocoreRequest(TypedDict):
@@ -245,6 +276,8 @@ class RefactorCapture:
         ] = {}
         # The requests Prefect's client has sent, so a retry, which sends one again, isn't recorded twice.
         self._prefect_requests: weakref.WeakSet[httpx.Request | httpx2.Request] = weakref.WeakSet()
+        # The apps `create_api_app` has built, whose responses are recorded.
+        self._api_apps: weakref.WeakSet[Starlette] = weakref.WeakSet()
         self._monkeypatch = pytest.MonkeyPatch()
 
     def pytest_configure(self) -> None:
@@ -290,15 +323,14 @@ class RefactorCapture:
     def install(self) -> None:
         """Wrap `__aiter__` on `StreamedResponse` and every subclass that overrides it, now and when one is defined.
 
-        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s, botocore's `Endpoint.make_request`, and each method
-        `IN_PROCESS_MODELS` lists.
+        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s, botocore's `Endpoint.make_request`, each method
+        `IN_PROCESS_MODELS` lists, `transform_stream` and the methods `UI_MESSAGE_METHODS` lists where `UIEventStream`,
+        `UIAdapter` or a subclass defines them, and the app `create_api_app` builds.
         """
-        pending: list[type[StreamedResponse]] = [StreamedResponse]
-        while pending:
-            cls = pending.pop()
-            pending.extend(cls.__subclasses__())
-            self._wrap_aiter(cls)
-        self._monkeypatch.setattr(StreamedResponse, '__init_subclass__', classmethod(self._wrap_aiter))
+        self._wrap_subclasses(StreamedResponse, self._wrap_aiter)
+        self._wrap_subclasses(UIEventStream, self._wrap_transform_stream)
+        self._wrap_subclasses(UIAdapter, self._wrap_message_methods)
+        self._wrap_api_app()
         self._wrap_send(httpx.AsyncClient)
         self._wrap_send(httpx2.AsyncClient)
         self._wrap_make_request()
@@ -406,6 +438,21 @@ class RefactorCapture:
         self._streams.clear()
         self._iterators.clear()
 
+    def _wrap_subclasses(self, base: type[WrappedT], wrap: Callable[[type[WrappedT]], None]) -> None:
+        """Call `wrap` on `base` and each of its subclasses, now and when one is defined."""
+        pending = [base]
+        while pending:
+            cls = pending.pop()
+            pending.extend(cls.__subclasses__())
+            wrap(cls)
+
+        # `Generic.__init_subclass__`, which `super()` reaches, sets up a generic subclass's type parameters.
+        def init_subclass(cls: type[WrappedT], **kwargs: object) -> None:
+            super(base, cls).__init_subclass__(**kwargs)
+            wrap(cls)
+
+        self._monkeypatch.setattr(base, '__init_subclass__', classmethod(init_subclass))
+
     def _wrap_aiter(self, cls: type[StreamedResponse]) -> None:
         if '__aiter__' not in vars(cls):
             return
@@ -452,6 +499,106 @@ class RefactorCapture:
 
         return recorded()
 
+    def _wrap_transform_stream(self, cls: type) -> None:
+        if 'transform_stream' not in vars(cls):
+            return
+        original: Callable[..., AsyncGenerator[object]] = vars(cls)['transform_stream']
+
+        @functools.wraps(original)
+        def recording_transform_stream(event_stream: object, *args: object, **kwargs: object) -> AsyncIterator[object]:
+            return self._recorded_ui_events(event_stream, original(event_stream, *args, **kwargs))
+
+        self._monkeypatch.setattr(cls, 'transform_stream', recording_transform_stream)
+
+    def _recorded_ui_events(self, event_stream: object, iterator: AsyncGenerator[object]) -> AsyncIterator[object]:
+        events: list[object] = []
+        record: dict[str, object] = {
+            'kind': 'ui',
+            'node': self.node,
+            'target': method_target(type(event_stream), 'transform_stream'),
+            'events': events,
+        }
+        self.records.append(record)
+
+        async def recorded() -> AsyncIterator[object]:
+            try:
+                async for event in iterator:
+                    events.append(normalized(event))
+                    yield event
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                # `transform_stream` runs its cleanup when it's closed, so it's closed with this rather than collected.
+                await iterator.aclose()
+
+        return recorded()
+
+    def _wrap_message_methods(self, cls: type) -> None:
+        for name in UI_MESSAGE_METHODS:
+            if name in vars(cls):
+                self._wrap_message_method(cls, name)
+
+    def _wrap_message_method(self, cls: type, name: str) -> None:
+        original: classmethod[object, ..., object] = vars(cls)[name]
+        target = method_target(cls, name)
+
+        # `functools.wraps` carries over `__isabstractmethod__`, which tells an abstract subclass apart.
+        @functools.wraps(original.__func__)
+        def recording_method(adapter_class: type[object], *args: object, **kwargs: object) -> object:
+            record: dict[str, object] = {'kind': 'ui', 'node': self.node, 'target': target}
+            self.records.append(record)
+            try:
+                result = original.__get__(None, adapter_class)(*args, **kwargs)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            record['result'] = normalized(result)
+            record['uncompared_fields'] = uncompared_fields(result)
+            return result
+
+        self._monkeypatch.setattr(cls, name, classmethod(recording_method))
+
+    def _wrap_api_app(self) -> None:
+        original_create: Callable[..., Starlette] = vars(web_api)['create_api_app']
+        original_call: Callable[[Starlette, Scope, Receive, Send], Awaitable[None]] = vars(Starlette)['__call__']
+
+        @functools.wraps(original_create)
+        def recording_create_api_app(*args: object, **kwargs: object) -> Starlette:
+            app = original_create(*args, **kwargs)
+            self._api_apps.add(app)
+            return app
+
+        async def recording_call(app: Starlette, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope['type'] != 'http' or app not in self._api_apps:
+                return await original_call(app, scope, receive, send)
+            record: dict[str, object] = {
+                'kind': 'ui',
+                'node': self.node,
+                'target': f'{scope["method"]} {scope["path"]}',
+            }
+            self.records.append(record)
+            body = bytearray()
+
+            async def recording_send(message: Message) -> None:
+                if message['type'] == 'http.response.start':
+                    record['status'] = message['status']
+                    record['headers'] = normalized(
+                        {name.decode(): value.decode() for name, value in message['headers']}
+                    )
+                body.extend(message.get('body', b''))
+                await send(message)
+
+            try:
+                await original_call(app, scope, receive, recording_send)
+            finally:
+                record['body'] = normalized(parsed_json(body.decode(errors='backslashreplace')))
+
+        # `create_web_app` calls it through the name its module imported.
+        for module in (web_api, web_app):
+            self._monkeypatch.setattr(module, 'create_api_app', recording_create_api_app)
+        self._monkeypatch.setattr(Starlette, '__call__', recording_call)
+
     def _wrap_send(self, client_class: type[httpx.AsyncClient] | type[httpx2.AsyncClient]) -> None:
         original: Callable[..., Awaitable[object]] = vars(client_class)['send']
 
@@ -484,10 +631,6 @@ class RefactorCapture:
         self._monkeypatch.setattr(Endpoint, 'make_request', recording_make_request)
 
     def _record_request(self, target: str, headers: Iterable[tuple[str, str]], text: str) -> None:
-        try:
-            body: object = json.loads(text)
-        except ValueError:
-            body = text
         self.records.append(
             {
                 'kind': 'request',
@@ -496,7 +639,7 @@ class RefactorCapture:
                 'headers': normalized(
                     {name: value for name, value in headers if name.lower() not in UNRECORDED_HEADERS}
                 ),
-                'body': normalized(body),
+                'body': normalized(parsed_json(text)),
             }
         )
 
@@ -570,24 +713,58 @@ def method_target(owner: type, name: str) -> str:
     return f'{owner.__module__}.{owner.__qualname__}.{name}'
 
 
+def parsed_json(text: str) -> object:
+    """`text` parsed when it's JSON, else `text`."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def uncompared_fields(value: object) -> list[object]:
+    """The fields equality skips, like `FileUrl._media_type`, of each dataclass `value` holds, in order.
+
+    Serialization shows what they resolve to, like the media type a URL's extension implies, not what they hold.
+    """
+    found: list[object] = []
+    items: list[object] = []
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        fields = dataclasses.fields(value)
+        if skipped := {field.name: getattr(value, field.name) for field in fields if not field.compare}:
+            found.append({'type': type(value).__qualname__, 'fields': normalized(skipped)})
+        items = [getattr(value, field.name) for field in fields]
+    elif isinstance(value, Mapping):
+        items = [*value.values()]
+    elif isinstance(value, list | tuple):
+        items = [*value]
+    for item in items:
+        found.extend(uncompared_fields(item))
+    return found
+
+
 def normalized(value: object) -> object:
     """`value` as JSON-compatible data, with the values that change from run to run replaced by placeholders."""
     now = datetime.now(UTC)
 
     def generated_timestamp(match: re.Match[str]) -> str:
         try:
-            timestamp = datetime.fromisoformat(match[1])
+            timestamp = datetime.fromisoformat(match[2])
         except ValueError:
             return match[0]
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=UTC)
-        return '"NOW"' if abs(timestamp - now) < timedelta(days=1) else match[0]
+        return f'{match[1]}NOW{match[1]}' if abs(timestamp - now) < timedelta(days=1) else match[0]
+
+    def generated_epoch_milliseconds(match: re.Match[str]) -> str:
+        timestamp = datetime.fromtimestamp(int(match[1]) / 1000, UTC)
+        return '"timestamp":"NOW"' if abs(timestamp - now) < timedelta(days=1) else match[0]
 
     # Split only between two quoted strings, so a value with a comma in it, like an HTTP date, stays whole.
     def sorted_headers(match: re.Match[str]) -> str:
         return "'HTTPHeaders': {" + ', '.join(sorted(re.split(r"(?<='), (?=')", match[1]))) + '}'
 
     text = ISO_DATETIME.sub(generated_timestamp, to_json(value, fallback=repr, bytes_mode='base64').decode())
+    text = EPOCH_MILLISECONDS.sub(generated_epoch_milliseconds, text)
     text = BOTOCORE_ERROR_HEADERS.sub(sorted_headers, text)
     for pattern, replacement in GENERATED_VALUES:
         text = pattern.sub(replacement, text)
@@ -617,7 +794,8 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     base, head = _load(base_dir), _load(head_dir)
     if empty := [d for d, nodes in ((base_dir, base), (head_dir, head)) if not nodes]:
         print(
-            f'Nothing recorded in {", ".join(map(str, empty))}; the selected tests may not stream or send requests.',
+            f'Nothing recorded in {", ".join(map(str, empty))}; the selected tests may not stream, send requests or '
+            'run a UI adapter.',
             file=sys.stderr,
         )
         return 2
@@ -627,13 +805,16 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     print(f'records: base {sum(map(len, base.values()))}, head {len(head_records)}')
     print(f'stream events: head {sum(len(record["events"]) for record in head_records if record["kind"] == "stream")}')
     print(f'requests: head {sum(record["kind"] == "request" for record in head_records)}')
+    print(f'ui records: head {sum(record["kind"] == "ui" for record in head_records)}')
 
     modules: Counter[str] = Counter()
     targets: Counter[str] = Counter()
+    ui_targets: Counter[str] = Counter()
     for records in head_nodes.values():
         modules.update({module for record in records for module in record.get('modules', [])})
         targets.update({record['target'] for record in records if record['kind'] == 'request'})
-    for label, counts in (('stream module', modules), ('request target', targets)):
+        ui_targets.update({record['target'] for record in records if record['kind'] == 'ui'})
+    for label, counts in (('stream module', modules), ('request target', targets), ('ui target', ui_targets)):
         print(f'nodes per {label}, head:')
         for name, count in sorted(counts.items()):
             print(f'  {name}: {count}')

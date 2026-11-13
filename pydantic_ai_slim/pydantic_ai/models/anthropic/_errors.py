@@ -119,7 +119,9 @@ def api_error(
     """The error for an error response, stream `error` event, or errored Message Batches result with `body`."""
     error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
     error_type, error_message = error.get('type'), error.get('message')
-    category = error_category(error_type, error_message)
+    details = error.get('details')
+    error_code = details.get('error_code') if _utils.is_str_dict(details) else None
+    category = error_category(error_type, error_message, error_code)
     provider_error_type = error_type if isinstance(error_type, str) else None
     if status_code < 400:
         # An `error` event inside a stream whose type has no known status.
@@ -154,13 +156,23 @@ def api_error(
     )
 
 
-def error_category(error_type: object, error_message: object) -> _model_errors.HTTPErrorCategory | None:
-    """The error category an error body's `type` and `message` name, if any."""
+def error_category(
+    error_type: object, error_message: object, error_code: object
+) -> _model_errors.HTTPErrorCategory | None:
+    """The error category an error body's `type`, `message` and `details.error_code` name, if any."""
+    if error_code == 'enforced_spend_limit_reached':
+        # The tier spend cap is a `rate_limit_error` that lasts until the next month, see
+        # https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap.
+        return ModelQuotaExceededError
     if error_type == 'invalid_request_error' and isinstance(error_message, str):
-        if 'prompt is too long' in error_message.lower():
+        message = error_message.lower()
+        if 'prompt is too long' in message:
             return ModelContextWindowExceededError
-        if 'credit balance is too low' in error_message.lower():
-            # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
+        if 'credit balance is too low' in message or (
+            message.startswith('you have reached your specified') and 'api usage limits' in message
+        ):
+            # Anthropic reports an exhausted prepaid balance, and a spend limit the user set, as a 400 identifiable
+            # only by its message, see https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit.
             return ModelQuotaExceededError
     return _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
 

@@ -34,7 +34,16 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelConnectionError,
     ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -1985,12 +1994,13 @@ async def test_google_image_generation_maps_non_http_api_error():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.parametrize(
-    ('status_code', 'headers', 'error', 'expected_retry_after'),
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'),
     [
         pytest.param(
             400,
             {'retry-after': '12'},
             {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'},
+            ModelRequestRejectedError,
             12,
             id='retry-after-header',
         ),
@@ -2003,19 +2013,73 @@ async def test_google_image_generation_maps_non_http_api_error():
                 'status': 'RESOURCE_EXHAUSTED',
                 'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
             },
+            ModelRateLimitError,
             14.0,
             id='retry-info-body',
+        ),
+        pytest.param(
+            503,
+            None,
+            {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'},
+            ModelOverloadedError,
+            None,
+            id='overloaded',
+        ),
+        pytest.param(
+            400,
+            None,
+            {
+                'code': 400,
+                'message': 'API key not valid. Please pass a valid API key.',
+                'status': 'INVALID_ARGUMENT',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'}],
+            },
+            ModelAuthenticationError,
+            None,
+            id='api-key-invalid',
+        ),
+        pytest.param(
+            404,
+            None,
+            {'code': 404, 'message': 'models/gemini-2.5-flash-image is not found.', 'status': 'NOT_FOUND'},
+            ModelNotFoundError,
+            None,
+            id='not-found',
+        ),
+        pytest.param(
+            504,
+            None,
+            {
+                'code': 504,
+                'message': 'Deadline expired before operation could complete.',
+                'status': 'DEADLINE_EXCEEDED',
+            },
+            ModelServerError,
+            None,
+            id='status-without-category',
+        ),
+        pytest.param(
+            502,
+            None,
+            {'code': 502, 'message': 'Bad Gateway'},
+            ModelServerError,
+            None,
+            id='no-status',
         ),
     ],
 )
 async def test_google_image_generation_status_error(
-    status_code: int, headers: dict[str, str] | None, error: dict[str, object], expected_retry_after: float
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[ModelRateLimitError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError],
+    expected_retry_after: float | None,
 ):
-    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and the wait the provider reported.
+    """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
 
-    Not a VCR test because a 4xx is easy to provoke but its wait is not: a `retry-after` header and a structured
-    error body both depend on Google's live quota state, and a recording would pin whatever that happened to be.
-    The responses here are fixed from Google's documented error format instead.
+    Not a VCR test because an error status is easy to provoke but its wait is not: a `retry-after` header and a
+    structured error body both depend on Google's live quota state, and a recording would pin whatever that happened to
+    be. The responses here are fixed from Google's documented error format instead.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
@@ -2027,9 +2091,73 @@ async def test_google_image_generation_status_error(
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
 
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gemini-2.5-flash-image')
+    )
     assert exc_info.value.status_code == status_code
+    assert exc_info.value.provider_error_code == error.get('status')
     assert exc_info.value.body == {'error': error}
     assert exc_info.value.retry_after == expected_retry_after
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_gave_up_status_error():
+    """A status a retrying transport gave up on surfaces as a categorized `ModelHTTPError` with Gemini's wait.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    error: dict[str, object] = {
+        'code': 429,
+        'message': 'Resource has been exhausted',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+    }
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        response = httpx2.Response(429, json={'error': error}, request=request)
+        raise httpx2.HTTPStatusError('Client error 429', request=request, response=response)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert isinstance(exc_info.value, ModelRateLimitError)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.retry_after == 14.0
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    ('transport_error', 'expected', 'phase'),
+    [
+        pytest.param(httpx2.ConnectError, ModelConnectionError, 'connect', id='connect'),
+        pytest.param(httpx2.ReadTimeout, ModelTimeoutError, 'read', id='timeout'),
+    ],
+)
+async def test_google_image_generation_transport_error(
+    transport_error: type[httpx2.TransportError], expected: type[ModelConnectionError], phase: str
+):
+    """`google.genai` doesn't wrap connection errors and timeouts, so they surface as their pydantic-ai categories.
+
+    Not a VCR test: the transport raises before any response exists, so there is no response to record.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        raise transport_error('failed', request=request)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        with pytest.raises(ModelConnectionError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert type(exc_info.value) is expected
+    assert exc_info.value.phase == phase
+    assert isinstance(exc_info.value.__cause__, transport_error)
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')

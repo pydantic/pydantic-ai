@@ -8,11 +8,12 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 import yaml
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO
+from category_classify_opencode import TOOL_GUIDANCE, Classification
+from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP
 from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
@@ -28,6 +29,15 @@ import subprocess
 import sys
 
 args = sys.argv[1:]
+
+if args[:2] in (['pr', 'view'], ['pr', 'diff']):
+    with open(os.environ['FAKE_CALLS_OUT'], 'a') as handle:
+        handle.write(' '.join(args) + '\\n')
+    if args[1] == 'view':
+        sys.stdout.write(os.environ['FAKE_PR_VIEW'])
+    else:
+        sys.stdout.write(os.environ['FAKE_PR_FILES' if '--name-only' in args else 'FAKE_PR_DIFF'])
+    sys.exit(0)
 
 if args[:1] != ['api']:
     sys.exit('stub gh: unhandled command ' + repr(args))
@@ -291,9 +301,96 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     claude = next(step for step in review['steps'] if step.get('id') == 'review')
     assert '--model claude-opus-5-5[1m]' in claude['with']['claude_args']
     assert 'claude-opus-5-5' in REVIEW_ENGINES['claude']
-    for provider in (OPENCODE_GO, DEEPINFRA):
-        assert opencode['env'][provider.key_variable] == f'${{{{ secrets.{provider.key_variable} }}}}'
+    assert 'DEEPINFRA_API_KEY' not in opencode['env']
+    for provider in (OPENCODE_GO, ZAI, ZAI_BACKUP):
+        assert opencode['env'][provider.secret_variable] == f'${{{{ secrets.{provider.secret_variable} }}}}'
         assert REVIEW_ENGINES[provider.review_engine] == f'Reviewer: OpenCode ({provider.model})'
+
+
+def test_category_classify_falls_back_to_opencode_only_on_a_usage_limit() -> None:
+    """Only a subscription-limit rejection reruns the classification, and either job's category is applied."""
+    jobs = _workflow()['jobs']
+    classify = jobs['category-classify']
+    fallback = jobs['category-classify-opencode']
+    apply = jobs['category-apply']
+    steps = {step.get('id'): step for step in classify['steps']}
+    review_detector = next(step for step in jobs['review']['steps'] if step.get('id') == 'usage-limit')
+    assert steps['classify']['continue-on-error'] is True
+    assert steps['usage-limit']['if'] == "steps.classify.outcome == 'failure'"
+    assert steps['usage-limit']['run'] == review_detector['run']
+    assert steps['usage-limit']['env'] == {
+        **review_detector['env'],
+        'EXECUTION_FILE': '${{ steps.classify.outputs.execution_file }}',
+    }
+    assert steps['extract']['if'] == "steps.classify.outcome == 'success'"
+    assert classify['outputs']['fallback'] == '${{ steps.usage-limit.outputs.fallback }}'
+
+    assert fallback['needs'] == 'category-classify'
+    assert fallback['if'] == (
+        "needs.category-classify.result == 'success' && needs.category-classify.outputs.fallback == 'true'"
+    )
+    assert fallback['permissions'] == {'contents': 'read', 'pull-requests': 'read'}
+    assert fallback['outputs']['category'] == '${{ steps.classify.outputs.category }}'
+    opencode = next(step for step in fallback['steps'] if step.get('id') == 'classify')
+    assert opencode['run'].endswith('python3 .github/scripts/category_classify_opencode.py\n')
+    assert opencode['env']['CLASSIFY_PROMPT'] == steps['classify']['with']['prompt']
+    assert 'GH_TOKEN' not in opencode['env']
+    assert 'DEEPINFRA_API_KEY' not in opencode['env']
+    for provider in (OPENCODE_GO, ZAI, ZAI_BACKUP):
+        assert opencode['env'][provider.secret_variable] == f'${{{{ secrets.{provider.secret_variable} }}}}'
+
+    assert apply['needs'] == ['category-classify', 'category-classify-opencode']
+    assert apply['if'].startswith('!cancelled() && ')
+    [apply_step] = apply['steps']
+    assert apply_step['env']['CLASSIFIED_CATEGORY'] == (
+        '${{ needs.category-classify.outputs.category || needs.category-classify-opencode.outputs.category }}'
+    )
+    allowed = re.search(r'ALLOWED="([^"]*)"', apply_step['run'])
+    assert allowed is not None
+    assert tuple(allowed[1].split()) == get_args(Classification.model_fields['category'].annotation)
+
+
+@pytest.mark.parametrize(
+    ('changed', 'fetches_diff'),
+    [
+        pytest.param('README.md\n', False, id='no-pyproject'),
+        pytest.param('README.md\npydantic_ai_slim/pyproject.toml\n', True, id='pyproject'),
+    ],
+)
+def test_category_prefetch_saves_the_files_the_classifier_reads(tmp_path: Path, changed: str, fetches_diff: bool):
+    """The prefetch writes each `gh` command's output under the name the OpenCode prompt gives it."""
+    step = next(
+        step
+        for step in _workflow()['jobs']['category-classify-opencode']['steps']
+        if step['name'] == 'Prefetch PR context'
+    )
+    runner_temp = tmp_path / 'runner-temp'
+    runner_temp.mkdir()
+    diff = 'diff --git a/pydantic_ai_slim/pyproject.toml b/pydantic_ai_slim/pyproject.toml\n'
+    result, calls = _run_step(
+        step,
+        tmp_path / 'step',
+        {
+            'RUNNER_TEMP': str(runner_temp),
+            'REPO': REPOSITORY,
+            'FAKE_PR_VIEW': 'title:\tFix a crash\n',
+            'FAKE_PR_FILES': changed,
+            'FAKE_PR_DIFF': diff,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    expected = {'pr-view.txt': 'title:\tFix a crash\n', 'changed-files.txt': changed}
+    if fetches_diff:
+        expected['pr.diff'] = diff
+    context = runner_temp / 'category-context'
+    assert {path.name: path.read_text(encoding='utf-8') for path in context.iterdir()} == expected
+    for name in [*expected, 'pr.diff']:
+        assert f'`{name}`' in TOOL_GUIDANCE
+    assert calls == [
+        f'pr view {PR_NUMBER} --repo {REPOSITORY}',
+        f'pr diff {PR_NUMBER} --repo {REPOSITORY} --name-only',
+        *([f'pr diff {PR_NUMBER} --repo {REPOSITORY}'] if fetches_diff else []),
+    ]
 
 
 REVIEWED_HEAD = 'a' * 40
@@ -331,13 +428,17 @@ def _douwebot_review(
             id='clean-approval',
         ),
         pytest.param(
-            _douwebot_review(10, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='claude'),
+            _douwebot_review(
+                10, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='claude'
+            ),
             False,
             '',
             id='clean-claude',
         ),
         pytest.param(
-            _douwebot_review(11, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode'),
+            _douwebot_review(
+                11, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode'
+            ),
             False,
             '',
             id='clean-opencode',
@@ -351,13 +452,30 @@ def _douwebot_review(
             id='clean-opencode-deepinfra',
         ),
         pytest.param(
-            _douwebot_review(12, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)')),
+            _douwebot_review(
+                15, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-zai'
+            ),
+            False,
+            '',
+            id='clean-opencode-zai',
+        ),
+        pytest.param(
+            _douwebot_review(
+                12,
+                'APPROVED',
+                ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)'),
+            ),
             False,
             'review-12',
             id='legacy-discussion-is-not-attribution',
         ),
         pytest.param(
-            _douwebot_review(13, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)'), engine='claude'),
+            _douwebot_review(
+                13,
+                'APPROVED',
+                ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)'),
+                engine='claude',
+            ),
             False,
             'review-13',
             id='engine-line-in-discussion-is-still-a-finding',
