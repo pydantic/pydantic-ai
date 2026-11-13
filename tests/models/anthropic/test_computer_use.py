@@ -73,8 +73,8 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not 
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 
 
-def _agent(model: AnthropicModel, computer: FakeComputer, **settings: Any) -> Agent[None, str]:
-    return Agent(model, capabilities=[computer, InMemoryProvider().capability(**settings)])
+def _agent(model: AnthropicModel, computer: FakeComputer) -> Agent[None, str]:
+    return Agent(model, capabilities=[computer, InMemoryProvider().capability()])
 
 
 def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
@@ -255,6 +255,29 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
     assert all('greater than or equal to 0' in r['content'][0]['text'] for r in results)
+
+
+async def test_a_screenshot_before_other_calls_is_refused(allow_model_requests: None) -> None:
+    """The screen is captured once, after the batch, so an earlier screenshot call would get no image of its own."""
+    computer = FakeComputer()
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'screenshot', {}),
+                _tool_use('toolu_2', 'left_click', {'coordinate': [5, 6]}),
+                _tool_use('toolu_3', 'screenshot', {}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await _agent(model, computer).run('Go.')
+
+    assert computer.actions == []
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = second['messages'][-1]['content']
+    assert [r['is_error'] for r in results] == [True, True, True]
+    assert all('not_the_last_call' in r['content'][0]['text'] for r in results)
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
