@@ -1191,8 +1191,7 @@ async def test_promoted_foreground_wait_cancellation_keeps_child() -> None:
         await owner.cancel(record.id)
 
 
-@pytest.mark.parametrize('operation', ['close', 'cancel'])
-async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
+async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     original = anyio.move_on_after
 
     def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
@@ -1209,21 +1208,278 @@ async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch, operation: 
             await super().save(record)
 
     owner = SlowOwner()
-    if operation == 'close':
-        with pytest.raises(RuntimeError, match='cleanup timed out'):
-            async with owner.opened():
-                await delegate(owner)
-                owner.stall = True
-    else:
+    async with owner.opened():
+        await delegate(owner)
+        (record,) = owner.records.values()
+        owner.stall = True
+        try:
+            with pytest.raises(RuntimeError, match='cancellation cleanup'):
+                await owner.cancel(record.id)
+        finally:
+            owner.stall = False
+
+
+async def test_close_lets_a_settling_child_finish_saving(tmp_path: Path) -> None:
+    """A child whose run ended as the owner closes isn't cancelled out of saving its result."""
+    saving, release = anyio.Event(), anyio.Event()
+
+    class GatedOwner(DelegationTasks):
+        async def save(self, record: DelegationTask) -> None:
+            if record.status == 'finished':
+                saving.set()
+                await release.wait()
+            await super().save(record)
+
+    owner = GatedOwner(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            await delegate(owner, background=True)
+            await saving.wait()
+            # Released once the drain waits, after it would have cancelled the worker.
+            asyncio.get_running_loop().call_soon(release.set)
+    (record,) = owner.records.values()
+    assert json.loads((tmp_path / f'{record.id}.json').read_text())['outcome'] == 'ok'
+
+
+async def test_a_resume_settled_while_the_owner_closes_is_saved(tmp_path: Path) -> None:
+    """A resumed task that the closing owner keeps from starting is saved settled, though an earlier worker ran it."""
+    accepting, release_accept, release_other = anyio.Event(), anyio.Event(), anyio.Event()
+
+    class GatedOwner(DelegationTasks):
+        async def save(self, record: DelegationTask) -> None:
+            if record.status == 'running' and record.generation == 2:
+                accepting.set()
+                await release_accept.wait()
+            await super().save(record)
+
+    async def other(record: DelegationTask) -> str:
+        # Keeps the drain waiting until the resume has settled.
+        while not release_other.is_set():
+            try:
+                await release_other.wait()
+            except asyncio.CancelledError:
+                pass
+        return 'done'
+
+    owner = GatedOwner(directory=tmp_path)
+    with anyio.fail_after(WAIT):
         async with owner.opened():
             await delegate(owner)
             (record,) = owner.records.values()
-            owner.stall = True
+            await owner.delegate(
+                agent_name='worker',
+                prompt='go',
+                conversation_id='other',
+                model=None,
+                background=True,
+                resume=None,
+                run=other,
+            )
+            pending = asyncio.create_task(delegate(owner, resume=record.id))
+            pending.add_done_callback(lambda _: release_other.set())
+            await accepting.wait()
+            asyncio.get_running_loop().call_soon(release_accept.set)
+    assert 'stopped before execution' in pending.result()
+    saved = json.loads((tmp_path / f'{record.id}.json').read_text())
+    assert (saved['generation'], saved['status']) == (2, 'finished')
+
+
+@pytest.mark.parametrize('closing_error', [True, False])
+async def test_stuck_child_does_not_mask_the_closing_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, closing_error: bool
+) -> None:
+    """A child that ignores cancellation past the drain bound raises on a clean close, and is only logged on error."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(0.01, shield=shield)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    started, release = anyio.Event(), anyio.Event()
+
+    async def stuck(record: DelegationTask) -> str:
+        started.set()
+        while not release.is_set():
             try:
-                with pytest.raises(RuntimeError, match='cancellation cleanup'):
-                    await owner.cancel(record.id)
-            finally:
-                owner.stall = False
+                await release.wait()
+            except asyncio.CancelledError:
+                pass
+        return 'done'
+
+    owner = DelegationTasks()
+    expected = (ValueError, 'closing error') if closing_error else (RuntimeError, 'cleanup timed out')
+    with pytest.raises(expected[0], match=expected[1]) as raised:
+        async with owner.opened():
+            await owner.delegate(
+                agent_name='worker',
+                prompt='go',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=stuck,
+            )
+            await started.wait()
+            if closing_error:
+                raise ValueError('closing error')
+    (record,) = owner.records.values()
+    assert record.id in (caplog.text if closing_error else str(raised.value))
+    release.set()
+    (worker,) = [task for task in asyncio.all_tasks() if task.get_name() == f'delegate-{record.id}']
+    await worker
+
+
+async def test_close_logs_a_worker_that_failed_while_closing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    started = anyio.Event()
+
+    async def wait(record: DelegationTask) -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return 'unreachable'  # pragma: no cover
+
+    owner = DelegationTasks()
+    save = owner.save
+
+    async def fail(record: DelegationTask) -> None:
+        # Only the worker's own save: closing saves the record again, since it changed since it was saved.
+        monkeypatch.setattr(owner, 'save', save)
+        raise OSError('disk full')
+
+    async with owner.opened():
+        await owner.delegate(
+            agent_name='worker',
+            prompt='go',
+            conversation_id='root',
+            model=None,
+            background=True,
+            resume=None,
+            run=wait,
+        )
+        await started.wait()
+        # The cancelled worker's final save fails, ending it with that error.
+        monkeypatch.setattr(owner, 'save', fail)
+    assert 'failed while closing' in caplog.text and 'disk full' in caplog.text
+    (record,) = owner.records.values()
+    assert record.outcome == 'cancelled'
+
+
+async def test_close_saves_a_settled_child_whose_save_was_cut_short(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original_bound, original_write = anyio.move_on_after, anyio.Path.write_bytes
+    blocked = False
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        # Only the worker's own 5 s bound on its final save.
+        return original_bound(0.01 if delay == 5 else delay, shield=shield)
+
+    async def write_bytes(path: anyio.Path, data: bytes) -> int:
+        nonlocal blocked
+        if b'"status":"finished"' in data and not blocked:
+            blocked = True
+            await anyio.sleep_forever()
+        return await original_write(path, data)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    monkeypatch.setattr(anyio.Path, 'write_bytes', write_bytes)
+    owner = DelegationTasks(directory=tmp_path)
+    async with owner.opened():
+        await delegate(owner, background=True)
+        (record,) = owner.records.values()
+        (worker,) = [task for task in asyncio.all_tasks() if task.get_name() == f'delegate-{record.id}']
+        await worker
+        path = tmp_path / f'{record.id}.json'
+        assert json.loads(path.read_text())['status'] == 'running'
+    assert (json.loads(path.read_text())['status'], record.outcome) == ('finished', 'ok')
+
+
+async def test_close_timeout_with_no_stuck_child_names_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A drain that outlives its bound only while saving doesn't blame a child that released its resources."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(0.01, shield=shield)
+
+    async def blocked(path: anyio.Path, data: bytes) -> int:
+        await anyio.sleep_forever()
+        return 0  # pragma: no cover
+
+    owner = DelegationTasks(directory=tmp_path)
+    with pytest.raises(RuntimeError, match='children still running: none'):
+        async with owner.opened():
+            await delegate(owner)
+            (record,) = owner.records.values()
+            monkeypatch.setattr(anyio.Path, 'write_bytes', blocked)
+            # Cut short, so closing saves it again, and that save outlives the drain bound too.
+            with anyio.move_on_after(0.01):
+                await owner.save(record)
+            monkeypatch.setattr(anyio, 'move_on_after', short)
+
+
+async def test_close_drains_many_children_concurrently(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """Closing releases 48 children at once within the drain bound, and leaves the saved history alone."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(1, shield=shield)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    history = DelegationTasks(directory=tmp_path)
+    for index in range(8):
+        record = DelegationTask(
+            id=f'{index:032x}', agent_name='worker', prompt='old', conversation_id='old', status='finished'
+        )
+        await history.restore(record)
+    saved: list[str] = []
+    running = 0
+    all_running, all_saving = anyio.Event(), anyio.Event()
+
+    class SlowOwner(DelegationTasks):
+        closing: bool = False
+
+        async def save(self, record: DelegationTask) -> None:
+            if self.closing:
+                saved.append(record.id)
+                if record.conversation_id == 'old':  # pragma: no cover -- only a drain that re-saves history gets here.
+                    await anyio.sleep_forever()
+                if len(saved) == 48:
+                    all_saving.set()
+                # Each child's cleanup waits for all the others, so only a concurrent release finishes.
+                await all_saving.wait()
+            await super().save(record)
+
+    async def hang(record: DelegationTask) -> str:
+        nonlocal running
+        running += 1
+        if running == 48:
+            all_running.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    owner = SlowOwner(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            for _ in range(48):
+                await owner.delegate(
+                    agent_name='worker',
+                    prompt='go',
+                    conversation_id='root',
+                    model=None,
+                    background=True,
+                    resume=None,
+                    run=hang,
+                )
+            await all_running.wait()
+            owner.closing = True
+    assert 'children still running' not in caplog.text
+    assert all(task.done() for task in asyncio.all_tasks() if task.get_name().startswith('delegate-'))
+    children = [record for record in owner.records.values() if record.conversation_id == 'root']
+    assert sorted(saved) == sorted(record.id for record in children)
+    assert {record.outcome for record in children} == {'cancelled'}
 
 
 async def test_child_budget_cannot_hide_parent_usage() -> None:

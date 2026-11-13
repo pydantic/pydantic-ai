@@ -390,7 +390,7 @@ class LiveSession(Protocol):
         ...
 
     def steer(self, text: str, /) -> bool:
-        """Send `text` to the running turn now, as Alt+Enter at the prompt does; its model reads it at its next request.
+        """Send `text` to the running turn now, as steering at the prompt does; its model reads it at its next request.
 
         Returns `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line, which never steer.
         """

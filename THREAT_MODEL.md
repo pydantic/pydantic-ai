@@ -208,7 +208,7 @@ On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its d
 - `!` commands run in the host shell, not the agent workspace, and their output is saved for the next prompt.
 - The agent's shell can run `clai2`, so `clai2 config` and `clai2 plugins` refuse a change that could let the agent do more; such changes are `/` commands the user types. A process that writes the settings database directly or drives CLAI's input is not stopped.
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
-- A model's saved `base_url` receives its provider's credentials: saved keys, keyed profiles, and Codex sign-ins. Whoever can write the model settings can redirect them; `delegate_models` settings cannot set it.
+- A model's saved `base_url` receives its provider's credentials: saved keys, keyed profiles, and Codex sign-ins. Whoever can write the model settings can redirect them; `delegate_models` settings cannot set it. A model's saved `api_key` names a `/keys` entry, never the key itself; together with `base_url`, whoever can write the model settings can send any saved key, including one saved for an unrelated service, to that endpoint.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
 - When no OS keyring backend exists, saved credentials fall back to `0600` plaintext files under `$XDG_CONFIG_HOME/pydantic-clai2/`, and `pydantic_clai2.config.credential_store` logs a single warning per process when reading or writing one.
 
