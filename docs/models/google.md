@@ -261,7 +261,7 @@ For [Gemini models that support agentic video processing](https://ai.google.dev/
 from pydantic_ai import Agent, VideoUrl
 from pydantic_ai.models.google import GoogleModel
 
-agent = Agent(GoogleModel('gemini-3.7-flash'))
+agent = Agent(GoogleModel('gemini-4-hydrogen'))
 result = agent.run_sync(
     [
         'Summarize the important moments with timestamps.',
@@ -333,9 +333,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 settings = GoogleModelSettings(
-    temperature=0.2,
     max_tokens=1024,
-    top_k=40,
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
