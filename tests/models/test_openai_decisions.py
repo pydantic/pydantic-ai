@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from unittest.mock import AsyncMock, PropertyMock, patch
 
 import anyio
@@ -2077,6 +2077,7 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
             {
                 'model': 'gpt-6-luna',
                 'input': [
+                    {'type': 'message', 'role': 'developer', 'content': 'Choose an action for this request.'},
                     {
                         'role': 'user',
                         'content': [
@@ -2087,13 +2088,13 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
                                 'detail': 'auto',
                             },
                         ],
-                    }
+                    },
                 ],
                 'questions': [
                     {
                         'type': 'choice',
                         'name': 'route',
-                        'instructions': '{"question": "Which of these does this call for?", "background": "Choose an action for this request."}',
+                        'instructions': 'Which of these does this call for?',
                         'choices': [
                             {'value': 'Approve', 'description': 'Approve this request.'},
                             {'value': 'Notify', 'description': 'Notify the owner.'},
@@ -2104,6 +2105,7 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
             {
                 'model': 'gpt-6-luna',
                 'input': [
+                    {'type': 'message', 'role': 'developer', 'content': 'Choose an action for this request.'},
                     {
                         'role': 'user',
                         'content': [
@@ -2114,13 +2116,13 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
                                 'detail': 'auto',
                             },
                         ],
-                    }
+                    },
                 ],
                 'questions': [
                     {
                         'type': 'predicate',
                         'name': 'approved',
-                        'instructions': '{"field": "approved", "premise": "If the user\'s request calls for Approve: Approve this request.", "question": "Can this be approved?", "background": "Choose an action for this request."}',
+                        'instructions': '{"field": "approved", "premise": "If the user\'s request calls for Approve: Approve this request.", "question": "Can this be approved?"}',
                     }
                 ],
             },
@@ -2752,7 +2754,14 @@ async def test_tool_round_trip_goes_as_native_items(
     assert result.output is True
     assert [body['input'] for body in request_capture.bodies('/decisions')] == snapshot(
         [
-            'My latest invoice looks wrong, can you check it?',
+            [
+                {
+                    'type': 'message',
+                    'role': 'developer',
+                    'content': 'Was the customer charged twice? Look the invoice up before answering.',
+                },
+                {'role': 'user', 'content': 'My latest invoice looks wrong, can you check it?'},
+            ],
             [
                 {'role': 'user', 'content': 'My latest invoice looks wrong, can you check it?'},
                 {
@@ -2769,3 +2778,240 @@ async def test_tool_round_trip_goes_as_native_items(
             ],
         ]
     )
+
+
+BACKGROUND = 'You triage tickets for Acme Corp.'
+DEVELOPER_MESSAGE = {'type': 'message', 'role': 'developer', 'content': BACKGROUND}
+
+
+def answer_every_question(request: httpx2.Request) -> httpx2.Response:
+    """Pick the first choice of every choice question and say yes to every predicate."""
+    answers: list[Mapping[str, object]] = []
+    for question in json.loads(request.content)['questions']:
+        if question['type'] == 'choice':
+            values = [choice['value'] for choice in question['choices']]
+            answers.append(
+                {
+                    'type': 'choice',
+                    'name': question['name'],
+                    'choice': values[0],
+                    'probabilities': [{'value': v, 'probability': float(v == values[0])} for v in values],
+                    'confidence': 1.0,
+                }
+            )
+        else:
+            assert question['type'] == 'predicate'
+            answers.append({'type': 'predicate', 'name': question['name'], 'probability': 0.9})
+    return decisions(*answers)
+
+
+def sent_bodies(captured: Captured) -> list[dict[str, Any]]:
+    return [json.loads(request.content) for request in captured.requests]
+
+
+def assert_background_only_in_developer_message(bodies: list[dict[str, Any]], prompt: str):
+    for body in bodies:
+        assert body['input'] == [DEVELOPER_MESSAGE, {'role': 'user', 'content': prompt}]
+        for question in body['questions']:
+            assert BACKGROUND not in question['instructions']
+            assert '"background"' not in question['instructions']
+
+
+class Report(BaseModel):
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    tags: list[Literal['a', 'b']] = Field(description='Which tags apply?')
+
+
+async def test_instructions_go_once_as_a_developer_message_not_in_questions(allow_model_requests: None):
+    captured = Captured(answer_every_question)
+
+    result = await Agent(mock_model(captured), output_type=Report, instructions=BACKGROUND).run('Help!')
+
+    assert result.output == Report(urgent=True, tags=['a', 'b'])
+    bodies = sent_bodies(captured)
+    assert len(bodies) == 1
+    assert [q['name'] for q in bodies[0]['questions']] == ['urgent', 'tags.a', 'tags.b']
+    assert_background_only_in_developer_message(bodies, 'Help!')
+
+
+class Dispute(BaseModel):
+    """Handle a billing dispute."""
+
+    disputed: bool = Field(description='Is the charge disputed?')
+
+
+class Unexplained(BaseModel):
+    flagged: bool = Field(description='Is it flagged?')
+
+
+@pytest.mark.parametrize(
+    ('max_questions', 'request_count'),
+    [
+        pytest.param(OpenAIDecisionsModel.max_questions, 1, id='fields-asked-beside-route'),
+        pytest.param(1, 2, id='route-then-fill'),
+    ],
+)
+async def test_route_and_fill_requests_each_lead_with_the_developer_message(
+    max_questions: int | None, request_count: int, allow_model_requests: None
+):
+    captured = Captured(answer_every_question)
+    agent = Agent(mock_model(captured), output_type=[Dispute, Ticket], instructions=BACKGROUND)
+
+    with patch.object(OpenAIDecisionsModel, 'max_questions', max_questions):
+        result = await agent.run('Charged twice.')
+
+    assert result.output == Dispute(disputed=True)
+    bodies = sent_bodies(captured)
+    assert len(bodies) == request_count
+    assert any(q['name'] == 'route' for q in bodies[0]['questions'])
+    assert_background_only_in_developer_message(bodies, 'Charged twice.')
+
+
+async def test_route_criteria_still_fall_back_to_instructions(allow_model_requests: None):
+    def look_up_order() -> str:
+        return 'shipped'  # pragma: no cover
+
+    captured = Captured(answer_every_question)
+    agent = Agent(mock_model(captured), output_type=Unexplained, tools=[look_up_order], instructions=BACKGROUND)
+
+    await agent.run('Where is it?')
+
+    bodies = sent_bodies(captured)
+    route = next(q for q in bodies[0]['questions'] if q['name'] == 'route')
+    assert {'value': 'Unexplained', 'description': BACKGROUND} in route['choices']
+    assert_background_only_in_developer_message(bodies, 'Where is it?')
+
+
+async def test_bare_output_instructions_stay_the_question_without_a_developer_message(allow_model_requests: None):
+    captured = Captured(boolean_answers)
+
+    result = await Agent(mock_model(captured), output_type=bool, instructions='Is it urgent?').run('Help!')
+
+    assert result.output is True
+    (body,) = sent_bodies(captured)
+    assert body['input'] == 'Help!'
+    (question,) = body['questions']
+    assert question['instructions'] == 'Is it urgent?'
+
+
+async def test_bare_fan_out_instructions_stay_the_question_without_a_developer_message(allow_model_requests: None):
+    captured = Captured(boolean_answers)
+
+    result = await Agent(
+        mock_model(captured), output_type=list[Literal['a', 'b']], instructions='Which tags apply?'
+    ).run('Help!')
+
+    assert result.output == ['a', 'b']
+    (body,) = sent_bodies(captured)
+    assert body['input'] == 'Help!'
+    assert [json.loads(q['instructions']) for q in body['questions']] == [
+        {'question': 'Which tags apply?', 'option': 'a'},
+        {'question': 'Which tags apply?', 'option': 'b'},
+    ]
+
+
+async def test_without_instructions_the_prompt_is_the_whole_input(allow_model_requests: None):
+    captured = Captured(answer_every_question)
+
+    await Agent(mock_model(captured), output_type=Report).run('Help!')
+
+    (body,) = sent_bodies(captured)
+    assert body['input'] == 'Help!'
+    assert [json.loads(q['instructions']) for q in body['questions']] == [
+        {'field': 'urgent', 'question': 'Does this need a reply within the hour?'},
+        {'field': 'tags', 'question': 'Which tags apply?', 'option': 'a'},
+        {'field': 'tags', 'question': 'Which tags apply?', 'option': 'b'},
+    ]
+
+
+async def test_forced_route_fill_leads_with_the_developer_message(allow_model_requests: None):
+    """The one route left is filled without a choice question, and its fill still takes the instructions once.
+
+    Not a VCR test: it pins the request body, which the cassette matcher doesn't compare.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Help!')]),
+        ModelResponse(parts=[ToolCallPart('inspect_ticket', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('inspect_ticket', 'Inspected.', 'call_1')], instructions=BACKGROUND),
+    ]
+    function_tools = [
+        ToolDefinition(name='inspect_ticket', description='Inspect the ticket.'),
+        ToolDefinition(
+            name='escalate',
+            description='Escalate the ticket.',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'urgent': {'type': 'boolean', 'description': 'Is it urgent?'}},
+                'required': ['urgent'],
+            },
+        ),
+    ]
+    captured = Captured(answer_every_question)
+
+    response = await mock_model(captured).request(
+        history, None, ModelRequestParameters(function_tools=function_tools, allow_text_output=False)
+    )
+
+    assert response.parts == [ToolCallPart('escalate', {'urgent': True}, tool_call_id=IsStr())]
+    (body,) = sent_bodies(captured)
+    assert body['input'][0] == DEVELOPER_MESSAGE
+    assert all(item.get('role') != 'developer' for item in body['input'][1:])
+    (question,) = body['questions']
+    assert question['name'] == 'urgent'
+    assert BACKGROUND not in question['instructions']
+
+
+async def test_developer_message_leads_a_system_prompt(allow_model_requests: None):
+    """The instructions lead the input, and a system prompt follows as the `system` entry it always was."""
+    captured = Captured(answer_every_question)
+
+    await Agent(mock_model(captured), output_type=Report, system_prompt='Be terse.', instructions=BACKGROUND).run(
+        'Help!'
+    )
+
+    (body,) = sent_bodies(captured)
+    assert body['input'] == [
+        DEVELOPER_MESSAGE,
+        {'role': 'system', 'content': 'Be terse.'},
+        {'role': 'user', 'content': 'Help!'},
+    ]
+
+
+@pytest.mark.parametrize('with_image', [False, True])
+async def test_direct_decide_leads_with_its_instructions(with_image: bool, allow_model_requests: None):
+    """A request with no conversation still sends its instructions once, ahead of the state.
+
+    Not a VCR test: only a direct `decide` call reaches this, and it pins the request body.
+    """
+    captured = Captured(answer_every_question)
+    images = (BinaryContent(b'picture', media_type='image/png'),) if with_image else ()
+
+    await mock_model(captured).decide(
+        DecisionRequest(
+            state='Help!', questions={'q': NoulQuestion(instructions='Urgent?')}, images=images, instructions=BACKGROUND
+        ),
+        {},
+    )
+
+    (body,) = sent_bodies(captured)
+    assert body['input'][0] == DEVELOPER_MESSAGE
+    assert body['input'][1]['role'] == 'user'
+    assert len(body['input']) == 2
+
+
+class Out(BaseModel):
+    urgent: bool
+
+
+async def test_undescribed_field_with_instructions_sends_bare_field_name(allow_model_requests: None):
+    captured = Captured(answer_every_question)
+
+    await Agent(mock_model(captured), output_type=Out, instructions='You triage for Acme.').run('Help!')
+
+    (body,) = sent_bodies(captured)
+    assert body['input'] == [
+        {'type': 'message', 'role': 'developer', 'content': 'You triage for Acme.'},
+        {'role': 'user', 'content': 'Help!'},
+    ]
+    (question,) = body['questions']
+    assert question['instructions'] == 'urgent'

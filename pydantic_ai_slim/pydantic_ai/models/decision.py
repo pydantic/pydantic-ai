@@ -220,6 +220,13 @@ class DecisionRequest:
     Empty when `decide` is called directly with only a `state`. Its images are the ones in `images`, resolved and in
     the same order: the order they appear in, message by message and part by part.
     """
+    instructions: str | None = None
+    """The agent's instructions, for a backend that sends them once rather than in every question.
+
+    Set only on a model with [`native_instructions`][pydantic_ai.models.decision.DecisionModel.native_instructions],
+    and only when a question would otherwise have carried them as framing. When the instructions are themselves the
+    question, as for a bare `bool` output, they stay in the question and this is `None`.
+    """
 
 
 @dataclass(kw_only=True)
@@ -530,6 +537,7 @@ class _Limits:
     score_levels: int | None
     requires_instructions: bool
     questions: int | None
+    native_instructions: bool = False
 
 
 @dataclass(init=False)
@@ -572,6 +580,8 @@ class DecisionModel(Model[InterfaceClient]):
     along with `model_name`, `system` and `base_url`, set `max_choice_options` and `max_score_levels` to the
     backend's limits, and `requires_instructions` if it refuses a question without `instructions`, or have its
     provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile].
+    Set `native_instructions` if the backend sends the agent's instructions once per request rather than in every
+    question.
     Set `supports_image_input` if the backend accepts images, and `max_images` and `max_questions` to its
     per-request transport limits. These caps describe the endpoint, so profiles do not override them.
     See [Decision models](../../models/decision.md#implementing-a-decision-model) for the full rules and an example.
@@ -631,6 +641,14 @@ class DecisionModel(Model[InterfaceClient]):
     output type docstring or agent `instructions` to send, such a question goes without `instructions`. A backend
     that requires them is sent a generic question instead, which leaves the options to carry the meaning, as they do
     without it.
+    """
+
+    native_instructions: ClassVar[bool] = False
+    """Whether the backend sends the agent's instructions once per request, from `DecisionRequest.instructions`.
+
+    Set this on a backend that has a place for them beside the questions. Its questions then leave them out, and
+    the request carries them in [`DecisionRequest.instructions`][pydantic_ai.models.decision.DecisionRequest.instructions]
+    instead. Instructions that are themselves the question, as for a bare `bool` output, stay in the question.
     """
 
     # Retry feedback is a step taken for the prompt, so it goes along as a `retry` entry: translated, a validation
@@ -801,6 +819,7 @@ class DecisionModel(Model[InterfaceClient]):
             score_levels=profile.get('decision_max_score_levels', self.max_score_levels),
             requires_instructions=profile.get('decision_requires_instructions', self.requires_instructions),
             questions=self.max_questions,
+            native_instructions=self.native_instructions,
         )
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
@@ -817,7 +836,9 @@ class DecisionModel(Model[InterfaceClient]):
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
             state, image_inputs = self._map_decision_input(messages, turn=done)
-            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings, messages)
+            request = await self._prepare_decision_request(
+                state, image_inputs, ask.questions, settings, messages, instructions=ask.framing(instructions)
+            )
             async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
@@ -832,7 +853,15 @@ class DecisionModel(Model[InterfaceClient]):
         speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
         questions.update(route_questions)
-        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings, messages)
+        # The route question is framed by the instructions whatever else is asked beside it.
+        request_template = await self._prepare_decision_request(
+            state,
+            image_inputs,
+            questions,
+            settings,
+            messages,
+            instructions=instructions if limits.native_instructions else None,
+        )
 
         # The questions of a picked route whose fields are asked in a second request, past the size cutoff.
         to_fill: _Ask | None = None
@@ -944,6 +973,8 @@ class DecisionModel(Model[InterfaceClient]):
         questions: dict[str, DecisionQuestion],
         model_settings: DecisionModelSettings,
         messages: list[ModelMessage],
+        *,
+        instructions: str | None,
     ) -> DecisionRequest:
         """Validate a complete request before resolving its image URLs."""
         self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
@@ -959,7 +990,9 @@ class DecisionModel(Model[InterfaceClient]):
                 if not image.is_image:
                     raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
                 images.append(image)
-        return DecisionRequest(state=state, questions=questions, images=tuple(images), messages=messages)
+        return DecisionRequest(
+            state=state, questions=questions, images=tuple(images), messages=messages, instructions=instructions
+        )
 
     async def _fill(
         self,
@@ -983,7 +1016,13 @@ class DecisionModel(Model[InterfaceClient]):
         """
         try:
             async with self._decide(
-                dataclasses.replace(request_template, questions=ask.questions),
+                # A picked route that is a bare output asks the instructions as its question, so they are not sent
+                # a second time beside it.
+                dataclasses.replace(
+                    request_template,
+                    questions=ask.questions,
+                    instructions=ask.framing(request_template.instructions),
+                ),
                 settings,
                 route=label,
                 fields=True,
@@ -1015,7 +1054,9 @@ class DecisionModel(Model[InterfaceClient]):
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
         state, image_inputs = self._map_decision_input(messages, turn=turn)
-        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings, messages)
+        request_template = await self._prepare_decision_request(
+            state, image_inputs, fill.questions, settings, messages, instructions=fill.framing(instructions)
+        )
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
@@ -2297,6 +2338,8 @@ class _Ask:
     properties: dict[str, dict[str, Any]]
     questions: dict[str, DecisionQuestion]
     defaulted: frozenset[str]
+    framed: bool
+    """Whether a question left out the instructions it frames, for the request to send them once instead."""
 
     @classmethod
     def about(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits, *, label: str | None) -> _Ask:
@@ -2306,8 +2349,12 @@ class _Ask:
         after it; `None` for the one output type asked when there is no route question.
         """
         fields = _fields(tool)
-        questions = _questions(fields, tool, instructions, limits, label=label)
-        return cls(fields.properties, questions, fields.defaulted)
+        questions, framed = _questions(fields, tool, instructions, limits, label=label)
+        return cls(fields.properties, questions, fields.defaulted, framed)
+
+    def framing(self, instructions: str | None) -> str | None:
+        """The instructions a request asking only these questions sends beside them, or `None`."""
+        return instructions if self.framed else None
 
     @classmethod
     def to_fill(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits, *, label: str) -> _Ask | None:
@@ -2343,13 +2390,20 @@ def _questions(
     limits: _Limits,
     *,
     label: str | None,
-) -> dict[str, DecisionQuestion]:
-    """One question per output field, or one per option for a field that fans out."""
+) -> tuple[dict[str, DecisionQuestion], bool]:
+    """One question per output field, or one per option for a field that fans out.
+
+    Also whether a question left out the instructions it frames, which a model with `native_instructions` sends once
+    per request instead. Instructions that are a bare output's question stay in it.
+    """
     questions: dict[str, DecisionQuestion] = {}
+    framed = False
     for name, prop in fields.properties.items():
         ask = _ask(name, prop, output_tool, instructions, label=label, context=fields.context.get(name, []))
+        if limits.native_instructions and ask.pop(_INSTRUCTIONS_KEY, None) is not None:
+            framed = True
         questions.update(_field_questions(name, prop, ask, limits))
-    return questions
+    return questions, framed
 
 
 def _field_questions(
@@ -2599,9 +2653,12 @@ def _route_question(
             f'{len(criteria)} routes: each output type counts as one beside the tools. Attach fewer tools, or '
             'withhold some of them until they are needed.'
         )
-    # The agent's instructions frame the pick as they frame every field, under the same label.
+    # The agent's instructions frame the pick as they frame every field, under the same label, unless the model sends
+    # them once per request.
     asked: JsonValue = (
-        {'question': _ROUTE_QUESTION, _INSTRUCTIONS_KEY: instructions} if instructions else _ROUTE_QUESTION
+        {'question': _ROUTE_QUESTION, _INSTRUCTIONS_KEY: instructions}
+        if instructions and not limits.native_instructions
+        else _ROUTE_QUESTION
     )
     questions['route'] = ChoiceQuestion(instructions=asked, criteria=criteria)
     return 'route'

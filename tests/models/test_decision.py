@@ -118,6 +118,37 @@ class Triage(BaseModel):
     action: Literal['approve', 'review'] = Field(description='What should happen next?')
 
 
+async def test_default_backend_embeds_instructions_in_each_question(allow_model_requests: None):
+    model = InMemoryDecisionModel()
+
+    await Agent(model, output_type=Triage, instructions='You triage for Acme.').run('Cannot sign in.')
+
+    (request,) = model.requests
+    assert [question.instructions for question in request.questions.values()] == [
+        {
+            'field': 'urgent',
+            'question': 'Does this need an immediate response?',
+            'goal': 'Triage a support ticket.',
+            'background': 'You triage for Acme.',
+        },
+        {
+            'field': 'action',
+            'question': 'What should happen next?',
+            'goal': 'Triage a support ticket.',
+            'background': 'You triage for Acme.',
+        },
+    ]
+
+
+async def test_default_backend_sends_no_separate_instructions(allow_model_requests: None):
+    model = InMemoryDecisionModel()
+
+    await Agent(model, output_type=Triage, instructions='You triage for Acme.').run('Cannot sign in.')
+
+    assert DecisionModel.native_instructions is False
+    assert model.requests[0].instructions is None
+
+
 async def test_decision_model_extension_point(allow_model_requests: None):
     model = InMemoryDecisionModel()
     result = await Agent(model, output_type=Triage).run('The customer cannot sign in.')

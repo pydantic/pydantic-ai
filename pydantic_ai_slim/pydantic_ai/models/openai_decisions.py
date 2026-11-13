@@ -169,6 +169,9 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     supports_image_input: ClassVar[bool] = True
 
+    native_instructions: ClassVar[bool] = True
+    """The agent's instructions go once, as a leading `developer` message, rather than in every question."""
+
     max_images: ClassVar[int | None] = 128
     """The API accepts at most 128 image parts across all input messages; a 129th returns HTTP 400.
 
@@ -259,7 +262,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         if any(not image.is_image for image in request.images):
             raise UserError('OpenAI Decisions supports image evidence only; `request.images` contains a non-image.')
         decision_input = (
-            _Conversation(request.images, self.profile).items(request.messages)
+            _Conversation(request.images, self.profile).items(request.messages, request.instructions)
             if request.messages
             else _state_input(request)
         )
@@ -337,18 +340,35 @@ def _tool_call_ids(messages: Sequence[ModelMessage]) -> set[str]:
     }
 
 
+def _developer(instructions: str) -> EasyInputMessageParam:
+    """The agent's instructions as the `developer` message that leads the input."""
+    return EasyInputMessageParam(type='message', role='developer', content=instructions)
+
+
 def _state_input(request: DecisionRequest) -> str | list[DecisionInputMessageParam]:
-    """A request without a conversation, as its `state` in one user message with each image after its label."""
+    """A request without a conversation, as its `state` in one user message with each image after its label.
+
+    The request's instructions, if any, lead it as a `developer` message.
+    """
     text = _text(request.state)
     if not request.images:
-        return text
+        if request.instructions is None:
+            return text
+        # The SDK still types `input` as user messages only; see `_Conversation`.
+        return cast(
+            list[DecisionInputMessageParam],
+            [_developer(request.instructions), EasyInputMessageParam(role='user', content=text)],
+        )
     content: list[DecisionInputPartUnionParam] = [DecisionInputTextParam(type='input_text', text=text)]
     for index, image in enumerate(request.images, start=1):
         image_input = DecisionInputImageParam(type='input_image', image_url=image.data_uri)
         if metadata := image.vendor_metadata:
             image_input['detail'] = metadata.get('detail', 'auto')
         content.extend((DecisionInputTextParam(type='input_text', text=f'<image {index}>:'), image_input))
-    return [DecisionInputMessageParam(role='user', content=content)]
+    user = DecisionInputMessageParam(role='user', content=content)
+    if request.instructions is None:
+        return [user]
+    return cast(list[DecisionInputMessageParam], [_developer(request.instructions), user])
 
 
 class _Conversation:
@@ -368,7 +388,12 @@ class _Conversation:
         self._profile = profile
         self._items: list[ResponseInputItemParam] = []
 
-    def items(self, messages: Sequence[ModelMessage]) -> str | list[DecisionInputMessageParam]:
+    def items(
+        self, messages: Sequence[ModelMessage], instructions: str | None = None
+    ) -> str | list[DecisionInputMessageParam]:
+        if instructions is not None:
+            # Sent once, ahead of the conversation, rather than in every question.
+            self._items.append(_developer(instructions))
         calls = _tool_call_ids(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
