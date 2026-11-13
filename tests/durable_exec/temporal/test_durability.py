@@ -827,6 +827,56 @@ async def test_durability_rejects_a_retry_on_model_errors_only_a_run_resolves(cl
     assert 'must be one of the capabilities the agent is built with' in str(cause)
 
 
+wrapped_retry_durable_agent = Agent(
+    FunctionModel(_flaky_once_model_fn, model_name='flaky'),
+    name='durability_wrapped_retry_agent',
+    capabilities=[
+        WrapperCapability(wrapped=RetryOnModelErrors()),
+        TemporalDurability(
+            # A retry policy that would retry the model error itself, were it retryable.
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class WrappedRetryDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await wrapped_retry_durable_agent.run(prompt)).output
+
+
+async def test_durability_detects_a_retry_on_model_errors_a_wrapper_capability_wraps(client: Client):
+    """A `RetryOnModelErrors` inside a `WrapperCapability` on the agent is seen when the agent is bound.
+
+    So the capability owns retrying model errors, as when it's on the agent directly: the failed attempt and the retry
+    are activities of their own with a workflow timer between them, not one activity that Temporal attempts twice.
+    """
+    _flaky_calls.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WrappedRetryDurableAgentWorkflow],
+        plugins=[AgentPlugin(wrapped_retry_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            WrappedRetryDurableAgentWorkflow.run,
+            args=['hello'],
+            id=WrappedRetryDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == 'recovered'
+    assert _flaky_calls == ['flaky', 'flaky']
+    assert _scheduled_activity_count(history) == 2
+    assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
+
+
 _backup_streamed: list[str] = []
 
 
