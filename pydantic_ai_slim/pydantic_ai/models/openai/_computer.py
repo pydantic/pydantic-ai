@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -146,6 +146,8 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
             return [({'type': 'wait'}, None)]
         case _OpenAIScreenshot():
             return [({'type': 'screenshot'}, None)]
+        case _:
+            assert_never(action)
 
 
 def _refused_action(error: ValidationError) -> dict[str, Any]:
