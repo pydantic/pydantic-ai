@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Self
 
 import pytest
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
@@ -228,6 +228,27 @@ class TestLoadFromRegistry:
         assert result.value == 'custom:test'
 
 
+@dataclass
+class ObjectParam(AbstractCapability[None]):
+    weights: dict[str, int] | None = None
+
+    @classmethod
+    def from_spec(cls, weights: dict[str, int] | None = None) -> Self:
+        return cls(weights=weights)
+
+
+class Limits(BaseModel):
+    length: int
+
+
+@dataclass
+class ModelParam(AbstractCapability[None]):
+    limits: Limits
+
+    @classmethod
+    def from_spec(cls, limits: Limits) -> Self: ...  # pragma: no cover
+
+
 class TestBuildSchemaTypes:
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
@@ -271,6 +292,63 @@ class TestBuildSchemaTypes:
         assert list(validator.iter_errors(scalar_spec))
         with pytest.raises(ValueError, match='positional argument'):
             Agent.from_spec(scalar_spec, custom_capability_types=[KeywordCapability])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('arguments', 'weights'),
+        [
+            pytest.param({'weights': {'a': 1}}, {'a': 1}, id='keyword-form'),
+            pytest.param(None, None, id='short-form'),
+        ],
+    )
+    def test_object_param_capability_schema(self, arguments: JsonValue, weights: dict[str, int] | None):
+        """Every form the schema accepts for a sole object-typed parameter loads as that parameter's value."""
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{'ObjectParam': arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([ObjectParam])
+        assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+        capabilities = Agent.from_spec(spec, custom_capability_types=[ObjectParam]).root_capability.capabilities
+        [capability] = [c for c in capabilities if isinstance(c, ObjectParam)]
+        assert capability.weights == weights
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_object_param_capability_schema_rejects_object_short_form(self):
+        """The short form rejects an object, since the loader reads one as keyword arguments."""
+        schema = AgentSpec.model_json_schema_with_capabilities([ObjectParam])
+        validator = validator_for(schema)(schema)
+
+        unknown_keyword = {'model': 'test', 'capabilities': [{'ObjectParam': {'a': 1}}]}
+        assert list(validator.iter_errors(unknown_keyword))
+        with pytest.raises(ValueError, match="unexpected keyword argument 'a'"):
+            Agent.from_spec(unknown_keyword, custom_capability_types=[ObjectParam])
+
+        # `{'weights': 5}` is a valid `dict[str, int]`, but the loader passes it as `weights=5`.
+        mistyped = {'model': 'test', 'capabilities': [{'ObjectParam': {'weights': 5}}]}
+        assert list(validator.iter_errors(mistyped))
+        capabilities = Agent.from_spec(mistyped, custom_capability_types=[ObjectParam]).root_capability.capabilities
+        assert [c.weights for c in capabilities if isinstance(c, ObjectParam)] == [5]
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_model_param_capability_schema(self):
+        """A sole model-typed parameter, whose schema is a `$ref`, takes its value in the keyword form only."""
+        schema = AgentSpec.model_json_schema_with_capabilities([ModelParam])
+        validator = validator_for(schema)(schema)
+        keyword_form = {'model': 'test', 'capabilities': [{'ModelParam': {'limits': {'length': 4}}}]}
+        assert list(validator.iter_errors(keyword_form)) == []
+        short_form = {'model': 'test', 'capabilities': [{'ModelParam': {'length': 4}}]}
+        assert list(validator.iter_errors(short_form))
+
+    def test_unrepresentable_param_capability_schema(self):
+        """A sole parameter with no JSON schema drops the capability's short form instead of raising."""
+
+        class Client: ...
+
+        @dataclass
+        class ClientParam(AbstractCapability[None]):
+            @classmethod
+            def from_spec(cls, client: Client | None = None) -> Self: ...  # pragma: no cover
+
+        schema = AgentSpec.model_json_schema_with_capabilities([ClientParam])
+        assert [key for key in schema['$defs'] if key.endswith('_ClientParam')] == []
 
     def test_no_params_class(self):
         class NoParams:

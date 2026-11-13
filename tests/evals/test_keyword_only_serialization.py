@@ -64,6 +64,15 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
             return len(ctx.output) >= self.minimum
 
+    @dataclass
+    class ObjectPositional(Evaluator[str, str, str]):
+        """A string-keyed dict value saves in the keyword form, since the loader reads one as keyword arguments."""
+
+        minimum: dict[str, int]
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum['length']
+
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
         value: float
@@ -91,6 +100,11 @@ with try_import() as imports_successful:
         'PositionalWithKeywordOnlyDefault': RoundTripCase(
             PositionalWithKeywordOnlyDefault(minimum=4), 4, frozenset({'short_spec'}) | KEYWORD_FORMS
         ),
+        'ObjectPositional': RoundTripCase(
+            ObjectPositional(minimum={'length': 4}),
+            {'minimum': {'length': 4}},
+            frozenset({'short_spec'}) | KEYWORD_FORMS,
+        ),
     }
 
 
@@ -107,6 +121,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'KeywordOnlyFirstWithDefault',
         'Positional',
         'PositionalWithKeywordOnlyDefault',
+        'ObjectPositional',
     ],
 )
 def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'], evaluator_name: str):

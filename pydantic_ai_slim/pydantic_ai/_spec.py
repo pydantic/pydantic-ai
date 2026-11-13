@@ -10,19 +10,23 @@ import inspect
 import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypeVar, cast
+from contextlib import suppress
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, TypeVar, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    GetPydanticSchema,
     RootModel,
+    TypeAdapter,
     ValidationError,
     field_validator,
     model_serializer,
     model_validator,
     with_config,
 )
-from pydantic_core import to_jsonable_python
+from pydantic.errors import PydanticInvalidForJsonSchema
+from pydantic_core import PydanticOmit, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
@@ -297,12 +301,13 @@ def build_schema_types(
 
         # Short form: the single argument must accept a positional value.
         short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
+        object_rejecting_type = _object_rejecting_type(target, name, type_hints)
         if len(short_type_hints) == 1 and short_type_hints.keys().isdisjoint(keyword_only_params):
             [type_hint_type] = short_type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', name, {name: type_hint_type}))
+            schema_types.append(_make_typed_dict('short_spec', name, {name: object_rejecting_type or type_hint_type}))
 
-        # Keyword form: required for keyword-only or multiple parameters.
-        if len(type_hints) > 1 or keyword_only_params:
+        # Keyword form: required for keyword-only or multiple parameters, or a sole parameter accepting an object.
+        if len(type_hints) > 1 or keyword_only_params or object_rejecting_type:
             params_td = _make_typed_dict('spec_params', name, type_hints)
             schema_types.append(_make_typed_dict('spec', name, {name: params_td}))
 
@@ -342,15 +347,55 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     return type_hints, required_type_hints
 
 
+def _accepts_var_keyword(target: Callable[..., object]) -> bool:
+    return any(p.kind == p.VAR_KEYWORD for p in inspect.signature(target).parameters.values())
+
+
 def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping[str, Any]) -> set[str]:
     """The names of `target`'s keyword-only spec parameters.
 
     A target accepting `**kwargs` keeps its existing mapping schema, so none of its parameters count.
     """
-    params = inspect.signature(target).parameters.values()
-    if any(p.kind == p.VAR_KEYWORD for p in params):
+    if _accepts_var_keyword(target):
         return set()
+    params = inspect.signature(target).parameters.values()
     return {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+
+
+def _object_rejecting_type(target: Callable[..., object], name: str, type_hints: Mapping[str, Any]) -> object | None:
+    """The type of `target`'s sole spec parameter with JSON objects rejected, if its JSON schema accepts an object.
+
+    The loader reads a string-keyed dict in the short form as keyword arguments, so such a parameter takes objects in
+    the keyword form only. A target accepting `**kwargs` keeps its schema. So does a parameter whose type has no JSON
+    schema, since the schema's union drops that short form.
+    """
+    if len(type_hints) != 1 or _accepts_var_keyword(target):
+        return None
+    [type_hint] = type_hints.values()
+    with suppress(PydanticOmit, PydanticInvalidForJsonSchema):
+        json_schema = TypeAdapter(_make_typed_dict('short_spec', name, {name: type_hint})).json_schema()
+        if _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {})):
+            reject_objects = GetPydanticSchema(
+                get_pydantic_json_schema=lambda core_schema, handler: {
+                    'allOf': [handler(core_schema), {'not': {'type': 'object'}}]
+                }
+            )
+            return Annotated[type_hint, reject_objects]
+    return None
+
+
+def _json_schema_accepts_object(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> bool:
+    """Whether `schema`, a JSON schema Pydantic generated with `defs` as its `$defs`, can accept a JSON object.
+
+    A schema without a `type`, such as the one for `Any`, counts as accepting one. A wrong yes only adds the keyword
+    form and rejects objects the type already rejects.
+    """
+    if (ref := schema.get('$ref')) is not None:
+        return _json_schema_accepts_object(defs[ref.removeprefix('#/$defs/')], defs)
+    if (members := schema.get('anyOf', schema.get('oneOf'))) is not None:
+        return any(_json_schema_accepts_object(member, defs) for member in members)
+    json_type = schema.get('type', 'object')
+    return json_type == 'object' or (isinstance(json_type, list) and 'object' in json_type)
 
 
 def _make_typed_dict(cls_name_prefix: str, name: str, fields: dict[str, Any]) -> Any:
