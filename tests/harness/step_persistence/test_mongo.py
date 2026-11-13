@@ -16,8 +16,8 @@ import anyio.to_thread
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
-from pymongo.driver_info import DriverInfo
 from pymongo.asynchronous.collection import AsyncCollection
+from pymongo.driver_info import DriverInfo
 from pymongo.errors import BulkWriteError
 
 import pydantic_ai_harness.step_persistence as sp
