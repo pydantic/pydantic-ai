@@ -505,7 +505,6 @@ class FakeSandbox:
         self.id = sandbox_id
         self.name: str | None = None
         self.state = SandboxState.STARTED
-        self.env: dict[str, str] | None = None
         self.public = False
         # Whether the control plane has it public; `public` only learns it on `refresh_data`, as in the SDK.
         self.server_public = False
@@ -580,13 +579,6 @@ class FakeSandbox:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
 
-    async def create_signed_preview_url(
-        self, port: int, expires_in_seconds: int | None = None, request_timeout: float | None = None
-    ) -> SimpleNamespace:
-        self.check_alive()
-        self.desktop_calls.append(f'signed_preview {port} {expires_in_seconds}')
-        return SimpleNamespace(url=f'https://{port}-signed.proxy.example/', token='signed')
-
     def check_alive(self) -> None:
         if self.state in (SandboxState.DESTROYING, SandboxState.DESTROYED):
             raise self.gone_error or DaytonaNotFoundError(
@@ -607,7 +599,6 @@ class FakeClient:
         sandbox = FakeSandbox(f'sb-{len(self.owner.create_params) + 1}', host_root=self.owner.host_root)
         sandbox.client = self
         sandbox.name = params.name
-        sandbox.env = params.env_vars
         self.owner.sandboxes.append(sandbox)
         self.owner.create_params.append(params)
         self.owner.create_started.set()
