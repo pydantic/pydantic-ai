@@ -1795,6 +1795,19 @@ async def test_unnamed_cases():
     assert [case.name for case in result.cases] == ['Case 1', 'My Case', 'Case 3']
 
 
+def test_add_case_allows_unnamed_cases():
+    """`add_case` assigns no name, so two unnamed cases are not a name collision."""
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='add_unnamed_cases',
+        cases=[Case(name='My Case', inputs=TaskInput(query='What is 1+1?'))],
+    )
+
+    dataset.add_case(inputs=TaskInput(query='What is 2+2?'))
+    dataset.add_case(inputs=TaskInput(query='What is 1+2?'))
+
+    assert [case.name for case in dataset.cases] == ['My Case', None, None]
+
+
 async def test_duplicate_case_names():
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata](
