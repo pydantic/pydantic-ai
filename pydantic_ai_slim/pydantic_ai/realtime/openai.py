@@ -975,7 +975,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 return
 
     async def _read_frame(self, raw: str) -> tuple[RealtimeFrame, str | None]:
-        """Decode one text frame into the frame `frames` yields, and why the connection re-dials right after it, if it does."""
+        """Decode one text frame into the frame `frames` yields, and why the connection re-dials after it, if it does."""
         try:
             frame = await self._decode_frame(raw)
         except ValueError as e:
