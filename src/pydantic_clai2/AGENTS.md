@@ -194,7 +194,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt.
 - **Integrations are deferred.** Only the coding loop and run plumbing are eager.
-  The customization guide (`clai_customization`) and every hosted integration
+  The agent docs capability (`clai_customization`) and every hosted integration
   plugin pass `defer_loading=True` on the capability they build (on the one a
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
@@ -226,6 +226,27 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   a stored approval with the same id and factory that differs from the
   project's is stale and the project's, off, replaces it. A drop-in or a user's
   own plugin under that id is never replaced.
+  `/plugins enable` also records the SHA-256 of each repository file the
+  declaration runs (`ProcessPlugins.project_files`: a file plugin's own file,
+  and the programs inside the project a `hooks` table runs) in the store's
+  `approved_files` table, beside `plugins` so older builds never read it. An
+  `APPROVED_AS_WRITTEN` approval whose files differ is stale too, and
+  `import_module` refuses a project file whose bytes differ, executing the bytes
+  it checked. `HooksPlugin` compares each program at spawn with the approved
+  contents (read through `host.settings_database`), stopping a `before_tool`
+  call on a mismatch. `approve` refuses a file it cannot read, so an empty
+  digest never matches.
+- **Project settings beyond display wait for approval.** `.clai/settings.json`
+  keys in `SAFE_PROJECT_KEYS` (`display.*`) apply at once; every other key is
+  `pending` until `/project approve` stores that exact value for the project
+  root in the store's `approved_project_settings` table, so a changed value
+  waits again. A new `Settings` field waits too unless added there on purpose.
+  A `run.permissions` no wider than the user's own applies at once, since it
+  cannot widen anything. `update_channel` is user-only, rejected in a project file.
+  Approval is a `/command` only, never a `clai2` subcommand, because the agent
+  can run `clai2` from its shell. For the same reason `clai2 config` refuses a
+  change `widens` (`refuse_widening`), and `clai2 plugins` only lists. Unapproved `instructions` go to the model as
+  `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
@@ -312,7 +333,11 @@ one that is not.
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
   `hotkeys` so they type into the search instead of firing while the user
-  searches.
+  searches. For searchable `FieldMenu` lists, use `slash_search` only when a row offers Space cycling.
+  Eligible rows have multiple declared choices and no action/submenu mapping.
+  Cycle choices in declaration order and wrap. Start at the first choice when the current value is absent or unlisted.
+  Keep searchable field lists without eligible rows on type-to-filter with uppercase `R` reset.
+  Keep nonsearchable field lists without search and with lowercase `r` reset.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
@@ -371,7 +396,9 @@ streamed fences, shell command headers, and theme previews. Shell command header
 add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
 a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
-from the palette.
+from the palette until their lightness differs, so colour-blind readers can tell them apart.
+`theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
+(or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 
 ## Source layout
 
@@ -482,10 +509,20 @@ images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
 the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
+Agent-readable docs are indexed by `clai_docs._CLAI_DOCS`. Docs outside
+`pydantic_clai2/` ship through `pyproject.toml`'s wheel `force-include` and sdist
+`include`. The catalog and packaging guards in `tests/clai2/test_clai_docs.py`
+reject new docs missing from either surface. If a new feature falls outside the
+existing discovery triggers, update `clai_docs._DESCRIPTION` and `_HINT`.
+
 The resume browser is a focused exception to the single `MenuBuilder` convention:
 it needs independently focused projects/sessions and two-line cards. Keep its
 frame pure, inject keys/size/IO, use Termflow terminal ownership and layout, and
 run through `menu_worker`. Metadata refreshes must preserve selection by ID.
+`/tasks` is the other exception: a `termflow.live` app, because a transcript that
+streams beside an input needs a frame loop. Its actions are Ctrl chords, since
+letters type the message. Keep `TaskView` free of the terminal and the event loop:
+`snapshot`, `act` and `size` are injected, and tests pass `open_tasks` a scripted `run`.
 History-changing plugins use `await conversation.commit_messages`, not the legacy
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 

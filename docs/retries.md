@@ -50,7 +50,7 @@ How many attempts the SDK makes by default, and whether `max_retries` can bring 
 
 With one owner, a failing model request is retried on the wire at most as many times as that owner allows: `K` for a transport stopped by `stop_after_attempt(K)`, `1 + N` for an SDK allowed `N` retries, or the engine's maximum attempts. Each model in a [`ModelFallback`](capabilities/model-fallback.md) chain gets that budget again, so a chain of `F` models allows `F` times as many. To fall back sooner, give the models before the last one a smaller budget, as in [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request).
 
-When the transport owns retrying, setting `max_retries` to `0` matters even for errors you'd expect only the transport to see. The Anthropic and Groq SDKs retry *any* exception the HTTP client raises, including the `HTTPStatusError` a `validate_response` like the one in [A retrying client](#a-retrying-client) raises after the transport's last attempt. With the SDK's default of 2 retries, a 503 that a transport stopped by `stop_after_attempt(3)` gives up on goes on the wire 9 times, and is raised as a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] rather than an error with the response's status.
+When the transport owns retrying, setting `max_retries` to `0` matters even for errors you'd expect only the transport to see. The Anthropic and Groq SDKs retry *any* exception the HTTP client raises, including the `HTTPStatusError` a `validate_response` like the one in [A retrying client](#a-retrying-client) raises after the transport's last attempt. With the SDK's default of 2 retries, a 503 that a transport stopped by `stop_after_attempt(3)` gives up on goes on the wire 9 times before it's raised, as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status.
 
 When a durable engine owns retrying, configure its retry policy for model requests and turn the SDK's retries off. On Temporal:
 
@@ -78,7 +78,7 @@ agent = Agent(
 1. Each activity attempt sends the request once.
 2. Temporal attempts a model request up to 3 times, each time in a new activity attempt.
 
-To stop the engine from retrying errors that another attempt can't fix, like a rejected API key, see [Activity retries](durable_execution/temporal.md#activity-retries) on Temporal.
+On Temporal, the engine doesn't retry errors that another attempt can't fix, like a rejected API key, an exhausted quota or a request that ran out of its deadline; see [Activity retries](durable_execution/temporal.md#activity-retries) to change which.
 
 ## Recovery scopes compared {#recovery-scopes}
 
@@ -757,11 +757,11 @@ The stored part carries no wording at all; each model turns it into a sendable p
 
 | `cause` | What the model is sent | Why |
 |---|---|---|
-| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
-| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<retry_feedback>…</retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
-| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. A `'no_output'` part with any other content, such as one your own code builds, goes out fenced in `<retry_feedback>` like a `'model_retry'`. |
+| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<pyai:validation_errors>…</pyai:validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
+| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<pyai:retry_feedback>…</pyai:retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
+| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. A `'no_output'` part with any other content, such as one your own code builds, goes out fenced in `<pyai:retry_feedback>` like a `'model_retry'`. |
 
-A closing tag inside any of these wrappers is escaped, so text the model had a hand in cannot end the statement that carries it, and inside the two user-voice fences so is a `<system>` tag, opening or closing, so the model's own words cannot pass themselves off as the framework speaking.
+The text inside these wrappers goes in as written ([details](message-history.md#framework-frames-and-content-fidelity)).
 
 !!! note "Feedback never joins the standing prompt"
     Feedback never joins the run's standing prompt, even when it opens the history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), [`ProcessHistory`](capabilities/process-history.md) filtering, or a model-request hook retrying the first request of a run with no user prompt. Only the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s the history was written with go to the provider's own system field; `'no_output'` feedback in that position goes out as `<system>`-tagged user text, whatever the provider.

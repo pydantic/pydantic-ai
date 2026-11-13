@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -12,14 +13,17 @@ if TYPE_CHECKING:
     from ..realtime.google import GoogleRealtimeModelProfile
     from ..realtime.profiles import AsyncToolCallMode, RealtimeModelProfile
 
-GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
+GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH']
 """Native Gemini `thinking_level` values."""
 
-GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH')
+GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH')
 """The full thinking-level scale, cheapest first. The resolver's order map derives from this."""
 
-GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(GOOGLE_THINKING_LEVEL_SCALE)
-"""The full thinking-level scale as a set."""
+GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(('MINIMAL', 'LOW', 'MEDIUM', 'HIGH'))
+"""The levels assumed for a model without a documented level set: the scale without `XHIGH`.
+
+Only models whose `google_thinking_levels` list `XHIGH` take it; Gemini 3 models reject it with a 400.
+"""
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
 # See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
@@ -49,14 +53,13 @@ def _flatten_all_of(json_schema: dict[str, Any]) -> dict[str, Any]:
         *(cast('dict[str, Any]', member) for member in cast('list[Any]', members) if isinstance(member, dict)),
         parent,
     ]
-    for member in candidates:
-        member = _flatten_all_of(member)
-        for key, value in member.items():
-            if key == 'properties' and isinstance(value, dict):
+    for key, value in chain.from_iterable(_flatten_all_of(member).items() for member in candidates):
+        match key, value:
+            case 'properties', dict():
                 properties.update(cast('dict[str, Any]', value))
-            elif key == 'required' and isinstance(value, list):
+            case 'required', list():
                 required.extend(name for name in cast('list[str]', value) if name not in required)
-            else:
+            case _:
                 merged[key] = value
     if properties:
         merged['properties'] = properties
@@ -70,31 +73,37 @@ def _drop_unsupported_schema_keywords(
 ) -> dict[str, Any]:
     """Drop unsupported Gemini schema keywords recursively without importing `google-genai`."""
     json_schema = _flatten_all_of(json_schema)
-    kept: dict[str, Any] = {}
-    for key, value in json_schema.items():
-        if key not in accepted_keywords:
-            continue
-        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-            kept[key] = {
-                name: {}
-                if schema is True
-                else _drop_unsupported_schema_keywords(schema, accepted_keywords=accepted_keywords)
-                for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
-                if schema is not False
-            }
-        elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
-            kept[key] = [
-                {} if item is True else _drop_unsupported_schema_keywords(item, accepted_keywords=accepted_keywords)
-                for item in cast('list[dict[str, Any] | bool]', value)
-                if item is not False
-            ]
-        elif key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
-            kept[key] = _drop_unsupported_schema_keywords(
-                cast('dict[str, Any]', value), accepted_keywords=accepted_keywords
-            )
-        else:
-            kept[key] = value
-    return kept
+    return {
+        key: _drop_unsupported_keyword_value(key, value, accepted_keywords=accepted_keywords)
+        for key, value in json_schema.items()
+        if key in accepted_keywords
+    }
+
+
+def _drop_unsupported_keyword_value(key: str, value: object, *, accepted_keywords: frozenset[str]) -> object:
+    """Drop unsupported Gemini schema keywords from the subschemas an accepted keyword's value holds."""
+    if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+        return {
+            name: _drop_unsupported_subschema_keywords(schema, accepted_keywords=accepted_keywords)
+            for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
+            if schema is not False
+        }
+    if key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
+        return [
+            _drop_unsupported_subschema_keywords(item, accepted_keywords=accepted_keywords)
+            for item in cast('list[dict[str, Any] | bool]', value)
+            if item is not False
+        ]
+    if key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
+        return _drop_unsupported_schema_keywords(cast('dict[str, Any]', value), accepted_keywords=accepted_keywords)
+    return value
+
+
+def _drop_unsupported_subschema_keywords(
+    schema: dict[str, Any] | Literal[True], *, accepted_keywords: frozenset[str]
+) -> dict[str, Any]:
+    """`_drop_unsupported_schema_keywords` for a subschema, where a `true` schema becomes `{}`."""
+    return {} if schema is True else _drop_unsupported_schema_keywords(schema, accepted_keywords=accepted_keywords)
 
 
 class GoogleModelProfile(ModelProfile, total=False):
@@ -163,8 +172,8 @@ class GoogleModelProfile(ModelProfile, total=False):
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
-    Unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
-    scale is assumed. Unified thinking efforts snap to the nearest supported level.
+    Unset means [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS] is assumed: every
+    level but `XHIGH`. Unified thinking efforts snap to the nearest supported level.
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
@@ -204,7 +213,7 @@ class GoogleModelProfile(ModelProfile, total=False):
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the full `GOOGLE_THINKING_LEVELS` scale, except where only one API enforces
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where only one API enforces
     # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
     # does for `gemini-3.1-flash-image` on the Gemini API.
     # https://ai.google.dev/gemini-api/docs/thinking
@@ -219,13 +228,23 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
     # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
     ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Not probed live. Both thinking tables list `low`, `medium` and `high` for Gemini 4 Carbon:
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Verified live 2026-11-12 against the Gemini API: `LOW`, `MEDIUM`, `HIGH` and `XHIGH` are accepted, `MINIMAL`
+    # returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed; both thinking tables
+    # list `low`, `medium`, `high` and `xhigh` for Gemini 4 Hydrogen:
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
 _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Verified live 2026-09-16 against the Gemini Developer API: `gemini-3.8-live-extended-thinking`
     # answers `1007 Thinking level MINIMAL is not supported for this model` and accepts the other
-    # three. Live models not listed here take the full scale.
+    # three. Live models not listed here take the default `GOOGLE_THINKING_LEVELS`.
     ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Live model name prefixes mapped to the thinking levels they accept."""
@@ -307,6 +326,24 @@ _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
 """Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
 
+def _realtime_async_tool_call_mode(
+    model_name: str, *, is_extended_thinking: bool, is_3_8_live: bool
+) -> AsyncToolCallMode:
+    """Whether a Gemini Live model runs tool calls asynchronously: never, at the session's choice, or always."""
+    # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with a slow tool,
+    # where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and `gemini-3.1-flash-live-preview`
+    # accepts the flag but still goes silent until the result lands. `gemini-3.8-live` honors it too: verified
+    # live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with the call rather than after its
+    # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
+    # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
+    # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
+    if is_extended_thinking:
+        return 'always'
+    if 'native-audio' in model_name or is_3_8_live:
+        return 'optional'
+    return 'never'
+
+
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
     # `models/gemini-3.8-live` is as valid an id as the bare spelling — `google-genai` passes a
@@ -326,18 +363,6 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
     )
-    # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with a slow tool,
-    # where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and `gemini-3.1-flash-live-preview`
-    # accepts the flag but still goes silent until the result lands. `gemini-3.8-live` honors it too: verified
-    # live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with the call rather than after its
-    # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
-    # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
-    # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
-    async_tool_call_mode: AsyncToolCallMode = 'never'
-    if is_extended_thinking:
-        async_tool_call_mode = 'always'
-    elif 'native-audio' in model_name or is_3_8_live:
-        async_tool_call_mode = 'optional'
     profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
         # The speech-to-speech Live models are audio-only: a session asking for `TEXT` is closed with
@@ -390,7 +415,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # setting is skipped for it too.
         'supports_thinking': is_extended_thinking
         or (('native-audio' in model_name or not model_name.startswith('gemini-live-2.5')) and not is_3_8_live),
-        'async_tool_call_mode': async_tool_call_mode,
+        'async_tool_call_mode': _realtime_async_tool_call_mode(
+            model_name, is_extended_thinking=is_extended_thinking, is_3_8_live=is_3_8_live
+        ),
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
@@ -559,20 +586,7 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
 
         # Gemini only accepts string enums here, and `Schema.enum` is typed `list[str]`.
         if enum := schema.get('enum'):
-            if all(isinstance(value, str) for value in enum):
-                schema['type'] = 'string'
-            else:
-                # Stringifying the values would be a trap: the model would answer `"1"` for a
-                # `Literal[1, 2]`, exactly as asked, and validation would then reject its own
-                # schema's answer, since Pydantic won't coerce a string into an int literal. Keep the
-                # declared type so the answer validates, and move the choices into the description so
-                # they're still stated — an unenforced hint beats an unanswerable argument.
-                del schema['enum']
-                allowed = ', '.join(repr(value) for value in enum)
-                description = schema.get('description')
-                schema['description'] = (
-                    f'{description} (allowed values: {allowed})' if description else f'Allowed values: {allowed}'
-                )
+            _fit_enum_to_strings(schema, enum)
 
         if 'oneOf' in schema and 'type' not in schema:
             # A discriminated union. Gemini rejects `oneOf` outright (despite what its own error message
@@ -587,21 +601,44 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         if 'prefixItems' in schema:
             # A tuple. The subset has no positional item types, so the element type widens to the union
             # of the positions, and the length is pinned instead.
-            prefix_items = schema.pop('prefixItems')
-            items = schema.get('items')
-            unique_items = [items] if items is not None else []
-            for item in prefix_items:
-                if item not in unique_items:
-                    unique_items.append(item)
-            if len(unique_items) > 1:
-                schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:  # pragma: no branch
-                schema['items'] = unique_items[0]
-            schema.setdefault('minItems', len(prefix_items))
-            if items is None:  # pragma: no branch
-                schema.setdefault('maxItems', len(prefix_items))
+            _widen_tuple(schema)
 
         return schema
+
+
+def _fit_enum_to_strings(schema: JsonSchema, enum: list[object]) -> None:
+    """Type a string `enum` as `string`, or move the values of any other into the description."""
+    if all(isinstance(value, str) for value in enum):
+        schema['type'] = 'string'
+    else:
+        # Stringifying the values would be a trap: the model would answer `"1"` for a
+        # `Literal[1, 2]`, exactly as asked, and validation would then reject its own
+        # schema's answer, since Pydantic won't coerce a string into an int literal. Keep the
+        # declared type so the answer validates, and move the choices into the description so
+        # they're still stated — an unenforced hint beats an unanswerable argument.
+        del schema['enum']
+        allowed = ', '.join(repr(value) for value in enum)
+        description = schema.get('description')
+        schema['description'] = (
+            f'{description} (allowed values: {allowed})' if description else f'Allowed values: {allowed}'
+        )
+
+
+def _widen_tuple(schema: JsonSchema) -> None:
+    """Replace a tuple's `prefixItems` with the union of its positions as `items`, and pin its length."""
+    prefix_items = schema.pop('prefixItems')
+    items = schema.get('items')
+    unique_items = [items] if items is not None else []
+    for item in prefix_items:
+        if item not in unique_items:
+            unique_items.append(item)
+    if len(unique_items) > 1:
+        schema['items'] = {'anyOf': unique_items}
+    elif len(unique_items) == 1:  # pragma: no branch
+        schema['items'] = unique_items[0]
+    schema.setdefault('minItems', len(prefix_items))
+    if items is None:  # pragma: no branch
+        schema.setdefault('maxItems', len(prefix_items))
 
 
 def _fold_described_options(schema: JsonSchema) -> None:

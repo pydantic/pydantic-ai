@@ -9,9 +9,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal
-from unittest.mock import Mock, patch
+from typing import Annotated, Any, Literal, cast
+from unittest.mock import AsyncMock, Mock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -25,6 +26,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -43,7 +45,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -119,7 +121,10 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._toolset import CallToolResult
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
@@ -205,9 +210,11 @@ with workflow.unsafe.imports_passed_through():
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
 
     from ..._inline_snapshot import snapshot
+    from ...append_only import drain_events
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
+    from ..responses_websocket import responses_reply, websocket_model
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -837,6 +844,45 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
         plugins=[LogfirePlugin(setup_logfire, replay_safe=False)],
     ).replay_workflow(history)
     assert len(capfire.exporter.exported_spans_as_dict()) > span_count
+
+
+def _recorded_metric_names(capfire: CaptureLogfire) -> set[str]:
+    """Names of the metrics recorded since the last collection."""
+    data = capfire.metrics_reader.get_metrics_data()
+    if data is None:
+        return set()
+    return {
+        metric.name
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+    }
+
+
+async def test_replay_records_no_model_request_metrics(client_with_logfire: Client, capfire: CaptureLogfire) -> None:
+    """Replaying history re-runs workflow code, but the model requests it replays were metered when they ran."""
+    workflow_id = f'{ReplaySafeLogfireWorkflow.__name__}-metrics-{uuid.uuid4()}'
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplaySafeLogfireWorkflow],
+        plugins=[AgentPlugin(replay_safe_logfire_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        await client_with_logfire.execute_workflow(
+            ReplaySafeLogfireWorkflow.run, args=['hello'], id=workflow_id, task_queue=TASK_QUEUE
+        )
+        history = await client_with_logfire.get_workflow_handle(workflow_id).fetch_history()
+    assert 'gen_ai.client.token.usage' in _recorded_metric_names(capfire)
+
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin()],
+    ).replay_workflow(history)
+
+    assert 'gen_ai.client.token.usage' not in _recorded_metric_names(capfire)
 
 
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
@@ -1930,6 +1976,40 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+async def test_temporal_model_activities_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An activity without an external model owner uses HTTP instead of opening a socket for one request."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        responses_model = websocket_model(client)
+        temporal_model = TemporalModel(
+            responses_model,
+            activity_name_prefix='test__responses_websocket',
+            activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+            deps_type=type(None),
+            event_stream_handler=drain_events,
+        )
+        ctx = RunContext[None](deps=None, model=responses_model, usage=RunUsage(), run_id='responses-websocket')
+        params = _RequestParams(
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            model_id=None,
+        )
+        response = await ActivityEnvironment().run(temporal_model.request_activity, params, None)
+        stream_response = await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            None,  # pyright: ignore[reportArgumentType]
+        )
+    assert response.text == stream_response.text == 'from HTTP'
+    connect.assert_not_called()
 
 
 @pytest.mark.parametrize('legacy_payload', [True, False])
@@ -3135,11 +3215,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
+    # Foundry serves no mid-conversation system messages, so the system prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
+                'system': f'{lookalike_note_announcement(system_role=False)}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3154,6 +3234,111 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'setting, standing_prompt',
+    [
+        # Both put the announcement ahead of the standing prompt: `'when_needed'` here because of the mid-conversation
+        # prompt, `'always'` because there is a standing prompt.
+        pytest.param(None, ['<announcement>', 'leading'], id='default'),
+        pytest.param('always', ['<announcement>', 'leading'], id='always'),
+        pytest.param('never', ['leading'], id='never'),
+    ],
+)
+def test_temporal_model_reprepare_applies_the_framing_announcement_setting(
+    setting: str | None, standing_prompt: list[str]
+) -> None:
+    """The activity's re-prepare restores `framing_announcement` from the request's settings.
+
+    The private parameter field that carries it to `prepare_messages` isn't serialized, so without that the activity
+    would prepare with the profile's default, `'when_needed'`, whatever the run asked for.
+    """
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_lookalike_notes = True
+
+    concrete = AnnouncingFunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__reprepare_framing_announcement',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    params = _RequestParams(
+        messages=[
+            ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+        ],
+        model_settings={'framing_announcement': setting} if setting else None,
+        # As the activity receives them: the private field doesn't survive serialization.
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_id='anthropic:claude-opus-5',
+    )
+
+    prepared = temporal_model._reprepare_messages(params, concrete)  # pyright: ignore[reportPrivateUsage]
+
+    first = prepared[0]
+    assert isinstance(first, ModelRequest)
+    announcement = lookalike_note_announcement(system_role=False)
+    assert [
+        '<announcement>' if part.content == announcement else part.content
+        for part in first.parts
+        if isinstance(part, SystemPromptPart)
+    ] == standing_prompt
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_reprepares_with_the_run_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The activity's re-preparation applies the run's `framing_announcement`, which isn't serialized with the parameters."""
+    foundry_client = anthropic.AsyncAnthropicFoundry(resource='test-resource', api_key='test-api-key')
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(anthropic_client=foundry_client)
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_reprepare_setting',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+    received_messages: list[list[ModelMessage]] = []
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        received_messages.append(activity_messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=messages,
+        model_settings={'framing_announcement': 'never'},
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    [[first_request, *_]] = received_messages
+    assert isinstance(first_request, ModelRequest)
+    assert [part.content for part in first_request.parts if isinstance(part, SystemPromptPart)] == ['leading']
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -3748,6 +3933,9 @@ def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    """An error the workflow can't rebuild, without a `retry_after` or a listing as non-retryable, fails the activity
+    as it always did."""
+
     class ApplicationModelError(ModelAPIError):
         """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
 
@@ -3785,6 +3973,49 @@ def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_
     with pytest.raises(ActivityError):
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('retry_after', 'next_retry_delay'),
+    [
+        pytest.param(7.0, timedelta(seconds=7), id='retry-after'),
+        # Outside an activity, the default retry policy's `maximum_interval` of 100 seconds caps the delay.
+        pytest.param(3600.0, timedelta(seconds=100), id='capped'),
+    ],
+)
+def test_a_model_error_that_cannot_be_rebuilt_still_carries_its_retry_delay(
+    retry_after: float, next_retry_delay: timedelta
+):
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, is raised as an `ApplicationError`
+    when it has a `retry_after`, so Temporal still waits that long, under its own class name as Temporal would have
+    reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom', retry_after=retry_after)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details, raised.value.next_retry_delay) == (
+        'ApplicationModelError',
+        False,
+        (),
+        next_retry_delay,
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_a_non_retryable_model_error_gets_no_retry_delay():
+    """A model error listed as non-retryable isn't attempted again, so its `retry_after` sets no `next_retry_delay`."""
+    error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', retry_after=7.0)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ModelRateLimitError,)):
+            raise error
+    assert (raised.value.non_retryable, raised.value.next_retry_delay) == (True, None)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
@@ -3831,3 +4062,24 @@ def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
         with rebuilt_model_errors():
             raise activity_error
     assert raised.value is activity_error
+
+
+def test_payload_converter_decodes_journal_entries_written_before_records():
+    """A tool-call result an earlier worker journaled has no file record, and still decodes with every file.
+
+    The application's own worker wrote it, so a workflow in flight across an upgrade keeps its tool results.
+    """
+    files: list[DocumentUrl | ImageUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = TypeAdapter[Any](CallToolResult).dump_python(result, mode='json')
+    del journaled['content_file_digests']
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode()
+    )
+
+    converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
+    assert converter.from_payload(payload, cast(type, CallToolResult)) == result

@@ -58,6 +58,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part, try_import
+from .conftest import items_serialized_differently_inside_a_list
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -224,6 +225,64 @@ async def test_decision_model_preserves_image_evidence_in_state(allow_model_requ
         'text': 'Current prompt.\n\n<image 6>',
     }
     assert request.state == expected_state
+
+
+async def test_decision_model_keeps_structured_tool_return_items_beside_an_image(allow_model_requests: None):
+    """A dict a tool returns beside an image is history as the JSON object it is without the image, failed or not."""
+    image = BinaryContent(b'tool', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Check the weather.')]),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-1')]),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-2')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-2', outcome='failed')]),
+    ]
+    model = ImageEnabledDecisionModel()
+
+    await Agent(model, output_type=bool, instructions='Is it warm?').run('Decide.', message_history=history)
+
+    [request] = model.requests
+    assert request.state == snapshot(
+        {
+            'history': [
+                {'user': 'Check the weather.'},
+                {'tool_call': {'name': 'weather', 'args': {}}},
+                {'tool_return': {'name': 'weather', 'content': '[{"temp":20},"<image 1>"]'}},
+                {'tool_call': {'name': 'weather', 'args': {}}},
+                {'tool_return': {'name': 'weather', 'content': '{"error":"[{\\"temp\\":20},\\"<image 2>\\"]"}'}},
+            ],
+            'text': 'Decide.',
+        }
+    )
+
+
+async def test_decision_model_serializes_tool_return_items_beside_an_image_as_alone(allow_model_requests: None):
+    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level."""
+    items = items_serialized_differently_inside_a_list()
+    alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
+    image = BinaryContent(b'tool', media_type='image/png')
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Check the readings.')])]
+    for index, outcome in enumerate(('success', 'failed', 'retried'), start=1):
+        history.append(ModelResponse(parts=[ToolCallPart('read', {}, tool_call_id=f'tool-{index}')]))
+        history.append(
+            ModelRequest(parts=[ToolReturnPart('read', [*items, image], tool_call_id=f'tool-{index}', outcome=outcome)])
+        )
+    model = ImageEnabledDecisionModel()
+
+    await Agent(model, output_type=bool, instructions='Are they valid?').run('Decide.', message_history=history)
+
+    [request] = model.requests
+    assert isinstance(request.state, dict) and isinstance(request.state['history'], list)
+    assert [entry for entry in request.state['history'] if isinstance(entry, dict) and 'tool_return' in entry] == [
+        {'tool_return': {'name': 'read', 'content': f'[{alone},"<image 1>"]'}},
+        {
+            'tool_return': {
+                'name': 'read',
+                'content': json.dumps({'error': f'[{alone},"<image 2>"]'}, separators=(',', ':')),
+            }
+        },
+        {'tool_return': {'name': 'read', 'content': f'{{"error":[{alone},"<image 3>"]}}'}},
+    ]
 
 
 class Release(BaseModel):
@@ -980,9 +1039,9 @@ async def test_a_legacy_retry_prompt_part_on_a_direct_request_is_judged_as_what_
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in one word
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
             ]
@@ -1701,6 +1760,77 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
+_VALUE_LIMIT = 1_000
+"""The limit these tests patch in, so their schemas stay small."""
+
+
+def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, Any]:
+    """Definitions that each refer to the one below twice, so resolving them doubles per level, past `_VALUE_LIMIT`.
+
+    As `properties`, every level doubles the fields; as `anyOf`, it doubles the options of a single field.
+    """
+    defs: dict[str, Any] = {'D0': {'type': 'boolean'}}
+    levels = _VALUE_LIMIT.bit_length()
+    for i in range(1, levels + 1):
+        ref = {'$ref': f'#/$defs/D{i - 1}'}
+        defs[f'D{i}'] = (
+            {'type': 'object', 'properties': {'a': ref, 'b': ref}} if combine == 'properties' else {'anyOf': [ref, ref]}
+        )
+    return {
+        'type': 'object',
+        'properties': {'query': {'$ref': f'#/$defs/D{levels}', 'description': 'What to look up.'}},
+        '$defs': defs,
+    }
+
+
+async def test_arguments_past_the_value_limit_are_not_filled(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for.
+
+    Only as `properties`: as `anyOf`, the field is one no fill could answer anyway, limit or not.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    tool = Tool.from_schema(
+        look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions('properties')
+    )
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
+
+    with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
+        await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
+
+    assert [list(request.questions) for request in model.requests] == snapshot(
+        [['Triage.urgent', 'Triage.action', 'route']]
+    )
+
+
+@pytest.mark.parametrize('combine', ['properties', 'anyOf'])
+async def test_an_output_type_past_the_value_limit_is_refused(
+    allow_model_requests: None, combine: Literal['properties', 'anyOf'], monkeypatch: pytest.MonkeyPatch
+):
+    """Alone, an output type whose `$ref`s expand past the limit is refused before a request is sent."""
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Look the order up.',
+        kind='output',
+        parameters_json_schema=_doubling_definitions(combine),
+    )
+    model = InMemoryDecisionModel()
+
+    with pytest.raises(
+        UserError,
+        match=f"The JSON schema of output tool 'final_result' is too large: .* more than {_VALUE_LIMIT:,} JSON values",
+    ):
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart('Where is my order?')])],
+            None,
+            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
+        )
+
+    assert model.requests == []
+
+
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
 async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_requests: None, schema: Any):
     output_tool = ToolDefinition(
@@ -2045,9 +2175,9 @@ Please refund it.\
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Pick something else.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
                 {'thinking': 'A refund, then.'},
@@ -2304,9 +2434,9 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                         {
                             'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                         },
                     ],
@@ -2344,9 +2474,9 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer with a tool call.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
             ],
@@ -2383,9 +2513,9 @@ async def test_feedback_after_a_tool_returned_is_a_retry_entry(allow_model_reque
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                 },
             ],

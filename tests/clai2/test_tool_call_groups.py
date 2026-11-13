@@ -209,7 +209,7 @@ async def test_shell_and_arguments_are_ignored_but_edits_and_writes_print_as_in_
             pid=1,
             output_path='/o',
             status_path='/s',
-            total_lines=1,
+            line_count=1,
             truncated=False,
         ),
     ):

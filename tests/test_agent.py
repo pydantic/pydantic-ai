@@ -43,6 +43,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputTokenLimitExceeded,
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
@@ -200,6 +201,7 @@ from .conftest import (
     legacy_retry_prompt_part,
     message,
     message_part,
+    no_leaked_tasks,
 )
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
@@ -2018,7 +2020,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=80, output_tokens=5),
+                usage=RequestUsage(input_tokens=82, output_tokens=5),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -3181,7 +3183,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=91, output_tokens=12),
+                usage=RequestUsage(input_tokens=93, output_tokens=12),
                 model_name='function:return_city_location:',
                 model_id='function:function:return_city_location:',
                 timestamp=IsDatetime(),
@@ -3263,7 +3265,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=82, output_tokens=11),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -4584,6 +4586,9 @@ def test_failed_run_history_is_resumable():
         with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
 
+    response = messages[-2]
+    assert isinstance(response, ModelResponse)
+
     result = agent.run_sync('Never mind.', message_history=messages)
     assert result.output == 'success'
     assert seen_by_model[-1][-1] == snapshot(
@@ -4594,7 +4599,7 @@ def test_failed_run_history_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_foobar',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=response.timestamp,
                     outcome='interrupted',
                 ),
                 UserPromptPart(content='Never mind.', timestamp=IsNow(tz=UTC)),
@@ -4770,8 +4775,9 @@ def test_tool_exceeds_token_limit_error():
     with pytest.raises(
         IncompleteToolCall,
         match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
-    ):
+    ) as exc_info:
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert isinstance(exc_info.value, OutputTokenLimitExceeded)
 
     with pytest.raises(
         IncompleteToolCall,
@@ -4807,13 +4813,13 @@ def test_empty_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_empty_response), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4828,16 +4834,119 @@ def test_thinking_only_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_thinking_only), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
+
+
+class _City(BaseModel):
+    name: str
+    population: int
+
+
+@pytest.mark.parametrize('output_type', [NativeOutput(_City), PromptedOutput(_City)], ids=['native', 'prompted'])
+def test_truncated_structured_output_raises_without_retry(output_type: NativeOutput[_City] | PromptedOutput[_City]):
+    """JSON the token limit cut off would be cut off again on a retry with the same limit, so it isn't retried."""
+    calls = 0
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[TextPart('{"name": "Paris", "popu')], finish_reason='length')
+
+    agent = Agent(FunctionModel(truncated), output_type=output_type, retries=3)
+
+    with pytest.raises(
+        OutputTokenLimitExceeded,
+        match=r'Model token limit \(10\) exceeded while generating structured output, resulting in incomplete JSON\.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert calls == 1
+
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded'):
+        agent.run_sync('Hello')
+
+
+def test_structured_output_that_validates_is_accepted_despite_finish_reason_length():
+    def complete(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 2}')], finish_reason='length')
+
+    agent = Agent(FunctionModel(complete), output_type=NativeOutput(_City))
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
+
+
+def test_output_validator_retry_with_finish_reason_length_is_retried():
+    """Only a validation failure is blamed on the token limit: an output validator's `ModelRetry` is still retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        population = 2 if len(messages) == 1 else 3
+        return ModelResponse(
+            parts=[TextPart(f'{{"name": "Paris", "population": {population}}}')], finish_reason='length'
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=NativeOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            raise ModelRetry('Population is too small.')
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+@pytest.mark.parametrize('rejected_by', ['schema', 'output_validator'])
+def test_json_that_parses_but_is_rejected_with_finish_reason_length_is_retried(rejected_by: str):
+    """Only JSON cut off before it's complete is blamed on the token limit: JSON that parses but is rejected is retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 3}')])
+        first = '{"name": "Paris"}' if rejected_by == 'schema' else '{"name": "Paris", "population": 2}'
+        return ModelResponse(parts=[TextPart(first)], finish_reason='length')
+
+    agent = Agent(FunctionModel(respond), output_type=NativeOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            _City.model_validate({'name': output.name})  # raises `ValidationError`: `population` is missing
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+def test_text_output_function_validation_error_with_finish_reason_length_is_retried():
+    """A `TextOutput` function parses text itself, so its `ValidationError` keeps its retry even when cut off."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('{"name": "Paris", "popu')], finish_reason='length')
+        return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 2}')])
+
+    def parse(text: str) -> _City:
+        return _City.model_validate_json(text)
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(parse))
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
+
+
+def test_truncated_text_output_is_returned():
+    """Plain text has no shape to validate, so text the token limit cut off is the output; `finish_reason` says so."""
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('The capital of France is Pa')], finish_reason='length')
+
+    result = Agent(FunctionModel(truncated)).run_sync('Hello')
+    assert result.output == 'The capital of France is Pa'
+    assert result.response.finish_reason == 'length'
 
 
 def test_model_requests_blocked(env: TestEnv):
@@ -9536,6 +9645,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'outcome': 'retried',
                     'retry': {'cause': 'validation_error', 'attempt': 1, 'max_retries': 1},
                     'part_kind': 'tool-return',
+                    'content_file_digests': [],
                 }
             ],
             'timestamp': IsStr(),
@@ -10479,20 +10589,17 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
             raise
         return 'done'  # pragma: no cover
 
-    tasks_before = asyncio.all_tasks()
-    with pytest.raises(RuntimeError, match='boom'):
-        await agent.run('call tools')
+    with no_leaked_tasks():
+        with pytest.raises(RuntimeError, match='boom'):
+            await agent.run('call tools')
 
-    # Give the event loop a moment to process cancellations.
-    await asyncio.sleep(0)
+        # Give the event loop a moment to process cancellations.
+        await asyncio.sleep(0)
 
-    # The slow tool must have started (confirming both tasks ran in parallel).
-    assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
-    # The slow tool must have been cancelled when fast_failing_tool raised.
-    assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
-    # No new asyncio tasks should be left over from this run.
-    leaked = asyncio.all_tasks() - tasks_before
-    assert not leaked, f'Orphaned tasks remain: {leaked}'
+        # The slow tool must have started (confirming both tasks ran in parallel).
+        assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
+        # The slow tool must have been cancelled when fast_failing_tool raised.
+        assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
 
 
 async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks():
@@ -13196,6 +13303,11 @@ async def test_raise_content_filter_error_capability_streaming():
         ),
         ({'block_reason': 'SAFETY'}, "Content filter triggered. Block reason: 'SAFETY'"),
         ({'refusal': 'I cannot comply.'}, "Content filter triggered. Refusal: 'I cannot comply.'"),
+        (
+            {'finish_reason': 'refusal', 'refusal': 'I cannot comply.'},
+            "Content filter triggered. Finish reason: 'refusal'. Refusal: 'I cannot comply.'",
+        ),
+        ({}, 'Content filter triggered.'),
     ],
 )
 async def test_raise_content_filter_error_capability_message_from_provider_details(
@@ -13680,7 +13792,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=75, output_tokens=1),
+                usage=RequestUsage(input_tokens=77, output_tokens=1),
                 model_name='function:model_then_text:',
                 model_id='function:function:model_then_text:',
                 timestamp=IsNow(tz=UTC),

@@ -13,9 +13,10 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.aoe import AoePlugin
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
 from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
 from pydantic_clai2.builtin_plugins.day_ai import DayAISource
@@ -25,7 +26,7 @@ from pydantic_clai2.builtin_plugins.notion import NotionSource
 from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
 from pydantic_clai2.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.commands import Commands, config_command, plugins_command
+from pydantic_clai2.commands import Commands, config_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
@@ -292,10 +293,14 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().update_channel == 'stable'
     # Databases from before grouped tool calls keep one line per call.
     assert store.load().tool_calls == 'detailed'
+    # Databases from before `/permissions` run everything without asking.
+    assert store.load().permissions == 'full'
     # Older databases show the model in delegated-task rows unless the user turns it off.
     assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
     assert store.load().instructions == ''
+    assert store.load().repo_context_walk_up_roots == ['~']
+    assert store.load().repo_context_autoload_symlink_roots == []
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -344,7 +349,7 @@ async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, va
         Console(file=output), stop_loading=lambda: None, show_tool_output=reopened.load().tool_output
     )
     for event in (
-        FileChangeRequestEvent(
+        FileChangeRequestedEvent(
             path='file.txt', root_dir='/tmp', operation='write', diff='visible diff', truncated=False
         ),
         FileWrittenEvent(path='file.txt', root_dir='/tmp', content_hash='hash'),
@@ -368,7 +373,12 @@ async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, va
 
 @pytest.mark.parametrize(
     ('key', 'value_json'),
-    [('future.setting', '{"enabled":true}'), ('future.setting', 'unrecognized encoding')],
+    [
+        ('future.setting', '{"enabled":true}'),
+        ('future.setting', 'unrecognized encoding'),
+        # Saved by a `main` build before `repo_context.walk_up_roots` replaced it; never released.
+        ('repo_context.walk_up_root', '"/offline mount/projects"'),
+    ],
 )
 def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_json: str) -> None:
     path = tmp_path / 'config.db'
@@ -413,7 +423,10 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
         ('run.instructions', '42'),
+        ('run.permissions', '"sometimes"'),
         ('accounts.pool', '"off"'),
+        ('repo_context.walk_up_roots', '["relative"]'),
+        ('repo_context.autoload_symlink_roots', '["~other-user/shared"]'),
     ],
 )
 def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:
@@ -633,6 +646,38 @@ def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> No
         assert 'plugin_requirements' in tables
 
 
+def test_database_without_approved_files_keeps_its_approvals_and_gains_the_table(tmp_path: Path) -> None:
+    """A database from before CLAI kept approved file contents opens unchanged; they go in a table older builds never read."""
+    path = tmp_path / 'config.db'
+    helper = Path('/work/repo/plugins/helper.py')
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'helper',
+                f'{{"id": "helper", "factory": "helper", "path": "{helper}", "enabled": true, "settings": {{}}}}',
+            ),
+        )
+    store = SettingsStore(path)
+    approval = PluginSettings(id='helper', factory='helper', path=str(helper))
+    assert store.plugins() == [approval]
+    assert store.approved_sha256(helper) is None, 'loading asks for this approval again'
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        # Older builds refuse any other version; approved contents live in a table they never read.
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    store.approve_files({helper: 'abc'})
+    reopened = SettingsStore(path)
+    assert reopened.approved_sha256(helper) == 'abc'
+    assert reopened.plugins() == [approval], 'the declaration older builds read is untouched'
+
+
 def test_database_without_chains_keeps_models_and_gains_chains(tmp_path: Path) -> None:
     """A database from before fallback chains and auth profiles keeps its models and settings unchanged."""
     path = tmp_path / 'config.db'
@@ -767,7 +812,10 @@ def test_existing_observability_rows_are_coalesced(tmp_path: Path, with_legacy: 
             legacy = PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False)
             connection.execute('INSERT INTO plugins VALUES (?, ?)', (legacy.id, legacy.model_dump_json()))
     assert store.plugins() == [current]
-    plugins_command(store, [action, 'observability'])
+    if action == 'disable':
+        store.save_plugin(current.model_copy(update={'enabled': False}))
+    else:
+        store.delete_plugin('observability')
     assert store.plugins() == ([current.model_copy(update={'enabled': False})] if action == 'disable' else [])
     with closing(sqlite3.connect(store.path)) as connection:
         assert connection.execute('SELECT id FROM plugins').fetchall() == (
@@ -786,17 +834,6 @@ def test_plugin_alias_coalescing_rolls_back_on_failure(tmp_path: Path) -> None:
         store.save_plugin(plugin.model_copy(update={'enabled': False}))
     with closing(sqlite3.connect(store.path)) as connection:
         assert list(connection.iterdump()) == original
-
-
-def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None:
-    store = SettingsStore(tmp_path / 'config.db')
-    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
-    plugins_command(store, ['disable', 'logfire'])
-    assert store.plugins()[0].id == 'observability' and not store.plugins()[0].enabled
-    plugins_command(store, ['enable', 'logfire'])
-    assert store.plugins()[0].enabled
-    plugins_command(store, ['remove', 'logfire'])
-    assert store.plugins() == []
 
 
 @pytest.mark.parametrize(
@@ -831,9 +868,8 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
         LogfireMCPSettings
     )
     assert (settings.url, settings.read_only) == (url, False)
-    # `/plugins ... logfire` still means `observability`, as in older builds.
-    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
-    plugins_command(store, ['disable', 'logfire'])
+    # A `logfire` row still means `observability`, as in older builds.
+    store.save_plugin(PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False))
     assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
 
 
@@ -944,6 +980,90 @@ async def test_saved_background_compaction_loads_in_builds_with_and_without_the_
     )
     assert store.plugins() == saved
     await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('stored', 'supported', 'titles'),
+    [('{}', True, False), ('{"titles": true}', True, True), ('{"titles": true}', False, False)],
+    ids=['saved-before-titles', 'this-build', 'build-without-titles'],
+)
+async def test_saved_aoe_titles_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, supported: bool, titles: bool
+) -> None:
+    """An `aoe` saved before `titles` existed keeps titles off; a build lacking the feature drops the setting."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'aoe',
+                '{"id": "aoe", "factory": "pydantic_clai2.builtin_plugins.aoe", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'titles' in stored:
+        store.save_plugin(store.plugins()[0], requires={'titles': frozenset({'aoe-titles'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'aoe-titles'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'aoe']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, AoePlugin)
+    assert entry.loaded.plugin.settings.titles is titles
+    assert entry.ignored == (None if supported else 'aoe: ignored saved titles (needs aoe-titles); using defaults.')
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`mcp` plugin-settings servers using `defer_loading` are tagged; a build lacking the feature drops them."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'mcp',
+                '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+                '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
+            ),
+        )
+
+    def loader() -> PluginLoader[None]:
+        return PluginLoader(
+            store=store,
+            console=Console(file=io.StringIO(), width=200),
+            commands=Commands(),
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        )
+
+    this_build = loader()
+    await this_build.load_all()
+    await this_build.disable('mcp')
+    await this_build.enable('mcp')
+    await this_build.close('exit')
+    assert store.plugin_requirements('mcp') == {'servers': ['mcp-defer-loading']}, 'saving tags the servers'
+    saved = store.plugins()
+
+    monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'mcp-defer-loading'})
+    older = loader()
+    await older.load_all()
+
+    [entry] = [entry for entry in older.entries() if entry.name == 'mcp']
+    assert entry.loaded is not None, 'a build without on-demand servers drops them, not the plugin'
+    assert entry.loaded.plugin.settings.model_dump() == {'servers': {}}
+    assert entry.ignored == 'mcp: ignored saved servers (needs mcp-defer-loading); using defaults.'
+    assert store.plugins() == saved
+    await older.close('exit')
 
 
 @pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-disabled-skills'])
@@ -1198,6 +1318,92 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
     assert reopened.plugins()[0].settings['review_agent'] is True
 
 
+def test_repo_context_boundaries_survive_a_build_without_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    saved: dict[str, JsonValue] = {
+        'repo_context.walk_up_roots': ['~', '/offline mount/projects'],
+        'repo_context.autoload_symlink_roots': ['~/shared tooling', '/offline mount/instructions'],
+    }
+    for key, value in saved.items():
+        store.set(key, value)
+    store.set('model', 'test')
+    plugin = PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})
+    store.save_plugin(plugin)
+    store.add_model(name='test')
+    store.save_model_settings('test', {'max_tokens': 64})
+    older = {key: name for key, name in SETTING_FIELDS.items() if key not in saved}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+        store = SettingsStore(path)
+        assert store.overrides() == {'model': 'test'}
+        store.set('display.thinking', False)
+        store.reset('display.thinking')
+    reopened = SettingsStore(path)
+    assert reopened.overrides() == saved | {'model': 'test'}
+    assert reopened.plugins() == [plugin]
+    assert reopened.models() == ['test']
+    assert reopened.model_settings('test') == {'max_tokens': 64}
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+
+
+@pytest.mark.parametrize(
+    ('key', 'value'),
+    [
+        ('repo_context.walk_up_roots', '/'),
+        ('repo_context.walk_up_roots', ['']),
+        ('repo_context.walk_up_roots', ['   ']),
+        ('repo_context.walk_up_roots', ['relative/path']),
+        ('repo_context.walk_up_roots', ['.']),
+        ('repo_context.walk_up_roots', ['./']),
+        ('repo_context.walk_up_roots', ['~another-user']),
+        ('repo_context.walk_up_roots', ['~another-user/path']),
+        ('repo_context.walk_up_roots', ['$HOME/projects']),
+        ('repo_context.walk_up_roots', ['/bad\x00path']),
+        ('repo_context.walk_up_roots', [42]),
+        ('repo_context.walk_up_roots', ['~', 'bad']),
+        ('repo_context.autoload_symlink_roots', '/'),
+        ('repo_context.autoload_symlink_roots', [1]),
+        ('repo_context.autoload_symlink_roots', ['']),
+        ('repo_context.autoload_symlink_roots', ['/bad\x00path']),
+        ('repo_context.autoload_symlink_roots', ['relative']),
+        ('repo_context.autoload_symlink_roots', ['.']),
+        ('repo_context.autoload_symlink_roots', ['./']),
+        ('repo_context.autoload_symlink_roots', ['~another-user/path']),
+        ('repo_context.autoload_symlink_roots', ['/', 'bad']),
+    ],
+)
+def test_invalid_repo_context_boundary_writes_preserve_data(tmp_path: Path, key: str, value: JsonValue) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('repo_context.walk_up_roots', ['~/projects'])
+    store.set('repo_context.autoload_symlink_roots', ['/offline/shared'])
+    store.set('model', 'test')
+    snapshot = store.path.read_bytes()
+    with pytest.raises(ValidationError):
+        store.set(key, value)
+    assert store.path.read_bytes() == snapshot
+
+
+@pytest.mark.parametrize('path', ['~', '~/offline mount', '/offline mount'])
+def test_repo_context_paths_are_stored_without_requiring_existence(tmp_path: Path, path: str) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    config_command(store, ['set', 'repo_context.walk_up_roots', f'["{path}"]'])
+    config_command(store, ['set', 'repo_context.autoload_symlink_roots', f'["{path}"]'])
+    settings = SettingsStore(store.path).load()
+    assert settings.repo_context_walk_up_roots == [path]
+    assert settings.repo_context_autoload_symlink_roots == [path]
+    config_command(store, ['reset', 'repo_context.walk_up_roots'])
+    config_command(store, ['reset', 'repo_context.autoload_symlink_roots'])
+    assert store.load().repo_context_walk_up_roots == ['~']
+    assert store.load().repo_context_autoload_symlink_roots == []
+
+
 def test_worktree_command_setting_validation(tmp_path: Path) -> None:
     key = str((tmp_path / 'repo.git').resolve())
     valid = {key: ['sh', '-c', 'rm -r "$1"', 'clai', '{path}']}
@@ -1227,6 +1433,33 @@ def test_project_cannot_register_worktree_commands(tmp_path: Path) -> None:
     project.write_text('{"worktree_remove_commands": {"/repo": ["command"]}}')
     with pytest.raises(ValueError, match='user-only'):
         load_project_settings(tmp_path)
+
+
+def test_kept_worktrees_preserve_existing_database(tmp_path: Path) -> None:
+    """The additive table leaves version-1 settings readable and survives unrelated writes."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test:model"'))
+        connection.execute('PRAGMA user_version = 1')
+    store = SettingsStore(path)
+    checkout = tmp_path / 'checkout'
+    assert store.kept_worktree(checkout) is None
+    store.keep_worktree(checkout, checkout='first')
+    # Older builds only access the tables they know; they accept the same schema version.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('future.setting', '{"kept":true}'))
+    reopened = SettingsStore(path)
+    assert reopened.load().model == 'test:model'
+    assert reopened.kept_worktree(checkout) == 'first'
+    reopened.set('display.thinking', False)
+    reopened.keep_worktree(checkout, checkout='replacement')
+    assert SettingsStore(path).kept_worktree(checkout) == 'replacement'
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute('SELECT value_json FROM settings WHERE key = ?', ('future.setting',)).fetchone() == (
+            '{"kept":true}',
+        )
 
 
 def test_worktree_commands_roundtrip_and_older_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

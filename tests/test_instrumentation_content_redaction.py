@@ -42,6 +42,7 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     MessageJsonCache,
+    current_model_request_span,
     has_stale_message_json,
     include_content_ctx,
     model_request_parameters_attributes,
@@ -176,7 +177,9 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
         native_tools=[
             tool,
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
@@ -194,7 +197,7 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
     assert native_tool['allowed_tools'] == ['search']
     assert exported['function_tools'][0]['metadata'] == {'source': 'user'}
     assert exported['native_tools'][1]['files'][0]['file_id'] == 'file-123'
-    assert exported['native_tools'][2]['instructions'] == 'search only these files'
+    assert exported['native_tools'][2]['provider_settings']['xai']['instructions'] == 'search only these files'
     assert tool.authorization_token == 'SENTINEL-token'
     response = ModelResponse(parts=[NativeToolCallPart(tool_name='mcp_server:docs', tool_call_id='call-1')])
     settings, exporter = redacted_setup(include_content)
@@ -212,7 +215,9 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
         ],
         native_tools=[
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     expected = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
@@ -221,7 +226,7 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
     assert json.loads(serialized) == expected
     assert expected['function_tools'][0]['metadata'] == {'x': 1}
     assert expected['native_tools'][0]['files'][0]['file_id'] == 'file-123'
-    assert expected['native_tools'][1]['instructions'] == 'search only these files'
+    assert expected['native_tools'][1]['provider_settings']['xai']['instructions'] == 'search only these files'
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:
@@ -1057,6 +1062,27 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+
+
+def test_current_model_request_span_requires_the_owned_span() -> None:
+    """A model records request attributes on the open `chat` span only while it's the current span.
+
+    Not on a span opened inside the request, which is the current span instead, nor on a finished request's span.
+    """
+    settings, _ = redacted_setup(include_content=False)
+    tracer = settings.tracer
+    previous = include_content_ctx.get()
+    try:
+        include_content_ctx.set(None)
+        assert current_model_request_span() is None
+        with tracer.start_as_current_span('chat') as chat_span:
+            include_content_ctx.set(ContentPolicy(chat_span, include_content=False, tracer=tracer))
+            assert current_model_request_span() is chat_span
+            with tracer.start_as_current_span('nested span'):
+                assert current_model_request_span() is None
+        assert current_model_request_span() is None
+    finally:
+        include_content_ctx.set(previous)
 
 
 def test_a_span_inside_a_request_needs_the_request_still_open() -> None:
