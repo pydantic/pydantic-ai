@@ -598,9 +598,19 @@ def test_review_span_marks_a_review_the_chain_restarted(
 def test_cancelled_review_exports_its_span(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]], signum: signal.Signals
 ) -> None:
-    """The signals Actions sends a cancelled step export the run in flight's span and the review's span."""
+    """A signal Actions sends a cancelled step exports the run in flight's span and the review's span.
+
+    Actions' SIGTERM 7.5 s after its SIGINT arrives while the spans export, and cannot cut either short.
+    """
     _fake_opencode(tmp_path, monkeypatch, 'exit 1')
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    export = run_pr_review_check.urllib.request.urlopen
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.AbstractContextManager[None]:
+        os.kill(os.getpid(), signal.SIGTERM)
+        return export(request, timeout)
+
+    monkeypatch.setattr(run_pr_review_check.urllib.request, 'urlopen', urlopen)
 
     def cancelled(*args: object, **kwargs: object) -> Usage:
         os.kill(os.getpid(), signum)

@@ -286,8 +286,9 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   failure fields and its own steps and tokens. When Actions cancels a job, it sends SIGINT to the
   step's entry process and SIGTERM 7.5 s later, then kills the process tree 2.5 s after that; see
   [workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
-  The review step `exec`s the runner, so the runner is that process, and both signals raise
-  `KeyboardInterrupt` in it, so the review span still exports.
+  The review step `exec`s the runner, so the runner is that process. The first signal raises
+  `KeyboardInterrupt` in it and the runner ignores the rest, so a cancelled review exports its run
+  span and review span when Logfire answers within those 10 s.
   OpenCode's own spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result

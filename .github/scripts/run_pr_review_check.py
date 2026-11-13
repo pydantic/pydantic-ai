@@ -16,6 +16,7 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import FrameType
 from typing import Literal, TextIO
 from urllib.parse import quote
 
@@ -256,6 +257,13 @@ def report_privately(webhook: str, check: str, pr_number: int, repository: str, 
         pass
 
 
+def _interrupt(signum: int, frame: FrameType | None) -> None:
+    """Raise `KeyboardInterrupt` once, then ignore the cancellation's later signals while the spans export."""
+    for each in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(each, signal.SIG_IGN)
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     """Review one check and write its publishable result for the publisher job."""
     env = os.environ
@@ -272,10 +280,11 @@ def main() -> None:
         'github.run_id': env['GITHUB_RUN_ID'],
         'github.run_attempt': env['GITHUB_RUN_ATTEMPT'],
     }
-    # Actions cancels a step with SIGINT to its entry process, which the Review step `exec`s into this script, and with
-    # SIGTERM 7.5 s later. Both raise `KeyboardInterrupt`, so the `finally` below still exports the review's span.
+    # Actions cancels a step with SIGINT to its entry process, which the Review step `exec`s into this script, then
+    # SIGTERM 7.5 s later, and kills it 2.5 s after that. The first raises `KeyboardInterrupt`, so the `finally` below
+    # exports the review's span, and the rest cannot cut that export short.
     for signum in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(signum, signal.default_int_handler)
+        signal.signal(signum, _interrupt)
     started = time.time_ns()
     # The review's span, which each OpenCode run's span names as its parent.
     trace_id, span_id = secrets.token_hex(16), secrets.token_hex(8)
