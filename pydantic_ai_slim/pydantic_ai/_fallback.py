@@ -209,7 +209,7 @@ class FallbackPredicates:
     handlers: a stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
     """
     output_token_limit: bool = False
-    """Whether `fallback_on` names `OutputTokenLimitExceeded`, so a response the output token limit cut off is rejected.
+    """Whether the predicates name `OutputTokenLimitExceeded`, so a response the output token limit cut off matches.
 
     Like `content_filter`, the exception type stands for any response with `finish_reason='length'`, as the agent only
     raises the error once a response is accepted: one with no usable output, but also text that was cut off, which is
