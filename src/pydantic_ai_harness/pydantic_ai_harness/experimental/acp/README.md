@@ -23,7 +23,24 @@ Expose a Pydantic AI agent to editors and terminal UIs over the [Agent Client Pr
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/)
 
-![An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.](https://pydantic.dev/docs/ai/img/harness/acp.svg)
+```mermaid
+sequenceDiagram
+    accTitle: ACP: serve an agent to Zed and other editors
+    accDescr: The Editor launches the script and sends run_acp_stdio session/new with cwd, and session_config roots the tools at cwd. On session/prompt from the Editor, run_acp_stdio calls agent.run, and the Agent's text and tool calls go back to the Editor as session/update. For a pending tool call, run_acp_stdio sends session/request_permission and the Editor answers allow or reject.
+    participant editor as Editor
+    participant acp as run_acp_stdio
+    participant agent as Agent
+    editor->>acp: launches the script
+    editor->>acp: session/new, with cwd
+    Note over acp: session_config roots the tools at cwd
+    editor->>acp: session/prompt
+    acp->>agent: agent.run
+    agent-->>acp: text, tool calls
+    acp-->>editor: session/update
+    agent-->>acp: pending tool call
+    acp->>editor: session/request_permission
+    editor-->>acp: allow or reject
+```
 
 ## The problem
 
@@ -217,7 +234,7 @@ Pass `models` to advertise a stable ACP session config option named `model` (usi
 run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
 ```
 
-A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows (its default is then the first known model, so curate the list when you want a specific default). Without `models`, no model config option is advertised.
+A model id is any string a Pydantic AI model accepts, so models not listed in `KnownModelName` work too. Pass `models='all'` to offer every model `KnownModelName` lists (its default is then the first known model, so curate the list when you want a specific default). Without `models`, no model config option is advertised.
 
 To advertise ids Pydantic AI's `infer_model` does not understand (for example OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`; returning the id unchanged falls back to `infer_model`.
 
@@ -251,7 +268,7 @@ run_acp_stdio(            # async; serve until the client disconnects
     mcp_capabilities=None,    # MCP transports to advertise; needs a session_config to connect them
     tool_presenter=None,      # defaults to the FileSystem/Shell presenter
     session_store=None,       # enables session/load by persisting each session
-    models=None,              # models offered as the `model` config option ('all' for every known model)
+    models=None,              # models offered as the `model` config option ('all' for every `KnownModelName`)
     model_resolver=None,      # maps an advertised model id to the Model used for the run
     usage_limits=None,        # no request limit by default; pass UsageLimits(...) to set ceilings
 )

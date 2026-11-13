@@ -24,7 +24,16 @@ import { DiffIcon, SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
 import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
-import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action, type Chat } from './state'
+import {
+  finishedCalls,
+  initial,
+  initialOrchestrator,
+  reduce,
+  reduceOrchestrator,
+  shownChat,
+  type Action,
+  type Chat,
+} from './state'
 import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
@@ -46,11 +55,13 @@ const NO_ATTACHMENTS: readonly Attachment[] = []
 const SessionTranscript = memo(function SessionTranscript({
   id,
   chat,
+  busy,
   onWorker,
   onError,
 }: {
   id: string
   chat: Chat
+  busy: boolean
   onWorker: (id: string) => void
   onError: (message: string) => void
 }) {
@@ -70,11 +81,26 @@ const SessionTranscript = memo(function SessionTranscript({
   return (
     <SessionContext.Provider value={session}>
       <WorkersContext.Provider value={links}>
-        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} />
+        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} busy={busy} />
       </WorkersContext.Provider>
     </SessionContext.Provider>
   )
 })
+
+/** `count` as it rises, at most once per `ms`, the latest each time; a drop, as when a turn ends, shows at once. */
+function useRising(count: number, ms: number): number {
+  const [shown, setShown] = useState(count)
+  const latest = useRef(count)
+  latest.current = count
+  if (count < shown) setShown(count)
+  const behind = count > shown
+  useEffect(() => {
+    if (!behind) return
+    const timer = window.setTimeout(() => setShown(latest.current), ms)
+    return () => window.clearTimeout(timer)
+  }, [behind, ms])
+  return Math.min(count, shown)
+}
 
 function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
@@ -309,11 +335,24 @@ export function App() {
     setChanges(false)
     setSidePanel(null)
   }, [])
-  // The files may have changed when a turn ends, so the count and the panel ask again then. While one runs, each asks
-  // only for a session or scope it has no answer for yet.
+  // The files may have changed when a turn ends, so the count, the panel, and the git chip ask again then. While one
+  // runs, each asks again as its tool calls finish, at most once a second.
   const changesActive = connection === 'open' && !chat.running
+  const finished = useMemo(
+    () => (chat.running ? finishedCalls(chat.entries.slice(chat.turnFrom)) : 0),
+    [chat.running, chat.entries, chat.turnFrom],
+  )
+  const edits = useRising(finished, 1000)
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
-  const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false, state.sessionsVersion).changes
+  const sessionChanges = useChanges(
+    session,
+    'session',
+    shown ?? '',
+    changesActive,
+    false,
+    state.sessionsVersion,
+    edits,
+  ).changes
   const changed = (sessionChanges?.files.length ?? 0) + (sessionChanges?.omitted ?? 0)
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
@@ -746,8 +785,8 @@ export function App() {
                   // One per session, so an action still running for the last one cannot show over this one.
                   key={chat.session.id}
                   session={chat.session.id}
-                  // While a turn runs its edits are not done yet; each item after it may be a `/commit`'s.
-                  refresh={chat.running ? -1 : entries.length}
+                  // While a turn runs, each finished tool call may have edited files; each item after may be a `/commit`'s.
+                  refresh={chat.running ? -1 - edits : entries.length}
                   onNotice={showNotice}
                 />
               )}
@@ -845,7 +884,13 @@ export function App() {
           .sort()
           .map((id) => (
             <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
-              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} onError={showError} />
+              <SessionTranscript
+                id={id}
+                chat={chats[id] as Chat}
+                busy={live[id]?.busy ?? false}
+                onWorker={openWorker}
+                onError={showError}
+              />
             </Activity>
           ))}
         {!orchestrating && !workerTask && !fresh && (
@@ -918,7 +963,9 @@ export function App() {
           session={session}
           owner={shown ?? ''}
           active={changesActive}
+          connected={connection === 'open'}
           saved={state.sessionsVersion}
+          edits={edits}
           onClose={() => setChanges(false)}
         />
       )}

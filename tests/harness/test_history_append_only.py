@@ -31,7 +31,7 @@ from pydantic_ai_harness import (
     Advisor,
     ApprovalReviewer,
     AskUser,
-    BubblewrapSandbox,
+    BubblewrappedWorkspace,
     CapabilityCreation,
     ClampOversizedMessages,
     ClearToolResults,
@@ -301,7 +301,7 @@ FIXTURES: dict[str, Fixture] = {
     'Advisor': lambda _: Advisor(TestModel()),
     'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
     'AskUser': lambda _: AskUser(answerer=None),
-    'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
+    'BubblewrappedWorkspace': lambda tmp_path: BubblewrappedWorkspace(LocalWorkspace(tmp_path)),
     'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
@@ -482,6 +482,18 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
+    ),
+    # Each run ends with a review round, which takes a turn of its own.
+    'RefineOutput': Scenario(
+        turns=(
+            Turn(calls=(('look_up', {'topic': 'weather'}),)),
+            Turn(calls=(('look_up', {'topic': 'news'}),)),
+            Turn(text='Here is the weather and the news.'),
+            Turn(text='Here is the weather and the news, checked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='Here is more, checked.'),
+        )
     ),
     'RepoContext': Scenario(
         state_calls=(

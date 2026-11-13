@@ -122,7 +122,9 @@ class WebService:
         )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
-        """Where the settings menus opened in this page ask their questions."""
+        """Where the settings menus opened in this page, and commands entered while CLAI has no terminal, ask."""
+        if isinstance(self.live, LiveRuntimes):
+            self.live.dialogs = self.dialogs
         self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
@@ -153,10 +155,13 @@ class WebService:
         self._unsubscribe = self.live.subscribe(self.live_changed)
 
     def close(self) -> None:
-        """Stop following the live sessions and stop counting browsers as their watchers."""
+        """Stop following the live sessions, counting browsers as their watchers, and asking for commands."""
         self._unsubscribe()
         for client in self.hub.connected():
             self.unwatch(client)
+        # A newer service's stay: a reload during a turn closes this one after building that.
+        if isinstance(self.live, LiveRuntimes) and self.live.dialogs is self.dialogs:
+            self.live.dialogs = None
 
     # Live sessions and their channels.
 
@@ -203,6 +208,7 @@ class WebService:
                 LiveEntry(
                     id=channel.id,
                     state=self._state(channel),
+                    busy=channel.session.busy,
                     title=channel.session.conversation.title,
                     workspace=str(channel.session.workspace),
                 )
@@ -627,10 +633,12 @@ class WebService:
                 return channel, catalog
         raise LookupError(f'No task {task_id!r} in an open session.')
 
-    def task_transcript(self, task_id: str) -> TaskTranscript:
+    async def task_transcript(self, task_id: str) -> TaskTranscript:
         _, catalog = self._task(task_id)
         [task] = [task for task in catalog.listing() if task.id == task_id]
-        return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
+        # A settled task's history is read from its saved file.
+        history = await to_thread.run_sync(catalog.history, task_id)
+        return TaskTranscript(task=task_entry(task), items=history_items(history))
 
     async def task_action(self, task_id: str, action: TaskAction) -> None:
         """Stop, background, or resume a task, as `/tasks` does."""
@@ -935,4 +943,4 @@ class Observer(AbstractCapability[None]):
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if (channel := self._channel(ctx)) is not None:
-            channel.observe(event, usage=ctx.usage, by_user=is_monty_cell(ctx))
+            channel.observe(event, usage=ctx.usage, messages=ctx.messages, by_user=is_monty_cell(ctx))

@@ -1,11 +1,18 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer, inline_objects, split_definitions
+from .._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    inline_objects,
+    resolve_json_pointer,
+    split_definitions,
+)
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -663,7 +670,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
     profile = OpenAIModelProfile(
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        json_schema_transformer=(
+            _GptOssJsonSchemaTransformer if model_name.startswith('gpt-oss') else OpenAIJsonSchemaTransformer
+        ),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
@@ -689,7 +698,21 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
+    if model_name.startswith('gpt-oss'):
+        # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
+        # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so
+        # it gets the announcement from the first request (see the field's docstring). Here rather than in
+        # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
+        profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def _gpt_oss_schema_profile(model_name: str) -> ModelProfile:  # pyright: ignore[reportUnusedFunction]
+    """The gpt-oss schema fix alone, for providers that serve gpt-oss without `openai_model_profile`.
+
+    Callers only pass gpt-oss model names.
+    """
+    return OpenAIModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
 
 
 def is_openai_live_model(model_name: str) -> bool:
@@ -1023,6 +1046,48 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 )
             elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
+
+
+class _GptOssInlineDefsJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
+    """`InlineDefsJsonSchemaTransformer` for the gpt-oss models, which don't see a tool schema's `$defs` on any host.
+
+    A `$ref` the inliner doesn't walk to, such as one under a `type` list like `['object', 'null']`, would be left
+    pointing at a definition it dropped, so such a schema is kept as it was.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = super().walk()
+        if any(resolve_json_pointer(inlined, ref) is None for ref in _refs(inlined)):
+            return self.schema
+        return inlined
+
+
+class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    """`OpenAIJsonSchemaTransformer` on a schema whose `$defs` are inlined first, for the gpt-oss models.
+
+    gpt-oss doesn't see a tool schema's `$defs`, wherever it's served, so it guesses the shape of every field that
+    refers to one and fails validation. Only recursive definitions, which can't be inlined, are kept under `$defs`.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = _GptOssInlineDefsJsonSchemaTransformer(self.schema).walk()
+        transformer = OpenAIJsonSchemaTransformer(inlined, strict=self.strict)
+        result = transformer.walk()
+        self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+
+def _refs(node: object) -> Iterator[str]:
+    """Every `$ref` in `node`, at any depth."""
+    if isinstance(node, dict):
+        for key, value in cast(dict[str, object], node).items():
+            if key == '$ref' and isinstance(value, str):
+                yield value
+            else:
+                yield from _refs(value)
+    elif isinstance(node, list):
+        for value in cast(list[object], node):
+            yield from _refs(value)
 
 
 class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):

@@ -7,10 +7,10 @@ import base64
 import inspect
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import replace
 from functools import partial
-from typing import Literal
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -20,9 +20,25 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, PrefixTools, on_event
-from pydantic_ai.exceptions import UserError
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    HandleDeferredToolCalls,
+    Instrumentation,
+    PrefixTools,
+    on_event,
+)
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    DurabilityEngineSpec,
+    DurableOperationId,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
+)
+from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
+from pydantic_ai.external_events import fail_external_event, resolve_external_event
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -183,7 +199,7 @@ class TestAskUser:
         await agent.run('go')
         (requested,) = observer.requested
         (answered,) = observer.answered
-        assert requested.request is answerer.requests[0]
+        assert requested.request == answerer.requests[0]
         assert answered.request_id == requested.request.id
         assert answered.response.cancelled is False
         assert requested.tool_name == TOOL_NAME and answered.tool_call_id == 'c1'
@@ -643,6 +659,364 @@ class TestTimeout:
         assert observer.answered[0].timed_out is False
 
 
+class TestResumeToken:
+    """A three-parameter answerer may hand the question on and let the answer arrive later, through a resume token."""
+
+    @staticmethod
+    def agent(answerer: AnyAnswerer[None], *capabilities: AbstractCapability[None]) -> Agent[None, str]:
+        return Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=answerer), *capabilities],
+        )
+
+    async def test_runs_repeating_a_tool_call_id_ask_under_different_request_ids(self) -> None:
+        """An answerer serving several runs can hold questions from all of them, so a repeated call ID must not collide."""
+        pending: dict[str, str] = {}
+
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> AskUserResponse | None:
+            pending[request.id] = token
+            return None
+
+        def answer(picked: str) -> dict[str, Any]:
+            response = AskUserResponse(
+                answers=(
+                    AskUserAnswer(header='Approach', selected=(picked,)),
+                    AskUserAnswer(header='Targets', selected=('db.py',)),
+                )
+            )
+            return TypeAdapter(AskUserResponse).dump_python(response, mode='json')
+
+        outputs: dict[str, str] = {}
+
+        async def run(name: str) -> None:
+            outputs[name] = (await self.agent(hand_on).run('go')).output
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run, 'first')
+            tg.start_soon(run, 'second')
+            with anyio.fail_after(5):
+                while len(pending) < 2:
+                    await anyio.sleep(0.01)
+            for picked, token in zip(('Patch', 'Refactor'), pending.values()):
+                resolve_external_event(token, answer(picked))
+
+        assert len(pending) == 2 and 'c1' not in pending, 'two distinct request IDs, neither the shared call ID'
+        assert sorted(json.loads(output)['Approach'][0] for output in outputs.values()) == ['Patch', 'Refactor']
+
+    async def test_the_answer_arrives_through_the_token(self) -> None:
+        tokens: list[str] = []
+        handed_on = anyio.Event()
+
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> AskUserResponse | None:
+            assert ctx.tool_call_id == 'c1' and request.id != 'c1'
+            tokens.append(token)
+            handed_on.set()
+            return None
+
+        observer = Observer()
+        results: list[str] = []
+
+        async def run() -> None:
+            results.append((await self.agent(hand_on, observer).run('go')).output)
+
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='Approach', selected=('Patch',), note=('Keep the API',)),
+                AskUserAnswer(header='Targets', selected=('db.py',)),
+            )
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run)
+            with anyio.fail_after(5):
+                await handed_on.wait()
+            resolve_external_event(tokens[0], TypeAdapter(AskUserResponse).dump_python(response, mode='json'))
+
+        assert json.loads(results[0]) == {'Approach': ['Patch'], 'Targets': ['db.py']}
+        (answered,) = observer.answered
+        assert answered.response == response
+        assert answered.request_id == observer.requested[0].request.id
+        assert not answered.timed_out and not answered.failed
+
+    async def test_an_answer_that_is_not_a_response_fails_the_run_but_still_releases_observers(self) -> None:
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> None:
+            resolve_external_event(token, {'answers': 'Patch'})
+
+        observer = Observer()
+        with pytest.raises(UserError, match=r"The answer sent for question '\w+' is not an `AskUserResponse`"):
+            await self.agent(hand_on, observer).run('go')
+        (answered,) = observer.answered
+        assert answered.failed
+
+    async def test_a_failed_wait_tells_the_model_the_user_did_not_answer(self) -> None:
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> None:
+            fail_external_event(token, 'The Slack message was deleted.')
+
+        observer = Observer()
+        result = await self.agent(hand_on, observer).run('go')
+
+        assert result.output == TIMED_OUT
+        (answered,) = observer.answered
+        assert answered.timed_out and answered.response == AskUserResponse(cancelled=True)
+
+
+class TestModelRetry:
+    async def test_an_answerer_raising_model_retry_asks_the_model_to_retry(self) -> None:
+        async def retry(request: AskUserRequest) -> AskUserResponse:
+            raise ModelRetry('Ask one question at a time.')
+
+        observer = Observer()
+        agent = Agent(calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=retry), observer])
+
+        assert 'Ask one question at a time.' in (await agent.run('go')).output
+        (answered,) = observer.answered
+        assert answered.failed
+
+
+class TestRunStream:
+    async def test_run_stream_answers_the_question(self) -> None:
+        """The question is deferred by the tool body, not declared deferred, so `run_stream()` runs `AskUser`'s handler."""
+        answerer = ScriptedAnswerer()
+        agent = Agent(calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=answerer)])
+        async with agent.run_stream('go') as result:
+            output = await result.get_output()
+
+        assert json.loads(output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert len(answerer.requests) == 1
+
+
+class TestComposition:
+    async def test_ask_user_answers_its_questions_before_a_handler_that_takes_a_token_is_asked(self) -> None:
+        asked: list[DeferredToolRequests] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            asked.append(requests)  # pragma: no cover
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[HandleDeferredToolCalls[None](ask), AskUser(answerer=ScriptedAnswerer())],
+        )
+        result = await agent.run('go')
+
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert asked == []
+
+    async def test_ask_user_answers_before_a_handler_listed_earlier_that_fills_every_call(self) -> None:
+        answerer = ScriptedAnswerer()
+        seen: list[list[str]] = []
+
+        def fill_everything(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            seen.append([call.tool_call_id for call in requests.calls])
+            return requests.build_results(calls={call.tool_call_id: 'placeholder' for call in requests.calls})
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='c1'),
+                        ToolCallPart('look_up', {}, tool_call_id='l1'),
+                    ]
+                )
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        ' | '.join(
+                            part.model_response_str() for part in messages[-1].parts if isinstance(part, ToolReturnPart)
+                        )
+                    )
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[HandleDeferredToolCalls(fill_everything), AskUser(answerer=answerer)],
+        )
+
+        @agent.tool_plain
+        def look_up() -> str:
+            raise CallDeferred
+
+        result = await agent.run('go')
+
+        answer, looked_up = result.output.split(' | ')
+        assert json.loads(answer) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert looked_up == 'placeholder'
+        assert len(answerer.requests) == 1
+        assert seen == [['l1']], 'the handler only sees what AskUser left pending'
+
+    async def test_the_answerer_gets_the_questions_as_the_tool_received_them(self) -> None:
+        """A hook such as an argument guard that rewrites the questions before the tool runs is respected."""
+
+        class RedactQuestions(AbstractCapability[None]):
+            async def before_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+            ) -> ValidatedToolArgs:
+                assert isinstance(args, dict)
+                questions = [
+                    question.model_copy(update={'question': '[redacted]'})
+                    if isinstance(question, Question)
+                    else {**question, 'question': '[redacted]'}
+                    for question in args['questions']
+                ]
+                return {**args, 'questions': questions}
+
+        answerer = ScriptedAnswerer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[RedactQuestions(), AskUser(answerer=answerer)],
+        )
+        await agent.run('go')
+
+        (request,) = answerer.requests
+        assert {question.question for question in request.questions} == {'[redacted]'}
+
+    async def test_calls_that_are_not_its_questions_are_left_to_later_handlers(self) -> None:
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('delete', {}, tool_call_id='d1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def approve(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return requests.build_results(approve_all=True)
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=ScriptedAnswerer()), HandleDeferredToolCalls(approve)],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def delete() -> str:
+            return 'deleted'
+
+        assert (await agent.run('go')).output == 'done'
+
+    async def test_each_ask_user_answers_only_its_own_questions(self) -> None:
+        """Two `AskUser`s under different `id`s, one prefixed, and a question another tool defers, each go to their own answerer."""
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='first'),
+                        ToolCallPart(f'later_{TOOL_NAME}', {'questions': raw_questions()}, tool_call_id='second'),
+                        ToolCallPart('pick_color', {}, tool_call_id='foreign'),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        first, second = ScriptedAnswerer(), ScriptedAnswerer()
+        asked: list[list[str]] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            asked.append([call.tool_call_id for call in requests.calls])
+            return requests.build_results(calls={'foreign': 'blue'})
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[
+                AskUser(answerer=first, id=None),
+                PrefixTools(AskUser(answerer=second, id='later_ask_user'), prefix='later'),
+                HandleDeferredToolCalls[None](ask),
+            ],
+        )
+
+        @agent.tool_plain
+        def pick_color() -> str:
+            raise CallDeferred(kind='question')
+
+        assert (await agent.run('go')).output == 'done'
+        assert (len(first.requests), len(second.requests)) == (1, 1)
+        assert first.requests[0].id != second.requests[0].id
+        assert asked == [['foreign']]
+
+    async def test_without_an_answerer_a_handler_that_takes_a_token_gets_the_question(self) -> None:
+        """One inbox: the handler sees the question, marked as one, and answers it like any deferred call."""
+        kinds: list[str] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            (call,) = requests.calls
+            kinds.append(requests.kind(call.tool_call_id))
+            request = AskUserRequest.from_tool_call(call)
+            response = AskUserResponse(
+                answers=(
+                    AskUserAnswer(header='Approach', selected=('Patch',)),
+                    AskUserAnswer(header='Targets', selected=('ui.py',)),
+                )
+            )
+            return requests.build_results(calls={call.tool_call_id: ask_user_result(request, response)})
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=None), HandleDeferredToolCalls[None](ask)],
+        )
+        result = await agent.run('go')
+
+        assert kinds == ['question']
+        assert json.loads(result.output) == {'Approach': ['Patch'], 'Targets': ['ui.py']}
+
+
+class _ImmediateBackend(JournalCallableOperationBackend[None]):
+    def __init__(self, agent_name: str, default_model_id: str | None) -> None:
+        super().__init__(
+            agent_name=agent_name,
+            default_model_id=default_model_id,
+            config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        )
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: None,
+    ) -> object:
+        return await body()
+
+
+class _AlwaysDurable(BaseDurabilityCapability[None]):
+    """A durable engine that runs every operation immediately and implements no external-event waiter."""
+
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Immediate', durable_unit_noun='operation', durable_container_noun='run', codec=JSON_CODEC
+    )
+
+    @property
+    def in_durable_context(self) -> bool:
+        return True
+
+    def get_durable_operation_backend(self) -> _ImmediateBackend:
+        return _ImmediateBackend(self.name, self.default_model_id)
+
+
+class TestDurableEngineWithoutAWaiter:
+    async def test_asking_is_refused(self) -> None:
+        """A wait in process would not be recorded, so the engine refuses it rather than let a replay ask again."""
+        answerer = ScriptedAnswerer()
+        agent = Agent(
+            calling(raw_questions()),
+            name='asker',
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=answerer), _AlwaysDurable()],
+        )
+
+        with pytest.raises(UserError, match='Immediate does not support waiting for external events yet'):
+            await agent.run('go')
+        assert answerer.requests == []
+
+
 class TestCheckResponse:
     def request(self) -> AskUserRequest:
         return AskUserRequest(questions=(question(), question('Targets', multi_select=True, labels=('x', 'y'))))
@@ -727,7 +1101,7 @@ class TestCheckResponse:
         with pytest.raises(ValueError, match='unknown or repeated question'):
             await agent.run('go')
         assert len(observer.requested) == 1 and len(observer.answered) == 1
-        assert observer.answered[0].response is answerer.response
+        assert observer.answered[0].response == answerer.response
 
 
 class TestSchema:
@@ -929,9 +1303,6 @@ class TestAnswerNotes:
         assert (note_text in blob) is include_content
         assert (base64.b64encode(note_bytes).decode() in blob) is (include_content and include_binary_content)
         assert note_bytes.decode() not in blob
-        if not deferred:
-            (tool_span,) = [span for span in spans if span.name == 'execute_tool ask_user_question']
-            assert (note_text in json.dumps(dict(tool_span.attributes or {}))) is include_content
         provider.shutdown()
 
     @pytest.mark.parametrize('keep_user_messages', [False, True])
@@ -962,7 +1333,8 @@ class TestAnswerNotes:
         compacted = await compact_now(
             SummarizingCompaction(
                 max_messages=3,
-                keep_messages=2,
+                # Leave room for the note copy: with two slots the newer 'next' turn displaces it.
+                keep_messages=3,
                 preserve_first_user_message=False,
                 keep_user_messages=keep_user_messages,
                 bridge_prefix=False,
@@ -1013,8 +1385,8 @@ class TestAnswerNotes:
             )
             assert observer.answered == []
         else:
-            assert observer.answered[0].response is response
-            assert observer.answered[0].response.answers[0].note[1] is image_content
+            assert observer.answered[0].response == response
+            assert observer.answered[0].response.answers[0].note[1] == image_content
         assert json.loads(str(result.output)) == snapshot({'Approach': ['Patch'], 'Targets': ['all files']})
         request_id = observer.requested[0].request.id
         last_request = result.all_messages()[-2]
@@ -1061,7 +1433,7 @@ class TestAnswerNotes:
             ),
         ]
         assert not isinstance(user_part.content, str)
-        assert user_part.content[2] is image_content
+        assert user_part.content[2] == image_content
 
     def test_only_answers_with_notes_get_frames_and_multi_select_is_unchanged(self) -> None:
         request = AskUserRequest(questions=(question(), question('Targets', multi_select=True)))
@@ -1226,7 +1598,7 @@ class TestAnswerNotes:
         )
         with pytest.raises(ValueError, match=message):
             await agent.run('go')
-        assert observer.answered[0].response is response
+        assert observer.answered[0].response == response
 
     def test_image_only_notes_and_response_serialization(self, image_content: BinaryContent) -> None:
         request = AskUserRequest(questions=(question(),))

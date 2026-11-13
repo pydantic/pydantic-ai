@@ -133,30 +133,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     except MistralError as e:
         # The SDK's base class also covers the `HTTPValidationError` it raises for a 422 and the
         # `ResponseValidationError` it raises for a 200 body it can't parse, not just `SDKError`.
-        if (status_code := e.status_code) >= 400:
-            try:
-                error = pydantic_core.from_json(e.body)
-            except ValueError:
-                error = None
-            code = error.get('code') if _utils.is_str_dict(error) else None
-            error_type = error.get('type') if _utils.is_str_dict(error) else None
-            # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
-            code = str(code) if isinstance(code, str | int) else None
-            message = error.get('message') if _utils.is_str_dict(error) else None
-            category = (
-                ModelContextWindowExceededError
-                if code == '3051'
-                else _model_errors.http_status_category(status_code, message)
-            )
-            raise ModelHTTPError.for_category(
-                category,
-                status_code=status_code,
-                model_name=model_name,
-                body=e.body,
-                headers=dict(e.headers),
-                provider_error_code=code,
-                provider_error_type=error_type if isinstance(error_type, str) else None,
-            ) from e
+        if e.status_code >= 400:
+            raise _map_status_error(e, model_name) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
@@ -167,10 +145,44 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
+def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
+    try:
+        error = pydantic_core.from_json(e.body)
+    except ValueError:
+        error = None
+    code = error.get('code') if _utils.is_str_dict(error) else None
+    error_type = error.get('type') if _utils.is_str_dict(error) else None
+    # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+    code = str(code) if isinstance(code, str | int) else None
+    message = error.get('message') if _utils.is_str_dict(error) else None
+    category = (
+        ModelContextWindowExceededError
+        if code == '3051'
+        else _model_errors.http_status_category(e.status_code, message)
+    )
+    return ModelHTTPError.for_category(
+        category,
+        status_code=e.status_code,
+        model_name=model_name,
+        body=e.body,
+        headers=dict(e.headers),
+        provider_error_code=code,
+        provider_error_type=error_type if isinstance(error_type, str) else None,
+    )
+
+
 LatestMistralModelNames = Literal[
-    'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
+    'mistral-large-latest',
+    'mistral-medium-latest',
+    'mistral-small-latest',
+    'magistral-medium-latest',
+    'magistral-small-latest',
+    'codestral-latest',
+    'ministral-14b-latest',
+    'ministral-8b-latest',
+    'ministral-3b-latest',
 ]
-"""Latest  Mistral models."""
+"""Latest Mistral models: `-latest` aliases are Mistral's canonical model ids."""
 
 MistralModelName = str | LatestMistralModelNames
 """Possible Mistral model names.
@@ -234,6 +246,8 @@ class MistralModel(Model[Mistral]):
 
     # Mistral's chat API reads PDFs and takes text files inlined into the prompt, and has no audio or video part.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
     _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
 
     _model_name: MistralModelName = field(repr=False)
@@ -434,26 +448,25 @@ class MistralModel(Model[Mistral]):
         tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: MistralToolChoice | MistralToolChoiceEnum
-        if resolved_tool_choice == 'auto':
-            tool_choice = 'auto'
-        elif resolved_tool_choice == 'required':
-            tool_choice = 'any'
-        elif resolved_tool_choice == 'none':
-            # Mistral returns garbled responses when tool_choice='none' with tools present.
-            # Don't send tools at all.
-            return None, None
-        elif isinstance(resolved_tool_choice, tuple):
-            tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
+        match resolved_tool_choice:
+            case 'auto':
+                tool_choice = 'auto'
+            case 'required':
+                tool_choice = 'any'
+            case 'none':
+                # Mistral returns garbled responses when tool_choice='none' with tools present.
+                # Don't send tools at all.
+                return None, None
+            case ('required', tool_names) if len(tool_names) == 1:
                 # Name the single forced tool natively and keep all tools, so the tools prefix stays cacheable.
                 (tool_name,) = tool_names
                 tool_choice = MistralToolChoice(function=MistralFunctionName(name=tool_name))
-            else:
+            case (tool_choice_mode, tool_names):
                 # Breaks caching, but Mistral doesn't support limiting tools to a subset via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
-        else:
-            assert_never(resolved_tool_choice)
+            case _:
+                assert_never(resolved_tool_choice)
 
         if not tool_defs:
             return None, None
@@ -567,26 +580,11 @@ class MistralModel(Model[Mistral]):
         """
         # 1) Handle anyOf first, because it's a different schema structure
         if any_of := value.get('anyOf'):
-            if all('const' in option for option in any_of):
-                # Described options (an `Enum` with member docstrings): the same type as a plain `enum`.
-                value = {key: val for key, val in value.items() if key != 'anyOf'}
-                if 'type' not in value:
-                    # An option's own `type` is what the schema says; fall back to the constant's Python type
-                    # only when it says nothing. `bool` is checked first, being a subclass of `int`.
-                    const = any_of[0]['const']
-                    value['type'] = any_of[0].get('type') or (
-                        'boolean'
-                        if isinstance(const, bool)
-                        else 'integer'
-                        if isinstance(const, int)
-                        else 'number'
-                        if isinstance(const, float)
-                        else 'string'
-                    )
-            else:
+            if not all('const' in option for option in any_of):
                 # Simplistic approach: pick the first option in anyOf
                 # (In reality, you'd possibly want to merge or union types)
                 return f'Optional[{cls._get_python_type(any_of[0])}]'
+            value = cls._described_options_schema(value, any_of)
 
         # 2) If we have a top-level "type" field
         value_type = value.get('type')
@@ -605,29 +603,52 @@ class MistralModel(Model[Mistral]):
 
         # 5) Object: Check for additionalProperties
         if value_type == 'object':
-            additional_properties = value.get('additionalProperties', {})
-            if isinstance(additional_properties, bool):
-                return 'bool'  # pragma: lax no cover
-            additional_properties_type = additional_properties.get('type')
-            if (
-                additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
-                and additional_properties_type != 'array'
-                and additional_properties_type != 'object'
-            ):
-                # dict[str, bool/int/float/etc...]
-                return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
-            elif additional_properties_type == 'array':
-                array_items = additional_properties.get('items', {})
-                return f'dict[str, list[{cls._get_python_type(array_items)}]]'
-            elif additional_properties_type == 'object':
-                # nested dictionary of unknown shape
-                return 'dict[str, dict[str, Any]]'
-            else:
-                # If no additionalProperties type or something else, default to a generic dict
-                return 'dict[str, Any]'
+            return cls._get_python_dict_type(value)
 
         # 6) Fallback
         return 'Any'
+
+    @staticmethod
+    def _described_options_schema(value: dict[str, Any], any_of: list[dict[str, Any]]) -> dict[str, Any]:
+        # Described options (an `Enum` with member docstrings): the same type as a plain `enum`.
+        value = {key: val for key, val in value.items() if key != 'anyOf'}
+        if 'type' not in value:
+            # An option's own `type` is what the schema says; fall back to the constant's Python type
+            # only when it says nothing. `bool` is checked first, being a subclass of `int`.
+            const = any_of[0]['const']
+            value['type'] = any_of[0].get('type') or (
+                'boolean'
+                if isinstance(const, bool)
+                else 'integer'
+                if isinstance(const, int)
+                else 'number'
+                if isinstance(const, float)
+                else 'string'
+            )
+        return value
+
+    @classmethod
+    def _get_python_dict_type(cls, value: dict[str, Any]) -> str:
+        additional_properties = value.get('additionalProperties', {})
+        if isinstance(additional_properties, bool):
+            return 'bool'  # pragma: lax no cover
+        additional_properties_type = additional_properties.get('type')
+        if (
+            additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
+            and additional_properties_type != 'array'
+            and additional_properties_type != 'object'
+        ):
+            # dict[str, bool/int/float/etc...]
+            return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
+        elif additional_properties_type == 'array':
+            array_items = additional_properties.get('items', {})
+            return f'dict[str, list[{cls._get_python_type(array_items)}]]'
+        elif additional_properties_type == 'object':
+            # nested dictionary of unknown shape
+            return 'dict[str, dict[str, Any]]'
+        else:
+            # If no additionalProperties type or something else, default to a generic dict
+            return 'dict[str, Any]'
 
     @staticmethod
     def _get_timeout_ms(timeout: HTTPTimeout | int | float | None) -> int | None:
@@ -688,51 +709,21 @@ class MistralModel(Model[Mistral]):
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
-    async def _map_messages(  # noqa: C901
+    async def _map_messages(
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         mistral_messages: list[MistralMessages] = []
         for message in messages:
-            if isinstance(message, ModelRequest):
-                async for msg in self._map_user_message(message):
-                    mistral_messages.append(msg)
-            elif isinstance(message, ModelResponse):
-                content_chunks: list[MistralContentChunk] = []
-                thinking_chunks: list[MistralThinking] = []
-                tool_calls: list[MistralToolCall] = []
-
-                for part in message.parts:
-                    if isinstance(part, TextPart):
-                        content_chunks.append(MistralTextChunk(text=part.content))
-                    elif isinstance(part, ThinkingPart):
-                        thinking_chunks.append(MistralTextChunk(text=part.content))
-                    elif isinstance(part, ToolCallPart):
-                        tool_calls.append(self._map_tool_call(part))
-                    elif isinstance(part, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
-                        # This is currently never returned from mistral
-                        pass
-                    elif isinstance(part, FilePart):  # pragma: no cover
-                        # Files generated by models are not sent back to models that don't themselves generate files.
-                        pass
-                    elif isinstance(part, CompactionPart):  # pragma: no cover
-                        # Compaction parts are not sent back to models that don't support compaction.
-                        pass
-                    elif isinstance(part, SpeechPart):  # pragma: no cover
-                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                        raise _unconverted_speech_part_error()
-                    else:
-                        assert_never(part)
-                if thinking_chunks:
-                    content_chunks.insert(0, MistralThinkChunk(thinking=thinking_chunks))
-                if not content_chunks and not tool_calls:
-                    # Mistral rejects an assistant message with neither content nor tool calls
-                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
-                    # the OpenAI and Anthropic adapters.
-                    continue
-                mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
-            else:
-                assert_never(message)
+            match message:
+                case ModelRequest():
+                    async for msg in self._map_user_message(message):
+                        mistral_messages.append(msg)
+                case ModelResponse():
+                    if (assistant_message := self._map_model_response(message)) is not None:
+                        mistral_messages.append(assistant_message)
+                case _:
+                    assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(mistral_messages) if not isinstance(m, MistralSystemMessage)),
@@ -742,96 +733,142 @@ class MistralModel(Model[Mistral]):
                 MistralSystemMessage(content=part.content) for part in instruction_parts
             ]
 
-        # Post-process messages to insert fake assistant message after tool message if followed by user message
-        # to work around `Unexpected role 'user' after role 'tool'` error.
-        processed_messages: list[MistralMessages] = []
-        for i, current_message in enumerate(mistral_messages):
-            processed_messages.append(current_message)
+        return _separate_tool_and_user_messages(mistral_messages)
 
-            if isinstance(current_message, MistralToolMessage) and i + 1 < len(mistral_messages):
-                next_message = mistral_messages[i + 1]
-                if isinstance(next_message, MistralUserMessage):
-                    # Insert a dummy assistant message
-                    processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
+    def _map_model_response(self, message: ModelResponse) -> MistralAssistantMessage | None:
+        content_chunks: list[MistralContentChunk] = []
+        thinking_chunks: list[MistralThinking] = []
+        tool_calls: list[MistralToolCall] = []
 
-        return processed_messages
+        for part in message.parts:
+            match part:
+                case TextPart():
+                    content_chunks.append(MistralTextChunk(text=part.content))
+                case ThinkingPart():
+                    thinking_chunks.append(MistralTextChunk(text=part.content))
+                case ToolCallPart():
+                    tool_calls.append(self._map_tool_call(part))
+                case NativeToolCallPart() | NativeToolReturnPart():  # pragma: no cover
+                    # This is currently never returned from mistral
+                    pass
+                case FilePart():  # pragma: no cover
+                    # Files generated by models are not sent back to models that don't themselves generate files.
+                    pass
+                case CompactionPart():  # pragma: no cover
+                    # Compaction parts are not sent back to models that don't support compaction.
+                    pass
+                case SpeechPart():  # pragma: no cover
+                    # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                    raise _unconverted_speech_part_error()
+                case _:
+                    assert_never(part)
+        if thinking_chunks:
+            content_chunks.insert(0, MistralThinkChunk(thinking=thinking_chunks))
+        if not content_chunks and not tool_calls:
+            # Mistral rejects an assistant message with neither content nor tool calls
+            # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+            # the OpenAI and Anthropic adapters.
+            return None
+        return MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str | TextContent):
-                    text = item if isinstance(item, str) else item.content
-                    content.append(MistralTextChunk(text=text))
-                elif isinstance(item, ImageUrl):
-                    if item.force_download:
-                        downloaded = await download_item(item, data_format='base64_uri')
-                        image_url = MistralImageURL(url=downloaded['data'])
-                    else:
-                        image_url = MistralImageURL(url=item.url)
-                    if metadata := item.vendor_metadata:
-                        image_url.detail = metadata.get('detail', 'auto')
-                    content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
-                elif isinstance(item, BinaryContent):
-                    if _is_text_like_media_type(item.media_type):
-                        content.append(
-                            MistralTextChunk(
-                                text=self._format_inlined_text_file(
-                                    item.data.decode('utf-8'),
-                                    media_type=item.media_type,
-                                    identifier=item.identifier,
-                                )
-                            )
-                        )
-                    elif item.is_image:
-                        image_url = MistralImageURL(url=item.data_uri)
-                        if metadata := item.vendor_metadata:
-                            image_url.detail = metadata.get('detail', 'auto')
-                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
-                    elif item.media_type == 'application/pdf':
-                        content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
-                    else:
-                        raise NotImplementedError(
-                            'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
-                        )
-                elif isinstance(item, DocumentUrl):
-                    if _is_text_like_media_type(item.media_type):
-                        downloaded_text = await download_item(item, data_format='text')
-                        content.append(
-                            MistralTextChunk(
-                                text=self._format_inlined_text_file(
-                                    downloaded_text['data'],
-                                    media_type=item.media_type,
-                                    identifier=item.identifier,
-                                )
-                            )
-                        )
-                    elif item.media_type == 'application/pdf':
-                        if item.force_download:
-                            downloaded = await download_item(item, data_format='base64_uri')
-                            content.append(
-                                MistralDocumentURLChunk(document_url=downloaded['data'], type='document_url')
-                            )
-                        else:
-                            content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
-                    else:
-                        raise NotImplementedError(
-                            'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
-                        )
-                elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
-                elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
-                elif isinstance(item, UploadedFile):
-                    raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
-                elif isinstance(item, CachePoint):
-                    pass
-                else:
-                    assert_never(item)
+                match item:
+                    case str():
+                        content.append(MistralTextChunk(text=item))
+                    case TextContent():
+                        content.append(MistralTextChunk(text=item.content))
+                    case ImageUrl():
+                        content.append(await self._map_image_url(item))
+                    case BinaryContent():
+                        content.append(self._map_binary_content(item))
+                    case DocumentUrl():
+                        content.append(await self._map_document_url(item))
+                    case AudioUrl():
+                        raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
+                    case VideoUrl():
+                        raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
+                    case UploadedFile():
+                        raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
+                    case CachePoint():
+                        pass
+                    case _:
+                        assert_never(item)
         return MistralUserMessage(content=content)
+
+    @staticmethod
+    async def _map_image_url(item: ImageUrl) -> MistralImageURLChunk:
+        if item.force_download:
+            downloaded = await download_item(item, data_format='base64_uri')
+            image_url = MistralImageURL(url=downloaded['data'])
+        else:
+            image_url = MistralImageURL(url=item.url)
+        if metadata := item.vendor_metadata:
+            image_url.detail = metadata.get('detail', 'auto')
+        return MistralImageURLChunk(image_url=image_url, type='image_url')
+
+    def _map_binary_content(self, item: BinaryContent) -> MistralContentChunk:
+        if _is_text_like_media_type(item.media_type):
+            return MistralTextChunk(
+                text=self._format_inlined_text_file(
+                    item.data.decode('utf-8'),
+                    media_type=item.media_type,
+                    identifier=item.identifier,
+                )
+            )
+        elif item.is_image:
+            image_url = MistralImageURL(url=item.data_uri)
+            if metadata := item.vendor_metadata:
+                image_url.detail = metadata.get('detail', 'auto')
+            return MistralImageURLChunk(image_url=image_url, type='image_url')
+        elif item.media_type == 'application/pdf':
+            return MistralDocumentURLChunk(document_url=item.data_uri, type='document_url')
+        else:
+            raise NotImplementedError(
+                'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
+            )
+
+    async def _map_document_url(self, item: DocumentUrl) -> MistralContentChunk:
+        if _is_text_like_media_type(item.media_type):
+            downloaded_text = await download_item(item, data_format='text')
+            return MistralTextChunk(
+                text=self._format_inlined_text_file(
+                    downloaded_text['data'],
+                    media_type=item.media_type,
+                    identifier=item.identifier,
+                )
+            )
+        elif item.media_type == 'application/pdf':
+            if item.force_download:
+                downloaded = await download_item(item, data_format='base64_uri')
+                return MistralDocumentURLChunk(document_url=downloaded['data'], type='document_url')
+            else:
+                return MistralDocumentURLChunk(document_url=item.url, type='document_url')
+        else:
+            raise NotImplementedError(
+                'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
+            )
+
+
+def _separate_tool_and_user_messages(mistral_messages: list[MistralMessages]) -> list[MistralMessages]:
+    # Post-process messages to insert fake assistant message after tool message if followed by user message
+    # to work around `Unexpected role 'user' after role 'tool'` error.
+    processed_messages: list[MistralMessages] = []
+    for i, current_message in enumerate(mistral_messages):
+        processed_messages.append(current_message)
+
+        if isinstance(current_message, MistralToolMessage) and i + 1 < len(mistral_messages):
+            next_message = mistral_messages[i + 1]
+            if isinstance(next_message, MistralUserMessage):
+                # Insert a dummy assistant message
+                processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
+
+    return processed_messages
 
 
 MistralToolCallId = str | None
@@ -860,49 +897,53 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._add_usage(
-                    _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name),
-                    reported=chunk.data.usage is not None,
-                )
-
-                if chunk.data.id:  # pragma: no branch
-                    self.provider_response_id = chunk.data.id
-
-                try:
-                    choice = chunk.data.choices[0]
-                except IndexError:
-                    continue
-
-                if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-
-                # Handle the text part of the response
-                content = choice.delta.content
-                text, thinking = _map_content(content)
-                for thought in thinking:
-                    for event in self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought):
-                        yield event
-                if text:
-                    # Attempt to produce an output tool call from the received text
-                    output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
-                    if output_tools:
-                        self._delta_content += text
-                        # TODO: Port to native "manual JSON" mode
-                        maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
-                        if maybe_tool_call_part:
-                            yield self._parts_manager.handle_tool_call_part(
-                                vendor_part_id='output',
-                                tool_name=maybe_tool_call_part.tool_name,
-                                args=maybe_tool_call_part.args_as_dict(),
-                                tool_call_id=maybe_tool_call_part.tool_call_id,
-                            )
-                    else:
-                        for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
-                            yield event
-
-                for event in self._handle_tool_call_deltas(choice.delta.tool_calls or []):
+                for event in self._map_chunk(chunk.data):
                     yield event
+
+    def _map_chunk(self, chunk: MistralCompletionChunk) -> Iterator[ModelResponseStreamEvent]:
+        self._add_usage(
+            _map_usage(chunk, self._provider_name, self._provider_url, self._model_name),
+            reported=chunk.usage is not None,
+        )
+
+        if chunk.id:  # pragma: no branch
+            self.provider_response_id = chunk.id
+
+        try:
+            choice = chunk.choices[0]
+        except IndexError:
+            return
+
+        if raw_finish_reason := choice.finish_reason:
+            self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+            self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        # Handle the text part of the response
+        content = choice.delta.content
+        text, thinking = _map_content(content)
+        for thought in thinking:
+            yield from self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought)
+        if text:
+            yield from self._map_text_delta(text)
+
+        yield from self._handle_tool_call_deltas(choice.delta.tool_calls or [])
+
+    def _map_text_delta(self, text: str) -> Iterator[ModelResponseStreamEvent]:
+        # Attempt to produce an output tool call from the received text
+        output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
+        if output_tools:
+            self._delta_content += text
+            # TODO: Port to native "manual JSON" mode
+            maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
+            if maybe_tool_call_part:
+                yield self._parts_manager.handle_tool_call_part(
+                    vendor_part_id='output',
+                    tool_name=maybe_tool_call_part.tool_name,
+                    args=maybe_tool_call_part.args_as_dict(),
+                    tool_call_id=maybe_tool_call_part.tool_call_id,
+                )
+        else:
+            yield from self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
 
     def _handle_tool_call_deltas(self, tool_calls: list[MistralToolCall]) -> Iterator[ModelResponseStreamEvent]:
         """Accumulate streamed tool-call fragments that share a wire `index` into one call.
@@ -941,40 +982,44 @@ class MistralStreamedResponse(StreamedResponse):
     @staticmethod
     def _try_get_output_tool_from_text(text: str, output_tools: dict[str, ToolDefinition]) -> ToolCallPart | None:
         output_json: JsonValue = pydantic_core.from_json(text, allow_partial='trailing-strings')
-        if isinstance(output_json, dict) and output_json:
-            for output_tool in output_tools.values():
-                # NOTE: Additional verification to prevent JSON validation to crash
-                # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
-                # Example with BaseModel and required fields.
-                if not MistralStreamedResponse._validate_required_json_schema(
-                    output_json, output_tool.parameters_json_schema
-                ):
-                    continue
-
-                # Numeric tokens at the end of a partial document may be extended by the next chunk.
-                if not MistralStreamedResponse._validate_required_json_schema(
-                    output_json, output_tool.parameters_json_schema, allow_widened_numeric_match=False
-                ):
-                    try:
-                        pydantic_core.from_json(text)
-                    except ValueError:
-                        continue
-                elif text[-1:].isdigit():
-                    # Probe whether a decimal continuation would invalidate the schema.
-                    try:
-                        extended_json = cast(
-                            dict[str, JsonValue],
-                            pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings'),
-                        )
-                    except ValueError:
-                        continue
-                    if not MistralStreamedResponse._validate_required_json_schema(
-                        extended_json, output_tool.parameters_json_schema
-                    ):
-                        continue
-
+        if not isinstance(output_json, dict) or not output_json:
+            return None
+        for output_tool in output_tools.values():
+            if MistralStreamedResponse._output_json_matches_schema(
+                text, output_json, output_tool.parameters_json_schema
+            ):
                 # The following part_id will be thrown away
                 return ToolCallPart(tool_name=output_tool.name, args=output_json)
+        return None
+
+    @staticmethod
+    def _output_json_matches_schema(text: str, output_json: dict[str, JsonValue], json_schema: dict[str, Any]) -> bool:
+        # NOTE: Additional verification to prevent JSON validation to crash
+        # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
+        # Example with BaseModel and required fields.
+        if not MistralStreamedResponse._validate_required_json_schema(output_json, json_schema):
+            return False
+
+        # Numeric tokens at the end of a partial document may be extended by the next chunk.
+        if not MistralStreamedResponse._validate_required_json_schema(
+            output_json, json_schema, allow_widened_numeric_match=False
+        ):
+            try:
+                pydantic_core.from_json(text)
+            except ValueError:
+                return False
+        elif text[-1:].isdigit():
+            # Probe whether a decimal continuation would invalidate the schema.
+            try:
+                extended_json = cast(
+                    dict[str, JsonValue],
+                    pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings'),
+                )
+            except ValueError:
+                return False
+            if not MistralStreamedResponse._validate_required_json_schema(extended_json, json_schema):
+                return False
+        return True
 
     @staticmethod
     def _validate_required_json_schema(
@@ -992,22 +1037,9 @@ class MistralStreamedResponse(StreamedResponse):
                 return False
 
             param_schema = properties.get(param, {})
-            param_type = param_schema.get('type')
-            param_items = param_schema.get('items', {})
-            # Drafts before 2020-12 spell a tuple as an `items` list, which has no single item type to check.
-            param_items_type = None if isinstance(param_items, list) else param_items.get('type')
             param_value = json_dict[param]
-
-            if param_type == 'array' and param_items_type:
-                if not isinstance(param_value, list):
-                    return False
-                for item in param_value:
-                    if not _matches_json_type(
-                        item, param_items_type, allow_widened_numeric_match=allow_widened_numeric_match
-                    ):
-                        return False
-            elif param_type and not _matches_json_type(
-                param_value, param_type, allow_widened_numeric_match=allow_widened_numeric_match
+            if not MistralStreamedResponse._matches_param_type(
+                param_value, param_schema, allow_widened_numeric_match=allow_widened_numeric_match
             ):
                 return False
 
@@ -1018,6 +1050,29 @@ class MistralStreamedResponse(StreamedResponse):
                 ):
                     return False
 
+        return True
+
+    @staticmethod
+    def _matches_param_type(
+        param_value: JsonValue, param_schema: dict[str, Any], *, allow_widened_numeric_match: bool
+    ) -> bool:
+        param_type = param_schema.get('type')
+        param_items = param_schema.get('items', {})
+        # Drafts before 2020-12 spell a tuple as an `items` list, which has no single item type to check.
+        param_items_type = None if isinstance(param_items, list) else param_items.get('type')
+
+        if param_type == 'array' and param_items_type:
+            if not isinstance(param_value, list):
+                return False
+            for item in param_value:
+                if not _matches_json_type(
+                    item, param_items_type, allow_widened_numeric_match=allow_widened_numeric_match
+                ):
+                    return False
+        elif param_type and not _matches_json_type(
+            param_value, param_type, allow_widened_numeric_match=allow_widened_numeric_match
+        ):
+            return False
         return True
 
 
@@ -1088,28 +1143,26 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
         return None, []
     elif isinstance(content, list):
         for chunk in content:
-            if isinstance(chunk, MistralTextChunk):
-                text = (text or '') + chunk.text
-            elif isinstance(chunk, MistralThinkChunk):
-                for thought in chunk.thinking:
-                    if thought.type == 'text':  # pragma: no branch
-                        thinking.append(thought.text)
-            elif isinstance(chunk, MistralReferenceChunk):
-                pass
-            elif isinstance(
-                chunk,
-                MistralImageURLChunk
-                | MistralDocumentURLChunk
-                | MistralFileChunk
-                | MistralAudioChunk
-                | MistralResourceChunk
-                | MistralResourceLinkChunk,
-            ):  # pragma: no cover
-                pass
-            elif isinstance(chunk, MistralUnknownContentChunk):  # pragma: no cover
-                pass
-            else:
-                assert_never(chunk)
+            match chunk:
+                case MistralTextChunk():
+                    text = (text or '') + chunk.text
+                case MistralThinkChunk():
+                    thinking.extend(_map_think_chunk(chunk))
+                case MistralReferenceChunk():
+                    pass
+                case (
+                    MistralImageURLChunk()
+                    | MistralDocumentURLChunk()
+                    | MistralFileChunk()
+                    | MistralAudioChunk()
+                    | MistralResourceChunk()
+                    | MistralResourceLinkChunk()
+                ):  # pragma: no cover
+                    pass
+                case MistralUnknownContentChunk():  # pragma: no cover
+                    pass
+                case _:
+                    assert_never(chunk)
     elif isinstance(content, str):
         text = content
 
@@ -1118,3 +1171,11 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
         text = None
 
     return text, thinking
+
+
+def _map_think_chunk(chunk: MistralThinkChunk) -> list[str]:
+    thinking: list[str] = []
+    for thought in chunk.thinking:
+        if thought.type == 'text':  # pragma: no branch
+            thinking.append(thought.text)
+    return thinking
