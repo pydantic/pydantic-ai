@@ -193,11 +193,12 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 ```
 
 Each entry supports `command`, `args`, `env` and `cwd` for a stdio server, or `url` and `headers`
-for an HTTP server. An entry with both `command` and `url` is an error. The configuration is validated
-as it's loaded, so a wrongly-typed field is reported straight away instead of failing later at
-connection time. Unknown keys are ignored, so a file shared with another MCP client still loads — but
-they are only ignored, never honoured. In particular `disabled` does not skip a server, and `type` does
-not choose the transport: that is inferred from the URL, as described below.
+for an HTTP server. An entry with both runs `command` and ignores `url` and `headers`, as FastMCP does.
+The configuration is validated as it's loaded, so a wrongly-typed field is reported
+straight away instead of failing later at connection time. Unknown keys are ignored, so a file shared with
+another MCP client still loads — but they are only ignored, never honoured. In particular
+`disabled` does not skip a server, and `type` does not choose the transport: that is inferred from
+the URL, as described below.
 
 !!! note
     The MCP server is only inferred to be an SSE server because of the `/sse` suffix. Any other server with the `url` field is treated as a Streamable HTTP server. We made this decision given that the SSE transport is deprecated.

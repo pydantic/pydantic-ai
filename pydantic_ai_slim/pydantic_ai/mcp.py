@@ -2378,7 +2378,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
     and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
     in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
-    to disambiguate tools across multiple servers.
+    to disambiguate tools across multiple servers. An entry with both `command` and `url` runs `command`
+    and ignores `url` and `headers`.
 
     Environment variables can be referenced in the configuration file using:
 
@@ -2396,9 +2397,9 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
             cannot be read — a directory, or a file without read permission.
         ValidationError: If the configuration does not match the `mcpServers` shape above. This is
             a `ValueError` subclass, so catching `ValueError` covers it too.
-        ValueError: If the file is not valid JSON, a server entry has neither or both of `command`
-            and `url`, or an environment variable referenced in the configuration is not defined and
-            no default is provided.
+        ValueError: If the file is not valid JSON, a server entry has neither `command` nor `url`,
+            or an environment variable referenced in the configuration is not defined and no
+            default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
@@ -2410,8 +2411,6 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
 
     toolsets: list[AbstractToolset[Any]] = []
     for name, server in config['mcpServers'].items():
-        if 'command' in server and 'url' in server:
-            raise ValueError(f'MCP server config {name!r} must have either `command` or `url`, not both')
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],

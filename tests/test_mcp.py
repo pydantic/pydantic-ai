@@ -2983,16 +2983,7 @@ class TestLoadMCPToolsets:
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
-            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either `command` or `url`$"):
-                load_mcp_toolsets(config_path)
-
-    async def test_load_mcp_toolsets_rejects_server_entry_with_command_and_url(self):
-        """A server entry with both `command` and `url` is ambiguous, so it is rejected rather than run over stdio."""
-        config = {'mcpServers': {'alpha': {'command': 'python', 'url': 'https://example.com/mcp'}}}
-        with TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config), encoding='utf-8')
-            with pytest.raises(ValueError, match=r"MCP server config 'alpha' .* not both"):
+            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
                 load_mcp_toolsets(config_path)
 
     async def test_load_mcp_toolsets_passes_primitive_values_through_env_expansion(self):
