@@ -1,4 +1,4 @@
-"""Tests for `X11Computer`, which drives an X server with `xdotool` and `scrot`."""
+"""Tests for `X11Computer`, which drives the desktop container's X server with `xdotool` and `scrot`."""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceError
-from pydantic_ai_harness._x11 import X11Computer
+from pydantic_ai_harness._x11 import (
+    X11Computer,
+)
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 from .display_fakes import FAKE_SCREENSHOT
@@ -47,6 +49,8 @@ def recovery(argvs: list[Any]) -> list[list[str]]:
         for argv in argvs[1:]
     ]
 
+
+pytestmark = pytest.mark.anyio
 
 RELEASE_MODIFIERS = [
     *['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R'],
