@@ -204,6 +204,9 @@ class InferredLifecycle:
         cut a reply off (see `inputs_cut_off_replies`). (Sending audio says nothing: a microphone streams silence too.)"""
         self._ended_by_usage: str | None = None
         """The response a usage report or its tool call just ended: its terminal, if one follows, ends nothing more."""
+        self._results_owed: set[str] = set()
+        """The calls of the response its usage report ended whose results haven't gone out since. Its terminal comes
+        before they all have, if at all (with the report, as OpenAI's does), so a terminal after is the answer's."""
         self._cut_off = False
         """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`): more output is another."""
         self._deferred: ResponseDone | None = None
@@ -268,6 +271,12 @@ class InferredLifecycle:
             )
             self._commit_turn()
             return input_id
+        if isinstance(content, ToolResult) and content.tool_call_id in self._results_owed:
+            self._results_owed.discard(content.tool_call_id)
+            if not self._results_owed:
+                # Every result of the response its usage report ended is out: the terminal that comes next answers
+                # them (a model that has nothing to say ends its turn silently, as Gemini Live does).
+                self._ended_by_usage = None
         if isinstance(content, ToolResult) and content.tool_call_id in self._continued_calls:
             # A result directly follows the response that made its call: what the model says from here is after it.
             self._split(self._pending)
@@ -454,8 +463,10 @@ class InferredLifecycle:
                 # A tool-call frame's report: the calls' response is over, and the answer comes once every result
                 # is in.
                 ended = self._open
+                calls = self._open_calls
                 self._end(after, status='completed', finish_reason='tool_call')
                 self._ended_by_usage = ended
+                self._results_owed = set(calls)
         elif isinstance(event, (InputTranscript, RealtimeInputTranscriptionErrorEvent)):
             self._input_transcript(event, before)
         elif isinstance(event, RealtimeResponseInterruptedEvent):
@@ -500,6 +511,7 @@ class InferredLifecycle:
     def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
         """The model's output, of the response under way or of one it starts."""
         self._ended_by_usage = None
+        self._results_owed = set()
         named = event.response_id if isinstance(event, (AudioDelta, OutputTranscript, ToolCall)) else None
         if self._open is not None and self._cut_off:
             # More output after the response under way was cut off: a response of its own.
@@ -565,6 +577,7 @@ class InferredLifecycle:
         if self._open is None and self._ended_by_usage is not None:
             # The terminal of the response its usage report already ended (when it made tool calls).
             self._ended_by_usage = None
+            self._results_owed = set()
             return
         split_turn, self._split_turn = self._split_turn, False
         if self._open is None and split_turn:

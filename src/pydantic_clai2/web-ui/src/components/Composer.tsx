@@ -457,7 +457,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           aria-autocomplete="list"
           aria-activedescendant={suggestions.length > 0 ? `suggestion-${selected}` : undefined}
         />
-        <div className="composer-bar">
+        <div className="composer-bar wraps">
           {commands ? (
             <div className="model-picker">
               <button
@@ -488,37 +488,40 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             </span>
           )}
           {controls}
-          {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
-          {steers && running && text.trim() && attachments.length === 0 && (
-            <button
-              className="send steer"
-              onClick={() => void send(true)}
-              disabled={disabled}
-              title={`Steer now: send it to the running turn (${STEER_KEY})`}
-              aria-label="Steer now"
-            >
-              <BoltIcon size={15} />
-            </button>
-          )}
-          {running && empty ? (
-            <button
-              className="send stop"
-              onClick={() => void interrupt(onError, chat?.interrupt ?? session.interrupt)}
-              title="Interrupt (Esc)"
-              aria-label="Interrupt"
-            >
-              <StopIcon size={14} />
-            </button>
-          ) : (
-            <button
-              className="send"
-              onClick={() => void send()}
-              disabled={empty || disabled}
-              title={running ? 'Queue for after this turn (Enter)' : 'Send (Enter)'}
-            >
-              <ArrowUpIcon size={16} />
-            </button>
-          )}
+          {/* One group, so a narrow composer moves the meter and its buttons to the next line together. */}
+          <span className="composer-actions">
+            {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
+            {steers && running && text.trim() && attachments.length === 0 && (
+              <button
+                className="send steer"
+                onClick={() => void send(true)}
+                disabled={disabled}
+                title={`Steer now: send it to the running turn (${STEER_KEY})`}
+                aria-label="Steer now"
+              >
+                <BoltIcon size={15} />
+              </button>
+            )}
+            {running && empty ? (
+              <button
+                className="send stop"
+                onClick={() => void interrupt(onError, chat?.interrupt ?? session.interrupt)}
+                title="Interrupt (Esc)"
+                aria-label="Interrupt"
+              >
+                <StopIcon size={14} />
+              </button>
+            ) : (
+              <button
+                className="send"
+                onClick={() => void send()}
+                disabled={empty || disabled}
+                title={running ? 'Queue for after this turn (Enter)' : 'Send (Enter)'}
+              >
+                <ArrowUpIcon size={16} />
+              </button>
+            )}
+          </span>
         </div>
       </div>
     </div>

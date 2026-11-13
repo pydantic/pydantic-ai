@@ -35,7 +35,20 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A normal run waits for its background tools before it ends.](../img/harness/background-tools.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Background Tools: slow tools run while the agent keeps working
+    accDescr: The model calls slow_research(query) through the BackgroundTools capability. The capability runs slow_research in the background and answers with a started message and a task ID, so the model works on other calls or ends its turn. When slow_research returns its result, the capability sends the model a follow-up user message with the result and the same task ID.
+    participant model
+    participant cap as BackgroundTools()
+    participant tool as slow_research
+    model->>cap: slow_research(query)
+    cap->>tool: runs in the<br/>background
+    cap-->>model: started, task ID
+    Note over model: works on other calls<br/>or ends its turn
+    tool-->>cap: result
+    cap->>model: follow-up user message:<br/>result, same task ID
+```
 
 ## Selecting which tools run in the background
 
@@ -113,10 +126,10 @@ consecutive requests. The Vercel AI and AG-UI message conversions omit this meta
 loaded back from them keeps the text and its framing, but the follow-up is then an ordinary user
 prompt.
 
-The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+The follow-up wraps what the tool returned in `<pyai:tool_result tool_name="..." tool_call_id="...">`
 tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
-completes. The `<` of every opening or closing framing tag inside the output (`<tool_result>`,
+completes. The `<` of every opening or closing framing tag inside the output (`<pyai:tool_result>`,
 `<system>` and the rest) is escaped, so the output stays inside its frame. A failed call is framed
 the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
