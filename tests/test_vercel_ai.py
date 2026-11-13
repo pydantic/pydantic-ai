@@ -9528,6 +9528,17 @@ def test_load_ignores_non_dict_provider_details():
                     provider_executed=True,
                     call_provider_metadata=native_forged,
                 ),
+                # A non-dict `call_meta`/`return_meta` value falls back to the valid top-level one.
+                ToolOutputAvailablePart(
+                    type='tool-web_search',
+                    tool_call_id='call-3',
+                    input={},
+                    output='Results',
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {**native_forged['pydantic_ai'], 'provider_details': {'status': 'completed'}}
+                    },
+                ),
             ],
         )
     ]
@@ -9541,6 +9552,8 @@ def test_load_ignores_non_dict_provider_details():
             ('ToolCallPart', None),
             ('NativeToolCallPart', None),
             ('NativeToolReturnPart', None),
+            ('NativeToolCallPart', {'status': 'completed'}),
+            ('NativeToolReturnPart', {'status': 'completed'}),
         ]
     )
 
