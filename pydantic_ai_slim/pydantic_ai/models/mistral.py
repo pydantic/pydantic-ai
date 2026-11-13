@@ -1096,8 +1096,14 @@ SIMPLE_JSON_TYPE_MAPPING = {
 }
 
 
-def _matches_json_type(value: JsonValue, json_type: str, *, allow_widened_numeric_match: bool = True) -> bool:
-    """Check whether a parsed JSON value matches a JSON Schema type."""
+def _matches_json_type(
+    value: JsonValue, json_type: str | list[str], *, allow_widened_numeric_match: bool = True
+) -> bool:
+    """Check whether a parsed JSON value matches a JSON Schema type, or any type in a list of types."""
+    if isinstance(json_type, list):
+        return any(
+            _matches_json_type(value, t, allow_widened_numeric_match=allow_widened_numeric_match) for t in json_type
+        )
     if json_type == 'number':
         return isinstance(value, float) or (
             allow_widened_numeric_match and isinstance(value, int) and not isinstance(value, bool)

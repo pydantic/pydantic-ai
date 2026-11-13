@@ -7588,6 +7588,35 @@ def test_openai_chat_audio_uri_encoding(allow_model_requests: None):
     assert audio_part['input_audio']['format'] == 'wav'
 
 
+def test_openai_chat_audio_unsupported_format(allow_model_requests: None):
+    """Chat Completions `input_audio` only takes WAV and MP3, so other audio is rejected before any request is sent."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match=re.escape("only supports WAV and MP3 audio input, got 'audio/flac'")):
+        agent.run_sync(['Process this audio', BinaryContent(b'fake_audio_data', media_type='audio/flac')])
+
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_openai_chat_audio_url_unsupported_format(allow_model_requests: None):
+    """Same as above for `AudioUrl`, where the format comes from the downloaded file."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with patch('pydantic_ai.models.openai._chat_model.download_item') as mock_download:
+        mock_download.return_value = {'data': 'ZmFrZQ==', 'data_type': 'flac'}
+
+        with pytest.raises(UserError, match=re.escape("only supports WAV and MP3 audio input, got 'audio/flac'")):
+            await agent.run(
+                ['Process this audio url', AudioUrl('https://example.com/audio.flac', media_type='audio/flac')]
+            )
+
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
 async def test_openai_chat_audio_url_default_base64(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='success', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
