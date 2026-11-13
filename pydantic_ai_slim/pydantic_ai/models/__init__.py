@@ -3649,6 +3649,11 @@ _NON_CHAT_PROVIDERS = frozenset({'elevenlabs', 'sentence-transformers', 'voyagea
 """Providers that `infer_provider` knows but that serve no chat models (only realtime or embedding models)."""
 
 
+def _check_has_chat_models(model: str, model_kind: str) -> None:
+    if model_kind in _NON_CHAT_PROVIDERS:
+        raise UserError(f'Unknown model: {model}. Provider {model_kind!r} has no chat models.')
+
+
 def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
@@ -3681,8 +3686,7 @@ def infer_model(  # noqa: C901
         model_kind = normalize_gateway_provider(model_kind)
 
     # Checked before the provider is built, which would first ask for its package and API key.
-    if model_kind in _NON_CHAT_PROVIDERS:
-        raise UserError(f'Unknown model: {model}. Provider {model_kind!r} has no chat models.')
+    _check_has_chat_models(model, model_kind)
 
     if provider_factory is infer_provider:
         try:
