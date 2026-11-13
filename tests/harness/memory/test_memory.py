@@ -1587,6 +1587,56 @@ class TestInjection:
         replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
         assert (replay.source, replay.content) == (first.source, first.content)
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_a_failed_reload_keeps_the_recorded_source_for_a_put_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The next run can't read the store, so it keeps the snapshot history recorded; when a compaction drops
+        # it, it's put back attributed to the file's author, not to the agent.
+        (tmp_path / '.memory' / 'main').mkdir(parents=True)
+        (tmp_path / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        first = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=FileStore('.memory'))]).run(
+            'go', workspace=workspace
+        )
+
+        async def unreadable(self: FileStore, path: str, *, max_chars: int) -> MemoryFile | None:
+            raise OSError('the store is unreachable')
+
+        monkeypatch.setattr(FileStore, 'read', unreadable)
+
+        @dataclass
+        class CompactMidRun(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                if ctx.run_step == 2:
+                    compaction = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'x'})
+                    ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
+                    request_context.messages = list(ctx.messages)
+                return request_context
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[CompactMidRun(), Memory(store=FileStore('.memory'))],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'found'
+
+        result = await agent.run('next', message_history=first.all_messages(), workspace=workspace)
+
+        [put_back] = _snapshot_parts(post_compaction_window(result.all_messages()))
+        assert isinstance(put_back.source, WorkspaceSource)
+        assert put_back.source.authority == 'none'
+
     async def test_snapshot_from_a_store_of_its_own_stays_the_agents(self, tmp_path: Path) -> None:
         # The run's workspace is untrusted, but the store keeps its files in an operator workspace of its own.
         (tmp_path / 'memory' / 'main').mkdir(parents=True)
