@@ -136,8 +136,7 @@ async def test_inference_geo_sent_and_reported(
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
         model = AnthropicModel(
-            'claude-sonnet-5-5',
-            provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='x', http_client=http_client)),
+            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=_CLIENTS['api'](http_client))
         )
         settings = AnthropicModelSettings(max_tokens=_MAX_TOKENS)
         if geo is not None:
@@ -165,8 +164,7 @@ async def test_inference_geo_sent_to_models_without_data_residency(allow_model_r
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
         model = AnthropicModel(
-            'claude-haiku-4-5',
-            provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='x', http_client=http_client)),
+            'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=_CLIENTS['api'](http_client))
         )
         await Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
@@ -271,10 +269,9 @@ async def test_inference_geo_profile_override(allow_model_requests: None):
     """A user's `profile=` wins over the client-class default."""
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        client = AsyncAnthropicFoundry(api_key='x', base_url='https://example.com/anthropic', http_client=http_client)
         model = AnthropicModel(
             'claude-sonnet-5-5',
-            provider=AnthropicProvider(anthropic_client=client),
+            provider=AnthropicProvider(anthropic_client=_CLIENTS['foundry'](http_client)),
             profile=AnthropicModelProfile(anthropic_supports_inference_geo=True),
         )
         await Agent(
