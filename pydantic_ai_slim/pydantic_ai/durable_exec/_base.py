@@ -31,7 +31,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream, SetToolMetadata
+from pydantic_ai.capabilities import ModelFallback, ProcessEventStream, SetToolMetadata
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -43,6 +43,7 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.external_events import _refuse_unsupported_external_events  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import (
     KnownModelName,
@@ -54,7 +55,6 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.models._request_timeout import open_durable_unit_stream
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -81,7 +81,6 @@ from ._capability_operation import (
     collect_capability_operations,
     recover_capability,
 )
-from ._codec import IDENTITY_CODEC
 from ._operation import (
     CacheIdentity,
     CapabilityOperationId,
@@ -103,7 +102,6 @@ from ._operation import (
     ToolsetGetToolsParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
-    TypedResultCodec,
 )
 from ._operation_backend import (
     BoundDurableOperation,
@@ -139,6 +137,7 @@ from ._toolset import (
 from ._utils import (
     DurableModel,
     StreamedModelRequestResult,
+    agent_instrumentation_settings,
     consume_event_stream,
     managed_model_scope,
     mark_streamed_before_failing,
@@ -670,9 +669,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     handler=handler,
                     parameter_transport=backend.parameter_transports.capability_operation(declaration),
                     cache_identity=CapabilityCacheIdentity(),
-                    result_codec=TypedResultCodec(
+                    result_codec=self._typed_result_codec(
                         capability_operation_result_type(declaration.result_type),
-                        mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
                 )
@@ -883,12 +881,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
-        # — non-deterministic on replay. Reject it here, but only inside the durable container, so a
-        # durable-capable agent used *outside* a workflow keeps accepting tokens like a normal agent.
+        # — non-deterministic on replay. Reject it here unless the engine opts in, but only inside
+        # the durable container, so a durable-capable agent used *outside* a workflow keeps
+        # accepting tokens like a normal agent.
         # The token is attached to the run's controller during `Agent` setup, before this hook fires.
         # Read via `__dict__` so a restricted run-context subclass (e.g. `TemporalRunContext`) whose
         # `__getattribute__` rejects absent fields doesn't raise a misleading error instead.
-        if not self.in_durable_context:
+        if self.engine_spec.accepts_cancellation_token or not self.in_durable_context:
             return
         cancellation = ctx.__dict__.get('_cancellation')
         if cancellation is not None and cancellation.has_token:
@@ -1096,7 +1095,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if open_request_policy() is not None:
             yield
             return
-        settings = self._instrumentation_settings()
+        assert self._agent is not None, 'a model unit only runs for a bound agent'
+        settings = agent_instrumentation_settings(self._agent)
         span = get_current_span()
         policy = (
             ContentPolicy(span, settings.include_content and ctx.trace_include_content, settings.tracer)
@@ -1105,19 +1105,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
         with request_policy_scope(policy):
             yield
-
-    def _instrumentation_settings(self) -> InstrumentationSettings | None:
-        """The instrumentation the bound agent's runs open `chat` with, as the run resolves it.
-
-        An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
-        `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
-        """
-        agent = self._agent
-        assert agent is not None, 'a model unit only runs for a bound agent'
-        explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
-        if explicit:
-            return explicit[-1].settings
-        return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""
@@ -1160,12 +1147,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Force sequential tool execution when required by a sequence-keyed durable engine."""
+        """Refuse external-event waits the engine can't record, and force sequential tool execution when required by a sequence-keyed durable engine.
+
+        An engine that supports waiting for external events installs its own waiter with
+        `external_event_scope` before calling this, and that waiter is kept.
+        """
+        if not self.in_durable_context:
+            return await handler()
         agent = self._agent
-        if not self.engine_spec.sequential_tools_in_durable_context or agent is None or not self.in_durable_context:
-            return await handler()
-        with agent.parallel_tool_call_execution_mode('sequential'):
-            return await handler()
+        with _refuse_unsupported_external_events(self.engine_name):
+            if not self.engine_spec.sequential_tools_in_durable_context or agent is None:
+                return await handler()
+            with agent.parallel_tool_call_execution_mode('sequential'):
+                return await handler()
 
     def _normalize_unit_config(self, config: Any) -> Any:
         """Post-process a resolved config (e.g. Prefect/Temporal ensure non-retryable errors)."""

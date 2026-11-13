@@ -2887,7 +2887,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref].
                 `on_change='append'` makes the prompt dynamic whatever this says.
-            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a system prompt with
+            name: The name in the id `'system_prompt:<name>'` of the `<pyai:context>` element a system prompt with
                 `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
                 It has no effect without `on_change='append'`. Existing histories tie the prompt to the
                 function's `__qualname__` whether or not this is set, so renaming or moving the function
@@ -2896,7 +2896,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
                 message history (the default), which changes the start of every later request and so misses the
                 provider's prompt cache, or is appended to the history as a replacement that keeps the cached
-                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<context>` element from the
+                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<pyai:context>` element from the
                 first request on; see [appending system prompt changes](../agent.md#appending-system-prompt-changes).
 
         Example:
@@ -2942,7 +2942,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None,
         on_change: _messages.InstructionChangePolicy,
     ) -> str | None:
-        """The `<context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
+        """The `<pyai:context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
         if on_change != 'append':
             return None
         name = name if name is not None else func.__name__

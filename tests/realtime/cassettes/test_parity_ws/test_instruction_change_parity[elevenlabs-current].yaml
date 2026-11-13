@@ -51,13 +51,13 @@ interactions:
       instructions: 'You are a voice assistant. Answer in one short sentence.
 
 
-        <context id="agent:code_word">
+        <pyai:context id="agent:code_word">
 
         The code word is BLUE. Tell the user when they ask for it.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       output_modalities:
       - audio
@@ -94,13 +94,13 @@ interactions:
       instructions: 'You are a voice assistant. Answer in one short sentence.
 
 
-        <context id="agent:code_word">
+        <pyai:context id="agent:code_word">
 
         The code word is BLUE. Tell the user when they ask for it.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       output_modalities:
       - audio
@@ -476,11 +476,11 @@ interactions:
       role: user
       content:
       - type: input_text
-        text: '<system><context id="agent:code_word">
+        text: '<system><pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context></system>'
+          </pyai:context></system>'
 - kind: message
   direction: sent
   at: 3.306
@@ -515,11 +515,11 @@ interactions:
       role: user
       content:
       - type: input_text
-        text: '<system><context id="agent:code_word">
+        text: '<system><pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context></system>'
+          </pyai:context></system>'
         audio: null
         transcript: null
       call_id: null
@@ -540,11 +540,11 @@ interactions:
       role: user
       content:
       - type: input_text
-        text: '<system><context id="agent:code_word">
+        text: '<system><pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context></system>'
+          </pyai:context></system>'
         audio: null
         transcript: null
       call_id: null

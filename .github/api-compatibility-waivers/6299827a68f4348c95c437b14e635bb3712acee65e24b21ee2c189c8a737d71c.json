@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`GOOGLE_THINKING_LEVELS` keeps its value (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`). It is now written out instead of derived from `GOOGLE_THINKING_LEVEL_SCALE`, which gained `XHIGH`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13299"
+}

@@ -109,7 +109,7 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
         question='Could this destroy data, spend money, or leak secrets?',
     )
     agent = Agent(
-        'anthropic:claude-fable-5-1',
+        'anthropic:claude-fable-5-2',
         capabilities=[reviewer],
         output_type=[str, DeferredToolRequests],
     )
