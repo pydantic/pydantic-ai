@@ -149,6 +149,22 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
         assert computer.actions == []
 
 
+@pytest.mark.parametrize('checks', [{}, '', False, 0])
+async def test_malformed_safety_checks_make_the_call_wait_for_approval(allow_model_requests: None, checks: Any) -> None:
+    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
+    item = first.output[0]
+    assert isinstance(item, resp.ResponseComputerToolCall)
+    item.pending_safety_checks = checks
+    provider, computer = InMemoryProvider(), FakeComputer()
+    client = MockOpenAIResponses.create_mock([first, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    agent = Agent(model, capabilities=[computer, provider.capability()], output_type=[str, DeferredToolRequests])
+
+    result = await agent.run('Go.')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert computer.actions == []
+
+
 async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks(allow_model_requests: None) -> None:
     provider = InMemoryProvider()
     first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK])
