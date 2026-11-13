@@ -72,3 +72,11 @@ Two kinds of delegation do not receive the parent run's capabilities, so nothing
 ## Telemetry
 
 Emits nothing into telemetry.
+
+## API reference
+
+::: pydantic_ai_harness.deny_unanswered.DenyUnanswered
+
+::: pydantic_ai_harness.deny_unanswered.DEFAULT_MESSAGE
+
+::: pydantic_ai_harness.deny_unanswered.DEFAULT_QUESTION_MESSAGE
