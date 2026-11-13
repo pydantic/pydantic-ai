@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal, assert_never
 from openai.types import responses
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-from ..._framing import TOOL_RESULT_TAG, wrap
+from ..._framing import TOOL_RESULT_TAG, frame
 from ...computer_use import (
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     ComputerCallPart,
@@ -371,7 +371,7 @@ def _summary_message(
     """
     texts = [item for item in content if isinstance(item, str)]
     note = ' '.join([*texts, *conversions]) if texts or conversions else part.model_response_str(wrap_if_error=False)
-    framed = wrap(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
     if not others:
         return responses.EasyInputMessageParam(role='user', content=framed)
     message_content: list[responses.ResponseInputContentParam] = [

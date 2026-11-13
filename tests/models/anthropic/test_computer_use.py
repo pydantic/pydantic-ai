@@ -508,6 +508,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('key', {'text': 5}, {'type': 'keypress', 'unsupported_fields': ['text']}),
         ('type', {}, {'type': 'type', 'unsupported_fields': ['text']}),
         ('mouse_move', {}, {'type': 'move', 'unsupported_fields': ['coordinate']}),
+        ('wait', {}, {'type': 'wait', 'unsupported_fields': ['duration']}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
         (
