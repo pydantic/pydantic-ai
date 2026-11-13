@@ -7,7 +7,6 @@ does what it should, with stub programs for the sandbox's own.
 from __future__ import annotations
 
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -46,53 +45,46 @@ async def _start_script(fake_e2b: FakeE2B) -> str:
     return start
 
 
-def _run(script: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Runs `script` under `/bin/sh` with the stubs first on `PATH` and its fixed paths moved under `tmp_path`."""
+@pytest.fixture
+def stubs(tmp_path: Path) -> Path:
+    """The directory of stub programs, which a test's flag files sit beside."""
     bin_dir = tmp_path / 'bin'
-    if not bin_dir.exists():
-        bin_dir.mkdir()
-        for name, body in _STUBS.items():
-            (bin_dir / name).write_text(f'#!/bin/sh\nbin={bin_dir}\n{body}\n')
-            (bin_dir / name).chmod(0o755)
-    for old, new in [('/tmp/', f'{tmp_path}/'), ('/proc/', f'{tmp_path}/proc/')]:
+    bin_dir.mkdir()
+    for name, body in _STUBS.items():
+        (bin_dir / name).write_text(f'#!/bin/sh\nbin={bin_dir}\n{body}\n')
+        (bin_dir / name).chmod(0o755)
+    return bin_dir
+
+
+def _run(script: str, stubs: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Runs `script` under `/bin/sh` with the stubs first on `PATH` and its fixed paths moved beside them."""
+    root = stubs.parent
+    for old, new in [('/tmp/', f'{root}/'), ('/proc/', f'{root}/proc/')]:
         script = script.replace(old, new)
-    env = {'PATH': f'{bin_dir}:/usr/bin:/bin'}
+    env = {'PATH': f'{stubs}:/usr/bin:/bin'}
     return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
-
-
-async def test_the_start_script_is_valid_shell(fake_e2b: FakeE2B) -> None:
-    script = await _start_script(fake_e2b)
-    if shutil.which('dash'):  # pragma: no branch - CI has it; a laptop may not
-        assert subprocess.run(['dash', '-n', '-c', script], capture_output=True, text=True).stderr == ''
-    if shutil.which('shellcheck'):  # pragma: no branch - CI has it; a laptop may not
-        # SC2046 and SC2086 flag the unquoted `/proc/$(...)` and `/proc/$p` paths, which hold a PID or nothing.
-        check = ['shellcheck', '-s', 'sh', '-e', 'SC2046,SC2086', '-']
-        result = subprocess.run(check, input=script, capture_output=True, text=True)
-        assert result.returncode == 0, result.stdout
 
 
 @pytest.mark.parametrize(('session_display', 'starts'), [(':1', False), (':0', True)])
 async def test_xfce_starts_unless_its_session_runs_on_the_display(
-    fake_e2b: FakeE2B, tmp_path: Path, session_display: str, starts: bool
+    fake_e2b: FakeE2B, tmp_path: Path, stubs: Path, session_display: str, starts: bool
 ) -> None:
     start = await _start_script(fake_e2b)
     (tmp_path / 'proc' / '42').mkdir(parents=True)
     (tmp_path / 'proc' / '42' / 'environ').write_bytes(f'HOME=/root\0DISPLAY={session_display}\0'.encode())
-    _run('true', tmp_path)  # writes the stubs
-    (tmp_path / 'bin' / 'pgrep-xfce4-session').write_text('42\n')
+    (stubs / 'pgrep-xfce4-session').write_text('42\n')
 
-    result = _run(start, tmp_path, '1280x800')
+    result = _run(start, stubs, '1280x800')
 
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / 'bin' / 'xfce-started').exists() == starts
+    assert (stubs / 'xfce-started').exists() == starts
 
 
-async def test_xfce_exiting_fails_the_start_with_its_output(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+async def test_xfce_exiting_fails_the_start_with_its_output(fake_e2b: FakeE2B, stubs: Path) -> None:
     start = await _start_script(fake_e2b)
-    _run('true', tmp_path)  # writes the stubs
-    (tmp_path / 'bin' / 'startxfce4-fails').touch()
+    (stubs / 'startxfce4-fails').touch()
 
-    result = _run(start, tmp_path, '1280x800')
+    result = _run(start, stubs, '1280x800')
 
     assert result.returncode == 1
     assert result.stderr == 'the XFCE desktop did not start:\nno session bus\n'

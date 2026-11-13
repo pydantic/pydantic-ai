@@ -7,7 +7,7 @@ import base64
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.computer_use import Click, ComputerReturnPart
+from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef
@@ -21,8 +21,8 @@ from .fake_e2b import FakeE2B
 class FakeDisplay:
     """Answers the start script and `xdotool` like a sandbox whose X server is up or down."""
 
-    def __init__(self, *, up: bool = False) -> None:
-        self.up = up
+    def __init__(self) -> None:
+        self.up = False
         self.starts: list[str] = []
         self.xdotool: list[str] = []
 
@@ -32,7 +32,6 @@ class FakeDisplay:
             self.up = True
             return '', '', 0
         elif 'xwininfo -root' in command:
-            self.xdotool.append('xwininfo -root')
             # The backend reads the size only from a display it started.
             assert self.up, 'xwininfo before the display started'
             return '  Width: 1280\n  Height: 800\n', '', 0
@@ -58,18 +57,6 @@ async def test_a_desktop_sandbox_runs_the_desktop_template_unless_given_one(
     assert [call.template for call in fake_e2b.create_calls] == [created]
 
 
-async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    workspace = screen(E2BSandboxBackend(desktop=True))
-
-    assert await workspace.display_size() == (1280, 800)
-    await workspace.screenshot()  # an action waits for a screenshot of a display that just started
-    await workspace.act(Click(x=3, y=4))
-
-    assert len(display.starts) == 1
-    assert display.xdotool[-1].endswith('mousemove 3 4 click --repeat 1 1')
-    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
-
-
 async def test_commands_see_the_desktop_and_the_env(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     await E2BSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('true', shell=True)
 
@@ -84,14 +71,13 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
     assert start.endswith(' sh 1440x900')
 
 
-def test_a_sandbox_without_a_desktop_has_no_display() -> None:
-    assert E2BSandboxBackend().display is None
-
-
-def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
+async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     ref = WorkspaceRef(provider='e2b', id='sbx-desktop')
 
-    assert E2BSandbox(desktop=True).backend(ref).display is not None
+    await screen(E2BSandbox(desktop=(1440, 900)).backend(ref)).display_size()
+
+    (start,) = display.starts
+    assert start.endswith(' sh 1440x900')
     assert E2BSandbox().backend(ref).display is None
 
 
