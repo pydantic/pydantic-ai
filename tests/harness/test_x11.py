@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import base64
-import re
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import anyio
@@ -25,7 +23,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceError
-from pydantic_ai_harness._x11 import _PROGRAMS, X11Computer  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness._x11 import X11Computer
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 from .display_fakes import FAKE_SCREENSHOT
@@ -206,6 +204,7 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
         (HoldKeys(keys=('shift',), seconds=200), 350),
         (Scroll(direction='down', amount=1_000), 170),
         (PressKeys(keys=('a',), repeat=1_000), 162),
+        (PressKeys(keys=('ctrl', 'shift', 'a'), repeat=1_000), 186),
         (TypeText(text='a' * 1_000), 162),
         # 0.1 s before the first move and after the last, and 0.05 s before each of the 2 moves.
         (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.3),
@@ -388,26 +387,3 @@ async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> No
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(UnsupportedActionError):
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
-
-
-DOCS_ROOT = Path(__file__).parents[2]
-
-
-def test_every_page_that_lists_the_desktop_programs_names_them_all() -> None:
-    # Each backend's page repeats the list: one it leaves out fails on first use in an image built from the page.
-    pages = [
-        *DOCS_ROOT.glob('docs/harness/*.md'),
-        *DOCS_ROOT.glob('src/pydantic_ai_harness/pydantic_ai_harness/*/README.md'),
-    ]
-    lists = [
-        (page.name, sentence)
-        for page in pages
-        for sentence in re.split(r'(?<=\.) ', page.read_text())
-        if '`xdotool`' in sentence and '`setsid`' in sentence
-    ]
-    assert lists
-    assert [
-        (name, [p for p in _PROGRAMS if p not in sentence])
-        for name, sentence in lists
-        if any(p not in sentence for p in _PROGRAMS)
-    ] == []

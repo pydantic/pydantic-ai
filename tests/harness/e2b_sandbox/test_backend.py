@@ -436,18 +436,6 @@ class TestRun:
             for handle in commands.handles:
                 handle.close()
 
-    async def test_a_desktop_checks_again_for_a_setsid_its_start_may_install(self, fake_e2b: FakeE2B) -> None:
-        installed = False
-        fake_e2b.responder = lambda command, timeout: (
-            ('', '', 0 if installed else 127) if 'command -v setsid' in command else ('ok', '', 0)
-        )
-        backend = await started(template='minimal', desktop=True)
-        await backend.run(['true'])
-        installed = True
-        await backend.run(['true'])
-        calls = fake_e2b.sandboxes[0].commands.calls
-        assert calls[-1].command.startswith('setsid ')
-
     async def test_missing_setsid_uses_leader_stop_and_caches_probe(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.responder = lambda command, timeout: ('', '', 127) if 'command -v setsid' in command else ('ok', '', 0)
         backend = await started(template='minimal')

@@ -6,6 +6,7 @@ from typing import Literal, TypeAlias
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
@@ -15,10 +16,12 @@ from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
-_ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+_ANTHROPIC_BASE_BUILTINS = frozenset(
+    {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ComputerTool}
+)
 """Native tool types Anthropic generally supports across the model line. Mirrors
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below."""
+per-model in the profile below. `ComputerTool` is gated by `anthropic_computer_tool_version`."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',

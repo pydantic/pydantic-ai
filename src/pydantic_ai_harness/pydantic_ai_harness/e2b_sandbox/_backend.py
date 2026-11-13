@@ -138,7 +138,9 @@ _START_VIEWER = (
     # Under the display's lock, else two calls at once could each write a password or start a viewer.
     f'{START_LOCK}d=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
-    'if ! pgrep -x x11vnc >/dev/null; then '
+    # Only our own server and viewer count: one started without our password, such as `e2b_desktop`'s, holds the
+    # port, so ours fails to start and says so.
+    'if ! pgrep -f "[x]11vnc .*-rfbauth $d/passwd" >/dev/null; then '
     'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
     # Empty each log before its program starts: the redirect runs in the background child, so the check could read
     # an earlier run's line first.
@@ -148,9 +150,11 @@ _START_VIEWER = (
     # x11vnc writes its port once it listens, and exits without one if the port is taken. `-noipv6`: with the IPv4
     # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
     + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
-    + "fi; if ! pgrep -f '[w]ebsockify' >/dev/null; then "
+    + f"fi; if ! pgrep -f '[w]ebsockify .* {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & '
+    # `--web`, else novnc_proxy serves the working directory if it has a `vnc.html`.
+    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} --web /opt/noVNC '
+    '>"$d/novnc.log" 2>&1 9>&- & '
     + wait_until_ready(
         'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
     )
@@ -237,10 +241,12 @@ def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
     )
 
 
-async def _stopped_message(sandbox_id: str) -> str:
+async def _stopped_message(sandbox: e2b.AsyncSandbox) -> str:
     """Say why a sandbox E2B still answers for no longer runs, asking E2B whether it is paused or gone."""
+    sandbox_id = sandbox.sandbox_id
     try:
-        state = (await e2b.AsyncSandbox.get_info(sandbox_id)).state
+        # The instance's lookup, so it uses the configured `client`'s account rather than the environment's.
+        state = (await sandbox.get_info()).state
     except e2b.SandboxNotFoundException:
         return (
             f'The E2B sandbox {sandbox_id!r} no longer exists: it was killed. '
@@ -307,9 +313,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
 
-    With `desktop`, the sandbox gets a display on first use. A custom template needs Xvfb, `xdotool`,
-    `xwininfo`, `scrot` and `setsid`, which the first use installs with `apt-get` if it can, and
-    `startxfce4` for the XFCE desktop, which it doesn't.
+    With `desktop`, the sandbox gets a display on first use. A custom template then needs Xvfb,
+    `xdotool`, `scrot` and `setsid`.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -504,7 +509,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(await _stopped_message(sandbox.sandbox_id))
+                return WorkspaceUnavailableError(await _stopped_message(sandbox))
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
@@ -677,8 +682,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
 
     async def _has_setsid(self, sandbox: e2b.AsyncSandbox) -> bool:
         async with self._setsid_lock:
-            # Starting the display installs `setsid` when it's missing, so a "no" is kept only without a display.
-            if self._setsid is None or (not self._setsid and self._display is not None):
+            if self._setsid is None:
                 async with self._sdk_errors(sandbox.sandbox_id, 'Could not probe E2B command launcher'):
                     probe = await sandbox.commands.run(
                         'command -v setsid >/dev/null 2>&1',

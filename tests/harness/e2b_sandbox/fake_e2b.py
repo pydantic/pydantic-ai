@@ -674,6 +674,15 @@ class FakeSandbox:
             raise self._control.is_running_error
         return self._control.sandbox_is_running and not self.killed
 
+    async def get_info(self) -> types.SimpleNamespace:
+        # Only the instance's lookup is faked: the class-level `AsyncSandbox.get_info(id)` uses the environment's
+        # account, not the configured client's.
+        if self._control.get_info_error is not None:
+            raise self._control.get_info_error
+        if self.killed:
+            raise SandboxNotFoundException(f'Sandbox {self.sandbox_id} not found')
+        return types.SimpleNamespace(state='paused' if self._control.sandbox_paused else 'running')
+
 
 class FakeAsyncSandboxFactory:
     """Mirrors the `AsyncSandbox.create` / `AsyncSandbox.connect` class methods."""
@@ -712,14 +721,6 @@ class FakeAsyncSandboxFactory:
             raise self._control.kill_error
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
         return await existing.kill() if existing is not None else False
-
-    async def get_info(self, id: str) -> types.SimpleNamespace:
-        if self._control.get_info_error is not None:
-            raise self._control.get_info_error
-        existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
-        if existing is None or existing.killed:
-            raise SandboxNotFoundException(f'Sandbox {id} not found')
-        return types.SimpleNamespace(state='paused' if self._control.sandbox_paused else 'running')
 
     async def connect(self, id: str, timeout: int | None = None) -> FakeSandbox:
         self._control.connect_calls.append((id, timeout))
@@ -761,7 +762,7 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
-    # What `AsyncSandbox.get_info` reports for a sandbox that isn't killed, unless it raises `get_info_error`.
+    # What a sandbox's `get_info()` reports for a sandbox that isn't killed, unless it raises `get_info_error`.
     sandbox_paused: bool = False
     get_info_error: Exception | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.

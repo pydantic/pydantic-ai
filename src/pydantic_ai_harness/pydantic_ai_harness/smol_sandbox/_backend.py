@@ -47,7 +47,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -56,8 +55,6 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     require_asyncio,
 )
-from pydantic_ai_harness._x11 import DESKTOP_IMAGE, DISPLAY, desktop_display
-from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -238,7 +235,7 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
+class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     """A local [smolvm](https://github.com/smol-machines/smolvm) microVM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
@@ -258,7 +255,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             opens its own handle to it by id. Whoever created it owns deleting it.
         ref: Identity of an existing VM on this machine to attach to on first use: its name.
         image: OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own
-            Alpine Linux root filesystem without pulling anything, unless `desktop` is set.
+            Alpine Linux root filesystem without pulling anything.
         cpus: vCPUs for a new VM; smolvm's default when `None`.
         memory_mb: Memory for a new VM in MiB; smolvm's default when `None`.
         allow_internet_access: Whether a new VM gets unrestricted outbound network access, made from
@@ -268,9 +265,6 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             default image.
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
-        desktop: Whether the VM has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-            `True` for 1280x800, or its `(width, height)`. The first start installs the programs it needs, which
-            needs `allow_internet_access`. Without an `image`, a new VM runs `debian:bookworm-slim`.
     """
 
     def __init__(
@@ -284,7 +278,6 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         allow_internet_access: bool = False,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
-        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'smol')
@@ -294,19 +287,10 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         # On the local target a VM's id is its name, so the backend attaches to it like to a ref.
         self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
         self._passed_in = sandbox is not None
-        self._image = DESKTOP_IMAGE if image is None and desktop else image
+        self._image = image
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
-        self._desktop_size = desktop_size(desktop)
-        if self._desktop_size:
-            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
-            self._env = {'DISPLAY': DISPLAY, **self._env}
-        self._display = desktop_display(
-            self,
-            self._desktop_size,
-            lambda: f'smolvm VM {self._ref.id if self._ref else "(not created)"}',
-        )
         self._machine: smol.Machine | None = None
         self._sandbox: smol.AsyncMachine | None = None
         self._acquisition: asyncio.Task[smol.Machine] | None = None
@@ -320,11 +304,6 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         `SmolSandbox.destroy`, which waits for the boot.
         """
         return self._ref
-
-    @property
-    def display(self) -> Display | None:
-        """The VM's desktop, when created with `desktop=True`."""
-        return self._display
 
     async def get_sandbox(self) -> smol.AsyncMachine:
         """Return the SDK's `smol.AsyncMachine`, for smol features the workspace API does not cover.

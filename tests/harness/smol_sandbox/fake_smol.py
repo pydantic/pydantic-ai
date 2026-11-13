@@ -15,7 +15,7 @@ import signal
 import subprocess
 import threading
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, ClassVar
@@ -48,8 +48,6 @@ class FakeSmol:
         self.commands: list[tuple[list[str], smol.ExecOptions | None]] = []
         self.spawned: list[subprocess.Popen[bytes]] = []
         """Every command's process, in order."""
-        self.answer: Callable[[list[str]], tuple[str, str, int] | None] | None = None
-        """Answers a command (without the backend's wrapper) instead of running it, unless it returns `None`."""
         self.create_error: smol.SmolError | None = None
         self.connect_error: smol.SmolError | None = None
         self.state_error: smol.SmolError | None = None
@@ -158,11 +156,6 @@ class FakeMachine:
         if failure is not None:
             return smol.ExecStream([{'kind': 'error', 'message': failure}], lambda: None)
         env = {'PATH': os.environ['PATH'], **((opts.env if opts is not None else None) or {})}
-        if self.control.answer is not None and (reply := self.control.answer(command[4:])) is not None:
-            # Answered without running it, inside the backend's own wrapper, `/bin/sh -c <script> sh`.
-            stdout, stderr, code = reply
-            command = [*command[:4], 'sh', '-c', 'printf %s "$1"; printf %s "$2" >&2; exit "$3"', 'sh', stdout]
-            command += [stderr, str(code)]
         process = subprocess.Popen(
             command,
             cwd=workdir,

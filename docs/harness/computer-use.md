@@ -45,11 +45,7 @@ in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 | `DockerContainer(desktop=True)` | A container on your machine |
 | [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 | [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop) | An E2B cloud sandbox |
-| [`ModalSandbox(desktop=True)`](modal-sandbox.md#give-the-agent-a-desktop) | A Modal cloud sandbox |
-| [`SpritesSandbox(desktop=True)`](sprites-sandbox.md#give-the-agent-a-desktop) | A Fly.io Sprite |
 | [`BoxdSandbox(desktop=True)`](boxd-sandbox.md#give-the-agent-a-desktop) | A boxd microVM |
-| [`BoxLiteSandbox(desktop=True)`](boxlite-sandbox.md#give-the-agent-a-desktop) | A BoxLite micro-VM on your machine |
-| [`SmolSandbox(desktop=True)`](smol-sandbox.md#give-the-agent-a-desktop) | A smolvm microVM on your machine |
 
 To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
@@ -63,15 +59,6 @@ using a program's window, checking what the screen shows, or doing what the user
 
 With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
 the same three cases. Pass `description=` to change when the model loads it.
-
-## What the display needs
-
-Computer use runs five programs inside the sandbox: Xvfb draws the screen, `xdotool` moves the mouse and types,
-`xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen
-running after the command that started it ends. If any is missing, the first use of the display installs it with
-`apt-get`, as root or with passwordless `sudo`. That can take a minute; add them to your image to skip it. If they
-can't be installed, because the image has no `apt-get` or no root, the run ends with a `WorkspaceUnavailableError`
-that names what's missing.
 
 ## Models
 
@@ -146,7 +133,7 @@ To ask before every call that does more than look, raise `ApprovalRequired` from
 ```python {title="computer_use_ask_before_acting.py" test="skip" lint="skip"}
 from pydantic_ai import ApprovalRequired
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.computer_use import ComputerCallPart
+from pydantic_ai.computer_use import COMPUTER_KIND
 
 hooks = Hooks()
 
@@ -154,8 +141,8 @@ hooks = Hooks()
 @hooks.on.before_tool_execute
 async def ask_before_acting(ctx, *, call, tool_def, args):
     looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
-    if isinstance(call, ComputerCallPart) and not ctx.tool_call_approved:
-        if any(action.type not in looking for action in call.actions or []):
+    if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+        if any(action.type not in looking for action in args['actions']):
             raise ApprovalRequired
     return args
 ```

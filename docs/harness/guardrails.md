@@ -163,7 +163,7 @@ OutputGuardrail(guard=for_text(redact_secrets, on_other='allow'))  # skips it de
 ```
 
 A tool result guard receives `ToolResultInfo`, not just a value. Use
-`for_tool_result_text` to adapt a detector for a bare string result, a list of text
+`for_tool_result_text` to adapt a detector for a bare string result, a list of strings
 and images (such as a screenshot tool returns), or the text channels of a `ToolReturn`.
 Images are kept:
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 from pathlib import Path
 
 import anyio
@@ -217,6 +216,14 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     assert docker.x_lock_exists(backend.ref.id)
 
 
+async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
+    (docker.bin_dir / 'scrot').unlink()
+    workspace = _screen(_desktop(container_dir, image='my-desktop'))
+
+    with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):
+        await workspace.screenshot()
+
+
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
     workspace = _screen(_desktop(container_dir, image='my-desktop'))
@@ -225,77 +232,6 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
-
-
-_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux'
-
-# The fake docker hides a program only from its own bin directory, so a host that has it would skip the install.
-_host_without_display_programs = pytest.mark.skipif(
-    bool(shutil.which('xdotool') or shutil.which('scrot')), reason='the host has xdotool or scrot on PATH'
-)
-_host_without_xdotool = pytest.mark.skipif(bool(shutil.which('xdotool')), reason='the host has xdotool on PATH')
-
-
-@_host_without_display_programs
-@pytest.mark.parametrize('uid', [0, 1000])
-async def test_missing_display_programs_are_installed_on_first_use(
-    docker: FakeDocker, container_dir: Path, uid: int
-) -> None:
-    # A user other than root installs with passwordless sudo.
-    docker.remove_display()
-    docker.uninstall('xdotool', 'scrot')
-    docker.run_as(uid, sudo=True)
-
-    assert await _screen(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
-    assert docker.apt_get_calls == ['update -qq', _INSTALL]
-
-
-@_host_without_display_programs
-async def test_a_program_missing_beside_a_running_display_is_installed(docker: FakeDocker, container_dir: Path) -> None:
-    docker.uninstall('scrot')
-    docker.run_as(0)
-
-    assert await _screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
-    assert docker.apt_get_calls == ['update -qq', _INSTALL]
-    assert docker.xvfb_starts == 0
-
-
-@_host_without_display_programs
-async def test_missing_display_programs_without_root_say_what_is_missing(
-    docker: FakeDocker, container_dir: Path
-) -> None:
-    docker.remove_display()
-    docker.uninstall('xdotool', 'scrot')
-
-    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xwininfo, scrot and setsid') as error:
-        await _screen(_desktop(container_dir, image='my-desktop')).screenshot()
-    assert "missing xdotool scrot, and there's no root or passwordless sudo" in str(error.value)
-    assert docker.apt_get_calls == []
-
-
-@_host_without_xdotool
-async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path) -> None:
-    docker.remove_display()
-    docker.uninstall('xdotool')
-    docker.run_as(0)
-    docker.fail_installs()
-
-    with pytest.raises(WorkspaceUnavailableError, match='could not install xdotool:') as error:
-        await _screen(_desktop(container_dir, image='my-desktop')).screenshot()
-    assert 'Unable to locate package' in str(error.value)
-
-
-async def test_the_socket_directory_is_made_for_a_user_without_root(docker: FakeDocker, container_dir: Path) -> None:
-    # Xvfb makes `/tmp/.X11-unix` only when it runs as root.
-    backend = _desktop(container_dir, image='my-desktop')
-    await backend.working_dir()
-    assert backend.ref is not None
-    docker.remove_display()
-
-    await _screen(backend).display_size()
-
-    socket_dir = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / '.X11-unix'
-    assert socket_dir.stat().st_mode & 0o7777 == 0o1777
 
 
 async def test_a_container_without_a_desktop_has_no_display(docker: FakeDocker, container_dir: Path) -> None:

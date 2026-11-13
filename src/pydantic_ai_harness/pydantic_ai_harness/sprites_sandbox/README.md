@@ -131,7 +131,7 @@ The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN
 
 `runtime` only shapes a new Sprite, and an unknown one raises `WorkspaceUnavailableError` on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
 
-Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=`, `env=` and `desktop=` to the backend.
+Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `SPRITE_TOKEN`, not the Sprite, and a later operation opens a new one. A `client=` or `sandbox=` you passed is never closed.
 
@@ -162,32 +162,6 @@ async def run_in_prepared_sprite() -> str:
 ```
 
 The run uses the backend as it is, so `SpritesSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the Sprite instead, store `backend.ref` and pass it as `workspace=` to reattach later.
-
-## Give the agent a desktop
-
-Pass `desktop=True` for a Sprite with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
-
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(desktop=True), Coder(), ComputerUse()])
-
-
-async def main():
-    result = await agent.run('Install and start xterm, run `uname -a` in it, and tell me what it printed.')
-    print(result.output)
-```
-
-The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
-
-The first start installs [the programs the display needs](../computer_use/#what-the-display-needs), which can take a minute.
-
-The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
-
-There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
 
 ## Clean up
 
@@ -243,7 +217,6 @@ Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists un
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
-| `desktop` | Give the Sprite a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 
 Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 

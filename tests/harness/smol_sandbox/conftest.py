@@ -13,7 +13,7 @@ import pytest
 
 # smolmachines only has wheels for macOS on Apple silicon and Linux x86_64/aarch64.
 _HAS_SMOL = importlib.util.find_spec('smol') is not None
-collect_ignore = [] if _HAS_SMOL else ['test_conformance.py', 'test_smol_desktop.py', 'test_smol_sandbox.py']
+collect_ignore = [] if _HAS_SMOL else ['test_conformance.py', 'test_smol_sandbox.py']
 
 if TYPE_CHECKING or _HAS_SMOL:  # pragma: no branch - the SDK-installed and other jobs take opposite branches
     from .fake_smol import FakeSmol

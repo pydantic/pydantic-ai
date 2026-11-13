@@ -52,7 +52,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -61,8 +60,6 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     require_asyncio,
 )
-from pydantic_ai_harness._x11 import DESKTOP_IMAGE, DISPLAY, desktop_display
-from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from anyio.abc import TaskGroup
@@ -386,7 +383,7 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
+class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
     """A local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
@@ -404,7 +401,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         sandbox: A `boxlite.Box` you already have. Whoever created it owns deleting it.
         ref: Identity of an existing box to attach to on first use: its name, or its id if it has none.
         image: OCI image a new box runs, such as `'python:3.12-slim'`; BoxLite's default, Alpine Linux, when
-            `None`, unless `desktop` is set.
+            `None`.
         cpus: vCPUs for a new box; BoxLite's default when `None`.
         memory_mb: Memory for a new box in MiB; BoxLite's default when `None`.
         allow_internet_access: Whether a new box gets outbound network access, made from this machine's
@@ -417,10 +414,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
             read from the host environment.
         box_options: Other keyword arguments for a new box's `boxlite.BoxOptions`, such as `volumes`,
             `ports`, `secrets` or `disk_size_gb`. The ones the arguments above set are refused.
-        desktop: Whether the box has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-            `True` for 1280x800, or its `(width, height)`. The first start installs the programs it needs, which
-            needs `allow_internet_access`, with `allowed_hosts` reaching the Debian mirrors. Without an `image`, a new
-            box runs `debian:bookworm-slim`.
     """
 
     def __init__(
@@ -436,7 +429,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
         box_options: Mapping[str, Any] | None = None,
-        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'boxlite')
@@ -447,7 +439,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
             raise ValueError(f'box_options must not set {", ".join(reserved)}; use the named argument instead')
         self._options: Any = boxlite.BoxOptions(
             **(box_options or {}),
-            image=DESKTOP_IMAGE if image is None and desktop else image,
+            image=image,
             cpus=cpus,
             memory_mib=memory_mb,
             network=_network(allow_internet_access, allowed_hosts),
@@ -458,15 +450,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         self._ref = ref if sandbox is None else WorkspaceRef(provider='boxlite', id=_key(sandbox))
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
-        self._desktop_size = desktop_size(desktop)
-        if self._desktop_size:
-            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
-            self._env = {'DISPLAY': DISPLAY, **self._env}
-        self._display = desktop_display(
-            self,
-            self._desktop_size,
-            lambda: f'BoxLite box {self._ref.id if self._ref else "(not created)"}',
-        )
         self._box: _Box | None = None
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
@@ -479,11 +462,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         `BoxLiteSandbox.destroy`, which waits for it.
         """
         return self._ref
-
-    @property
-    def display(self) -> Display | None:
-        """The box's desktop, when created with `desktop=True`."""
-        return self._display
 
     async def get_sandbox(self) -> Any:
         """Return the SDK's `boxlite.Box`, for BoxLite features the workspace API does not cover.
