@@ -381,14 +381,22 @@ class _HostFileSystem(FakeFileSystem):
 
 
 class FakeComputerUse:
-    """`sandbox.computer_use`: records each call in `owner.desktop_calls` as one line, such as `click 3 4 left`."""
+    """`sandbox.computer_use`: records each call in `owner.desktop_calls` as one line, such as `click 3 4 left`.
+
+    Its `mouse`, `keyboard`, `screenshot` and `display` are separate objects, as in the SDK, so input sent through the
+    wrong one fails.
+    """
 
     def __init__(self, owner: FakeSandbox) -> None:
         self.owner = owner
-        self.mouse = self.keyboard = self.screenshot = self.display = self
+        self.mouse = FakeMouse(self)
+        self.keyboard = FakeKeyboard(self)
+        self.screenshot = FakeScreenshots(self)
+        self.display = FakeDisplayInfo(self)
         self.started = False
-        # Input before `start` breaks Daytona's desktop for good, so `_call` asserts it never happens.
         self.broken = False
+        """Set by a test: every request then answers 503 `connection is shut down`, as a desktop that took input
+        before it started does. `call` asserts input never comes before `start`."""
         self.proxy_unavailable = 0
         """How many of the next desktop requests the proxy refuses with a 503 before passing them on."""
         self.request_gate: asyncio.Event | None = None
@@ -405,11 +413,12 @@ class FakeComputerUse:
     def _check_broken(self) -> None:
         if self.proxy_unavailable:
             self.proxy_unavailable -= 1
-            raise DaytonaServiceUnavailableError('no available server', status_code=503, source=SOURCE_PROXY)
+            # Worded as the broken desktop's 503, so only its source tells them apart.
+            raise DaytonaServiceUnavailableError('connection is shut down', status_code=503, source=SOURCE_PROXY)
         if self.broken:
             raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
 
-    async def _call(self, line: str) -> None:
+    async def call(self, line: str) -> None:
         await anyio.lowlevel.checkpoint()
         if self.request_gate is not None:
             self.request_accepted.set()
@@ -422,28 +431,43 @@ class FakeComputerUse:
     async def start(self, request_timeout: float | None = None) -> None:
         self._check_broken()
         self.started = True
-        await self._call('start')
+        await self.call('start')
 
     async def get_status(self, request_timeout: float | None = None) -> SimpleNamespace:
         await anyio.lowlevel.checkpoint()
         self._check_broken()
         return SimpleNamespace(status='active' if self.started else 'inactive')
 
+
+class FakeDisplayInfo:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
+
     async def get_info(self, request_timeout: float | None = None) -> SimpleNamespace:
-        await self._call('get_info')
-        return SimpleNamespace(displays=self.displays)
+        await self.desktop.call('get_info')
+        return SimpleNamespace(displays=self.desktop.displays)
+
+
+class FakeScreenshots:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
 
     async def take_full_screen(self, request_timeout: float | None = None) -> SimpleNamespace:
-        await self._call('take_full_screen')
-        return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
+        await self.desktop.call('take_full_screen')
+        return SimpleNamespace(screenshot=base64.b64encode(self.desktop.png).decode())
 
     async def take_region(self, region: ScreenshotRegion, request_timeout: float | None = None) -> SimpleNamespace:
-        await self._call(f'take_region {region.x} {region.y} {region.width} {region.height}')
-        return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
+        await self.desktop.call(f'take_region {region.x} {region.y} {region.width} {region.height}')
+        return SimpleNamespace(screenshot=base64.b64encode(self.desktop.png).decode())
+
+
+class FakeMouse:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
 
     async def get_position(self, request_timeout: float | None = None) -> SimpleNamespace:
-        await self._call('get_position')
-        return self.position
+        await self.desktop.call('get_position')
+        return self.desktop.position
 
     async def click(
         self,
@@ -455,29 +479,20 @@ class FakeComputerUse:
         clicks: int | None = None,
         modifiers: list[str] | None = None,
     ) -> None:
-        await self._call(f'click {x} {y} {button} clicks={clicks} modifiers={modifiers}')
+        await self.desktop.call(f'click {x} {y} {button} clicks={clicks} modifiers={modifiers}')
 
     async def move(self, x: int, y: int, request_timeout: float | None = None) -> None:
-        await self._call(f'move {x} {y}')
+        await self.desktop.call(f'move {x} {y}')
 
     async def down(
-        self,
-        x: int | str | None = None,
-        y: int | None = None,
-        button: str = 'left',
-        request_timeout: float | None = None,
+        self, x: int | None = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
     ) -> None:
-        # `keyboard.down(key)` and `mouse.down(x, y, button)` share this fake.
-        await self._call(f'keydown {x}' if isinstance(x, str) else f'mousedown {x} {y} {button}')
+        await self.desktop.call(f'mousedown {x} {y} {button}')
 
     async def up(
-        self,
-        x: int | str | None = None,
-        y: int | None = None,
-        button: str = 'left',
-        request_timeout: float | None = None,
+        self, x: int | None = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
     ) -> None:
-        await self._call(f'keyup {x}' if isinstance(x, str) else f'mouseup {x} {y} {button}')
+        await self.desktop.call(f'mouseup {x} {y} {button}')
 
     async def scroll(
         self,
@@ -489,14 +504,25 @@ class FakeComputerUse:
         *,
         modifiers: list[str] | None = None,
     ) -> bool:
-        await self._call(f'scroll {x} {y} {direction} {amount} modifiers={modifiers}')
+        await self.desktop.call(f'scroll {x} {y} {direction} {amount} modifiers={modifiers}')
         return True
 
+
+class FakeKeyboard:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
+
+    async def down(self, key: str, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'keydown {key}')
+
+    async def up(self, key: str, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'keyup {key}')
+
     async def type(self, text: str, delay: int | None = None, request_timeout: float | None = None) -> None:
-        await self._call(f'type {text}')
+        await self.desktop.call(f'type {text}')
 
     async def press(self, key: str, modifiers: list[str] | None = None, request_timeout: float | None = None) -> None:
-        await self._call(f'press {key} modifiers={modifiers}')
+        await self.desktop.call(f'press {key} modifiers={modifiers}')
 
 
 class FakeSandbox:
