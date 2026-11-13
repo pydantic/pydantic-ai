@@ -9,6 +9,7 @@ here, and a mocked response is what lets those tests echo a geo the request didn
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 import httpx2
@@ -30,7 +31,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -89,6 +90,22 @@ def _handler(bodies: list[dict[str, Any]]):
         return httpx2.Response(200, json=_MESSAGE_JSON)
 
     return handle
+
+
+_CLIENTS: dict[str, Callable[[httpx2.AsyncClient], AsyncAnthropicClient]] = {
+    'api': lambda http_client: AsyncAnthropic(api_key='x', http_client=http_client),
+    'bedrock': lambda http_client: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
+    'mantle': lambda http_client: AsyncAnthropicBedrockMantle(
+        api_key='x', aws_region='us-east-1', http_client=http_client
+    ),
+    'vertex': lambda http_client: AsyncAnthropicVertex(
+        project_id='p', region='us-east5', access_token='x', http_client=http_client
+    ),
+    'foundry': lambda http_client: AsyncAnthropicFoundry(
+        api_key='x', base_url='https://example.com/anthropic', http_client=http_client
+    ),
+}
+"""The SDK client for each client name the tests parametrize over, sending through the given HTTP client."""
 
 
 def _last_response(messages: list[ModelMessage]) -> ModelResponse:
@@ -175,18 +192,9 @@ async def test_inference_geo_request_field_by_client(
     """Bedrock, Vertex AI and Foundry decide the region by endpoint, so the setting is ignored there with a warning."""
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        clients = {
-            'api': lambda: AsyncAnthropic(api_key='x', http_client=http_client),
-            'bedrock': lambda: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
-            'mantle': lambda: AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1', http_client=http_client),
-            'vertex': lambda: AsyncAnthropicVertex(
-                project_id='p', region='us-east5', access_token='x', http_client=http_client
-            ),
-            'foundry': lambda: AsyncAnthropicFoundry(
-                api_key='x', base_url='https://example.com/anthropic', http_client=http_client
-            ),
-        }
-        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=clients[client_name]()))
+        model = AnthropicModel(
+            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=_CLIENTS[client_name](http_client))
+        )
         agent = Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
         )
@@ -211,16 +219,9 @@ async def test_inference_geo_not_reported_when_ignored_streamed(allow_model_requ
     """
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        clients = {
-            'mantle': lambda: AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1', http_client=http_client),
-            'vertex': lambda: AsyncAnthropicVertex(
-                project_id='p', region='us-east5', access_token='x', http_client=http_client
-            ),
-            'foundry': lambda: AsyncAnthropicFoundry(
-                api_key='x', base_url='https://example.com/anthropic', http_client=http_client
-            ),
-        }
-        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=clients[client_name]()))
+        model = AnthropicModel(
+            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=_CLIENTS[client_name](http_client))
+        )
         agent = Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
         )
@@ -250,14 +251,8 @@ async def test_inference_geo_provider_profile_wins(
 
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        clients = {
-            'api': lambda: AsyncAnthropic(api_key='x', http_client=http_client),
-            'foundry': lambda: AsyncAnthropicFoundry(
-                api_key='x', base_url='https://example.com/anthropic', http_client=http_client
-            ),
-        }
         model = AnthropicModel(
-            'claude-sonnet-5-5', provider=InferenceGeoProvider(anthropic_client=clients[client_name]())
+            'claude-sonnet-5-5', provider=InferenceGeoProvider(anthropic_client=_CLIENTS[client_name](http_client))
         )
         agent = Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
