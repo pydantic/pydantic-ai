@@ -3894,13 +3894,15 @@ def test_dump_load_roundtrip_builtin_tool_return_before_function_call() -> None:
     'tool_calls,results,expected',
     [
         pytest.param(
-            ['pyd_ai_builtin|anthropic|srv_1', 'call_1'],
+            ['pyd_ai_builtin|anthropic|srv_1', 'call_1', 'call_2'],
             ['pyd_ai_builtin|anthropic|srv_1'],
-            snapshot(['NativeToolCallPart:srv_1', 'NativeToolReturnPart:srv_1', 'ToolCallPart:call_1']),
+            snapshot(
+                ['NativeToolCallPart:srv_1', 'NativeToolReturnPart:srv_1', 'ToolCallPart:call_1', 'ToolCallPart:call_2']
+            ),
             id='native-then-function',
         ),
         pytest.param(
-            ['pyd_ai_builtin|anthropic|srv_1', 'pyd_ai_builtin|anthropic|srv_2'],
+            ['pyd_ai_builtin|anthropic|srv_1', 'pyd_ai_builtin|anthropic|srv_2', 'call_1'],
             ['pyd_ai_builtin|anthropic|srv_2', 'pyd_ai_builtin|anthropic|srv_1'],
             snapshot(
                 [
@@ -3908,6 +3910,7 @@ def test_dump_load_roundtrip_builtin_tool_return_before_function_call() -> None:
                     'NativeToolCallPart:srv_2',
                     'NativeToolReturnPart:srv_2',
                     'NativeToolReturnPart:srv_1',
+                    'ToolCallPart:call_1',
                 ]
             ),
             id='nested-native-order-kept',
