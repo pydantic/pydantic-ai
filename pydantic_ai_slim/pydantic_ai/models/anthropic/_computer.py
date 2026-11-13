@@ -306,7 +306,7 @@ class _HoldKey(_Strict):
 
 
 class _Wait(_Strict):
-    duration: float | None = None
+    duration: float
 
 
 class _Zoom(_Strict):

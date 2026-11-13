@@ -10,6 +10,7 @@ import anyio
 import anyio.lowlevel
 import pytest
 from daytona import (
+    DaytonaAuthenticationError,
     DaytonaBadGatewayError,
     DaytonaBadRequestError,
     DaytonaConnectionError,
@@ -276,6 +277,25 @@ async def test_a_failed_release_after_a_failed_action_says_what_may_still_be_hel
     }[release]
     with expected:
         await screen(backend).act(action)
+
+
+async def test_rejected_credentials_end_the_run_without_their_text_when_a_release_fails_too(
+    fake_daytona: FakeDaytona,
+) -> None:
+    """The credential error's own text may carry the token, so it isn't passed to the model with the held keys."""
+    backend, sandbox = await _started(fake_daytona)
+
+    async def rejected(*args: object, **kwargs: object) -> None:
+        raise DaytonaAuthenticationError('expired token secret-value', status_code=401)
+
+    async def failing(*args: object, **kwargs: object) -> None:
+        raise DaytonaInternalServerError('unexpected EOF', status_code=500)
+
+    sandbox.computer_use.move = rejected
+    sandbox.computer_use.up = failing
+    with pytest.raises(WorkspaceUnavailableError) as raised:
+        await screen(backend).act(MoveMouse(x=1, y=1, modifiers=('ctrl',)))
+    assert 'secret-value' not in str(raised.value)
 
 
 @pytest.mark.parametrize(
