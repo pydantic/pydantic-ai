@@ -3,17 +3,19 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -2020,7 +2022,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=80, output_tokens=5),
+                usage=RequestUsage(input_tokens=82, output_tokens=5),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -2047,6 +2049,99 @@ def test_output_type_text_output_invalid():
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # pyright: ignore[reportArgumentType]
         Agent('test', output_type=output_type)
+
+
+class TextModel(BaseModel):
+    text: str
+
+
+class TextTypedDict(TypedDict):
+    text: str
+
+
+@dataclass
+class TextDataclass:
+    text: str
+
+
+def model_arg(m: TextModel) -> str:
+    return m.text  # pragma: no cover
+
+
+def model_arg_named_like_field(text: TextModel) -> str:
+    return text.text  # pragma: no cover
+
+
+def typed_dict_arg(m: TextTypedDict) -> str:
+    return m['text']  # pragma: no cover
+
+
+def typed_dict_arg_named_like_field(text: TextTypedDict) -> str:
+    return text['text']  # pragma: no cover
+
+
+def dataclass_arg_named_like_field(text: TextDataclass) -> str:
+    return text.text  # pragma: no cover
+
+
+def ctx_and_model_arg_named_like_field(ctx: RunContext[None], text: TextModel) -> str:
+    return text.text  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'output_function',
+    [
+        model_arg,
+        model_arg_named_like_field,
+        typed_dict_arg,
+        typed_dict_arg_named_like_field,
+        dataclass_arg_named_like_field,
+        ctx_and_model_arg_named_like_field,
+    ],
+)
+def test_output_type_text_output_model_like_arg(output_function: Callable[..., str]):
+    """A model-like arg takes the model's JSON schema, so a model with one `str` field looks like a `str` arg.
+
+    The function would still be handed the raw text, so it's rejected like any other non-`str` arg.
+
+    Not a VCR test: the `UserError` is raised when the agent is created, before any request is sent.
+    """
+    with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
+        Agent('test', output_type=TextOutput(output_function))
+
+
+TextAlias = str
+
+
+def str_arg(text: str) -> str:
+    return f'text={text}'
+
+
+def type_alias_str_arg(text: TextAlias) -> str:
+    return f'text={text}'
+
+
+def constrained_str_arg(text: Annotated[str, Field(max_length=10)]) -> str:
+    return f'text={text}'
+
+
+def ctx_and_str_arg(ctx: RunContext[None], text: str) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('output_function', [str_arg, type_alias_str_arg, constrained_str_arg, ctx_and_str_arg])
+def test_output_type_text_output_str_arg_forms(output_function: Callable[..., str]):
+    """Every form of `str` arg passes the construction check that rejects a model-like arg.
+
+    Not a VCR test: the check runs when the agent is created, and calling the function with the text is in-memory
+    framework behavior that no provider response changes.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
+    assert agent.run_sync('hi').output == 'text=hello'
 
 
 def test_output_type_native_output_must_be_only():
@@ -2252,6 +2347,32 @@ def test_output_type_text_output_function():
             ),
         ]
     )
+
+
+def text_alias(text: Annotated[str, Field(alias='theText')]) -> str:
+    return f'text={text}'
+
+
+def text_with_hidden_arg(text: str, b: SkipJsonSchema[int] = 1) -> str:
+    return f'text={text}'
+
+
+def text_with_var_kwargs(text: str, **kwargs: int) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('output_function', [text_alias, text_with_hidden_arg, text_with_var_kwargs])
+def test_output_type_text_output_function_str_arg(output_function: Callable[..., str]):
+    """`TextOutput` calls the function with the text under the str arg's Python name, not its alias.
+
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
+    assert agent.run_sync('hi').output == 'text=hello'
 
 
 def test_output_type_handoff_to_agent():
@@ -3183,7 +3304,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=91, output_tokens=12),
+                usage=RequestUsage(input_tokens=93, output_tokens=12),
                 model_name='function:return_city_location:',
                 model_id='function:function:return_city_location:',
                 timestamp=IsDatetime(),
@@ -3265,7 +3386,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=82, output_tokens=11),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -4502,6 +4623,103 @@ async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
         result = await agent.run('kwarg override prompt', metadata={'run_only': True})
 
     assert result.metadata == {'env': 'override', 'override_only': True}
+
+
+@dataclass
+class AgentMetadataCompatibilityCase:
+    name: str
+    base: dict[str, object] | None
+    run: dict[str, object] | None
+    expected: dict[str, object] | None
+    identity: Literal['base', 'run', 'new', 'none']
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        AgentMetadataCompatibilityCase('no metadata', None, None, None, 'none'),
+        AgentMetadataCompatibilityCase('empty base', {}, None, {}, 'base'),
+        AgentMetadataCompatibilityCase('empty run', None, {}, None, 'none'),
+        AgentMetadataCompatibilityCase('truthy base and empty run', {'base': True}, {}, {'base': True}, 'base'),
+        AgentMetadataCompatibilityCase('truthy run only', None, {'run': True}, {'run': True}, 'run'),
+        AgentMetadataCompatibilityCase(
+            'two truthy dicts',
+            {'shared': 'base', 'base': True},
+            {'shared': 'run', 'run': True},
+            {'shared': 'run', 'base': True, 'run': True},
+            'new',
+        ),
+    ],
+    ids=lambda case: case.name,
+)
+async def test_agent_metadata_resolution(case: AgentMetadataCompatibilityCase) -> None:
+    agent = Agent(TestModel(), metadata=case.base)
+
+    result = await agent.run('hello', metadata=case.run)
+
+    assert result.metadata == case.expected
+    if case.identity == 'base':
+        assert result.metadata is case.base
+    elif case.identity == 'run':
+        assert result.metadata is case.run
+    elif case.identity == 'new':
+        assert result.metadata is not case.base
+        assert result.metadata is not case.run
+    else:
+        assert result.metadata is None
+
+
+async def test_agent_metadata_factories_resolve_in_order_and_override_skips_them() -> None:
+    calls: list[str] = []
+    spec_metadata: dict[str, object] = {'shared': 'spec', 'spec': True}
+
+    def base_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('base')
+        return {'shared': 'base', 'base': True}
+
+    def run_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('run')
+        return {'shared': 'run', 'run': True}
+
+    agent = Agent(TestModel(), metadata=base_factory)
+    result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert calls[:2] == ['base', 'run']
+    assert result.metadata == {'shared': 'run', 'spec': True, 'base': True, 'run': True}
+
+    calls.clear()
+    override: dict[str, object] = {}
+    with agent.override(metadata=override):
+        result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert result.metadata is override
+    assert calls == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_default_run_id_does_not_add_history_traversals(legacy: bool) -> None:
+    class CountingHistory(list[ModelMessage]):
+        iterations: int = 0
+
+        def __iter__(self) -> Iterator[ModelMessage]:
+            self.iterations += 1
+            return super().__iter__()
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'legacy-run-id'
+
+    capabilities: list[AbstractCapability[object]] = [LegacyCapability()] if legacy else []
+    agent = Agent(TestModel(), capabilities=capabilities)
+    history = CountingHistory(
+        [
+            ModelRequest(parts=[UserPromptPart('previous question')], run_id='previous-run'),
+            ModelResponse(parts=[TextPart('previous answer')], run_id='previous-run'),
+        ]
+    )
+    await agent.run('hello', message_history=history)
+    # Legacy IDs need a collision scan; keep each path within its established traversal budget.
+    assert history.iterations <= (4 if legacy else 3)
 
 
 def test_unknown_tool():
@@ -13792,7 +14010,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=75, output_tokens=1),
+                usage=RequestUsage(input_tokens=77, output_tokens=1),
                 model_name='function:model_then_text:',
                 model_id='function:function:model_then_text:',
                 timestamp=IsNow(tz=UTC),

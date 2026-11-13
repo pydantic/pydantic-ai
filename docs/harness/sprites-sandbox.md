@@ -11,7 +11,24 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.](../img/harness/sprites-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: Sprites Sandbox: your agent's commands run in a persistent Fly.io Sprite
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command, using ctx.workspace. SpritesSandbox's get_workspace hands the run a Sprite via the Sprites API and SPRITE_TOKEN. The Fly.io Sprite sleeps when idle, destroy(ref) deletes it, and a later run reattaches with the WorkspaceRef in the message history and result.workspace.ref, waking it if asleep.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        sprites["SpritesSandbox()<br/>get_workspace hands<br/>the run a Sprite"]:::capability
+    end
+    sandbox["Fly.io Sprite<br/>sleeps when idle,<br/>deleted by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sprites
+    ref -.->|"a later run reattaches,<br/>waking it if asleep"| sprites
+    sprites <-->|"Sprites API,<br/>SPRITE_TOKEN"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install
 
@@ -62,7 +79,7 @@ For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) 
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
@@ -84,7 +101,7 @@ File reads refuse FIFOs rather than waiting for a writer. File writes go through
 
 ### What a timeout stops
 
-A command timeout starts after the Sprite is ready. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
+A command timeout starts once the Sprite is ready and the command's exec connection is open, so a slow or retried connection does not use it up; each connection attempt has its own 10-second limit. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
 
 A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Sprites reports the exit status only after the output stream closes. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 

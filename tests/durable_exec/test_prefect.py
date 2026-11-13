@@ -36,6 +36,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BinaryContent,
+    CancellationToken,
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
@@ -518,6 +519,13 @@ async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -
         UserError, match='Workspaces are not supported inside a Prefect flow through the deprecated wrapper agent'
     ):
         await run_agent()
+
+
+async def test_prefect_agent_rejects_cancellation_token() -> None:
+    """A same-process `cancellation_token` can't cross the Prefect durable boundary, so the deprecated
+    wrapper rejects it up front."""
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with Prefect durable execution'):
+        await simple_prefect_agent.run('Hello', cancellation_token=CancellationToken())
 
 
 def test_prefect_agent_construction_warns_deprecated() -> None:
@@ -3048,7 +3056,7 @@ async def test_flow_retry_keeps_run_deadline() -> None:
 
 
 async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
-    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    """A model selector sees the run's cached default IDs and deadline on every step, and again on a flow retry."""
     selections: list[tuple[int, str | None, str | None, datetime | None]] = []
 
     def select(ctx: ModelSelectionContext[object]) -> Model:
@@ -3079,8 +3087,8 @@ async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
         return result.output
 
     await flaky()
-    [(flow_run_id, run_id, conversation_id)] = set(attempts)
-    assert run_id == f'{flow_run_id}:0'
+    [(_, run_id, conversation_id)] = set(attempts)
+    assert uuid.UUID(run_id).version == 4
     deadline = selections[0][3]
     assert deadline is not None
     assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]

@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY
-from pydantic_ai_harness.subagents import is_task_report
+from pydantic_ai_harness.sub_agents import is_task_report
 
 JsonObject = dict[str, object]
 

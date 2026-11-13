@@ -31,7 +31,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream, SetToolMetadata
+from pydantic_ai.capabilities import ModelFallback, ProcessEventStream, SetToolMetadata
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -55,7 +55,6 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.models._request_timeout import open_durable_unit_stream
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -138,6 +137,7 @@ from ._toolset import (
 from ._utils import (
     DurableModel,
     StreamedModelRequestResult,
+    agent_instrumentation_settings,
     consume_event_stream,
     managed_model_scope,
     mark_streamed_before_failing,
@@ -193,8 +193,7 @@ def conversation_id_from_run_id(run_id: str) -> str:
 
     Return this from
     [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id]
-    inside the durable context when
-    [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] is replay-stable:
+    inside the durable context when the supplied `run_id` is replay-stable:
     a replayed or recovered run then gets the same `conversation_id` without drawing randomness. The
     derivation is deterministic, also for a caller-supplied `run_id`, and matches what the Temporal,
     DBOS and Prefect capabilities return.
@@ -882,12 +881,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
-        # — non-deterministic on replay. Reject it here, but only inside the durable container, so a
-        # durable-capable agent used *outside* a workflow keeps accepting tokens like a normal agent.
+        # — non-deterministic on replay. Reject it here unless the engine opts in, but only inside
+        # the durable container, so a durable-capable agent used *outside* a workflow keeps
+        # accepting tokens like a normal agent.
         # The token is attached to the run's controller during `Agent` setup, before this hook fires.
         # Read via `__dict__` so a restricted run-context subclass (e.g. `TemporalRunContext`) whose
         # `__getattribute__` rejects absent fields doesn't raise a misleading error instead.
-        if not self.in_durable_context:
+        if self.engine_spec.accepts_cancellation_token or not self.in_durable_context:
             return
         cancellation = ctx.__dict__.get('_cancellation')
         if cancellation is not None and cancellation.has_token:
@@ -1095,7 +1095,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if open_request_policy() is not None:
             yield
             return
-        settings = self._instrumentation_settings()
+        assert self._agent is not None, 'a model unit only runs for a bound agent'
+        settings = agent_instrumentation_settings(self._agent)
         span = get_current_span()
         policy = (
             ContentPolicy(span, settings.include_content and ctx.trace_include_content, settings.tracer)
@@ -1104,19 +1105,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
         with request_policy_scope(policy):
             yield
-
-    def _instrumentation_settings(self) -> InstrumentationSettings | None:
-        """The instrumentation the bound agent's runs open `chat` with, as the run resolves it.
-
-        An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
-        `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
-        """
-        agent = self._agent
-        assert agent is not None, 'a model unit only runs for a bound agent'
-        explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
-        if explicit:
-            return explicit[-1].settings
-        return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""

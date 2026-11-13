@@ -23,7 +23,7 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
 )
 from pydantic_ai_harness.permissions import Approver, PermissionDecision, PermissionRequest
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.runtime.permissions import approval_handler, approval_question, decision, shown_in_full
 from pydantic_clai2.ui.menus.menu_worker import run_worker

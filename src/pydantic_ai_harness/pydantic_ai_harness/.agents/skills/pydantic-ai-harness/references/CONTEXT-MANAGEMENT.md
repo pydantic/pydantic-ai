@@ -106,6 +106,13 @@ Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction` but m
 hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly one of
 `target_tokens` / `target_fraction` is required. Any object with
 `async def compact(messages, ctx) -> list[ModelMessage]` (`CompactionStrategy`) can be a tier.
+Each tier's kept messages set a floor under `target_tokens`: its `keep_tokens`/`keep_messages` tail
+with the current turn, the first user message under `preserve_first_user_message`, and pins. A target
+below that floor can't be reached. The outermost chain then logs a warning on each attempt and sets
+`compaction.target_unreached`, `compaction.target_tokens` and `compaction.estimate` on its span when
+the history changes; a no-op has no span, only the warning. The logger is
+`pydantic_ai_harness.compaction._tiered_compaction`. Use `preserve_first_user_message=False` on tiers
+that may drop or summarize the first user message.
 
 ## The individual strategies
 
@@ -309,7 +316,7 @@ then a `shape:` line for JSON and a head/tail excerpt; the model pages it with t
 substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
-With `FileSystem` on the agent and the default `WorkspaceStore()` (no `workspace=` of its own),
+With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
 `read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
 `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
 (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
@@ -358,14 +365,15 @@ Key parameters: `bands` (largest matching `over` wins; below the smallest passes
 `then` runs when the action cannot (store error, binary payload, failed summary call).
 
 Stores:
-- Default `WorkspaceStore()` writes under `.pydantic-ai-harness/tool-output/` in the run's
+- Default `WorkspaceOverflowStore()` writes under `.pydantic-ai-harness/tool-output/` in the run's
   workspace. If any band can spill and the run has no workspace, the run fails at start with
-  `UserError`. `WorkspaceStore(workspace=LocalWorkspaceBackend(...))` takes a backend, not the
+  `UserError`. `WorkspaceOverflowStore(workspace=LocalWorkspaceBackend(...))` takes a backend, not the
   `LocalWorkspace` capability. A read-only workspace falls back to `then`.
-- `LocalFileStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
+- `LocalFileOverflowStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
 - Anything implementing `OverflowStore` (`async write(key, data) -> handle`, `async read(handle)`).
 
-Gotchas: both `ToolReturn.return_value` and text `content` are reduced; `ModelRetry` and tool errors
+Gotchas: both `ToolReturn.return_value` and text `content` are reduced (a return value holding
+files keeps them; only the data beside them is reduced); `ModelRetry` and tool errors
 are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
 `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
 durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded
@@ -405,7 +413,7 @@ it can't tell a moved prefix from an expired cache.
 
 ## Media externalization (not a capability)
 
-`pydantic_ai_harness.media` holds content-addressed stores (`DiskMediaStore`, `SqliteMediaStore`,
+`pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
 `S3MediaStore`, `MongoMediaStore` with the `mongodb` extra, `PostgresMediaStore` over a
 caller-owned `asyncpg` pool) and the `externalize_media` /
 `restore_media` walkers. `StepPersistence` stores use them automatically (`media_store='auto'`,

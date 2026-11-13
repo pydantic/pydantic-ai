@@ -717,6 +717,14 @@ def _is_recoverable_max_duration(event: RealtimeCodecEvent) -> bool:
     return isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration' and event.recoverable
 
 
+def _turn_detection(model_settings: XaiRealtimeModelSettings) -> ServerVAD | None:
+    if 'xai_turn_detection' in model_settings:
+        return model_settings['xai_turn_detection']
+    if 'turn_detection' in model_settings:
+        return resolve_base_turn_detection(model_settings['turn_detection'])
+    return {'type': 'server_vad'}
+
+
 @dataclass(init=False)
 class XaiRealtimeModel(RealtimeModel):
     """xAI Grok Voice realtime API model.
@@ -816,15 +824,9 @@ class XaiRealtimeModel(RealtimeModel):
         )
         if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
-        if 'xai_turn_detection' in model_settings:
-            turn_detection = model_settings['xai_turn_detection']
-        elif 'turn_detection' in model_settings:
-            turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
-        else:
-            turn_detection: ServerVAD | None = {'type': 'server_vad'}
         config: dict[str, Any] = {
             'instructions': instructions,
-            'turn_detection': turn_detection_config(turn_detection),
+            'turn_detection': turn_detection_config(_turn_detection(model_settings)),
             'audio': {
                 'input': audio_input,
                 'output': {

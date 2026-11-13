@@ -13,6 +13,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.utils import Event
 from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
@@ -363,7 +364,8 @@ class TestRegistration:
 
         class Prompt(Generic[PromptT]):
             def __init__(self, **kwargs: object) -> None:
-                pass
+                self.app = self
+                self.on_reset: Event[Prompt[PromptT]] = Event(self)
 
             async def prompt_async(self, label: str, **kwargs: object) -> str:
                 return values.pop(0)
@@ -408,6 +410,7 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             clock=lambda: 0.0,
             spinner=lambda: BUILTIN_SPINNERS[selected[0]],
         )
+        live.ctrl_enter_steers = False
         accent = theme.sgr(theme.ACCENT)
         selected[0] = 'binary'
         title = live.frame()[0]
@@ -425,6 +428,8 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             follow_up, plain = (Text.from_ansi(row).plain for row in live.frame()[:2])
             assert follow_up == 'Follow-up: follow up'
             assert plain.startswith(hint)
+            live.ctrl_enter_steers = True
+            assert Text.from_ansi(live.frame()[1]).plain.startswith(hint.replace('Alt+', 'Ctrl+'))
         else:
             # Too narrow to show the whole frame: nothing is highlighted rather than half a frame.
             assert plain.startswith('─ Working') and accent not in title
