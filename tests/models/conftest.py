@@ -159,7 +159,7 @@ def mock_downloads(
     host, so the request reaches the mock transport instead of a recording.
     """
 
-    def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
+    def create_http_client(*, timeout: float | httpx2.Timeout) -> httpx2.AsyncClient:
         # A fresh client per download: each download closes the client it was given.
         return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
