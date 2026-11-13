@@ -233,7 +233,12 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     action = block['input'].get('action', '')
     if not isinstance(action, str):
         return '', dict(block['input'])  # names the `action` among the fields that don't map
-    args = {key: value for key, value in block['input'].items() if key != 'action'}
+    # The earlier tools name a click's held modifier keys `key`, where the toolset and other actions use `text`.
+    args = {
+        'text' if key == 'key' and action in _COMPUTER_CLICKS else key: value
+        for key, value in block['input'].items()
+        if key != 'action'
+    }
     return action, args
 
 

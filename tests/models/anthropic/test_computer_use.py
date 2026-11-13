@@ -211,7 +211,8 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
             'id': 'toolu_1',
             'type': 'tool_use',
             'name': 'computer',
-            'input': {'action': 'left_click', 'coordinate': [5, 6]},
+            # The earlier tools name a click's modifier keys `key`, not `text`.
+            'input': {'action': 'left_click', 'coordinate': [5, 6], 'key': 'shift'},
         }
     )
     client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
@@ -219,7 +220,7 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
     agent = Agent(model, capabilities=[computer, provider.capability()])
     await agent.run('Go.')
 
-    assert computer.actions == [Click(x=5, y=6)]
+    assert computer.actions == [Click(x=5, y=6, modifiers=('shift',))]
     first, second = get_mock_chat_completion_kwargs(client)
     assert first['tools'] == [
         {'type': tool, 'name': 'computer', 'display_width_px': 1280, 'display_height_px': 800, **zoom}
@@ -229,7 +230,7 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
     (call,) = second['messages'][-2]['content']
     assert (call['name'], call['input'], 'toolset_name' in call) == (
         'computer',
-        {'action': 'left_click', 'coordinate': [5, 6]},
+        {'action': 'left_click', 'coordinate': [5, 6], 'key': 'shift'},
         False,
     )
     (result,) = second['messages'][-1]['content']
