@@ -460,7 +460,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # pytest-examples finds the caller of a captured `print()` with `inspect.stack()`, which resolves
     # each frame's file with `os.path.abspath`, and matches it to the example with `Path.samefile`,
     # which calls `os.stat`. An example printing from inside a running event loop trips the detector
-    # on the harness's own calls. Exempting the capture entry point keeps these calls from example
+    # on the harness's own calls. Exempting the capture entry point leaves these calls from example
     # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
     ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
