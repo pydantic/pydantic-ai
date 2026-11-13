@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
@@ -253,7 +254,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             media_type=self.content_type,
         )
 
-    async def transform_stream(  # noqa: C901
+    async def transform_stream(
         self,
         stream: AsyncIterator[NativeEvent],
         on_complete: OnCompleteFunc[EventT] | None = None,
@@ -282,140 +283,26 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in self.before_stream():
             yield e
 
+        # Each generator this method forwards from is closed with `aclosing`, so a consumer that abandons the
+        # stream unwinds them here, before the source stream is closed, rather than leaving them to the event
+        # loop's async generator finalizer.
         try:
-            async for event in stream:
-                if isinstance(event, PartStartEvent):
-                    async for e in self._turn_to('response'):
-                        yield e
-                    self._record_canonical_system(event)
-                elif isinstance(event, PartEndEvent):
-                    self._record_canonical_system(event)
-                    # Only one part is open at a time, so this end is for `_open_part` (or it's already
-                    # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
-                    self._open_part = None
-                    self._open_part_deltas.clear()
-                elif isinstance(event, ToolCallEvent):
-                    tool_call_id = event.part.tool_call_id
-                    kind: Literal['function', 'output'] = (
-                        'output' if isinstance(event, OutputToolCallEvent) else 'function'
-                    )
-                    self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
-                    if kind == 'output':
-                        # The output tool call is now tracked in `_pending_tool_calls`,
-                        # so the `FinalResultEvent` backup used by the error path is no longer needed.
-                        self._final_result_event = None
-                    async for e in self._turn_to('request'):
-                        yield e
-                elif isinstance(event, AgentRunResultEvent):
-                    result = cast(AgentRunResult[OutputDataT], event.result)
-                    self._result = result
-
-                    async for e in self._turn_to(None):
-                        yield e
-
-                    if on_complete is not None:
-                        async for e in self._dispatch_on_complete(on_complete, result):
-                            yield e
-                elif isinstance(event, FinalResultEvent):
-                    self._final_result_event = event
-
-                elif isinstance(event, ToolResultEvent):
-                    tool_call_id = event.part.tool_call_id
-                    self._pending_tool_calls.pop(tool_call_id, None)
-
-                delta_recorded = False
-                async for e in self.handle_event(event):
-                    if isinstance(event, PartDeltaEvent) and not delta_recorded:
-                        self._record_part_delta(event)
-                        delta_recorded = True
+            async with aclosing(self._transform_events(stream, on_complete)) as events:
+                async for e in events:
                     yield e
-                if isinstance(event, PartDeltaEvent) and not delta_recorded:
-                    self._record_part_delta(event)
-
-                # Mark the part open only after its start event has been emitted, so a start hook that
-                # raises mid-emit doesn't leave the error path closing a part the client never saw.
-                if isinstance(event, PartStartEvent) and isinstance(
-                    event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart
-                ):
-                    self._open_part = event.part
-                    self._open_part_index = event.index
-                    self._open_part_deltas.clear()
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
-            # Close the open message part before emitting the error, so a client that aborts at the
-            # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
-            # first: it's a response-side event, whereas the tool-call cleanup below turns to the
-            # request side, and everything after the error chunk is dropped.
-            if (part := self._open_part) is not None:
-                for delta in self._open_part_deltas:
-                    # Synthetic cleanup must not replace the original stream error.
-                    try:
-                        match delta, part:
-                            case TextPartDelta() as text_delta, TextPart():
-                                part = text_delta.apply(part)
-                            case ThinkingPartDelta() as thinking_delta, ThinkingPart():
-                                part = thinking_delta.apply(part)
-                            case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
-                                part = tool_delta.apply(part)
-                            case _:
-                                pass
-                    except Exception:
-                        pass
-                self._open_part = None
-                self._open_part_deltas.clear()
-                async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
-                    yield e
-
-            # Close any pending tool calls before emitting the error,
-            # so the UI doesn't show them as still running.
-
-            # Pending output-tool call (stored via FinalResultEvent if the call event hasn't fired yet)
-            if (
-                self._final_result_event
-                and (tool_call_id := self._final_result_event.tool_call_id)
-                and (tool_name := self._final_result_event.tool_name)
-            ):
-                self._final_result_event = None
-                self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
-
-            # Pending tool calls
-            # A cancelled run's pending calls were interrupted, not failed: `'interrupted'` keeps
-            # the closeout honest on reload (a `'failed'` closeout would tell the model the tool
-            # errored) and matches how cancellation records tool calls in message history.
-            #
             # Classify on the exception itself, not `from_cancellation()`: external cancellation is a
             # `CancelledError` (a `BaseException`) that never reaches this `except Exception` block, so
             # the only cancellation seen here is a first-party `RunCancelled`. Chain-walking would
             # misread an ordinary error raised while handling a nested `RunCancelled` (Python sets
             # `__context__` implicitly) as a cancellation, hiding the failure from the client.
             cancelled = exc if isinstance(exc, RunCancelled) else None
-            for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
-                async for e in self._turn_to('request'):
+            async with aclosing(self._close_interrupted(cancelled=cancelled is not None)) as closeout:
+                async for e in closeout:
                     yield e
-                error_part = ToolReturnPart(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    content=INTERRUPTED_TOOL_RETURN_CONTENT
-                    if cancelled is not None
-                    else 'Tool execution was interrupted by an error.',
-                    outcome='interrupted' if cancelled is not None else 'failed',
-                )
-                if kind == 'output':
-                    async for e in self.handle_output_tool_result(OutputToolResultEvent(error_part)):
-                        yield e
-                else:
-                    async for e in self.handle_function_tool_result(FunctionToolResultEvent(error_part)):
-                        yield e
-            self._pending_tool_calls.clear()
 
-            if cancelled is not None:
-                self._cancelled = cancelled
-                if on_cancel is not None:
-                    async for e in dispatch_callback(on_cancel, cancelled):
-                        yield e
-                async for e in self.on_cancelled(cancelled):
-                    yield e
-            else:
-                async for e in self.on_error(exc):
+            async with aclosing(self._closing_events(exc, cancelled, on_cancel)) as closing_events:
+                async for e in closing_events:
                     yield e
         finally:
             await _utils.aclose_if_supported(stream)
@@ -424,6 +311,166 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             yield e
 
         async for e in self.after_stream():
+            yield e
+
+    async def _transform_events(
+        self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None
+    ) -> AsyncGenerator[EventT, None]:
+        """Forward each event to `handle_event`, keeping the state the error path in `transform_stream` closes."""
+        async for event in stream:
+            async with aclosing(self._before_handle_event(event, on_complete)) as before_events:
+                async for e in before_events:
+                    yield e
+
+            delta_recorded = False
+            async for e in self.handle_event(event):
+                if isinstance(event, PartDeltaEvent) and not delta_recorded:
+                    self._record_part_delta(event)
+                    delta_recorded = True
+                yield e
+            if isinstance(event, PartDeltaEvent) and not delta_recorded:
+                self._record_part_delta(event)
+
+            if isinstance(event, PartStartEvent):
+                self._record_part_start(event)
+
+    async def _before_handle_event(
+        self, event: NativeEvent, on_complete: OnCompleteFunc[EventT] | None
+    ) -> AsyncGenerator[EventT, None]:
+        """Fire the turn hooks `event` implies, and record what the error path needs, before `handle_event` sees it."""
+        match event:
+            case PartStartEvent():
+                async for e in self._turn_to('response'):
+                    yield e
+                self._record_canonical_system(event)
+            case PartEndEvent():
+                self._record_canonical_system(event)
+                # Only one part is open at a time, so this end is for `_open_part` (or it's already
+                # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
+                self._open_part = None
+                self._open_part_deltas.clear()
+            case ToolCallEvent():
+                self._record_tool_call(event)
+                async for e in self._turn_to('request'):
+                    yield e
+            case AgentRunResultEvent():
+                result = cast(AgentRunResult[OutputDataT], event.result)
+                self._result = result
+
+                async for e in self._turn_to(None):
+                    yield e
+
+                if on_complete is not None:
+                    async for e in self._dispatch_on_complete(on_complete, result):
+                        yield e
+            case FinalResultEvent():
+                self._final_result_event = event
+            case ToolResultEvent():
+                tool_call_id = event.part.tool_call_id
+                self._pending_tool_calls.pop(tool_call_id, None)
+            case _:
+                pass
+
+    def _record_tool_call(self, event: ToolCallEvent) -> None:
+        tool_call_id = event.part.tool_call_id
+        kind: Literal['function', 'output'] = 'output' if isinstance(event, OutputToolCallEvent) else 'function'
+        self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
+        if kind == 'output':
+            # The output tool call is now tracked in `_pending_tool_calls`,
+            # so the `FinalResultEvent` backup used by the error path is no longer needed.
+            self._final_result_event = None
+
+    def _record_part_start(self, event: PartStartEvent) -> None:
+        # Mark the part open only after its start event has been emitted, so a start hook that
+        # raises mid-emit doesn't leave the error path closing a part the client never saw.
+        if isinstance(event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart):
+            self._open_part = event.part
+            self._open_part_index = event.index
+            self._open_part_deltas.clear()
+
+    async def _close_interrupted(self, *, cancelled: bool) -> AsyncGenerator[EventT, None]:
+        """Close the open part and the pending tool calls that the stream's error interrupted."""
+        # Close the open message part before emitting the error, so a client that aborts at the
+        # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
+        # first: it's a response-side event, whereas the tool-call cleanup below turns to the
+        # request side, and everything after the error chunk is dropped.
+        if (part := self._open_part) is not None:
+            part = self._apply_open_part_deltas(part)
+            self._open_part = None
+            self._open_part_deltas.clear()
+            async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
+                yield e
+
+        # Close any pending tool calls before emitting the error,
+        # so the UI doesn't show them as still running.
+
+        # Pending output-tool call (stored via FinalResultEvent if the call event hasn't fired yet)
+        if (
+            self._final_result_event
+            and (tool_call_id := self._final_result_event.tool_call_id)
+            and (tool_name := self._final_result_event.tool_name)
+        ):
+            self._final_result_event = None
+            self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
+
+        # Pending tool calls
+        for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
+            async for e in self._turn_to('request'):
+                yield e
+            async for e in self._interrupted_tool_result(tool_call_id, kind, tool_name, cancelled=cancelled):
+                yield e
+        self._pending_tool_calls.clear()
+
+    def _apply_open_part_deltas(
+        self, part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart
+    ) -> TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart:
+        """`part` brought up to date with the recorded deltas, for the synthetic end event the error path emits."""
+        for delta in self._open_part_deltas:
+            # Synthetic cleanup must not replace the original stream error.
+            try:
+                match delta, part:
+                    case TextPartDelta() as text_delta, TextPart():
+                        part = text_delta.apply(part)
+                    case ThinkingPartDelta() as thinking_delta, ThinkingPart():
+                        part = thinking_delta.apply(part)
+                    case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
+                        part = tool_delta.apply(part)
+                    case _:
+                        pass
+            except Exception:
+                pass
+        return part
+
+    def _interrupted_tool_result(
+        self, tool_call_id: str, kind: Literal['function', 'output'], tool_name: str, *, cancelled: bool
+    ) -> AsyncIterator[EventT]:
+        """Handle the synthetic result that closes a pending tool call the stream's error interrupted."""
+        # A cancelled run's pending calls were interrupted, not failed: `'interrupted'` keeps
+        # the closeout honest on reload (a `'failed'` closeout would tell the model the tool
+        # errored) and matches how cancellation records tool calls in message history.
+        error_part = ToolReturnPart(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            content=INTERRUPTED_TOOL_RETURN_CONTENT if cancelled else 'Tool execution was interrupted by an error.',
+            outcome='interrupted' if cancelled else 'failed',
+        )
+        if kind == 'output':
+            return self.handle_output_tool_result(OutputToolResultEvent(error_part))
+        return self.handle_function_tool_result(FunctionToolResultEvent(error_part))
+
+    async def _closing_events(
+        self, exc: Exception, cancelled: RunCancelled | None, on_cancel: OnCancelFunc[EventT] | None
+    ) -> AsyncGenerator[EventT, None]:
+        """The events that end a stream `exc` interrupted: `on_error`'s, or for a cancellation, `on_cancel`'s then `on_cancelled`'s."""
+        if cancelled is None:
+            async for e in self.on_error(exc):
+                yield e
+            return
+        self._cancelled = cancelled
+        if on_cancel is not None:
+            async for e in dispatch_callback(on_cancel, cancelled):
+                yield e
+        async for e in self.on_cancelled(cancelled):
             yield e
 
     async def _dispatch_on_complete(
@@ -461,7 +508,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.before_response():
                 yield e
 
-    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:  # noqa: C901
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:
         """Transform a Pydantic AI event into one or more protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event type:
@@ -487,49 +534,42 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all events, make sure you call the super method.
         """
+        if (handler := self._dispatch_event(event)) is None:
+            return
+        async for e in handler:
+            yield e
+
+    def _dispatch_event(self, event: NativeEvent) -> AsyncIterator[EventT] | None:  # noqa: C901
+        """Call the `handle_*` method for `event`, or return `None` when `handle_event` forwards nothing for it."""
         match event:
             case PartStartEvent():
-                async for e in self.handle_part_start(event):
-                    yield e
+                return self.handle_part_start(event)
             case PartDeltaEvent():
-                async for e in self.handle_part_delta(event):
-                    yield e
+                return self.handle_part_delta(event)
             case PartEndEvent():
-                async for e in self.handle_part_end(event):
-                    yield e
+                return self.handle_part_end(event)
             case FinalResultEvent():
-                async for e in self.handle_final_result(event):
-                    yield e
+                return self.handle_final_result(event)
             case EnqueuedMessagesEvent():
-                async for e in self.handle_enqueued_messages(event):
-                    yield e
+                return self.handle_enqueued_messages(event)
             case FunctionToolCallEvent():
-                async for e in self.handle_function_tool_call(event):
-                    yield e
+                return self.handle_function_tool_call(event)
             case FunctionToolResultEvent():
-                async for e in self.handle_function_tool_result(event):
-                    yield e
+                return self.handle_function_tool_result(event)
             case ToolAvailabilityDeltaEvent():
-                async for e in self.handle_tool_availability_delta(event):
-                    yield e
+                return self.handle_tool_availability_delta(event)
             case CapabilityLoadDeltaEvent():
-                async for e in self.handle_capability_load_delta(event):
-                    yield e
+                return self.handle_capability_load_delta(event)
             case ModelSettingsDeltaEvent():
-                async for e in self.handle_model_settings_delta(event):
-                    yield e
+                return self.handle_model_settings_delta(event)
             case OutputToolCallEvent():
-                async for e in self.handle_output_tool_call(event):
-                    yield e
+                return self.handle_output_tool_call(event)
             case OutputToolResultEvent():
-                async for e in self.handle_output_tool_result(event):
-                    yield e
+                return self.handle_output_tool_result(event)
             case DeferredToolRequestsEvent():
-                async for e in self.handle_deferred_tool_requests(event):
-                    yield e
+                return self.handle_deferred_tool_requests(event)
             case DeferredToolResultsEvent():
-                async for e in self.handle_deferred_tool_results(event):
-                    yield e
+                return self.handle_deferred_tool_results(event)
             case CustomEvent():
                 # Checked here rather than in each protocol's handler so that `ui=False` holds for
                 # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
@@ -541,14 +581,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 # declared `ui=False` where it was emitted, so the unresolved case fails closed.
                 # Import the modules defining your events in the process that serves the frontend.
                 if event.ui and not isinstance(event, UnknownCustomEvent):
-                    async for e in self.handle_custom_event(event):
-                        yield e
+                    return self.handle_custom_event(event)
             case CapabilityEvent():
-                async for e in self.handle_capability_event(event):
-                    yield e
+                return self.handle_capability_event(event)
             case AgentRunResultEvent():
-                async for e in self.handle_run_result(event):
-                    yield e
+                return self.handle_run_result(event)
             case (
                 RealtimeTurnCompleteEvent()
                 | RealtimeInputSpeechStartEvent()
@@ -566,6 +603,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 pass
             case _:
                 pass
+        return None
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a `PartStartEvent`.
