@@ -1137,6 +1137,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def _system_entries_follow_user_turn(self) -> bool:
+        # A request's mid-conversation system messages go in a `system` entry after its user turn.
+        return True
+
     @cached_property
     def profile(self) -> AnthropicModelProfile:
         """The model profile.
@@ -1184,9 +1189,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
                 supports_inline_system_prompts=supports_inline_system_prompts,
                 supports_mid_conversation_effort=supports_mid_conversation_effort,
-                # A request-scoped entry is a `{'role': 'system'}` entry, so it's only native where the role is.
+                # A request-scoped entry is a `{'role': 'system'}` entry, so it needs a transport that serves the
+                # role, but not a model whose other system messages use it: a sealed model's are `<system>` blocks.
                 supports_request_scoped_system_prompts=_profile.get('supports_request_scoped_system_prompts', False)
-                and supports_inline_system_prompts,
+                and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)

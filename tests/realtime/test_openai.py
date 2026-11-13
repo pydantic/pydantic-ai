@@ -1912,9 +1912,9 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                             'type': 'input_text',
                             'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         }
                     ],
@@ -1930,9 +1930,9 @@ answer in prose
                             'type': 'input_text',
                             'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         }
                     ],
@@ -1948,9 +1948,9 @@ answer in prose
                             'type': 'input_text',
                             'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         }
                     ],
@@ -2021,6 +2021,7 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     tool_call_id='call-image',
                     content=[
                         'done',
+                        {'temp': 20},
                         BinaryContent(data=b'result-image', media_type='image/png', identifier='result.png'),
                     ],
                 )
@@ -2047,7 +2048,7 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-image',
-                    'output': '["done","See file result.png."]',
+                    'output': '["done",{"temp":20},"See file result.png."]',
                 },
             },
             {
@@ -2058,10 +2059,10 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '<tool_result tool_name="inspect" tool_call_id="call-image" file_id="result.png">',
+                            'text': '<pyai:tool_result tool_name="inspect" tool_call_id="call-image" file_id="result.png">',
                         },
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
-                        {'type': 'input_text', 'text': '</tool_result>'},
+                        {'type': 'input_text', 'text': '</pyai:tool_result>'},
                     ],
                 },
             },

@@ -6,7 +6,7 @@ import asyncio
 import functools
 import importlib
 import warnings
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -201,6 +201,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    response_refusal,
     response_status_to_state,
     response_tool_call_id,
 )
@@ -340,6 +341,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     _renders_effort_deltas = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
     # compaction actually compact here.
@@ -1111,7 +1114,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """
         return None
 
-    def _process_response(  # noqa: C901
+    def _process_response(
         self,
         response: responses.Response,
         model_settings: OpenAIResponsesModelSettings,
@@ -1123,126 +1126,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise response_error(
                 self.model_name, error.code, error.message, error_type=response_error_type(error), in_stream=False
             )
-        items: list[ModelResponsePart] = []
-        refusal_text: str | None = None
-        tool_search_output_call_ids = tool_search_call_ids_by_output(response)
-        tool_search_outputs = {
-            tool_search_output_call_ids[item.id]: item
-            for item in response.output
-            if isinstance(item, responses.ResponseToolSearchOutputItem)
-            and item.execution == 'server'
-            and item.id in tool_search_output_call_ids
-        }
-        paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
-        for item in response.output:
-            if isinstance(item, responses.ResponseReasoningItem):
-                items.extend(map_reasoning_item(item, self.system))
-            elif isinstance(item, responses.ResponseOutputMessage):
-                for content in item.content:
-                    if isinstance(content, responses.ResponseOutputRefusal):
-                        refusal_text = content.refusal
-                    # Like a stream, which only builds text from its deltas, empty text (such as the message that
-                    # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
-                    elif isinstance(content, responses.ResponseOutputText) and content.text:
-                        citations = map_responses_citations(content.annotations, content.text)
-                        part_provider_details: dict[str, Any] = {}
-                        if citations:
-                            part_provider_details.update(responses_citations_provider_details(content.annotations))
-                        if content.logprobs:
-                            part_provider_details['logprobs'] = map_logprobs(content.logprobs)
-                        if model_settings.get('openai_include_raw_annotations') and content.annotations:
-                            part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
-                                list(content.annotations), warnings=False
-                            )
-                        if item.phase is not None:
-                            part_provider_details['phase'] = item.phase
-                        items.append(
-                            TextPart(
-                                content.text,
-                                id=item.id,
-                                provider_name=self.system,
-                                provider_details=part_provider_details or None,
-                                citations=citations,
-                            )
-                        )
-            elif isinstance(item, responses.ResponseFunctionToolCall):
-                # When the Responses API wraps a discovered deferred tool in a namespace
-                # (tool-search flow), it requires the namespace to be round-tripped on
-                # subsequent turns. Preserve it via `provider_details`.
-                fn_provider_details: dict[str, Any] | None = None
-                if item.namespace:
-                    fn_provider_details = {'namespace': item.namespace}
-                items.append(
-                    ToolCallPart(
-                        item.name,
-                        item.arguments,
-                        tool_call_id=response_tool_call_id(
-                            item.call_id,
-                            response.id
-                            if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
-                            else None,
-                        ),
-                        id=item.id,
-                        provider_name=self.system,
-                        provider_details=fn_provider_details,
-                    )
-                )
-            elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
-                call_part, return_part, file_parts = map_code_interpreter_tool_call(item, self.system)
-                items.append(call_part)
-                if file_parts:
-                    items.extend(file_parts)
-                items.append(return_part)
-            elif isinstance(item, responses.ResponseFunctionWebSearch):
-                call_part, return_part = map_web_search_tool_call(item, self.system)
-                items.append(call_part)
-                items.append(return_part)
-            elif isinstance(item, responses.ResponseToolSearchCall):
-                if item.execution == 'client':
-                    # Client-executed: emit a regular ToolCallPart so the standard agent-graph
-                    # tool-execution path runs the local `search_tools` function. The matching
-                    # `ToolReturnPart` is produced by the tool runner, not here.
-                    items.append(map_client_tool_search_call(item, self.system))
-                else:
-                    call_part = map_tool_search_call(item, self.system)
-                    items.append(call_part)
-                    if output_item := tool_search_outputs.get(call_part.tool_call_id):
-                        items.append(build_tool_search_return_part(call_part.tool_call_id, output_item, self.system))
-            elif isinstance(item, responses.ResponseToolSearchOutputItem):
-                if item.execution == 'server' and item.id not in paired_tool_search_output_ids:
-                    items.append(build_tool_search_return_part(item.call_id or item.id, item, self.system))
-            elif isinstance(item, responses.response_output_item.ImageGenerationCall):
-                call_part, return_part, file_part = map_image_generation_tool_call(item, self.system)
-                items.append(call_part)
-                if file_part:  # pragma: no branch
-                    items.append(file_part)
-                items.append(return_part)
-            elif isinstance(item, ResponseCompactionItem):
-                items.append(map_compaction_item(item, self.system))
-            elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
-                # Pydantic AI doesn't yet support the ComputerUse built-in tool
-                pass
-            elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
-                # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
-                pass
-            elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
-                # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
-                pass
-            elif isinstance(item, responses.ResponseFileSearchToolCall):
-                call_part, return_part = map_file_search_tool_call(item, self.system)
-                items.append(call_part)
-                items.append(return_part)
-            elif isinstance(item, responses.response_output_item.McpCall):
-                call_part, return_part = map_mcp_call(item, self.system)
-                items.append(call_part)
-                items.append(return_part)
-            elif isinstance(item, responses.response_output_item.McpListTools):
-                call_part, return_part = map_mcp_list_tools(item, self.system)
-                items.append(call_part)
-                items.append(return_part)
-            elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
-                # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
-                pass
+        items = self._map_output_items(response, model_settings)
+        refusal_text = response_refusal(response)
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] = dict(self._process_provider_details(response) or {})
@@ -1288,6 +1173,143 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             state=state,
             provider_details=provider_details or None,
         )
+
+    def _map_output_items(  # noqa: C901
+        self, response: responses.Response, model_settings: OpenAIResponsesModelSettings
+    ) -> list[ModelResponsePart]:
+        """Map the output items of a non-streamed response to parts."""
+        tool_search_output_call_ids = tool_search_call_ids_by_output(response)
+        tool_search_outputs = {
+            tool_search_output_call_ids[item.id]: item
+            for item in response.output
+            if isinstance(item, responses.ResponseToolSearchOutputItem)
+            and item.execution == 'server'
+            and item.id in tool_search_output_call_ids
+        }
+        paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
+        items: list[ModelResponsePart] = []
+        for item in response.output:
+            match item:
+                case responses.ResponseReasoningItem():
+                    items.extend(map_reasoning_item(item, self.system))
+                case responses.ResponseOutputMessage():
+                    items.extend(self._map_output_message(item, model_settings))
+                case responses.ResponseFunctionToolCall():
+                    items.append(self._map_function_tool_call(item, response.id))
+                case responses.ResponseCodeInterpreterToolCall():
+                    items.extend(self._map_code_interpreter_call(item))
+                case responses.ResponseFunctionWebSearch():
+                    items.extend(map_web_search_tool_call(item, self.system))
+                case responses.ResponseToolSearchCall():
+                    items.extend(self._map_tool_search_call(item, tool_search_outputs))
+                case responses.ResponseToolSearchOutputItem():
+                    if item.execution == 'server' and item.id not in paired_tool_search_output_ids:
+                        items.append(build_tool_search_return_part(item.call_id or item.id, item, self.system))
+                case responses.response_output_item.ImageGenerationCall():
+                    items.extend(self._map_image_generation_call(item))
+                case ResponseCompactionItem():
+                    items.append(map_compaction_item(item, self.system))
+                case responses.ResponseComputerToolCall():  # pragma: lax no cover
+                    # Pydantic AI doesn't yet support the ComputerUse built-in tool
+                    pass
+                case responses.ResponseCustomToolCall():  # pragma: lax no cover
+                    # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
+                    pass
+                case responses.response_output_item.LocalShellCall():  # pragma: lax no cover
+                    # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
+                    pass
+                case responses.ResponseFileSearchToolCall():
+                    items.extend(map_file_search_tool_call(item, self.system))
+                case responses.response_output_item.McpCall():
+                    items.extend(map_mcp_call(item, self.system))
+                case responses.response_output_item.McpListTools():
+                    items.extend(map_mcp_list_tools(item, self.system))
+                case responses.response_output_item.McpApprovalRequest():  # pragma: no cover
+                    # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
+                    pass
+                case _:  # pragma: lax no cover
+                    pass
+        return items
+
+    def _map_output_message(
+        self, item: responses.ResponseOutputMessage, model_settings: OpenAIResponsesModelSettings
+    ) -> Iterator[TextPart]:
+        for content in item.content:
+            # Like a stream, which only builds text from its deltas, empty text (such as the message that
+            # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
+            if not isinstance(content, responses.ResponseOutputText) or not content.text:
+                continue
+            citations = map_responses_citations(content.annotations, content.text)
+            part_provider_details: dict[str, Any] = {}
+            if citations:
+                part_provider_details.update(responses_citations_provider_details(content.annotations))
+            if content.logprobs:
+                part_provider_details['logprobs'] = map_logprobs(content.logprobs)
+            if model_settings.get('openai_include_raw_annotations') and content.annotations:
+                part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
+                    list(content.annotations), warnings=False
+                )
+            if item.phase is not None:
+                part_provider_details['phase'] = item.phase
+            yield TextPart(
+                content.text,
+                id=item.id,
+                provider_name=self.system,
+                provider_details=part_provider_details or None,
+                citations=citations,
+            )
+
+    def _map_function_tool_call(self, item: responses.ResponseFunctionToolCall, response_id: str) -> ToolCallPart:
+        # When the Responses API wraps a discovered deferred tool in a namespace
+        # (tool-search flow), it requires the namespace to be round-tripped on
+        # subsequent turns. Preserve it via `provider_details`.
+        fn_provider_details: dict[str, Any] | None = None
+        if item.namespace:
+            fn_provider_details = {'namespace': item.namespace}
+        return ToolCallPart(
+            item.name,
+            item.arguments,
+            tool_call_id=response_tool_call_id(
+                item.call_id,
+                response_id if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False) else None,
+            ),
+            id=item.id,
+            provider_name=self.system,
+            provider_details=fn_provider_details,
+        )
+
+    def _map_code_interpreter_call(
+        self, item: responses.ResponseCodeInterpreterToolCall
+    ) -> Iterator[ModelResponsePart]:
+        call_part, return_part, file_parts = map_code_interpreter_tool_call(item, self.system)
+        yield call_part
+        yield from file_parts
+        yield return_part
+
+    def _map_image_generation_call(
+        self, item: responses.response_output_item.ImageGenerationCall
+    ) -> Iterator[ModelResponsePart]:
+        call_part, return_part, file_part = map_image_generation_tool_call(item, self.system)
+        yield call_part
+        if file_part:  # pragma: no branch
+            yield file_part
+        yield return_part
+
+    def _map_tool_search_call(
+        self,
+        item: responses.ResponseToolSearchCall,
+        tool_search_outputs: Mapping[str, responses.ResponseToolSearchOutputItem],
+    ) -> Iterator[ModelResponsePart]:
+        if item.execution == 'client':
+            # Client-executed: emit a regular ToolCallPart so the standard agent-graph
+            # tool-execution path runs the local `search_tools` function. The matching
+            # `ToolReturnPart` is produced by the tool runner, not here.
+            yield map_client_tool_search_call(item, self.system)
+        else:
+            call_part = map_tool_search_call(item, self.system)
+            yield call_part
+            if output_item := tool_search_outputs.get(call_part.tool_call_id):
+                yield build_tool_search_return_part(call_part.tool_call_id, output_item, self.system)
 
     async def _process_streamed_response(
         self,

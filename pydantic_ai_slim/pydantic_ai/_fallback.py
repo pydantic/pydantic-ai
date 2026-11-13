@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_neve
 from opentelemetry.trace import Span, Tracer
 
 from . import exceptions as _exceptions
-from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
+from ._model_request_attempts import AttemptStart, carried_attempts, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import (
     ContentFilterError,
@@ -340,11 +340,15 @@ class AttemptLog:
         record is kept. `rejected_status` is the span's status for a rejected response (see `record_attempt_span`).
         `kind` says whether the request moved on from the attempt to the same model or another one.
         """
-        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
+        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too. They're on
+        # the response it answered with, the group it raised when every model failed, or an error it didn't fall
+        # back on (see `carry_attempts`).
         if isinstance(failure, ModelResponse):
             self.attempts.extend(failure.failed_attempts or [])
         elif isinstance(failure, FallbackExceptionGroup):
             self.attempts.extend(failure.attempts)
+        else:
+            self.attempts.extend(carried_attempts(failure))
         attempt = failed_attempt(model, failure, start=start, duration=start.elapsed(), kind=kind)
         self.attempts.append(attempt)
         if parent is not None and tracer is not None and not start.replayed():

@@ -633,10 +633,12 @@ class WebService:
                 return channel, catalog
         raise LookupError(f'No task {task_id!r} in an open session.')
 
-    def task_transcript(self, task_id: str) -> TaskTranscript:
+    async def task_transcript(self, task_id: str) -> TaskTranscript:
         _, catalog = self._task(task_id)
         [task] = [task for task in catalog.listing() if task.id == task_id]
-        return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
+        # A settled task's history is read from its saved file.
+        history = await to_thread.run_sync(catalog.history, task_id)
+        return TaskTranscript(task=task_entry(task), items=history_items(history))
 
     async def task_action(self, task_id: str, action: TaskAction) -> None:
         """Stop, background, or resume a task, as `/tasks` does."""
