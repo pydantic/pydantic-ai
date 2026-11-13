@@ -4170,6 +4170,12 @@ class FilePart:
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __post_init__(self) -> None:
+        # The `AfterValidator` on `content` only runs on validation, so narrow direct construction
+        # too: a custom model returning `FilePart(BinaryContent(image))` must yield a `BinaryImage`.
+        if type(self.content) is BinaryContent:
+            self.content = BinaryContent.narrow_type(self.content)
+
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
         return bool(self.content.data)
