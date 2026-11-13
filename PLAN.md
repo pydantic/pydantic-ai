@@ -260,7 +260,7 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
      `receiving()` exit never prunes a message ack.
    - **Idle member, or a member whose final response settles before acknowledging:** `_run`'s settle path checks
      the member's inbox for unacknowledged entries. Like `send` to an idle member, it wakes the member with
-     them, enqueued `asap` on `agent.run(None, message_history=...)`, the pattern in `subagents/README.md`.
+     them, enqueued `asap` on `agent.run(None, message_history=...)`, the pattern in `sub_agents/README.md`.
      It wakes only when `outcome == 'ok'`, `not user_stopped` and `resumable`. After a user stop, a failure
      or a budget hit, entries stay saved until the next allowed wake. That keeps user stops authoritative and
      avoids fail-and-wake loops.
