@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai.durable_exec._capability_operation import collect_capability_operations
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._deferred_capability_loader import registered_beneath
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -110,7 +111,9 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         if capability is None:
             return None
         if self.per_run_step:
-            # Owned by the capabilities it returned, as in the run, so their tools stay hidden until they're loaded.
+            # Checked as in the run, which a deterministic factory has already passed. Owned by the capabilities it
+            # returned, as in the run, so their tools stay hidden until they're loaded.
+            _check_per_step_capability(capability)
             capability = CombinedCapability[AgentDepsT]([capability])
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
@@ -214,18 +217,31 @@ class PerStepDynamicCapability(ResolvedDynamicCapability[AgentDepsT]):
 
 
 def _check_per_step_capability(capability: AbstractCapability[Any]) -> None:
-    """Reject what a per-step factory can't return: an always-on capability, or one with native tools."""
+    """Reject what a per-step factory can't return.
+
+    An always-on capability, and contributions the run only collects when it starts: native tools, toolset wrappers
+    (an approval or filtering policy would silently not apply to tools that appear later), and durable operations,
+    which a durable engine registers when the agent is built.
+    """
     for branch in _combination_roots(capability):
+        name = f'{type(branch).__name__}(id={branch.id!r})'
         if branch.defer_loading is not True:
             raise UserError(
                 f'A `DynamicCapability` with `per_run_step=True` can only return on-demand capabilities, '
-                f'but it returned {type(branch).__name__}(id={branch.id!r}) without `defer_loading=True`.'
+                f'but it returned {name} without `defer_loading=True`.'
             )
         if branch.get_native_tools():
-            raise UserError(
-                f'A `DynamicCapability` with `per_run_step=True` does not support native tools yet, '
-                f'but it returned {type(branch).__name__}(id={branch.id!r}) with native tools.'
-            )
+            unsupported = 'native tools'
+        elif branch.get_wrapper_toolset(CombinedToolset[Any]([])) is not None:
+            unsupported = 'a toolset wrapper (`get_wrapper_toolset`)'
+        elif any(collect_capability_operations(leaf) for leaf in [branch, *registered_beneath(branch)]):
+            unsupported = 'durable operations'
+        else:
+            continue
+        raise UserError(
+            f'A `DynamicCapability` with `per_run_step=True` does not support {unsupported} yet, '
+            f'but it returned {name} with them.'
+        )
 
 
 def _register_beneath(

@@ -768,12 +768,20 @@ A [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] calls its fu
 The function may only return on-demand capabilities (`defer_loading=True`, each with its own `id`), or a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] of them, or `None`:
 
 ```python {title="per_step_capability.py"}
+from dataclasses import dataclass
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability, DynamicCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-refunds = Capability(
+
+@dataclass
+class Session:
+    verified: bool = False
+
+
+refunds = Capability[Session](
     id='refunds',
     description='Use for refund eligibility, refund status, or processing a refund.',
     instructions='Always confirm the order ID before issuing a refund.',
@@ -787,13 +795,8 @@ def refund_status(order_id: str) -> str:
     return f'Order {order_id}: refund issued on 2026-05-01.'
 
 
-def refunds_once_verified(ctx: RunContext) -> Capability | None:
-    verified = any(
-        isinstance(part, ToolReturnPart) and part.tool_name == 'verify_customer'
-        for message in ctx.messages
-        for part in message.parts
-    )
-    return refunds if verified else None
+def refunds_once_verified(ctx: RunContext[Session]) -> Capability[Session] | None:
+    return refunds if ctx.deps.verified else None
 
 
 def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -809,29 +812,31 @@ def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
 
 agent = Agent(
     FunctionModel(scripted_model),
+    deps_type=Session,
     capabilities=[DynamicCapability(refunds_once_verified, per_run_step=True)],
 )
 
 
-@agent.tool_plain
-def verify_customer(email: str) -> str:
+@agent.tool
+def verify_customer(ctx: RunContext[Session], email: str) -> str:
     """Verify the customer's identity."""
+    ctx.deps.verified = True
     return f'{email} is verified.'
 
 
-result = agent.run_sync('Where is my refund for order ABC-123?')
+result = agent.run_sync('Where is my refund for order ABC-123?', deps=Session())
 print(result.output)
 #> Your refund was issued on 2026-05-01.
 ```
 
 _(This example is complete, it can be run "as is")_
 
-The first request has no catalog, since `refunds` doesn't exist yet, but it already offers the `load_capability` tool: a run with a per-step `DynamicCapability` always does, because adding the tool later would change the tool definitions the provider has cached. Once `verify_customer` has returned, the next request adds `refunds` to the catalog, and the model loads it as usual. Code can load it too, with [`ctx.load_capability('refunds')`](#loading-from-code) from that step on; either way it leaves the same records in message history as a capability the agent had from the start.
+The first request has no catalog, since `refunds` doesn't exist yet, but it already offers the `load_capability` tool: a run with a per-step `DynamicCapability` always does, because adding the tool later would change the tool definitions the provider has cached. Once `verify_customer` has marked the session verified, the next request adds `refunds` to the catalog, and the model loads it as usual. Code can load it too, with [`ctx.load_capability('refunds')`](#loading-from-code) from that step on; either way it leaves the same records in message history as a capability the agent had from the start.
 
 The catalog changes the way it does when a capability is added between runs: the change is [appended](../agent.md#appending-instruction-changes) to the conversation and the instructions at the start of the prompt stay as they were, so the cached prefix holds. A capability's hidden tools reach the request the same way any [tool that appears mid-run](../tools-advanced.md#mid-run-tool-additions) does; see [Cache implications](#cache-implications).
 
 When the function stops returning a capability, it leaves the catalog through an appended change too. If the model had loaded it, it's no longer loaded: its instructions are withdrawn the same way, and its tools leave the request like any tool that's removed, which on most providers changes the tool definitions and so the cached prefix. If the function returns it again later, its earlier load counts again.
 
-The function is called at the start of the run and then once ahead of each step, with the step's [`RunContext`][pydantic_ai.tools.RunContext]. Derive the capabilities from the run context, such as `ctx.deps` and `ctx.messages`, rather than from state outside it: a [resumed conversation](#resumable-across-runs) or a replayed [durable](../durable_execution/overview.md) run finds a capability loaded in history only if the function returns it again. Return the same instance on consecutive steps to keep it, with any state or connections it holds; a new instance replaces it from that step on.
+The function is called at the start of the run and then once ahead of each step, with the step's [`RunContext`][pydantic_ai.tools.RunContext]. Derive the capabilities from the run context rather than from state outside it: a [resumed conversation](#resumable-across-runs) or a replayed [durable](../durable_execution/overview.md) run finds a capability loaded in history only if the function returns it again. Base a decision that grants access on state your server holds, like the `verified` flag on `ctx.deps` above, and not on `ctx.messages` alone: an endpoint that accepts message history from a client accepts tool calls and results the client made up (see [the trust boundary](../message-history.md#trust-boundary-for-client-supplied-history)). A tool that needs authorization should still check it itself. Return the same instance on consecutive steps to keep it, with any state or connections it holds; a new instance replaces it from that step on.
 
-A capability returned this way contributes its instructions, tools, model settings, and hooks once loaded. It can't contribute native tools, and its hooks run at the position of the `DynamicCapability` among the agent's capabilities.
+A capability returned this way contributes its instructions, tools, model settings, hooks, and event listeners once loaded, and its hooks run at the position of the `DynamicCapability` among the agent's capabilities. Contributions the run only collects when it starts aren't supported, and returning a capability with one raises `UserError`: native tools, a toolset wrapper from [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] (such as an approval policy), and [durable operations](custom.md#durable-capability-operations).

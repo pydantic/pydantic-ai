@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 import pytest
@@ -16,10 +17,19 @@ from pydantic_ai import (
     InstructionPart,
     RunContext,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, DynamicCapability, NativeTool
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CombinedCapability,
+    DynamicCapability,
+    NativeTool,
+    durable_operation,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     CapabilityLoadDeltaPart,
+    FunctionToolResultEvent,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -33,9 +43,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset, ApprovalRequiredToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -811,6 +823,19 @@ async def test_model_settings_of_a_capability_appearing_mid_run_apply_once_loade
     assert temperatures == snapshot([1.0, 1.0, 0.0])
 
 
+@dataclass
+class NeedsApproval(AbstractCapability[object]):
+    def get_wrapper_toolset(self, toolset: AbstractToolset[object]) -> AbstractToolset[object]:
+        return ApprovalRequiredToolset(toolset)
+
+
+@dataclass
+class Audited(AbstractCapability[object]):
+    @durable_operation('audit')
+    async def audit(self) -> None:  # pragma: no cover
+        pass
+
+
 @pytest.mark.parametrize(
     'returned, error',
     [
@@ -820,11 +845,29 @@ async def test_model_settings_of_a_capability_appearing_mid_run_apply_once_loade
         ),
         (
             NativeTool[object](WebSearchTool(), id='search', defer_loading=True),
-            "A `DynamicCapability` with `per_run_step=True` does not support native tools yet, but it returned NativeTool(id='search') with native tools.",
+            "A `DynamicCapability` with `per_run_step=True` does not support native tools yet, but it returned NativeTool(id='search') with them.",
+        ),
+        (
+            CombinedCapability[object]([make_refunds(), Capability[object](id='always-on', instructions='Always.')]),
+            "A `DynamicCapability` with `per_run_step=True` can only return on-demand capabilities, but it returned Capability(id='always-on') without `defer_loading=True`.",
+        ),
+        (
+            CombinedCapability[object](
+                [make_refunds(), NativeTool[object](WebSearchTool(), id='search', defer_loading=True)]
+            ),
+            "A `DynamicCapability` with `per_run_step=True` does not support native tools yet, but it returned NativeTool(id='search') with them.",
+        ),
+        (
+            NeedsApproval(id='approvals', defer_loading=True),
+            "A `DynamicCapability` with `per_run_step=True` does not support a toolset wrapper (`get_wrapper_toolset`) yet, but it returned NeedsApproval(id='approvals') with them.",
+        ),
+        (
+            Audited(id='audited', defer_loading=True),
+            "A `DynamicCapability` with `per_run_step=True` does not support durable operations yet, but it returned Audited(id='audited') with them.",
         ),
     ],
 )
-async def test_per_step_factory_rejects_what_it_cannot_return(returned: Capability[object], error: str) -> None:
+async def test_per_step_factory_rejects_what_it_cannot_return(returned: AbstractCapability[object], error: str) -> None:
     agent = Agent(
         FunctionModel(lambda messages, info: make_text_response('done')),
         capabilities=[DynamicCapability(lambda ctx: returned, per_run_step=True)],
@@ -832,3 +875,126 @@ async def test_per_step_factory_rejects_what_it_cannot_return(returned: Capabili
     with pytest.raises(UserError) as exc_info:
         await agent.run('Hello')
     assert str(exc_info.value) == error
+
+
+@pytest.mark.moves_cache_prefix(reason='capabilities that leave mid-run take their hidden tools out of the request')
+async def test_combined_capabilities_join_and_leave_the_catalog_together() -> None:
+    """A `CombinedCapability` of on-demand capabilities registers each of them, and they leave together."""
+    seen = Seen()
+    policy = Capability[object](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    both = CombinedCapability[object]([make_refunds(), policy])
+
+    def capability_for_step(ctx: RunContext[object]) -> CombinedCapability[object] | None:
+        return both if 2 <= ctx.run_step <= 3 else None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.record(messages, info)
+        step = responses(messages)
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id='ping-0')])
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'policy'}, tool_call_id='load')])
+        if step == 2:
+            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id='ping-2')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[DynamicCapability(capability_for_step, per_run_step=True)])
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    result = await agent.run('Refund order A1')
+
+    assert seen.tools == snapshot(
+        [
+            ['load_capability', 'ping'],
+            ['load_capability', 'ping'],
+            ['load_capability', 'ping'],
+            ['load_capability', 'ping'],
+        ]
+    )
+    assert [
+        (part.id, part.content)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ] == snapshot(
+        [
+            (
+                InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                """\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.
+- policy: Refund policy.\
+""",
+            ),
+            (InstructionId(source=CapabilityInstructionSource(id='policy')), 'Refunds take 5 days.'),
+            (InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')), None),
+            (InstructionId(source=CapabilityInstructionSource(id='policy')), None),
+        ]
+    )
+
+
+@dataclass
+class Audit(AbstractCapability[object]):
+    """Records the steps its hooks run on and the tool results it hears about."""
+
+    requests: list[int] = field(default_factory=list[int])
+    events: list[str] = field(default_factory=list[str])
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.requests.append(ctx.run_step)
+        return request_context
+
+    async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+        if isinstance(event, FunctionToolResultEvent):
+            self.events.append(f'{ctx.run_step}: {event.part.tool_name}')
+
+
+async def test_hooks_and_event_listeners_apply_while_loaded_and_present() -> None:
+    """A per-step capability's hooks and event listeners run only once it's loaded, and stop once it's gone."""
+    audit = Audit(id='audit', defer_loading=True)
+
+    def capability_for_step(ctx: RunContext[object]) -> Audit | None:
+        return audit if 2 <= ctx.run_step <= 4 else None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = responses(messages)
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'audit'}, tool_call_id='load')])
+        if step < 5:
+            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id=f'ping-{step}')])
+        return make_text_response('done')
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # A run with an event listener streams its steps, from the step the listener appears on.
+        for part in model_fn(messages, info).parts:
+            if isinstance(part, ToolCallPart):
+                yield {
+                    0: DeltaToolCall(
+                        name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id
+                    )
+                }
+            else:
+                assert isinstance(part, TextPart)
+                yield part.content
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn),
+        capabilities=[DynamicCapability(capability_for_step, per_run_step=True)],
+    )
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    await agent.run('Hello')
+
+    assert audit.requests == snapshot([3, 4])
+    assert audit.events == snapshot(['3: ping', '4: ping'])

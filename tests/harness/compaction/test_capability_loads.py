@@ -10,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, DynamicCapability
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -650,3 +650,33 @@ class TestCapabilityLoadsAcrossCompaction:
             original, compacted, kept_from=len(compacted) - 1, deferred_ids={'weather'}, preserve=preserve
         )
         assert again == compacted
+
+
+async def test_a_capability_from_a_per_step_factory_stays_loaded_across_compaction() -> None:
+    """A load of a capability a `DynamicCapability(per_run_step=True)` returns is recorded again after the summary."""
+
+    def weather(ctx: RunContext[None]) -> Weather:
+        return Weather()
+
+    def per_step() -> DynamicCapability[None]:
+        return DynamicCapability(weather, per_run_step=True)
+
+    first = await _agent(FunctionModel(_first_turn), per_step()).run('Weather in Athens?')
+    second_turn = _LaterTurn()
+    compaction = SummarizingCompaction[None](max_messages=6, keep_messages=1, model=FunctionModel(_summarize))
+    second = await _agent(FunctionModel(second_turn), per_step(), compaction).run(
+        'And in Oslo?', message_history=first.all_messages()
+    )
+
+    assert second.output == 'Sunny in Oslo'
+    assert _shape(second.all_messages()) == snapshot(
+        [
+            "request: user 'Weather in Athens?', baseline",
+            'request: compaction',
+            "request: load ['weather'], reveal ['get_forecast']",
+            "request: user 'And in Oslo?', baseline, instructions capability:weather",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text 'Sunny in Oslo'",
+        ]
+    )
