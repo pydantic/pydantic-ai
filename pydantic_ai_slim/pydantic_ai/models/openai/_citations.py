@@ -36,6 +36,11 @@ chat_annotations_ta = TypeAdapter(list[chat.chat_completion_message.Annotation])
 chat_annotation_ta = TypeAdapter(chat.chat_completion_message.Annotation)
 
 
+def jsonable_annotation(annotation: object) -> object:
+    """A streamed annotation as JSON data: a model the SDK parsed it into is dumped, anything else is kept as is."""
+    return annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
+
+
 def marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAnchor | None:
     # OpenAI URL annotation offsets select the rendered link already present in the output, not the supported claim.
     return MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
