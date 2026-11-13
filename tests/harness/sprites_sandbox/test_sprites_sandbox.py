@@ -1218,8 +1218,9 @@ class TestSpritesSandbox:
         async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
             nonlocal skipped
             if transport.execs:
-                # Only the exec that reads the capture back is slow: more than the default stop grace.
-                skipped += 25
+                # Only the exec that reads the capture back is slow: more than the default stop grace, less than the
+                # handshake timeout.
+                skipped += 5
             return await connect(url, **kwargs)
 
         monkeypatch.setattr('sprites.websocket.connect', slow_connect)
