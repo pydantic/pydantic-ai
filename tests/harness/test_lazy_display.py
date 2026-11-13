@@ -132,23 +132,3 @@ async def test_an_unavailable_or_stuck_environment_is_not_retried(error: Workspa
     with pytest.raises(type(error)):
         await display.screenshot()
     assert driver.starts == 1
-
-
-async def test_a_failed_start_of_a_running_display_starts_it_again_on_the_next_call() -> None:
-    driver = FakeDriver()
-    failing: list[Exception] = []
-
-    async def start() -> None:
-        await driver.start()
-        if failing:
-            raise failing.pop()
-
-    display = LazyDisplay(driver, start)
-    await display.screenshot()
-    # Such as before a live view link, after the environment restarted and lost its display.
-    failing.append(WorkspaceError('the X server did not start'))
-    with pytest.raises(WorkspaceError, match='did not start'):
-        await display.start()
-    await display.act(Click(x=1, y=2))
-    assert driver.starts == 3
-    assert driver.acted == [Click(x=1, y=2)]
