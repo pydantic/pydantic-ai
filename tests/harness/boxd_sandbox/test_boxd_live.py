@@ -93,15 +93,13 @@ async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str)
 async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> None:
     """Validates the fake-encoded assumptions that the first computer call starts the machine's desktop, that it
     stays at the size it was held at, and that a screenshot, a zoom and the pointer's position come back as the
-    display contract expects. `live_view_url` is the console's view of that same machine."""
+    display contract expects."""
     async with _owned(client, desktop=(1440, 900)) as backend:
         display = backend.display
         assert display is not None
         await display.screenshot()
         assert await display.display_size() == (1440, 900)
         await check_display_contract(display)
-        machine = await backend.get_sandbox()
-        assert (await backend.live_view_url()).endswith(f'/desktop/{machine.name}')
 
 
 async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:

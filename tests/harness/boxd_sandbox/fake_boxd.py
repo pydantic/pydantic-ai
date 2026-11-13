@@ -42,7 +42,6 @@ from boxd import (
     ConflictError,
     ExecResult,
     Machine,
-    MachineAccess,
     MachineNetworking,
     NotFoundError,
 )
@@ -108,8 +107,6 @@ class FakeMachine:
     processes: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
     starts: int = 0
     org: str | None = None
-    # Whether boxd's reply carries the console link to the desktop, as it does when the client knows the console.
-    desktop_link: bool = True
     # A copy's source machine: its id, and its status when it was forked.
     forked_from: tuple[str, str] | None = None
 
@@ -120,9 +117,6 @@ class FakeMachine:
             status=status or self.status,
             networking=MachineNetworking(networks=self.networks, isolated=self.isolated),
             org=None if self.org is None else OrgRef(id=f'org-{self.org}', name=self.org),
-            access=MachineAccess.model_construct(
-                desktop_url=f'https://app.boxd.example/desktop/{self.name}' if self.desktop_link else ''
-            ),
         )
 
 

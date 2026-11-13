@@ -6,7 +6,7 @@ import anyio
 import pytest
 from boxd import NotFoundError
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent
 from pydantic_ai.computer_use import (
     Click,
     ComputerReturnPart,
@@ -269,33 +269,8 @@ async def test_commands_run_on_the_desktop(host: FakeBoxd) -> None:
     ] == 'exec env -- DISPLAY=:100 A=1 true </dev/null'
 
 
-async def test_the_live_view_url_is_the_desktop_in_the_console(host: FakeBoxd) -> None:
-    backend = BoxdSandboxBackend(desktop=True)
-
-    url = await backend.live_view_url()
-
-    assert url == f'https://app.boxd.example/desktop/{host.only.name}'
-    # The desktop runs, held at its size, before the link is handed out.
-    assert host.desktop.calls == ['set_screen_size 1280x800']
-
-
-async def test_a_machine_without_a_desktop_has_no_display(host: FakeBoxd) -> None:
-    backend = BoxdSandboxBackend()
-
-    assert backend.display is None
-    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
-        await backend.live_view_url()
-    assert host.machines == {}
-
-
-async def test_a_desktop_link_boxd_did_not_return_is_a_workspace_error(host: FakeBoxd) -> None:
-    """boxd builds the link from the console's address, which a client configured with only an API endpoint lacks."""
-    backend = BoxdSandboxBackend(desktop=True)
-    await backend.get_sandbox()
-    host.only.desktop_link = False
-
-    with pytest.raises(WorkspaceError, match='did not return a desktop link'):
-        await backend.live_view_url()
+def test_a_machine_without_a_desktop_has_no_display() -> None:
+    assert BoxdSandboxBackend().display is None
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:

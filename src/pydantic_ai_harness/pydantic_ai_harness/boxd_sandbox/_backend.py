@@ -49,7 +49,6 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -413,7 +412,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             Nothing is read from the host environment.
         desktop: Give the agent the machine's desktop for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse], held at 1280x800 with `True`,
-            or at its `(width, height)`. `live_view_url()` opens it in the boxd console.
+            or at its `(width, height)`.
     """
 
     def __init__(
@@ -505,22 +504,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         """Start the desktop unless it runs, and hold it at the size asked for."""
         computer, machine_id = self._attached_computer()
         assert self._desktop_size is not None
-        # Held, so someone watching in the console sees the screen scaled instead of resizing it under the agent.
+        # Held, so boxd's console, which anyone in the organization can open, scales the screen instead of resizing it.
         await computer.set_screen_size(machine_id, *self._desktop_size)
-
-    async def live_view_url(self) -> str:
-        """A link to watch and use the desktop in the boxd console.
-
-        The link carries no secret: opening it needs a browser signed in to boxd as a member of the machine's
-        organization.
-        """
-        if self._display is None:
-            raise UserError('This boxd workspace has no display: create it with `desktop=True`.')
-        await self._display.start()
-        machine = await self.get_sandbox()
-        if not machine.access.desktop_url:
-            raise WorkspaceError(f'boxd did not return a desktop link for machine {machine.id}.')
-        return machine.access.desktop_url
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
