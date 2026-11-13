@@ -608,7 +608,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
             # The tool reads the run's messages and model in workflow code; the display work is one durable unit.
-            metadata={'temporal': False, 'prefect': False, 'render_workflows': False, 'aws_lambda': False},
+            metadata={
+                'temporal': False,
+                'prefect': False,
+                'render_workflows': False,
+                'aws_lambda': False,
+                'azure_durable_task': False,
+            },
         )
         self._toolset = FunctionToolset([tool], id=self.id)
 

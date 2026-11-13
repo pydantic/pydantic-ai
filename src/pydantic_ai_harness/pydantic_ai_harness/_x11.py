@@ -391,6 +391,7 @@ class X11Computer:
                 await self._xdotool(
                     [*_move(x, y), 'click', '--repeat', _repeat(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
                     hold=modifiers,
+                    release=('mouseup', wheel),
                     pauses=amount * _SCROLL_TICK_SECONDS,
                 )
             case TypeText(text=text):
