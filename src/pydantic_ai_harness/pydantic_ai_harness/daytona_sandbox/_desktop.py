@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
-from daytona import DaytonaConnectionError, DaytonaTimeoutError, ScreenshotRegion
+from daytona import DaytonaBadGatewayError, DaytonaConnectionError, DaytonaTimeoutError, ScreenshotRegion
 
 from pydantic_ai.computer_use import (
     Click,
@@ -123,12 +123,13 @@ async def _send_input(request: Callable[[], Awaitable[object]]) -> object:
 
     So a cancel stops before the request is sent, or waits for it to finish: the next action, perhaps another run's,
     must not reach the screen before it. Every input request goes through here. For the same reason, a request whose
-    outcome is unknown ends the run: a timeout doesn't stop Daytona carrying it out, nor does a dropped connection.
+    outcome is unknown ends the run: a timeout (including a 504) doesn't stop Daytona carrying it out, nor does a dropped
+    connection, nor the 502 its proxy returns when it loses the sandbox after passing the request on.
     """
     await anyio.lowlevel.checkpoint_if_cancelled()
     try:
         return await run_to_completion(request)
-    except (DaytonaTimeoutError, DaytonaConnectionError) as error:
+    except (DaytonaTimeoutError, DaytonaConnectionError, DaytonaBadGatewayError) as error:
         raise WorkspaceUnavailableError(
             f"Daytona didn't confirm the input, which may still be running on its desktop: {error}"
         ) from error

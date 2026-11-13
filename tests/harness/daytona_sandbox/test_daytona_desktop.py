@@ -10,6 +10,7 @@ import anyio
 import anyio.lowlevel
 import pytest
 from daytona import (
+    DaytonaBadGatewayError,
     DaytonaBadRequestError,
     DaytonaConnectionError,
     DaytonaError,
@@ -279,6 +280,7 @@ async def test_a_failed_release_after_a_failed_action_says_what_may_still_be_hel
     [
         pytest.param(DaytonaTimeoutError('request timeout'), True, id='timeout'),
         pytest.param(DaytonaConnectionError('Server disconnected'), True, id='connection-lost'),
+        pytest.param(DaytonaBadGatewayError('upstream dropped', status_code=502), True, id='proxy-lost-sandbox'),
         pytest.param(DaytonaBadRequestError('invalid key', status_code=400), False, id='refused'),
     ],
 )
