@@ -490,7 +490,7 @@ def _http_error(
 def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
     try:
         yield
-    except (errors.APIError, httpx2.TransportError) as e:
+    except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
         raise _map_api_error(e, model_name, model_id_namespace) from e
 
 

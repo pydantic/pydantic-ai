@@ -1,0 +1,582 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "628"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        model: openai.gpt-5.6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Follow the tool instructions.
+        instructions: >-
+          Call first_tool. After receiving its result, call second_tool in a new model
+          response.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: first_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+        - name: second_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "5535"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1794353422
+        created_at: 1794353422
+        error: null
+        frequency_penalty: 0.0
+        id: resp_mubj2dlybdsblwh33rwl5llzonjaylluzbxgpr2vthirqzj4hcaa
+        incomplete_details: null
+        instructions: >-
+          Call first_tool. After receiving its result, call second_tool in a new model
+          response.
+        max_output_tokens: null
+        max_tool_calls: null
+        metadata: {}
+        model: openai.gpt-5.6-luna
+        object: response
+        output:
+        - content: []
+          encrypted_content: >-
+            rsn_eyJhbGciOiJFUzI1NiIsInR5cCI6ImFyY2grandzIiwicHJvZmlsZSI6ImFyY2gtMSIsImlzcyI6ImF3cyIsImtpZCI6Ik1yX085VzI0UGFSUTdlb2pqM3lndERfbDE0d0NRNjJISDZOQ01kSzdUbXciLCJjZXJ0aWZpY2F0ZSI6ImV5SmhiR2NpT2lKRlV6STFOaUlzSW5SNWNDSTZJbUZ5WTJndGMybG5ibVZ5SzJwM2N5SXNJbkJ5YjJacGJHVWlPaUpoY21Ob0xURWlMQ0pwYzNNaU9pSmhkM01pTENKcmFXUWlPaUpzY0MxblEyNUdVemh0UzB0WVMzUjZWbTFPY2poaFdWbDBjMUIyT1dWQk1rUTBVWGhRWnpCa2MyMDRJbjAuZXlKcWQyc2lPbnNpYTNSNUlqb2lSVU1pTENKamNuWWlPaUpRTFRJMU5pSXNJbmdpT2lKclNXcFhiMVZZU1dKRVFYbHRlRFF0VjJsbFIzbFNTbEZNUVV0WFgycHJRMFZvVDJWMVIwRmtUMkZSSWl3aWVTSTZJbDlGWlUxblRHZHJhWGxIV201aFUyeGlObGh5VFhwclRWSnlUM3BuU0hWbGNVUlNjWGd0ZDBsc2VUUWlMQ0oxYzJVaU9pSnphV2NpTENKaGJHY2lPaUpGVXpJMU5pSXNJbXRwWkNJNklrMXlYMDg1VnpJMFVHRlNVVGRsYjJwcU0zbG5kRVJmYkRFMGQwTlJOakpJU0RaT1EwMWtTemRVYlhjaWZTd2ljSEp2ZG1sa1pYSnpJanBiSW05aGFTSmRMQ0ozY21sMFpWOW1jbTl0SWpveE56azBNekV4TkRRekxDSjNjbWwwWlY5MWJuUnBiQ0k2TVRjNU5ETTVOemcwTXl3aWNtVmhaRjkxYm5ScGJDSTZNVGc0T1RjME1EZ3dNSDAuWTN5MlhxRjBtSWNVMllvdklmbE51QXJWUWJtRGZjTk9oaXpUUjRTN0VXcEtpcGF6X0I3bUlrZzNmS0w3OUtXSXFYOUhPQjRjOFZKcllzcWxBZ1RXc1EiLCJpc3NfbWV0YSI6eyJyb3V0aW5nIjoiSUFEOCJ9fQ.eyJwcm90ZWN0ZWQiOiJleUppY21GdVkyaGZhV1FpT2lKUGIybFJVM1puTTFSM2EwMXVRbVY0WmtWSU15MUJJaXdpYzJGc2RDSTZJbXR3V2toNk9HbFhTamRoV2xkak1FMUxPR1ZNZFdkUlZtaDZWblJEU0hCa1NVWlJWMjF6TmtoVWRrRWlMQ0pqYjI1MFpXNTBYMjV2Ym1ObElqb2lhVkpDWDBFMVFXZ3pWMFF0V0c5cVJ5SXNJbkpsWTJsd2FXVnVkSE1pT2x0N0luQnNZWFJtYjNKdElqb2lZWGR6SWl3aWEybGtJam9pVGtSR1FrWnNhRUpsYlcwek9DMW1UekJJVUhKRWQwc3ROVFZNZWtWUk5XVnBVM0Z6VUZaTGJFUkVheUlzSW1WdVkzSjVjSFJsWkY5aWNtRnVZMmdpT2lKTFIybEZjbVJvVDFGemJVVjFiRWRqZWtsdVRGbHRZVTlZUmxKWmNFMUpTREpmY0VOaldFMUpTRGhxTkRWVmVIZFhRVlJLYjFSWlFrNTBiWGxsYVRWeFdGbzRkVzh4UWpCcGNFSlhZbTU1VTB4WWRscG9TRnBKV2xnNFl6Wk1RMVZDWW1SelVXaDVOalpNTjFGTlYzcExXRzlvZG00dE5FTnllWG96UldWS2RYaDVaWEUxUlhWcWN6SnVNM0JSTUV3dGNXWTFTbEY1WDBZMk5EZEpZMmxOUWpSU1RqZzRYMU5IT1hGblIwVmhjREIzUVVzMWF6UmpRMll0VFZSRUxVcFNhVEZzU0hGc1JUaHpNR1pDY21SUE1YVTRTSEZpYjFCa2VYRlJaRWh2Y21wcldWSmhTRlZhWVdSSmJIbGpPVEpJUVZCalRVZDViblF6TkVGWFdGSllRamd0U0U1bVZWRkhja2h3ZWtwU1RuVnFSR2hMTjJKVU9VdDJiSE5wZVRsS2FVOW9TbTlPUldoUWFtWlZXRlp0UkVJd2IzQkdla3B4WVZGcGRtMURiRVZ6VjJGbFYzQTBVa2xNUzJsWVZWSmFSbUpSYUVWUWFVVTBkVFpZY1ZsTmJsUlhaMmhxUWxBMFRFNTFlV0UzZVcxT2VpMXdORTB5U0hod1JtZGxkMEpZUWtwRWVrbHVVbDkwT1dvM05UYzBORWx2Tkd0ak1tMTFhSGhhZFVObFFuRlhhbkp1T0ZGbGRXeFBWSFJ1UWtSSk5tbzFRbmxCVUVacmFUZHlhR1JIWjBaRlZpMDRiV1JuU1dkTFZIUktjekJsV0U0NGJuQmxXbkEyVEc5SFVIRjBRa1IyT0Vrd1lscFRkRkIyT1hOTFlXMDNXR00wT1VNMGRrOVNNM1pqZUNKOVhYMCIsImNpcGhlcnRleHQiOiJpNUFrc01lZnR4Q1Y3VF8wV0VHWms1YjN0MzFkMmhWR1hObGsycUdvS05Ga1dhM0JsYkk3TkdqWHloaWpFWUZzUEtKRlJZRVFVM0tlSFp0NHpYcnIxWlJIcGRTSm81WEVpNjhoSHJ0X005aXptWkdiZENBT05VakZNY0NLbjY2Mm84OWgtY2lWekdydFZCbDFMTW4wWUE2OWp3bUVRdVhjd1R6cEpxYlF2andnaG1NYzdSeC1rcFJhRGZSa0FDZ1p3TjN3VUdrU1BwSmdxZHp1cVJGbVBFZW4tTkc3U2liVHZabVlvRDRxNFM2VHhxQk12OXhOZnlKbjFXTlpwOWNEODk2VGo2Ui1Sck5wT1ZPN0RZZWp2R1VzTml5WUNuSXFBZ25neEk3cGlXV2Rqa0ZSVjBKekNKSUdQMjhhSHlvOTg2VjdSZEdaTVpXX29JcklOUjR4M0VxRk9jZHpmN3BKRkt5X3plcnFFemRQNFZKd1lReGhOalRPWU9iSG0tS3RWbkU3cHd5LXZsM0I3UzIzV0VLYVJJWlN4RXN2SW5aZlNpN2VOUEhSZFF0VWRaVllyRzB5OFJJekdZYThqYTNqdjBNTUxtYWNPbkFpZUg3b0h1X2tJNzU5TlJwNVJseHh4dW5mcWxwa1MzYjlOT2RsZkhETWVHYkN4ZzJYbHFlMkZDS0lpT3RSaXMzck9vNVRKUW1sbERRLUtObTZlN2tvYXRpZGpGWFpJTWJENVN2a05yWjhGUmRMS2JUMEJ0YlNrenNuM09mcFREazRiVEtnSk5XUjFDQmc0TWU4V0V2aG1XanlSZGtZZXdOaHhQeDBtUS0tOTdmVUtHVFZ5WHJMbWRoMEVlLXo1dVcwN2hjSjFWT1lnaHRhVjNzN08wR1NTRXJrOEdkcmRuSUFBV0dRa0lIU2EyUHp3UHRCbXgyTXVQMGFoYjZ6V1FQTzVCU3Q4bGh0SUxNV2YyU0MtYmItSEJzNUxCNjZOS1c5V1AxYUt1UDYwUFk1VW1oZU9Kd21WYzFyclVzblowNGdiemdMdGMwcDdBZ09Ucmk3Um9pYUhSc1AwLUpGVkpjRndRZyJ9.xfk_sqIuqKPqHLVY2TcH2PeV12h3RmMRWeoh0QdALaK_qdyBu7yR5yIiTGfhuoK3Fg1KicgHK3yO_4lZ8rmV0w
+          id: rs_18d36eead6575f3c8be9a69364481f62
+          summary: []
+          type: reasoning
+        - arguments: "{}"
+          call_id: call_90eec98086dd5fc8ba30da13ebb9b8de
+          id: fc_27ee08901c265b5b8beb2d5835d0898b
+          name: first_tool
+          status: completed
+          type: function_call
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          summary: null
+          effort: medium
+          context: all_turns
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tools:
+        - description: null
+          name: first_tool
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        - description: null
+          name: second_tool
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 64
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 34
+          output_tokens_details:
+            reasoning_tokens: 18
+          total_tokens: 98
+        user: null
+        moderation: null
+  recorded_at: 2026-11-10T23:30:22.918834+00:00
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4631"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        model: openai.gpt-5.6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Follow the tool instructions.
+        - id: rs_18d36eead6575f3c8be9a69364481f62
+          summary: []
+          encrypted_content: >-
+            rsn_eyJhbGciOiJFUzI1NiIsInR5cCI6ImFyY2grandzIiwicHJvZmlsZSI6ImFyY2gtMSIsImlzcyI6ImF3cyIsImtpZCI6Ik1yX085VzI0UGFSUTdlb2pqM3lndERfbDE0d0NRNjJISDZOQ01kSzdUbXciLCJjZXJ0aWZpY2F0ZSI6ImV5SmhiR2NpT2lKRlV6STFOaUlzSW5SNWNDSTZJbUZ5WTJndGMybG5ibVZ5SzJwM2N5SXNJbkJ5YjJacGJHVWlPaUpoY21Ob0xURWlMQ0pwYzNNaU9pSmhkM01pTENKcmFXUWlPaUpzY0MxblEyNUdVemh0UzB0WVMzUjZWbTFPY2poaFdWbDBjMUIyT1dWQk1rUTBVWGhRWnpCa2MyMDRJbjAuZXlKcWQyc2lPbnNpYTNSNUlqb2lSVU1pTENKamNuWWlPaUpRTFRJMU5pSXNJbmdpT2lKclNXcFhiMVZZU1dKRVFYbHRlRFF0VjJsbFIzbFNTbEZNUVV0WFgycHJRMFZvVDJWMVIwRmtUMkZSSWl3aWVTSTZJbDlGWlUxblRHZHJhWGxIV201aFUyeGlObGh5VFhwclRWSnlUM3BuU0hWbGNVUlNjWGd0ZDBsc2VUUWlMQ0oxYzJVaU9pSnphV2NpTENKaGJHY2lPaUpGVXpJMU5pSXNJbXRwWkNJNklrMXlYMDg1VnpJMFVHRlNVVGRsYjJwcU0zbG5kRVJmYkRFMGQwTlJOakpJU0RaT1EwMWtTemRVYlhjaWZTd2ljSEp2ZG1sa1pYSnpJanBiSW05aGFTSmRMQ0ozY21sMFpWOW1jbTl0SWpveE56azBNekV4TkRRekxDSjNjbWwwWlY5MWJuUnBiQ0k2TVRjNU5ETTVOemcwTXl3aWNtVmhaRjkxYm5ScGJDSTZNVGc0T1RjME1EZ3dNSDAuWTN5MlhxRjBtSWNVMllvdklmbE51QXJWUWJtRGZjTk9oaXpUUjRTN0VXcEtpcGF6X0I3bUlrZzNmS0w3OUtXSXFYOUhPQjRjOFZKcllzcWxBZ1RXc1EiLCJpc3NfbWV0YSI6eyJyb3V0aW5nIjoiSUFEOCJ9fQ.eyJwcm90ZWN0ZWQiOiJleUppY21GdVkyaGZhV1FpT2lKUGIybFJVM1puTTFSM2EwMXVRbVY0WmtWSU15MUJJaXdpYzJGc2RDSTZJbXR3V2toNk9HbFhTamRoV2xkak1FMUxPR1ZNZFdkUlZtaDZWblJEU0hCa1NVWlJWMjF6TmtoVWRrRWlMQ0pqYjI1MFpXNTBYMjV2Ym1ObElqb2lhVkpDWDBFMVFXZ3pWMFF0V0c5cVJ5SXNJbkpsWTJsd2FXVnVkSE1pT2x0N0luQnNZWFJtYjNKdElqb2lZWGR6SWl3aWEybGtJam9pVGtSR1FrWnNhRUpsYlcwek9DMW1UekJJVUhKRWQwc3ROVFZNZWtWUk5XVnBVM0Z6VUZaTGJFUkVheUlzSW1WdVkzSjVjSFJsWkY5aWNtRnVZMmdpT2lKTFIybEZjbVJvVDFGemJVVjFiRWRqZWtsdVRGbHRZVTlZUmxKWmNFMUpTREpmY0VOaldFMUpTRGhxTkRWVmVIZFhRVlJLYjFSWlFrNTBiWGxsYVRWeFdGbzRkVzh4UWpCcGNFSlhZbTU1VTB4WWRscG9TRnBKV2xnNFl6Wk1RMVZDWW1SelVXaDVOalpNTjFGTlYzcExXRzlvZG00dE5FTnllWG96UldWS2RYaDVaWEUxUlhWcWN6SnVNM0JSTUV3dGNXWTFTbEY1WDBZMk5EZEpZMmxOUWpSU1RqZzRYMU5IT1hGblIwVmhjREIzUVVzMWF6UmpRMll0VFZSRUxVcFNhVEZzU0hGc1JUaHpNR1pDY21SUE1YVTRTSEZpYjFCa2VYRlJaRWh2Y21wcldWSmhTRlZhWVdSSmJIbGpPVEpJUVZCalRVZDViblF6TkVGWFdGSllRamd0U0U1bVZWRkhja2h3ZWtwU1RuVnFSR2hMTjJKVU9VdDJiSE5wZVRsS2FVOW9TbTlPUldoUWFtWlZXRlp0UkVJd2IzQkdla3B4WVZGcGRtMURiRVZ6VjJGbFYzQTBVa2xNUzJsWVZWSmFSbUpSYUVWUWFVVTBkVFpZY1ZsTmJsUlhaMmhxUWxBMFRFNTFlV0UzZVcxT2VpMXdORTB5U0hod1JtZGxkMEpZUWtwRWVrbHVVbDkwT1dvM05UYzBORWx2Tkd0ak1tMTFhSGhhZFVObFFuRlhhbkp1T0ZGbGRXeFBWSFJ1UWtSSk5tbzFRbmxCVUVacmFUZHlhR1JIWjBaRlZpMDRiV1JuU1dkTFZIUktjekJsV0U0NGJuQmxXbkEyVEc5SFVIRjBRa1IyT0Vrd1lscFRkRkIyT1hOTFlXMDNXR00wT1VNMGRrOVNNM1pqZUNKOVhYMCIsImNpcGhlcnRleHQiOiJpNUFrc01lZnR4Q1Y3VF8wV0VHWms1YjN0MzFkMmhWR1hObGsycUdvS05Ga1dhM0JsYkk3TkdqWHloaWpFWUZzUEtKRlJZRVFVM0tlSFp0NHpYcnIxWlJIcGRTSm81WEVpNjhoSHJ0X005aXptWkdiZENBT05VakZNY0NLbjY2Mm84OWgtY2lWekdydFZCbDFMTW4wWUE2OWp3bUVRdVhjd1R6cEpxYlF2andnaG1NYzdSeC1rcFJhRGZSa0FDZ1p3TjN3VUdrU1BwSmdxZHp1cVJGbVBFZW4tTkc3U2liVHZabVlvRDRxNFM2VHhxQk12OXhOZnlKbjFXTlpwOWNEODk2VGo2Ui1Sck5wT1ZPN0RZZWp2R1VzTml5WUNuSXFBZ25neEk3cGlXV2Rqa0ZSVjBKekNKSUdQMjhhSHlvOTg2VjdSZEdaTVpXX29JcklOUjR4M0VxRk9jZHpmN3BKRkt5X3plcnFFemRQNFZKd1lReGhOalRPWU9iSG0tS3RWbkU3cHd5LXZsM0I3UzIzV0VLYVJJWlN4RXN2SW5aZlNpN2VOUEhSZFF0VWRaVllyRzB5OFJJekdZYThqYTNqdjBNTUxtYWNPbkFpZUg3b0h1X2tJNzU5TlJwNVJseHh4dW5mcWxwa1MzYjlOT2RsZkhETWVHYkN4ZzJYbHFlMkZDS0lpT3RSaXMzck9vNVRKUW1sbERRLUtObTZlN2tvYXRpZGpGWFpJTWJENVN2a05yWjhGUmRMS2JUMEJ0YlNrenNuM09mcFREazRiVEtnSk5XUjFDQmc0TWU4V0V2aG1XanlSZGtZZXdOaHhQeDBtUS0tOTdmVUtHVFZ5WHJMbWRoMEVlLXo1dVcwN2hjSjFWT1lnaHRhVjNzN08wR1NTRXJrOEdkcmRuSUFBV0dRa0lIU2EyUHp3UHRCbXgyTXVQMGFoYjZ6V1FQTzVCU3Q4bGh0SUxNV2YyU0MtYmItSEJzNUxCNjZOS1c5V1AxYUt1UDYwUFk1VW1oZU9Kd21WYzFyclVzblowNGdiemdMdGMwcDdBZ09Ucmk3Um9pYUhSc1AwLUpGVkpjRndRZyJ9.xfk_sqIuqKPqHLVY2TcH2PeV12h3RmMRWeoh0QdALaK_qdyBu7yR5yIiTGfhuoK3Fg1KicgHK3yO_4lZ8rmV0w
+          type: reasoning
+        - name: first_tool
+          arguments: "{}"
+          call_id: call_90eec98086dd5fc8ba30da13ebb9b8de
+          type: function_call
+          id: fc_27ee08901c265b5b8beb2d5835d0898b
+        - type: function_call_output
+          call_id: call_90eec98086dd5fc8ba30da13ebb9b8de
+          output: first result
+        instructions: >-
+          Call first_tool. After receiving its result, call second_tool in a new model
+          response.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: first_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+        - name: second_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "5500"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1794353423
+        created_at: 1794353423
+        error: null
+        frequency_penalty: 0.0
+        id: resp_dzurpvjatvte46a5b6mkejpxi6bmb7mje6ua5fmmxepnk3z76zbq
+        incomplete_details: null
+        instructions: >-
+          Call first_tool. After receiving its result, call second_tool in a new model
+          response.
+        max_output_tokens: null
+        max_tool_calls: null
+        metadata: {}
+        model: openai.gpt-5.6-luna
+        object: response
+        output:
+        - content: []
+          encrypted_content: >-
+            rsn_eyJhbGciOiJFUzI1NiIsInR5cCI6ImFyY2grandzIiwicHJvZmlsZSI6ImFyY2gtMSIsImlzcyI6ImF3cyIsImtpZCI6ImVxcFg4Q3NLdWlSTXJMWjZSYnI2dGl5QWNFQ0pSS3lYUkJHR051SFUxX2MiLCJjZXJ0aWZpY2F0ZSI6ImV5SmhiR2NpT2lKRlV6STFOaUlzSW5SNWNDSTZJbUZ5WTJndGMybG5ibVZ5SzJwM2N5SXNJbkJ5YjJacGJHVWlPaUpoY21Ob0xURWlMQ0pwYzNNaU9pSmhkM01pTENKcmFXUWlPaUpzY0MxblEyNUdVemh0UzB0WVMzUjZWbTFPY2poaFdWbDBjMUIyT1dWQk1rUTBVWGhRWnpCa2MyMDRJbjAuZXlKcWQyc2lPbnNpYTNSNUlqb2lSVU1pTENKamNuWWlPaUpRTFRJMU5pSXNJbmdpT2lKdVZIWmFTamMzVmxka1dXbzBXakpwVDJJM1IzQk9TR3RtUVVWTmFFVnhXbEJhWjE5MGRHdzFYekZaSWl3aWVTSTZJamhCV0dwQ1lWTnhVSFpUTFc5Vk5tczVOR2d5VG01ZlRFaFpaMjloWkY5ZmVHMXhZbTk2WnpOMFh6UWlMQ0oxYzJVaU9pSnphV2NpTENKaGJHY2lPaUpGVXpJMU5pSXNJbXRwWkNJNkltVnhjRmc0UTNOTGRXbFNUWEpNV2paU1luSTJkR2w1UVdORlEwcFNTM2xZVWtKSFIwNTFTRlV4WDJNaWZTd2ljSEp2ZG1sa1pYSnpJanBiSW05aGFTSmRMQ0ozY21sMFpWOW1jbTl0SWpveE56azBNekV6TXpJMUxDSjNjbWwwWlY5MWJuUnBiQ0k2TVRjNU5ETTVPVGN5TlN3aWNtVmhaRjkxYm5ScGJDSTZNVGc0T1RjME1EZ3dNSDAueGQ3azF2X2ZQSUJHX0d3dFdZWGZRd01Ed0FqNWRXQ3JJTE5Ua0VCTGJNSzMxTjF3SFVqNGdmYlAwOHFHRTRsYk90WkFmcXp5OGdHQ3Q3X0VucUp3NEEiLCJpc3NfbWV0YSI6eyJyb3V0aW5nIjoiSUFEOCJ9fQ.eyJwcm90ZWN0ZWQiOiJleUppY21GdVkyaGZhV1FpT2lKUGIybFJVM1puTTFSM2EwMXVRbVY0WmtWSU15MUJJaXdpYzJGc2RDSTZJbXBaZEV4MllYWXpUekZsZW1wU1drdGZZemx0VERjeVkzaEpkRW8wTjJRd01IVjBjelZQVnpCSWQwa2lMQ0pqYjI1MFpXNTBYMjV2Ym1ObElqb2lPR1JzVFdoUWFqTXdjSHBMTkU5a1p5SXNJbkpsWTJsd2FXVnVkSE1pT2x0N0luQnNZWFJtYjNKdElqb2lZWGR6SWl3aWEybGtJam9pVGtSR1FrWnNhRUpsYlcwek9DMW1UekJJVUhKRWQwc3ROVFZNZWtWUk5XVnBVM0Z6VUZaTGJFUkVheUlzSW1WdVkzSjVjSFJsWkY5aWNtRnVZMmdpT2lKTFIybEZjbVJvVDFGemJVVjFiRWRqZWtsdVRGbHRZVTlZUmxKWmNFMUpTREpmY0VOaldFMUpTRGhxTkRWVmVIZFhRVlJLYjFSWlFrNTBiWGxsYVRWeFdGbzRkVzh4UWpCcGNFSlhZbTU1VTB4WWRscG9TRnBKV2xnNFl6Wk1RMVZDWW1SelVXaDVOalpNTjFGTlYzcExXRzlvZG00dE5FTnllWG96UldWS2RYaDVaWEUxUlhWcWN6SnVNM0JSTUV3dGNXWTFTbEY1WDBZMk5EZEpZMmxOUWpSU1RqZzRYMU5IT1hGblIwVmhjREIzUVVzMWF6UmpRMll0VFZSRUxVcFNhVEZzU0hGc1JUaHpNR1pDY21SUE1YVTRTSEZpYjFCa2VYRlJaRWh2Y21wcldWSmhTRlZhWVdSSmJIbGpPVEpJUVZCalRVZDViblF6TkVGWFdGSllRamd0U0U1bVZWRkhja2h3ZWtwU1RuVnFSR2hMTjJKVU9VdDJiSE5wZVRsS2FVOW9TbTlPUldoUWFtWlZXRlp0UkVJd2IzQkdla3B4WVZGcGRtMURiRVZ6VjJGbFYzQTBVa2xNUzJsWVZWSmFSbUpSYUVWUWFVVTBkVFpZY1ZsTmJsUlhaMmhxUWxBMFRFNTFlV0UzZVcxT2VpMXdORTB5U0hod1JtZGxkMEpZUWtwRWVrbHVVbDkwT1dvM05UYzBORWx2Tkd0ak1tMTFhSGhhZFVObFFuRlhhbkp1T0ZGbGRXeFBWSFJ1UWtSSk5tbzFRbmxCVUVacmFUZHlhR1JIWjBaRlZpMDRiV1JuU1dkTFZIUktjekJsV0U0NGJuQmxXbkEyVEc5SFVIRjBRa1IyT0Vrd1lscFRkRkIyT1hOTFlXMDNXR00wT1VNMGRrOVNNM1pqZUNKOVhYMCIsImNpcGhlcnRleHQiOiJrZGRlMHhJMUxGRFR3a25aa0NMRm95M09tUUFaRFItSFk3a0hET1RGM2dTS2t0ck1MeHJQcGZZdTVVYXdvVEZpTEhvUjUtTFJqOTRoSFFvbXdsUHk4X0dMUEItMHdNUGphemJkNVhOQkp1eE9ENndtNXRRUWtueXE3NkNoU2ZqWDlaa2J5REhOcm4xdURhSGhiUjVUd2ZWQkpJREZEX1BFa2x6SjdWb01ka1JGRURCSnRwc19weW1VMXZkMEZXM040Q1ExYmliTWFxbEczVjBpOHE0ZVJ6aTBIY1k4aUhtaHhRVURSd1BSTDJkQ3MtTzN1RU5PNENLTlE3UEYxNUE5a3NQcjhKX2FPb2gya3pvVFhDb3RhdUNpd2s1b0RZOVFXS20zZ0hpRk5EcWlVQWxGQmlNYkJhdjJXcV9YRmRjbWlOUFhZUGNLTDRkX1NEUXJqUS1FRFRqSThPNEM3RTJET0lyaTRqTmtrOTdoUmN6TmtkOVUyNTBuZU9LWjhMWmtFelNWOUNtUlBwdXVNMkRGeEJvQklvS3ZSMk9ia29zTi1rS2RoTTBqRmh1QWttWElsQXA0bmUtM01jTnJPaEp2VU90UTdRTmxDbFR1UmxTZU1kc0FOemhNTlZVWV96cW4tRE1uWm5LWlNYcjhnMGg3eFJ6UERKZVZDVWxnQnFrRG1KR25oNk93aWZZb21lSnI3elFzYXBoRll6aDhRbGFOYi1MckxCQllDSExxT1RqWEg2NDhULXRkZnVXbjZSbHNsSU9rVmkzcl9kNDJyR1N0Z2g2U2MwRVdHZTYxVFNHeTNFcWJvcGVhSGVNNzB0ZW1Qc21paGIyNXlpZlA1QTBGb1N2bjkzSnktRklPanl5eUp6YV9fZi1RaXNaejdZMVNaT290ZFhFeFBaeUN6YUkxZXpndWQ2Um5pcFBpRy1jZkRBNHpxazI2LTFNSkdXM2xEUm1FdzBjekdPWFh0MUN0RlNrSG54NjctblpIcXpZVHFqaHRYcFB4ZE5vQnJWWkRPNjlPTm9mMW15QWZ6SThMVXcifQ.NdWUshsXin5kXWXTW_1KdwuilKHwMnp17_MBWCCvmfbSNBaZvtWS-hVZyn6nvNgfEeif43O030adG3qMHDPoAQ
+          id: rs_0a2874b791d45e188597cc2f49bac0b9
+          summary: []
+          type: reasoning
+        - arguments: "{}"
+          call_id: call_8b70c794677d532d8856b610cd7a6ff8
+          id: fc_657f09d093c85c179f678f3d7644c9ee
+          name: second_tool
+          status: completed
+          type: function_call
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          summary: null
+          effort: medium
+          context: all_turns
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tools:
+        - description: null
+          name: first_tool
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        - description: null
+          name: second_tool
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 111
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 29
+          output_tokens_details:
+            reasoning_tokens: 13
+          total_tokens: 140
+        user: null
+        moderation: null
+  recorded_at: 2026-11-10T23:30:23.473197+00:00
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "8598"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        model: openai.gpt-5.6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Follow the tool instructions.
+        - id: rs_18d36eead6575f3c8be9a69364481f62
+          summary: []
+          encrypted_content: >-
+            rsn_eyJhbGciOiJFUzI1NiIsInR5cCI6ImFyY2grandzIiwicHJvZmlsZSI6ImFyY2gtMSIsImlzcyI6ImF3cyIsImtpZCI6Ik1yX085VzI0UGFSUTdlb2pqM3lndERfbDE0d0NRNjJISDZOQ01kSzdUbXciLCJjZXJ0aWZpY2F0ZSI6ImV5SmhiR2NpT2lKRlV6STFOaUlzSW5SNWNDSTZJbUZ5WTJndGMybG5ibVZ5SzJwM2N5SXNJbkJ5YjJacGJHVWlPaUpoY21Ob0xURWlMQ0pwYzNNaU9pSmhkM01pTENKcmFXUWlPaUpzY0MxblEyNUdVemh0UzB0WVMzUjZWbTFPY2poaFdWbDBjMUIyT1dWQk1rUTBVWGhRWnpCa2MyMDRJbjAuZXlKcWQyc2lPbnNpYTNSNUlqb2lSVU1pTENKamNuWWlPaUpRTFRJMU5pSXNJbmdpT2lKclNXcFhiMVZZU1dKRVFYbHRlRFF0VjJsbFIzbFNTbEZNUVV0WFgycHJRMFZvVDJWMVIwRmtUMkZSSWl3aWVTSTZJbDlGWlUxblRHZHJhWGxIV201aFUyeGlObGh5VFhwclRWSnlUM3BuU0hWbGNVUlNjWGd0ZDBsc2VUUWlMQ0oxYzJVaU9pSnphV2NpTENKaGJHY2lPaUpGVXpJMU5pSXNJbXRwWkNJNklrMXlYMDg1VnpJMFVHRlNVVGRsYjJwcU0zbG5kRVJmYkRFMGQwTlJOakpJU0RaT1EwMWtTemRVYlhjaWZTd2ljSEp2ZG1sa1pYSnpJanBiSW05aGFTSmRMQ0ozY21sMFpWOW1jbTl0SWpveE56azBNekV4TkRRekxDSjNjbWwwWlY5MWJuUnBiQ0k2TVRjNU5ETTVOemcwTXl3aWNtVmhaRjkxYm5ScGJDSTZNVGc0T1RjME1EZ3dNSDAuWTN5MlhxRjBtSWNVMllvdklmbE51QXJWUWJtRGZjTk9oaXpUUjRTN0VXcEtpcGF6X0I3bUlrZzNmS0w3OUtXSXFYOUhPQjRjOFZKcllzcWxBZ1RXc1EiLCJpc3NfbWV0YSI6eyJyb3V0aW5nIjoiSUFEOCJ9fQ.eyJwcm90ZWN0ZWQiOiJleUppY21GdVkyaGZhV1FpT2lKUGIybFJVM1puTTFSM2EwMXVRbVY0WmtWSU15MUJJaXdpYzJGc2RDSTZJbXR3V2toNk9HbFhTamRoV2xkak1FMUxPR1ZNZFdkUlZtaDZWblJEU0hCa1NVWlJWMjF6TmtoVWRrRWlMQ0pqYjI1MFpXNTBYMjV2Ym1ObElqb2lhVkpDWDBFMVFXZ3pWMFF0V0c5cVJ5SXNJbkpsWTJsd2FXVnVkSE1pT2x0N0luQnNZWFJtYjNKdElqb2lZWGR6SWl3aWEybGtJam9pVGtSR1FrWnNhRUpsYlcwek9DMW1UekJJVUhKRWQwc3ROVFZNZWtWUk5XVnBVM0Z6VUZaTGJFUkVheUlzSW1WdVkzSjVjSFJsWkY5aWNtRnVZMmdpT2lKTFIybEZjbVJvVDFGemJVVjFiRWRqZWtsdVRGbHRZVTlZUmxKWmNFMUpTREpmY0VOaldFMUpTRGhxTkRWVmVIZFhRVlJLYjFSWlFrNTBiWGxsYVRWeFdGbzRkVzh4UWpCcGNFSlhZbTU1VTB4WWRscG9TRnBKV2xnNFl6Wk1RMVZDWW1SelVXaDVOalpNTjFGTlYzcExXRzlvZG00dE5FTnllWG96UldWS2RYaDVaWEUxUlhWcWN6SnVNM0JSTUV3dGNXWTFTbEY1WDBZMk5EZEpZMmxOUWpSU1RqZzRYMU5IT1hGblIwVmhjREIzUVVzMWF6UmpRMll0VFZSRUxVcFNhVEZzU0hGc1JUaHpNR1pDY21SUE1YVTRTSEZpYjFCa2VYRlJaRWh2Y21wcldWSmhTRlZhWVdSSmJIbGpPVEpJUVZCalRVZDViblF6TkVGWFdGSllRamd0U0U1bVZWRkhja2h3ZWtwU1RuVnFSR2hMTjJKVU9VdDJiSE5wZVRsS2FVOW9TbTlPUldoUWFtWlZXRlp0UkVJd2IzQkdla3B4WVZGcGRtMURiRVZ6VjJGbFYzQTBVa2xNUzJsWVZWSmFSbUpSYUVWUWFVVTBkVFpZY1ZsTmJsUlhaMmhxUWxBMFRFNTFlV0UzZVcxT2VpMXdORTB5U0hod1JtZGxkMEpZUWtwRWVrbHVVbDkwT1dvM05UYzBORWx2Tkd0ak1tMTFhSGhhZFVObFFuRlhhbkp1T0ZGbGRXeFBWSFJ1UWtSSk5tbzFRbmxCVUVacmFUZHlhR1JIWjBaRlZpMDRiV1JuU1dkTFZIUktjekJsV0U0NGJuQmxXbkEyVEc5SFVIRjBRa1IyT0Vrd1lscFRkRkIyT1hOTFlXMDNXR00wT1VNMGRrOVNNM1pqZUNKOVhYMCIsImNpcGhlcnRleHQiOiJpNUFrc01lZnR4Q1Y3VF8wV0VHWms1YjN0MzFkMmhWR1hObGsycUdvS05Ga1dhM0JsYkk3TkdqWHloaWpFWUZzUEtKRlJZRVFVM0tlSFp0NHpYcnIxWlJIcGRTSm81WEVpNjhoSHJ0X005aXptWkdiZENBT05VakZNY0NLbjY2Mm84OWgtY2lWekdydFZCbDFMTW4wWUE2OWp3bUVRdVhjd1R6cEpxYlF2andnaG1NYzdSeC1rcFJhRGZSa0FDZ1p3TjN3VUdrU1BwSmdxZHp1cVJGbVBFZW4tTkc3U2liVHZabVlvRDRxNFM2VHhxQk12OXhOZnlKbjFXTlpwOWNEODk2VGo2Ui1Sck5wT1ZPN0RZZWp2R1VzTml5WUNuSXFBZ25neEk3cGlXV2Rqa0ZSVjBKekNKSUdQMjhhSHlvOTg2VjdSZEdaTVpXX29JcklOUjR4M0VxRk9jZHpmN3BKRkt5X3plcnFFemRQNFZKd1lReGhOalRPWU9iSG0tS3RWbkU3cHd5LXZsM0I3UzIzV0VLYVJJWlN4RXN2SW5aZlNpN2VOUEhSZFF0VWRaVllyRzB5OFJJekdZYThqYTNqdjBNTUxtYWNPbkFpZUg3b0h1X2tJNzU5TlJwNVJseHh4dW5mcWxwa1MzYjlOT2RsZkhETWVHYkN4ZzJYbHFlMkZDS0lpT3RSaXMzck9vNVRKUW1sbERRLUtObTZlN2tvYXRpZGpGWFpJTWJENVN2a05yWjhGUmRMS2JUMEJ0YlNrenNuM09mcFREazRiVEtnSk5XUjFDQmc0TWU4V0V2aG1XanlSZGtZZXdOaHhQeDBtUS0tOTdmVUtHVFZ5WHJMbWRoMEVlLXo1dVcwN2hjSjFWT1lnaHRhVjNzN08wR1NTRXJrOEdkcmRuSUFBV0dRa0lIU2EyUHp3UHRCbXgyTXVQMGFoYjZ6V1FQTzVCU3Q4bGh0SUxNV2YyU0MtYmItSEJzNUxCNjZOS1c5V1AxYUt1UDYwUFk1VW1oZU9Kd21WYzFyclVzblowNGdiemdMdGMwcDdBZ09Ucmk3Um9pYUhSc1AwLUpGVkpjRndRZyJ9.xfk_sqIuqKPqHLVY2TcH2PeV12h3RmMRWeoh0QdALaK_qdyBu7yR5yIiTGfhuoK3Fg1KicgHK3yO_4lZ8rmV0w
+          type: reasoning
+        - name: first_tool
+          arguments: "{}"
+          call_id: call_90eec98086dd5fc8ba30da13ebb9b8de
+          type: function_call
+          id: fc_27ee08901c265b5b8beb2d5835d0898b
+        - type: function_call_output
+          call_id: call_90eec98086dd5fc8ba30da13ebb9b8de
+          output: first result
+        - id: rs_0a2874b791d45e188597cc2f49bac0b9
+          summary: []
+          encrypted_content: >-
+            rsn_eyJhbGciOiJFUzI1NiIsInR5cCI6ImFyY2grandzIiwicHJvZmlsZSI6ImFyY2gtMSIsImlzcyI6ImF3cyIsImtpZCI6ImVxcFg4Q3NLdWlSTXJMWjZSYnI2dGl5QWNFQ0pSS3lYUkJHR051SFUxX2MiLCJjZXJ0aWZpY2F0ZSI6ImV5SmhiR2NpT2lKRlV6STFOaUlzSW5SNWNDSTZJbUZ5WTJndGMybG5ibVZ5SzJwM2N5SXNJbkJ5YjJacGJHVWlPaUpoY21Ob0xURWlMQ0pwYzNNaU9pSmhkM01pTENKcmFXUWlPaUpzY0MxblEyNUdVemh0UzB0WVMzUjZWbTFPY2poaFdWbDBjMUIyT1dWQk1rUTBVWGhRWnpCa2MyMDRJbjAuZXlKcWQyc2lPbnNpYTNSNUlqb2lSVU1pTENKamNuWWlPaUpRTFRJMU5pSXNJbmdpT2lKdVZIWmFTamMzVmxka1dXbzBXakpwVDJJM1IzQk9TR3RtUVVWTmFFVnhXbEJhWjE5MGRHdzFYekZaSWl3aWVTSTZJamhCV0dwQ1lWTnhVSFpUTFc5Vk5tczVOR2d5VG01ZlRFaFpaMjloWkY5ZmVHMXhZbTk2WnpOMFh6UWlMQ0oxYzJVaU9pSnphV2NpTENKaGJHY2lPaUpGVXpJMU5pSXNJbXRwWkNJNkltVnhjRmc0UTNOTGRXbFNUWEpNV2paU1luSTJkR2w1UVdORlEwcFNTM2xZVWtKSFIwNTFTRlV4WDJNaWZTd2ljSEp2ZG1sa1pYSnpJanBiSW05aGFTSmRMQ0ozY21sMFpWOW1jbTl0SWpveE56azBNekV6TXpJMUxDSjNjbWwwWlY5MWJuUnBiQ0k2TVRjNU5ETTVPVGN5TlN3aWNtVmhaRjkxYm5ScGJDSTZNVGc0T1RjME1EZ3dNSDAueGQ3azF2X2ZQSUJHX0d3dFdZWGZRd01Ed0FqNWRXQ3JJTE5Ua0VCTGJNSzMxTjF3SFVqNGdmYlAwOHFHRTRsYk90WkFmcXp5OGdHQ3Q3X0VucUp3NEEiLCJpc3NfbWV0YSI6eyJyb3V0aW5nIjoiSUFEOCJ9fQ.eyJwcm90ZWN0ZWQiOiJleUppY21GdVkyaGZhV1FpT2lKUGIybFJVM1puTTFSM2EwMXVRbVY0WmtWSU15MUJJaXdpYzJGc2RDSTZJbXBaZEV4MllYWXpUekZsZW1wU1drdGZZemx0VERjeVkzaEpkRW8wTjJRd01IVjBjelZQVnpCSWQwa2lMQ0pqYjI1MFpXNTBYMjV2Ym1ObElqb2lPR1JzVFdoUWFqTXdjSHBMTkU5a1p5SXNJbkpsWTJsd2FXVnVkSE1pT2x0N0luQnNZWFJtYjNKdElqb2lZWGR6SWl3aWEybGtJam9pVGtSR1FrWnNhRUpsYlcwek9DMW1UekJJVUhKRWQwc3ROVFZNZWtWUk5XVnBVM0Z6VUZaTGJFUkVheUlzSW1WdVkzSjVjSFJsWkY5aWNtRnVZMmdpT2lKTFIybEZjbVJvVDFGemJVVjFiRWRqZWtsdVRGbHRZVTlZUmxKWmNFMUpTREpmY0VOaldFMUpTRGhxTkRWVmVIZFhRVlJLYjFSWlFrNTBiWGxsYVRWeFdGbzRkVzh4UWpCcGNFSlhZbTU1VTB4WWRscG9TRnBKV2xnNFl6Wk1RMVZDWW1SelVXaDVOalpNTjFGTlYzcExXRzlvZG00dE5FTnllWG96UldWS2RYaDVaWEUxUlhWcWN6SnVNM0JSTUV3dGNXWTFTbEY1WDBZMk5EZEpZMmxOUWpSU1RqZzRYMU5IT1hGblIwVmhjREIzUVVzMWF6UmpRMll0VFZSRUxVcFNhVEZzU0hGc1JUaHpNR1pDY21SUE1YVTRTSEZpYjFCa2VYRlJaRWh2Y21wcldWSmhTRlZhWVdSSmJIbGpPVEpJUVZCalRVZDViblF6TkVGWFdGSllRamd0U0U1bVZWRkhja2h3ZWtwU1RuVnFSR2hMTjJKVU9VdDJiSE5wZVRsS2FVOW9TbTlPUldoUWFtWlZXRlp0UkVJd2IzQkdla3B4WVZGcGRtMURiRVZ6VjJGbFYzQTBVa2xNUzJsWVZWSmFSbUpSYUVWUWFVVTBkVFpZY1ZsTmJsUlhaMmhxUWxBMFRFNTFlV0UzZVcxT2VpMXdORTB5U0hod1JtZGxkMEpZUWtwRWVrbHVVbDkwT1dvM05UYzBORWx2Tkd0ak1tMTFhSGhhZFVObFFuRlhhbkp1T0ZGbGRXeFBWSFJ1UWtSSk5tbzFRbmxCVUVacmFUZHlhR1JIWjBaRlZpMDRiV1JuU1dkTFZIUktjekJsV0U0NGJuQmxXbkEyVEc5SFVIRjBRa1IyT0Vrd1lscFRkRkIyT1hOTFlXMDNXR00wT1VNMGRrOVNNM1pqZUNKOVhYMCIsImNpcGhlcnRleHQiOiJrZGRlMHhJMUxGRFR3a25aa0NMRm95M09tUUFaRFItSFk3a0hET1RGM2dTS2t0ck1MeHJQcGZZdTVVYXdvVEZpTEhvUjUtTFJqOTRoSFFvbXdsUHk4X0dMUEItMHdNUGphemJkNVhOQkp1eE9ENndtNXRRUWtueXE3NkNoU2ZqWDlaa2J5REhOcm4xdURhSGhiUjVUd2ZWQkpJREZEX1BFa2x6SjdWb01ka1JGRURCSnRwc19weW1VMXZkMEZXM040Q1ExYmliTWFxbEczVjBpOHE0ZVJ6aTBIY1k4aUhtaHhRVURSd1BSTDJkQ3MtTzN1RU5PNENLTlE3UEYxNUE5a3NQcjhKX2FPb2gya3pvVFhDb3RhdUNpd2s1b0RZOVFXS20zZ0hpRk5EcWlVQWxGQmlNYkJhdjJXcV9YRmRjbWlOUFhZUGNLTDRkX1NEUXJqUS1FRFRqSThPNEM3RTJET0lyaTRqTmtrOTdoUmN6TmtkOVUyNTBuZU9LWjhMWmtFelNWOUNtUlBwdXVNMkRGeEJvQklvS3ZSMk9ia29zTi1rS2RoTTBqRmh1QWttWElsQXA0bmUtM01jTnJPaEp2VU90UTdRTmxDbFR1UmxTZU1kc0FOemhNTlZVWV96cW4tRE1uWm5LWlNYcjhnMGg3eFJ6UERKZVZDVWxnQnFrRG1KR25oNk93aWZZb21lSnI3elFzYXBoRll6aDhRbGFOYi1MckxCQllDSExxT1RqWEg2NDhULXRkZnVXbjZSbHNsSU9rVmkzcl9kNDJyR1N0Z2g2U2MwRVdHZTYxVFNHeTNFcWJvcGVhSGVNNzB0ZW1Qc21paGIyNXlpZlA1QTBGb1N2bjkzSnktRklPanl5eUp6YV9fZi1RaXNaejdZMVNaT290ZFhFeFBaeUN6YUkxZXpndWQ2Um5pcFBpRy1jZkRBNHpxazI2LTFNSkdXM2xEUm1FdzBjekdPWFh0MUN0RlNrSG54NjctblpIcXpZVHFqaHRYcFB4ZE5vQnJWWkRPNjlPTm9mMW15QWZ6SThMVXcifQ.NdWUshsXin5kXWXTW_1KdwuilKHwMnp17_MBWCCvmfbSNBaZvtWS-hVZyn6nvNgfEeif43O030adG3qMHDPoAQ
+          type: reasoning
+        - name: second_tool
+          arguments: "{}"
+          call_id: call_8b70c794677d532d8856b610cd7a6ff8
+          type: function_call
+          id: fc_657f09d093c85c179f678f3d7644c9ee
+        - type: function_call_output
+          call_id: call_8b70c794677d532d8856b610cd7a6ff8
+          output: second result
+        instructions: >-
+          Call first_tool. After receiving its result, call second_tool in a new model
+          response.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: first_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+        - name: second_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "1808"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1794353424
+        created_at: 1794353423
+        error: null
+        frequency_penalty: 0.0
+        id: resp_a4n7uibuu62qgmlzp6qsfsjsosfltutldzzlq7cpnu7ld3nvgqla
+        incomplete_details: null
+        instructions: >-
+          Call first_tool. After receiving its result, call second_tool in a new model
+          response.
+        max_output_tokens: null
+        max_tool_calls: null
+        metadata: {}
+        model: openai.gpt-5.6-luna
+        object: response
+        output:
+        - content:
+          - annotations: []
+            logprobs: []
+            text: Done.
+            type: output_text
+          id: msg_88c45dc84c8d5bf59ff84f7c6db77d18
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          summary: null
+          effort: medium
+          context: all_turns
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tools:
+        - description: null
+          name: first_tool
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        - description: null
+          name: second_tool
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 153
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 6
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 159
+        user: null
+        moderation: null
+  recorded_at: 2026-11-10T23:30:24.547290+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 054bb86c-bcd9-473f-bc4f-95f726c08b42
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1327"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Follow the tool instructions.
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: call_90eec98086dd5fc8ba30da13ebb9b8de_XKHtVqYh
+              name: first_tool
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_90eec98086dd5fc8ba30da13ebb9b8de_XKHtVqYh
+              content:
+              - text: first result
+              status: success
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: call_8b70c794677d532d8856b610cd7a6ff8_C6Tnln0q
+              name: second_tool
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_8b70c794677d532d8856b610cd7a6ff8_C6Tnln0q
+              content:
+              - text: second result
+              status: success
+        - role: assistant
+          content:
+          - text: Done.
+        - role: user
+          content:
+          - text: Reply with exactly OK.
+        system:
+        - text: >-
+            Call first_tool. After receiving its result, call second_tool in a new model
+            response.
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: first_tool
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          - toolSpec:
+              name: second_tool
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        00000090000000523141c8a10b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f70717273222c22726f6c65223a22617373697374616e74227d1176eab0000000ab0000005797dab5b90b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a224f4b227d2c2270223a226162636465666768696a6b6c6d6e6f70227df116995b000000880000005666bcd0fb0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a2261626364227d6f7ed38e000000ab000000517eb9108c0b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50222c2273746f70526561736f6e223a22656e645f7475726e227d7e1a537e000000fb0000004ecba2d2b20b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a3730347d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b222c227573616765223a7b22696e707574546f6b656e73223a3731352c226f7574707574546f6b656e73223a342c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a3731397d7dfc01d1bf
+  recorded_at: 2026-11-10T23:30:25.456973+00:00

@@ -228,9 +228,9 @@ Complete discovery before calling `g.build()`.
 
 ### Nodes in separate modules
 
-With postponed annotations, node modules can import each other as modules and qualify successor
-classes in their return annotations. This already works with `g.node()`; `add_reachable()` reduces
-the registration needed at the composition root.
+A node's `run` return annotation names its successor classes, so nodes that route to each other
+import each other. To split them across modules, use postponed annotations and import the
+successor's module rather than its class:
 
 ```py {title="nodes/first.py" test="skip" lint="skip"}
 from __future__ import annotations
@@ -258,7 +258,12 @@ class Second(BaseNode[None, None, int]):
         return End(42)
 ```
 
-Import the modules at runtime so their names are available when return annotations are resolved.
+Neither module reads the other's class while it is being imported: the annotations are resolved when
+you register the classes with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node] or
+[`g.add_reachable()`][pydantic_graph.graph_builder.GraphBuilder.add_reachable], and the
+`run` bodies execute later still. Importing the classes directly (`from .second import Second`)
+fails with a circular `ImportError`.
+
 For independent tasks whose routing belongs in the composition root, use ordinary step functions:
 define the function in its own module, import it, then register it with `g.step(imported_function)`
 and connect its edges there. The function's module does not need to import the builder.
