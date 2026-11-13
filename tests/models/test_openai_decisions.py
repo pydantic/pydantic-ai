@@ -2910,6 +2910,35 @@ async def test_bare_fan_out_instructions_stay_the_question_without_a_developer_m
     ]
 
 
+async def test_bare_output_route_then_fill_sends_its_instructions_as_the_question(allow_model_requests: None):
+    def look_up_order() -> str:
+        return 'shipped'  # pragma: no cover
+
+    def route_then_answer(request: httpx2.Request) -> httpx2.Response:
+        route_response = pick_first_route(json.loads(request.content))
+        if route_response is not None:
+            return route_response
+        return boolean_answers(request)
+
+    question = 'Was the customer charged twice?'
+    captured = Captured(route_then_answer)
+    agent = Agent(mock_model(captured), output_type=bool, tools=[look_up_order], instructions=question)
+
+    with patch.object(OpenAIDecisionsModel, 'max_questions', 1):
+        result = await agent.run('Charged twice.')
+
+    assert result.output is True
+    route_body, fill_body = sent_bodies(captured)
+    assert any(q['name'] == 'route' for q in route_body['questions'])
+    assert route_body['input'] == [
+        {'type': 'message', 'role': 'developer', 'content': question},
+        {'role': 'user', 'content': 'Charged twice.'},
+    ]
+    assert fill_body['input'] == 'Charged twice.'
+    (fill_question,) = fill_body['questions']
+    assert json.loads(fill_question['instructions'])['question'] == question
+
+
 async def test_without_instructions_the_prompt_is_the_whole_input(allow_model_requests: None):
     captured = Captured(answer_every_question)
 

@@ -225,7 +225,8 @@ class DecisionRequest:
 
     Set only on a model with [`native_instructions`][pydantic_ai.models.decision.DecisionModel.native_instructions],
     and only when a question would otherwise have carried them as framing. When the instructions are themselves the
-    question, as for a bare `bool` output, they stay in the question and this is `None`.
+    question, as for a bare `bool` output, they stay in the question and this is `None`, unless a route question in
+    the same request is framed by them.
     """
 
 
