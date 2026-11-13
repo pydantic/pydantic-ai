@@ -60,16 +60,16 @@ interactions:
         capability, load it first.
 
 
-        <context id="capability:deferred_capabilities">
+        <pyai:context id="capability:deferred_capabilities">
 
         The following capabilities are deferred and can be loaded using the `load_capability`
         tool. A capability''s tools stay hidden until it is loaded:
 
         - weather: Weather forecasts.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       modalities:
       - text
@@ -114,16 +114,16 @@ interactions:
         capability, load it first.
 
 
-        <context id="capability:deferred_capabilities">
+        <pyai:context id="capability:deferred_capabilities">
 
         The following capabilities are deferred and can be loaded using the `load_capability`
         tool. A capability''s tools stay hidden until it is loaded:
 
         - weather: Weather forecasts.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       voice:
         name: alloy
@@ -563,16 +563,16 @@ interactions:
         capability, load it first.
 
 
-        <context id="capability:deferred_capabilities">
+        <pyai:context id="capability:deferred_capabilities">
 
         The following capabilities are deferred and can be loaded using the `load_capability`
         tool. A capability''s tools stay hidden until it is loaded:
 
         - weather: Weather forecasts.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       voice:
         name: alloy
