@@ -791,8 +791,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             started = exec_command.ws is not None
             await _close_command(exec_command)
             if capture_stderr and started:
-                # Removes the capture file, as far as the shielded grace allows.
-                await stop_shielded(lambda: self._read_capture(capture))
+                # Removes the capture file. The read-back is a fresh exec, so it gets that exec's own bound as grace.
+                await stop_shielded(lambda: self._read_capture(capture), grace=_INTERNAL_EXEC_TIMEOUT)
         return _map_error(error, sprite_name) if isinstance(error, Exception) else None
 
     async def _check_working_dir(

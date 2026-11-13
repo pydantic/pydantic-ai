@@ -1190,6 +1190,34 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
+    async def test_a_cancelled_command_removes_its_stderr_file_over_a_slow_exec(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        running = tmp_path / 'running'
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # Deadlines read the event loop's clock: the read-back's handshake moves it on instead of taking that long.
+        loop = asyncio.get_running_loop()
+        real_loop_time = loop.time
+        skipped = 0.0
+        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
+        connect = transport.connect
+
+        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            nonlocal skipped
+            if transport.execs:
+                # Only the exec that reads the capture back is slow: more than the default stop grace.
+                skipped += 25
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['sh', '-c', f'echo secret >&2; : > {running}; exec sleep 30'])
+            while not running.exists():
+                await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
     @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
     async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
         with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
