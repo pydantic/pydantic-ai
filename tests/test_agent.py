@@ -2103,6 +2103,8 @@ def test_output_type_text_output_model_like_arg(output_function: Callable[..., s
     """A model-like arg takes the model's JSON schema, so a model with one `str` field looks like a `str` arg.
 
     The function would still be handed the raw text, so it's rejected like any other non-`str` arg.
+
+    Not a VCR test: the `UserError` is raised when the agent is created, before any request is sent.
     """
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         Agent('test', output_type=TextOutput(output_function))
@@ -2129,7 +2131,11 @@ def ctx_and_str_arg(ctx: RunContext[None], text: str) -> str:
 
 @pytest.mark.parametrize('output_function', [str_arg, type_alias_str_arg, constrained_str_arg, ctx_and_str_arg])
 def test_output_type_text_output_str_arg_forms(output_function: Callable[..., str]):
-    """Every form of `str` arg passes the construction check that rejects a model-like arg."""
+    """Every form of `str` arg passes the construction check that rejects a model-like arg.
+
+    Not a VCR test: the check runs when the agent is created, and calling the function with the text is in-memory
+    framework behavior that no provider response changes.
+    """
 
     def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])
