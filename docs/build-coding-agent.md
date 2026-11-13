@@ -82,7 +82,7 @@ agent = Agent(
 )
 ```
 
-This is close to `Coder()`, not identical. `Coder` has longer default instructions and turns off strict tool schemas for its own tools, and three of its pieces are specializations you cannot write from outside: its `ToolOutputLimits` adds no `read_tool_result` tool, because bounded truncation never spills, while the plain capability above does; once a tool's retries run out, `Coder` sends the last error back to the model as a failed tool result, where the agent above ends the run; and its caching piece yields to a `cache` value the model, the agent or an earlier capability already set, where `Caching()` overrides it. The [Coder composition](harness/coder.md#composition) lists the exact configuration. From here every line is yours to change: allowlist commands with `Shell(allowed_commands=[...])`, make the file tools [read-only](harness/filesystem.md), or drop delegation.
+This is close to `Coder()`, not identical. `Coder` has longer default instructions and turns off strict tool schemas for its own tools, and two of its pieces are specializations you cannot write from outside: once a tool's retries run out, `Coder` sends the last error back to the model as a failed tool result, where the agent above ends the run; and its caching piece yields to a `cache` value the model, the agent or an earlier capability already set, where `Caching()` overrides it. The [Coder composition](harness/coder.md#composition) lists the exact configuration. From here every line is yours to change: allowlist commands with `Shell(allowed_commands=[...])`, make the file tools [read-only](harness/filesystem.md), or drop delegation.
 
 ## Change the pieces
 
