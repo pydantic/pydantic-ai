@@ -498,6 +498,72 @@ async def test_dynamic_toolset_outside_workflow():
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
 
 
+# --- A `per_run_step=False` dynamic toolset's result is prepared in activities, not in the workflow ---
+
+
+class _PreparedOffThreadToolset(FunctionToolset[None]):
+    """Prepares itself with off-thread work in `for_run`, which Temporal's workflow event loop refuses."""
+
+    async def for_run(self, ctx: RunContext[None]) -> _PreparedOffThreadToolset:
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+        return self
+
+
+def _prepared_greet(name: str) -> str:
+    return f'hi {name}'
+
+
+def _call_greet_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('_prepared_greet', {'name': 'x'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+prepared_in_activity_agent = Agent(
+    FunctionModel(_call_greet_then_finish),
+    deps_type=type(None),
+    name='prepared_in_activity_agent',
+    toolsets=[
+        DynamicToolset(
+            lambda ctx: _PreparedOffThreadToolset([_prepared_greet], id='prepared-inner'),
+            per_run_step=False,
+            id='prepared_in_activity',
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PreparedInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await prepared_in_activity_agent.run(prompt)).output
+
+
+async def test_per_run_step_false_dynamic_toolset_result_is_prepared_in_activities(client: Client):
+    """The toolset a `per_run_step=False` factory returns is prepared inside activities, never in the workflow.
+
+    Temporal activities can run in another process, so no activity can reach a toolset the workflow
+    resolved: each one resolves its own. The workflow must not resolve one too, or the result's
+    `for_run` runs in workflow code, where off-thread work like an `auth` function's I/O fails.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PreparedInActivityWorkflow],
+        plugins=[AgentPlugin(prepared_in_activity_agent)],
+    ):
+        output = await client.execute_workflow(
+            PreparedInActivityWorkflow.run,
+            args=['go'],
+            id='test_per_run_step_false_dynamic_toolset_result_is_prepared_in_activities',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'done'
+
+
 # --- DynamicToolset.get_instructions test (issue #5282) ---
 # A dynamic toolset whose resolved toolset implements `get_instructions()` must contribute those
 # instructions under `TemporalAgent`, resolved inside an activity like `get_tools`.
