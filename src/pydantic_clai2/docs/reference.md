@@ -267,9 +267,15 @@ conversation. Bytecode compiles during installation, so the restart skips it. Sw
 back to `stable` offers the latest release. Run from a source checkout, it installs
 CLAI as a `uv tool` the same way and restarts into that.
 
+Installing replaces the files of the `uv tool` environment, which would break any other
+`clai2` process running from it. So on Linux and macOS, while another `clai2` runs from that
+install, `/update now` and `clai2 update` install nothing and name the processes' IDs: quit
+them, then update again. A `clai2` started while uv installs is not covered, so start none then.
+
 `clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
-is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
+is the new build. It exits with status 1 when the check, uv, or finding uv failed, or
+when other `clai2` processes run from the install. On
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
 an interactive session, which installs after CLAI exits. The flag cannot be combined with
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
