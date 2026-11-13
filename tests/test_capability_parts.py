@@ -1930,6 +1930,18 @@ def test_a_capability_is_held_to_its_ceiling_wherever_it_enqueues_from(site: Enq
     ]
 
 
+def test_a_capability_with_no_id_is_held_to_its_ceiling_in_for_run() -> None:
+    """Before the run registers it under an id, a capability's `for_run` enqueue is named by its class."""
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Done.')])),
+        capabilities=[_EnqueuesFrom(site='for_run').with_authority('none')],
+    )
+    with pytest.warns(UserWarning, match="Capability '_EnqueuesFrom' enqueued a bare `SystemPromptPart`"):
+        history = agent.run_sync('Run the tests.').all_messages()
+    [part] = [part for message in history for part in getattr(message, 'parts', []) if isinstance(part, CapabilityPart)]
+    assert part.source == CapabilitySource('_EnqueuesFrom', authority='none')
+
+
 def test_a_capability_ceiling_never_raises_authority() -> None:
     fetched = TaskReportPart(content='x', source=ToolResultSource(tool_name='fetch'), task_id='t1', timestamp=TIMESTAMP)
     history, _ = _run_with_ceiling('user', fetched)
