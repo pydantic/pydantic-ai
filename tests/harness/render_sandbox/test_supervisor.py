@@ -34,8 +34,8 @@ pytestmark = [
     pytest.mark.subprocess(reason='Verify real supervisor signal ownership and process-group cleanup'),
 ]
 
-# Guards waits against a hang, so it is far longer than any runner stall and never decides a test's outcome.
 READINESS_WAIT_TIMEOUT = 300
+"""Bounds a wait for something the test caused, so it only ever catches a hang, never a slow runner."""
 
 
 @pytest.fixture(autouse=True)

@@ -133,7 +133,9 @@ class LocalRenderRuntime:
         """Poll a run until the local task server reports a terminal state, with its results once it completed.
 
         The dev server maps a run for `runs show` outside its store's lock, reading the run's output before its
-        status, so a show that overlaps the run's completion can report it completed with no results yet.
+        status, so a show that overlaps the run's completion can report it completed with no results yet. This
+        assumes every task returns a value, as each one in `runtime_app_live.py` does: a completed run of a task that
+        returns nothing would read as unfinished until the timeout.
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
