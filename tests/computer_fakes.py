@@ -17,6 +17,7 @@ from pydantic_ai.computer_use import (
     ComputerResult,
     ComputerToolAction,
     CursorPosition,
+    HoldKeys,
     MoveMouse,
     Screenshot,
     Wait,
@@ -82,7 +83,7 @@ class FakeComputer(AbstractCapability[Any]):
                 if ctx.workspace.read_only:
                     result['error'] = 'This workspace is read-only.'
                     break
-                if action.type == 'hold_key':
+                if isinstance(action, HoldKeys):
                     result['error'] = "the fake display cannot perform 'hold_key'"
                     break
                 self.actions.append(action)
