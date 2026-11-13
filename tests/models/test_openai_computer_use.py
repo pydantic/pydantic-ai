@@ -707,6 +707,16 @@ def test_openai_actions_map_onto_the_computer_tool(
     )
 
 
+def test_a_pixel_scroll_gpt_asks_for_keeps_a_note_on_how_it_runs() -> None:
+    scroll = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}
+    item = cast(resp.ResponseComputerToolCall, _computer_call(scroll).output[0])
+    call = _map_computer_call(item, 'computer', 'call_1', 'openai')
+    assert call.provider_details is not None
+    assert call.provider_details['computer_scroll_notes'] == [
+        'scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.'
+    ]
+
+
 def _is_a_valid_png(data_uri: str) -> bool:
     """Whether the data URI holds a PNG whose every chunk checksum matches, ending in `IEND`."""
     data = base64.b64decode(data_uri.removeprefix('data:image/png;base64,'))
@@ -986,10 +996,14 @@ async def test_a_streamed_computer_call_keeps_its_place_before_a_later_function_
     assert [getattr(event.delta, 'args_delta', None) for event in deltas] == [{'actions': [{'type': 'screenshot'}]}]
 
 
-async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('added', [pytest.param(True, id='added-then-done'), pytest.param(False, id='done-only')])
+async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(
+    allow_model_requests: None, added: bool
+) -> None:
     """In the order OpenAI streams items (each done before the next is added), a UI sees start, arguments, end.
 
     Starting it again when it ends would make AG-UI open the call twice and send its arguments as two JSON objects.
+    A call that arrives only as done starts with its arguments.
     """
     item = resp.ResponseComputerToolCall.model_validate(
         {**_COMPUTER_ITEM, 'actions': [{'type': 'screenshot'}], 'pending_safety_checks': []}
@@ -1010,6 +1024,8 @@ async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(
             response=response.model_copy(update={'status': 'completed'}), type='response.completed', sequence_number=3
         ),
     ]
+    if not added:
+        del stream[1]
     client = MockOpenAIResponses.create_mock_stream(stream)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
@@ -1020,13 +1036,17 @@ async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(
     ) as streamed:
         events = [event async for event in streamed]
 
+    final = streamed.get().parts[0]
+    assert isinstance(final, ComputerCallPart) and final.actions == [Screenshot()]
+    if not added:
+        assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
+        assert isinstance(events[0], PartStartEvent) and events[0].part.args == {'actions': [{'type': 'screenshot'}]}
+        return
     assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent']
     start, delta, _ = events
     assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart) and start.part.args is None
     assert isinstance(delta, PartDeltaEvent) and isinstance(delta.delta, ToolCallPartDelta)
     assert delta.delta.args_delta == {'actions': [{'type': 'screenshot'}]}
-    final = streamed.get().parts[0]
-    assert isinstance(final, ComputerCallPart) and final.actions == [Screenshot()]
 
 
 # Properties over any value OpenAI could send or a history could hold. The SDK builds response items without
