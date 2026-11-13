@@ -405,6 +405,14 @@ evaluators:
 - MaxDuration: 2.0
 ```
 
+The short form passes its value as the first positional argument. A keyword-only parameter, such as a field of a `@dataclass(kw_only=True)` evaluator, uses the dict form even when it is the only one:
+
+```yaml
+evaluators:
+- MinimumLength:
+    minimum: 4
+```
+
 ### 3. Multiple Parameters (Dict Form)
 
 ```yaml
