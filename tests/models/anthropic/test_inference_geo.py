@@ -1,9 +1,9 @@
 """Tests for Anthropic data residency (`anthropic_inference_geo`).
 
-Mocked at the HTTP transport, so each test pins the request body as the SDK sent it and feeds back the `usage` shape
-Anthropic answers with: `inference_geo` on a non-streamed message, and on `message_start` only for a stream (the
-recorded streams in this suite carry it nowhere else). The Bedrock, Vertex AI and Foundry clients can't be recorded
-here, and a mocked response is what lets those tests echo a geo the request didn't ask for.
+The Claude API cases are recorded. The Bedrock, Vertex AI and Foundry clients can't be recorded here, so their tests,
+and the profile tests that reuse them, are mocked at the HTTP transport: each pins the request body as the SDK sent it
+and feeds back the `usage` shape the Claude API answers with, `inference_geo` on a non-streamed message and on
+`message_start` only for a stream. A mocked response is what lets those tests echo a geo the request didn't ask for.
 """
 
 from __future__ import annotations as _annotations
@@ -15,10 +15,11 @@ from typing import Any
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse
+from pydantic_ai import Agent, ModelHTTPError, ModelMessage, ModelResponse
 from pydantic_ai.profiles import ModelProfile
 
-from ...conftest import try_import
+from ...conftest import RequestCapture, try_import
+from ..conftest import AnthropicModelFactory
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -114,6 +115,7 @@ def _last_response(messages: list[ModelMessage]) -> ModelResponse:
     return response
 
 
+@pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 @pytest.mark.parametrize(
     ('geo', 'provider_details'),
@@ -124,6 +126,8 @@ def _last_response(messages: list[ModelMessage]) -> ModelResponse:
 )
 async def test_inference_geo_sent_and_reported(
     allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
     stream: bool,
     geo: str | None,
     provider_details: dict[str, Any],
@@ -133,45 +137,40 @@ async def test_inference_geo_sent_and_reported(
     Every response from the Claude API reports a geo, so reporting it unasked would change `provider_details` for
     requests that don't use data residency.
     """
-    bodies: list[dict[str, Any]] = []
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        model = AnthropicModel(
-            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=_CLIENTS['api'](http_client))
-        )
-        settings = AnthropicModelSettings(max_tokens=_MAX_TOKENS)
-        if geo is not None:
-            settings['anthropic_inference_geo'] = geo
-        agent = Agent(model, model_settings=settings)
-        if stream:
-            async with agent.run_stream('Reply with exactly: OK') as streamed:
-                await streamed.get_output()
-            messages = streamed.all_messages()
-        else:
-            messages = (await agent.run('Reply with exactly: OK')).all_messages()
+    settings = AnthropicModelSettings(max_tokens=_MAX_TOKENS)
+    if geo is not None:
+        settings['anthropic_inference_geo'] = geo
+    agent = Agent(anthropic_model('claude-sonnet-5-5', capture=True), model_settings=settings)
+    if stream:
+        async with agent.run_stream('Reply with exactly: OK') as streamed:
+            await streamed.get_output()
+        messages = streamed.all_messages()
+    else:
+        messages = (await agent.run('Reply with exactly: OK')).all_messages()
 
-    [body] = bodies
+    body = request_capture.body('/v1/messages')
     assert body.get('stream', False) is stream
     assert body.get('inference_geo') == geo
     assert _last_response(messages).provider_details == provider_details
 
 
-async def test_inference_geo_sent_to_models_without_data_residency(allow_model_requests: None):
-    """The setting isn't gated by model: a model without data residency still gets it.
+@pytest.mark.vcr
+async def test_inference_geo_sent_to_models_without_data_residency(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """The setting isn't gated by model: a model without data residency still gets it, and the API's 400 is raised.
 
-    The real API answers such a request with a 400. Dropping the field instead would quietly run a request the user
-    asked to keep in one geography anywhere. This test only pins that the field is sent.
+    Dropping the field instead would quietly run a request the user asked to keep in one geography anywhere.
     """
-    bodies: list[dict[str, Any]] = []
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        model = AnthropicModel(
-            'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=_CLIENTS['api'](http_client))
-        )
-        await Agent(
-            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
-        ).run('Reply with exactly: OK')
+    agent = Agent(
+        anthropic_model('claude-haiku-4-5', capture=True),
+        model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us'),
+    )
+    with pytest.raises(ModelHTTPError, match="'claude-haiku-4-5-20251001' does not support inference_geo") as exc_info:
+        await agent.run('Reply with exactly: OK')
 
-    [body] = bodies
-    assert body['inference_geo'] == 'us'
+    assert exc_info.value.status_code == 400
+    assert request_capture.body('/v1/messages')['inference_geo'] == 'us'
 
 
 @pytest.mark.parametrize(
