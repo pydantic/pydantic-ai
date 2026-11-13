@@ -1270,7 +1270,7 @@ async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests:
 
     client = MockAnthropic.create_mock(
         [
-            _turn(_tool_use('toolu_1', 'screenshot', {}), _tool_use('toolu_2', 'mouse_move', {'coordinate': [1, 2]})),
+            _turn(_tool_use('toolu_1', 'mouse_move', {'coordinate': [1, 2]}), _tool_use('toolu_2', 'screenshot', {})),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
     )
