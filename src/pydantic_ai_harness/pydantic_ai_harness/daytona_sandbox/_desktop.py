@@ -23,6 +23,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
@@ -45,6 +46,7 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._display import png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness._workspace_provider import run_to_completion
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 if TYPE_CHECKING:
@@ -211,10 +213,19 @@ class DaytonaDesktop:
         """Scroll `amount` wheel clicks, `_SCROLLED_PER_REQUEST` at a time."""
         for start in range(0, amount, _SCROLLED_PER_REQUEST):
             clicks = min(_SCROLLED_PER_REQUEST, amount - start)
+            await anyio.lowlevel.checkpoint_if_cancelled()  # a cancel stops here, before the next part is sent
+            # Daytona scrolls a part it accepted even if we stop waiting, so a cancel waits for it, as in `_type`.
+            scroll = partial(
+                self._computer_use.mouse.scroll,
+                x,
+                y,
+                direction,
+                clicks,
+                modifiers=modifiers,
+                request_timeout=_REQUEST_TIMEOUT,
+            )
             # The one call that reports a failure in its result rather than raising.
-            if not await self._computer_use.mouse.scroll(
-                x, y, direction, clicks, modifiers=modifiers, request_timeout=_REQUEST_TIMEOUT
-            ):
+            if not await run_to_completion(scroll):
                 raise WorkspaceError("Daytona's desktop did not scroll.")
 
     async def _type(self, text: str) -> None:
@@ -229,8 +240,8 @@ class DaytonaDesktop:
                 await anyio.lowlevel.checkpoint_if_cancelled()  # a cancel stops here, before the next part is sent
                 # Daytona types a part it accepted even if we stop waiting, so a cancel waits for it: the next action
                 # must not reach the screen before this text does.
-                with anyio.CancelScope(shield=True):
-                    await keyboard.type(segment[start : start + _TYPED_PER_REQUEST], request_timeout=_TYPE_TIMEOUT)
+                part = segment[start : start + _TYPED_PER_REQUEST]
+                await run_to_completion(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
 
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()

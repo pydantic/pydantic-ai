@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import anyio
@@ -167,35 +169,38 @@ async def test_a_cancelled_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDay
     assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keyup a', 'keyup ctrl']
 
 
-async def test_a_cancelled_type_waits_for_the_part_daytona_accepted(fake_daytona: FakeDaytona) -> None:
-    """Daytona types a part it accepted even when the caller stops waiting, so the next action can't overtake it."""
+@pytest.mark.parametrize(
+    ('action', 'sent'),
+    [
+        pytest.param(TypeText(text='a' * 4_001), f'type {"a" * 2_000}', id='type'),
+        pytest.param(Scroll(x=1, y=2, direction='down', amount=501), 'scroll 1 2 down 500 modifiers=[]', id='scroll'),
+    ],
+)
+@pytest.mark.parametrize('native', [False, True], ids=['scope-cancel', 'task-cancel'])
+async def test_a_cancelled_type_or_scroll_waits_for_the_part_daytona_accepted(
+    fake_daytona: FakeDaytona, action: DisplayAction, sent: str, native: bool
+) -> None:
+    """Daytona finishes a part it accepted even when the caller stops waiting, so the next action can't overtake it."""
     backend, sandbox = await _started(fake_daytona)
-    type_part = sandbox.computer_use.type
-    accepted, release = anyio.Event(), anyio.Event()
+    desktop = sandbox.computer_use
+    desktop.request_gate = asyncio.Event()
+    scope = anyio.CancelScope()
 
-    async def slow_type(text: str, delay: int | None = None, request_timeout: float | None = None) -> None:
-        accepted.set()
-        await release.wait()
-        await type_part(text, delay, request_timeout)
+    async def act() -> None:
+        with scope:
+            await screen(backend).act(action)
 
-    sandbox.computer_use.type = slow_type
-    typing = anyio.CancelScope()
+    acting = asyncio.ensure_future(act())
+    await desktop.request_accepted.wait()
+    acting.cancel() if native else scope.cancel()
+    await anyio.wait_all_tasks_blocked()
+    assert not acting.done()  # still waiting for the part Daytona accepted
+    desktop.request_gate.set()
 
-    async def type_text() -> None:
-        with typing:
-            await screen(backend).act(TypeText(text='a' * 4_001))
-
-    async with anyio.create_task_group() as tasks:
-        tasks.start_soon(type_text)
-        await accepted.wait()
-        typing.cancel()
-        await anyio.wait_all_tasks_blocked()
-        assert not typing.cancelled_caught  # still waiting for the part Daytona accepted
-        release.set()
-
-    assert typing.cancelled_caught
+    with pytest.raises(asyncio.CancelledError) if native else nullcontext():
+        await acting
     # The rest was never sent.
-    assert sandbox.desktop_calls == [f'type {"a" * 2_000}']
+    assert sandbox.desktop_calls == [sent]
 
 
 async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: FakeDaytona) -> None:
