@@ -25,7 +25,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileSystem
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir

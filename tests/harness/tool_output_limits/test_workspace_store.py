@@ -24,11 +24,11 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.tool_output_limits import (
     READ_TOOL_NAME,
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore,
     Spill,
     ToolOutputLimits,
     Truncate,
-    WorkspaceStore,
+    WorkspaceOverflowStore,
 )
 
 
@@ -137,7 +137,9 @@ class TestDefaultStore:
                 return ModelResponse(parts=[ToolCallPart(READ_TOOL_NAME, {'handle': handle, 'limit': 2})])
             return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
-        limits = ToolOutputLimits(bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path))
+        limits = ToolOutputLimits(
+            bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
+        )
         agent = Agent(FunctionModel(respond), capabilities=[limits])
 
         @agent.tool_plain
@@ -152,14 +154,14 @@ class TestDefaultStore:
         assert (tmp_path / handle).read_text() == payload
         assert result.output == f'[handle {handle!r}: 500 matching line(s); showing 2]\nline 0\nline 1'
 
-    @pytest.mark.parametrize('store', [None, WorkspaceStore()], ids=['default', 'explicit'])
-    async def test_spilling_without_a_workspace_fails_the_run(self, store: WorkspaceStore | None):
+    @pytest.mark.parametrize('store', [None, WorkspaceOverflowStore()], ids=['default', 'explicit'])
+    async def test_spilling_without_a_workspace_fails_the_run(self, store: WorkspaceOverflowStore | None):
         agent = Agent(FunctionModel(_call_big_tool), capabilities=[ToolOutputLimits(store=store)])
-        with pytest.raises(UserError, match=r'none is attached to this run.*store=LocalFileStore\(\)'):
+        with pytest.raises(UserError, match=r'none is attached to this run.*store=LocalFileOverflowStore\(\)'):
             await agent.run('go')
 
     async def test_store_with_its_own_workspace_needs_none_from_the_run(self, tmp_path: Path):
-        store = WorkspaceStore(workspace=LocalWorkspaceBackend(tmp_path))
+        store = WorkspaceOverflowStore(workspace=LocalWorkspaceBackend(tmp_path))
         agent = Agent(FunctionModel(_call_big_tool), capabilities=[ToolOutputLimits(store=store)])
 
         @agent.tool_plain
@@ -174,7 +176,7 @@ class TestDefaultStore:
 
     def test_store_workspace_must_be_a_backend(self, tmp_path: Path):
         with pytest.raises(TypeError, match=r'takes a workspace backend.*LocalWorkspaceBackend\('):
-            WorkspaceStore(workspace=LocalWorkspace(tmp_path))  # pyright: ignore[reportArgumentType]
+            WorkspaceOverflowStore(workspace=LocalWorkspace(tmp_path))  # pyright: ignore[reportArgumentType]
 
     async def test_read_only_workspace_warns_and_falls_back(self, tmp_path: Path):
         limits = ToolOutputLimits(bands=[Band(over=100, action=Spill(then=Truncate(max_chars=150)))])
@@ -220,7 +222,7 @@ class TestDefaultStore:
         assert result.output.startswith("[No stored tool result for handle 'call-1'.")
 
     async def test_workspace_failure_on_read_is_a_failed_tool_call(self, tmp_path: Path):
-        toolset = ToolOutputLimits(store=WorkspaceStore()).get_toolset()
+        toolset = ToolOutputLimits(store=WorkspaceOverflowStore()).get_toolset()
         assert toolset is not None
         tool = toolset.tools[READ_TOOL_NAME]  # type: ignore[union-attr]
         ctx = _Ctx(workspace=Workspace(_FailingRead(tmp_path)))
@@ -231,7 +233,7 @@ class TestDefaultStore:
 class TestWorkspaceStore:
     async def test_keys_become_paths_in_the_store_directory(self, tmp_path: Path):
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-        store = WorkspaceStore()
+        store = WorkspaceOverflowStore()
         directory = f'{tmp_path.resolve()}/.pydantic-ai-harness/tool-output'
         handle = await store.write(workspace, 'run-1/../call 1.0', b'payload')
         assert handle == f'{directory}/run-1/_/call_1.0'
@@ -244,12 +246,12 @@ class TestWorkspaceStore:
         (tmp_path / 'secret.txt').write_text('secret')
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         with pytest.raises(PermissionError, match='outside the store directory'):
-            await WorkspaceStore().read(workspace, handle)
+            await WorkspaceOverflowStore().read(workspace, handle)
 
     async def test_symlink_in_the_store_directory_is_refused(self, tmp_path: Path):
         (tmp_path / 'secret.txt').write_text('secret')
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-        store = WorkspaceStore()
+        store = WorkspaceOverflowStore()
         await store.write(workspace, 'run/call.0', b'payload')
         (tmp_path / '.pydantic-ai-harness' / 'tool-output' / 'leak').symlink_to(tmp_path / 'secret.txt')
         with pytest.raises(PermissionError, match='outside the store directory'):
@@ -263,7 +265,7 @@ class TestWorkspaceStore:
         (tmp_path / 'work' / link).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / 'work' / link).symlink_to(outside)
         workspace = Workspace(LocalWorkspaceBackend(tmp_path / 'work'))
-        store = WorkspaceStore()
+        store = WorkspaceOverflowStore()
         with pytest.raises(WorkspaceError, match='is a symlink'):
             await store.read(workspace, 'run/call.0')
         with pytest.raises(WorkspaceError, match='is a symlink'):
@@ -276,17 +278,17 @@ class TestWorkspaceStore:
         (tmp_path / 'work' / '.pydantic-ai-harness' / '.gitignore').symlink_to(outside)
         workspace = Workspace(LocalWorkspaceBackend(tmp_path / 'work'))
         with pytest.raises(WorkspaceError, match='is a symlink'):
-            await WorkspaceStore().write(workspace, 'run/new.0', b'payload')
+            await WorkspaceOverflowStore().write(workspace, 'run/new.0', b'payload')
         assert not outside.exists()
 
     async def test_missing_handle_raises_file_not_found(self, tmp_path: Path):
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         with pytest.raises(FileNotFoundError):
-            await WorkspaceStore().read(workspace, 'run/missing.0')
+            await WorkspaceOverflowStore().read(workspace, 'run/missing.0')
 
     async def test_filesystem_only_workspace_uses_working_dir(self, tmp_path: Path):
         workspace = Workspace(_FilesystemOnly(tmp_path))
-        store = WorkspaceStore()
+        store = WorkspaceOverflowStore()
         handle = await store.write(workspace, 'run/call.0', b'data')
         assert handle == f'{tmp_path.resolve()}/.pydantic-ai-harness/tool-output/run/call.0'
         assert await store.read(workspace, handle) == b'data'

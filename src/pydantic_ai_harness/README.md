@@ -10,7 +10,7 @@
 
 ---
 
-**Pydantic AI Harness** is the official [capability](https://ai.pydantic.dev/capabilities/overview/) and harness library for [Pydantic AI](https://ai.pydantic.dev/). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](https://ai.pydantic.dev/models/), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](pydantic_ai_harness/filesystem/) to act in, a [plan](pydantic_ai_harness/planning/) it keeps current, [memory](pydantic_ai_harness/memory/) that carries across sessions, [sub-agents](pydantic_ai_harness/subagents/) to hand work to, [context management](pydantic_ai_harness/compaction/) for long runs, and [durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) that survives a restart. **Pydantic AI Harness** ships that harness.
+**Pydantic AI Harness** is the official [capability](https://ai.pydantic.dev/capabilities/overview/) and harness library for [Pydantic AI](https://ai.pydantic.dev/). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](https://ai.pydantic.dev/models/), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](pydantic_ai_harness/file_system/) to act in, a [plan](pydantic_ai_harness/planning/) it keeps current, [memory](pydantic_ai_harness/memory/) that carries across sessions, [sub-agents](pydantic_ai_harness/sub_agents/) to hand work to, [context management](pydantic_ai_harness/compaction/) for long runs, and [durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) that survives a restart. **Pydantic AI Harness** ships that harness.
 
 Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [80+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
@@ -79,7 +79,7 @@ pip install "pydantic-ai-slim[openai]"
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 from pydantic_ai_harness import Coder, Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'openai:gpt-6.1-sol',
@@ -87,7 +87,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         WebSearch(),  # look up docs and error messages on the web
-        Memory(FileStore('.agent-memory')),  # remembers across sessions
+        Memory(FileMemoryStore('.agent-memory')),  # remembers across sessions
     ],
 )
 ```
@@ -96,24 +96,24 @@ agent = Agent(
 
 ## Built from capabilities
 
-`Coder` is a regular combined capability: [`FileSystem`](pydantic_ai_harness/filesystem/) with five of its tools and content hashes off, [`Shell`](pydantic_ai_harness/shell/) with its persistent `shell` tool and no allowlist, [`RepoContext`](pydantic_ai_harness/repo_context/), [`SubAgents`](pydantic_ai_harness/subagents/) delegating to the agent itself, [`ClearToolResults`](pydantic_ai_harness/compaction/), and a bounded [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](pydantic_ai_harness/coder/) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
+`Coder` is a regular combined capability: [`FileSystem`](pydantic_ai_harness/file_system/) with five of its tools and content hashes off, [`Shell`](pydantic_ai_harness/shell/) with its persistent `shell` tool and no allowlist, [`RepoContext`](pydantic_ai_harness/repo_context/), [`SubAgents`](pydantic_ai_harness/sub_agents/) delegating to the agent itself, [`ClearToolResults`](pydantic_ai_harness/compaction/), and a bounded [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](pydantic_ai_harness/coder/) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
 
 ## Workspaces
 
 A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where the agent's files and commands live: your machine with `LocalWorkspace`, or an isolated sandbox. Harness capabilities never pick one for you. Attach one, or the run fails at its start and tells you what to attach.
 
-[Coder](pydantic_ai_harness/coder/), [FileSystem](pydantic_ai_harness/filesystem/), [Shell](pydantic_ai_harness/shell/), [Repo Context](pydantic_ai_harness/repo_context/), and [Macroscope](pydantic_ai_harness/macroscope/) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](pydantic_ai_harness/coder/#sharing-a-workspace).
+[Coder](pydantic_ai_harness/coder/), [FileSystem](pydantic_ai_harness/file_system/), [Shell](pydantic_ai_harness/shell/), [Repo Context](pydantic_ai_harness/repo_context/), and [Macroscope](pydantic_ai_harness/macroscope/) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](pydantic_ai_harness/coder/#sharing-a-workspace).
 
-Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
+Skills, SubAgents, ToolOutputLimits, and Memory's `FileMemoryStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory, ToolOutputLimits
-from pydantic_ai_harness.memory import FileStore
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.memory import FileMemoryStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
-memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
-limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
+memory = Memory(FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
+limits = ToolOutputLimits(store=LocalFileOverflowStore())  # spills in this machine's temp directory
 ```
 
 By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored. When the workspace user cannot write to the working directory, Shell keeps its job files in a directory private to that user under the workspace's temp directory (`$TMPDIR` in its environment, or `/tmp`) instead.
@@ -143,7 +143,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 
 | Capability | Package | What it does |
 |---|---|---|
-| [FileSystem](pydantic_ai_harness/filesystem/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
+| [FileSystem](pydantic_ai_harness/file_system/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Smart Search](pydantic_ai_harness/smart_search/) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
@@ -214,7 +214,7 @@ How the agent thinks and divides the work.
 |---|---|---|
 | [Thinking](https://ai.pydantic.dev/capabilities/thinking/) | Core | Provider-adaptive extended thinking at configurable effort |
 | [Planning](pydantic_ai_harness/planning/) | Harness | Model-owned task plans with a cache-safe live reminder |
-| [Subagents](pydantic_ai_harness/subagents/) | Harness | Delegate self-contained tasks to named child agents |
+| [Subagents](pydantic_ai_harness/sub_agents/) | Harness | Delegate self-contained tasks to named child agents |
 | [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](pydantic_ai_harness/advisor/) | Harness | Let an executor consult a stronger model mid-run |
 | [Background Tools](pydantic_ai_harness/background_tools/) | Harness | Run selected tools concurrently; results arrive as follow-up messages |
@@ -256,7 +256,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Guardrails](pydantic_ai_harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](pydantic_ai_harness/prompt_injection_defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Artifact Scanning](pydantic_ai_harness/artifact_scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
-| [Spend Limits](pydantic_ai_harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
+| [Spend Limits](pydantic_ai_harness/spend_limits/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](pydantic_ai_harness/ask_user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Tool Call Judge](pydantic_ai_harness/tool_call_judge/) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
@@ -306,13 +306,13 @@ A research agent from regular capabilities -- this is [`Researcher`](pydantic_ai
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai_harness import SubAgent, SubAgents, ToolOutputLimits
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
 sub_researcher = SubAgent(
     Agent(
         name='researcher',
         description='Research a focused sub-question on the web and report back with findings and source links',
-        capabilities=[WebSearch(local=True), WebFetch(local=True), ToolOutputLimits(store=LocalFileStore())],
+        capabilities=[WebSearch(local=True), WebFetch(local=True), ToolOutputLimits(store=LocalFileOverflowStore())],
     )
 )
 
@@ -322,7 +322,7 @@ agent = Agent(
         WebSearch(local=True),  # native provider search, DuckDuckGo fallback elsewhere
         WebFetch(local=True),  # read the pages behind the results, native or local
         SubAgents(agents=[sub_researcher], agent_folders=None),
-        ToolOutputLimits(store=LocalFileStore()),  # fetched pages don't flood the context
+        ToolOutputLimits(store=LocalFileOverflowStore()),  # fetched pages don't flood the context
     ],
 )
 

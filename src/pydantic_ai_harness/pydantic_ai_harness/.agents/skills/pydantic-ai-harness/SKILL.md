@@ -172,15 +172,15 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 
 from pydantic_ai_harness import Coder, Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[
-        LocalWorkspace('.'),  # FileStore also writes into the run's workspace
+        LocalWorkspace('.'),  # FileMemoryStore also writes into the run's workspace
         Coder(),
         WebSearch(),  # core
-        Memory(FileStore('.agent-memory')),  # notes that persist across sessions
+        Memory(FileMemoryStore('.agent-memory')),  # notes that persist across sessions
     ],
 )
 ```
@@ -235,7 +235,7 @@ Some are submodule-only, including `GitHub`, `Linear`, `Notion`, `Slack`, `Googl
 the [Task-Family References](#task-family-references) table gives the import path that works for every
 capability. Top-level imports are lazy, so importing one capability does not pull in another's optional
 dependencies. Supporting types such as stores and policies are only in the submodule, for example
-`pydantic_ai_harness.memory.FileStore`.
+`pydantic_ai_harness.memory.FileMemoryStore`.
 
 ## Key Practices
 
@@ -284,7 +284,7 @@ The full capability list, grouped by what each gives an agent, is on the
 
 ## Managed subagent lifetime
 
-For background subagents, use `DelegationTasks` from `pydantic_ai_harness.subagents`.
+For background subagents, use `DelegationTasks` from `pydantic_ai_harness.sub_agents`.
 Keep `async with tasks.opened()` outside parent turns and inside the lifetime of all
 shared workspace/plugin resources. Bind with `with tasks.bind()` and add
 `DelegationReports(tasks, conversation_id=...)` to parent runs. `SubAgents` then

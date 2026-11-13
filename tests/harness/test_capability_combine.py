@@ -77,7 +77,7 @@ from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
@@ -579,7 +579,7 @@ def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch:
 
     # Any module the walk visits will do; the class it defines is re-exported elsewhere, so what
     # is under test is that the *import failure* is recorded as skipped rather than propagated.
-    a_capability_module = 'pydantic_ai_harness.subagents._capability'
+    a_capability_module = 'pydantic_ai_harness.sub_agents._capability'
 
     def wrapped_in_user_error() -> Exception:
         """What a capability raises when it builds something needing a missing extra at import.

@@ -20,7 +20,7 @@ from pydantic_ai_harness.coder import Autonomy, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.coder._instructions import coder_instructions
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend

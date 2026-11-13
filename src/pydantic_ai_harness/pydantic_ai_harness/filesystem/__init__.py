@@ -1,39 +1,45 @@
-"""Filesystem capability: gives agents configurable, bounded file system access."""
+"""Deprecated import location for `pydantic_ai_harness.file_system`.
 
-from pydantic_ai_harness._warn import warn_class_renamed
-from pydantic_ai_harness.filesystem._capability import FileSystem
-from pydantic_ai_harness.filesystem._content import Replacement
-from pydantic_ai_harness.filesystem._events import (
-    FILE_SYSTEM_EVENTS,
-    MAX_DIFF_SOURCE_CHARS,
-    MAX_EVENT_DIFF_CHARS,
-    DirectoryCreatedEvent,
-    DirectoryListedEvent,
-    FileChangeRequestedEvent,
-    FileEditedEvent,
-    FileOperation,
-    FileReadEvent,
-    FilesSearchedEvent,
-    FileWrittenEvent,
-    SearchKind,
-)
-from pydantic_ai_harness.filesystem._tool_kinds import (
+Renamed to the snake_case of its capability, `FileSystem`. Importing from here still works but emits a
+`HarnessDeprecationWarning`. Import from `pydantic_ai_harness.file_system` instead.
+"""
+
+from pydantic_ai_harness import file_system as _file_system
+from pydantic_ai_harness._warn import warn_module_renamed
+from pydantic_ai_harness.file_system import (
     CREATE_DIRECTORY_KIND,
+    DEFAULT_TOOL_NAMES,
     EDIT_FILE_KIND,
     FILE_INFO_KIND,
+    FILE_SYSTEM_EVENTS,
+    FILE_SYSTEM_TOOL_NAMES,
     FIND_FILES_KIND,
     GREP_KIND,
     LIST_DIRECTORY_KIND,
     LIST_FILES_KIND,
+    MAX_DIFF_SOURCE_CHARS,
+    MAX_EVENT_DIFF_CHARS,
     READ_FILE_KIND,
+    READ_ONLY_TOOL_NAMES,
+    RIPGREP_TOOL_NAMES,
     SEARCH_FILES_KIND,
     WRITE_FILE_KIND,
     CreateDirectoryArgs,
     CreateDirectoryCallPart,
+    DirectoryCreatedEvent,
+    DirectoryListedEvent,
     EditFileArgs,
     EditFileCallPart,
+    FileChangeRequestedEvent,
+    FileEditedEvent,
     FileInfoArgs,
     FileInfoCallPart,
+    FileOperation,
+    FileReadEvent,
+    FilesSearchedEvent,
+    FileSystem,
+    FileSystemToolset,
+    FileWrittenEvent,
     FindFilesArgs,
     FindFilesCallPart,
     GrepArgs,
@@ -45,19 +51,16 @@ from pydantic_ai_harness.filesystem._tool_kinds import (
     ReadFileArgs,
     ReadFileCallPart,
     ReadFileReturnPart,
+    Replacement,
     ReplacementArgs,
     SearchFilesArgs,
     SearchFilesCallPart,
+    SearchKind,
     WriteFileArgs,
     WriteFileCallPart,
 )
-from pydantic_ai_harness.filesystem._toolset import (
-    DEFAULT_TOOL_NAMES,
-    FILE_SYSTEM_TOOL_NAMES,
-    READ_ONLY_TOOL_NAMES,
-    RIPGREP_TOOL_NAMES,
-    FileSystemToolset,
-)
+
+warn_module_renamed('filesystem', 'file_system')
 
 __all__ = [
     'CREATE_DIRECTORY_KIND',
@@ -115,7 +118,4 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    if name == 'FileChangeRequestEvent':
-        warn_class_renamed(name, 'FileChangeRequestedEvent', __name__)
-        return FileChangeRequestedEvent
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+    return getattr(_file_system, name)

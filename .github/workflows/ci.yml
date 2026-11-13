@@ -782,7 +782,7 @@ jobs:
           assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
           assert importlib.util.find_spec('json_repair') is None, 'json-repair belongs to the coder and repair-tool-arguments extras'
           import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
-          import pydantic_ai_harness.filesystem, pydantic_ai_harness.shell
+          import pydantic_ai_harness.file_system, pydantic_ai_harness.shell
           try:
               import pydantic_ai_harness.coder
           except ImportError as error:
@@ -1817,9 +1817,9 @@ jobs:
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
           detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
-            "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
+            "$H/pydantic_ai_harness/spend_limits" tests/harness/step_persistence tests/harness/media tests/harness/spend_limits \
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
-          detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect redis "$H/pydantic_ai_harness/spend_limits" tests/harness/spend_limits "$H/integration_tests/redis"
           detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
             "$H/integration_tests/azure_durable_task"
 

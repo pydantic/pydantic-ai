@@ -46,7 +46,7 @@ Paths are relative to the repo root.
 
 ### Harness: `subagents` already manages a pool of workers
 
-`DelegationTasks` (`src/pydantic_ai_harness/pydantic_ai_harness/subagents/_tasks.py`, publicly exported) provides:
+`DelegationTasks` (`src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_tasks.py`, publicly exported) provides:
 
 - **Long-lived background children.** Each is an `asyncio.Task` with a `DelegationTask` record
   (`id, agent_name, parent_id, status: running|finished, outcome, messages, generation, run_id`).

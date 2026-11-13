@@ -74,7 +74,7 @@ from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTaskEvent,
     DelegationTasks,

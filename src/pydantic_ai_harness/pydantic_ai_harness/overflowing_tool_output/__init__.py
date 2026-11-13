@@ -9,7 +9,7 @@ from pydantic_ai_harness.tool_output_limits import (
     READ_TOOL_NAME,
     Action,
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore,
     OverflowStore,
     Passthrough,
     Spill,
@@ -19,6 +19,8 @@ from pydantic_ai_harness.tool_output_limits import (
     Truncate,
     TruncationStrategy,
 )
+
+LocalFileStore = LocalFileOverflowStore
 
 OverflowingToolOutput = ToolOutputLimits
 

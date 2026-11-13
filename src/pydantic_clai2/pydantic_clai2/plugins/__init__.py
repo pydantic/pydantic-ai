@@ -28,7 +28,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
-from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_ai_harness.sub_agents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements

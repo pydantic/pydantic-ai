@@ -9,7 +9,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     TieredCompaction,
 )
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 
 Binds = type[object] | tuple[type[object], ...]
 """The capability class, or any of several, a plugin must bind to include another; an `isinstance` target."""

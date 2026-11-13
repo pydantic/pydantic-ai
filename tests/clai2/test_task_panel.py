@@ -7,7 +7,7 @@ from typing import Literal
 import pytest
 from rich.console import Console
 
-from pydantic_ai_harness.subagents import DelegationTaskEvent
+from pydantic_ai_harness.sub_agents import DelegationTaskEvent
 from pydantic_clai2.runtime.tasks import Tasks
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.test_tasks import task
@@ -41,7 +41,7 @@ def test_unsuccessful_outcomes_use_their_own_colour(outcome: Literal['failed', '
 
 
 def test_start_row_is_styled_like_a_tool_call() -> None:
-    from pydantic_ai_harness.subagents import DelegationStartedEvent
+    from pydantic_ai_harness.sub_agents import DelegationStartedEvent
     from pydantic_clai2.runtime.tasks import task_row
 
     event = DelegationStartedEvent(

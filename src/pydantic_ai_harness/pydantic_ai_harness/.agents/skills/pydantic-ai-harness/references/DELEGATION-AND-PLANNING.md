@@ -147,7 +147,7 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
 - `workspace_resolver=None`: an async `(ctx, request: DelegationWorkspaceRequest) -> Workspace`
   callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
-  `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
+  `pydantic_ai_harness.sub_agents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
   still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.
@@ -155,7 +155,7 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   capabilities). `max_depth=3` caps nesting, counting the top-level run.
 - `tool_retries=2`, `contain_errors=False`, `event_stream_handler=None`, `tool_name='delegate_task'`.
 - Disk agents: `agent_overrides={'name': AgentOverride(model=..., effort='high')}` and
-  `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.subagents`.
+  `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.sub_agents`.
 
 Gotchas:
 
@@ -188,7 +188,7 @@ Gotchas:
 ```python
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.subagents import SubAgent, SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents, TaskControl
 
 researcher = Agent('test', name='researcher', description='Researches a topic.')
 orchestrator = Agent(
@@ -243,7 +243,7 @@ no longer matches it. `message_history` is trusted as the caller's own, metadata
 client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
 
 ```python
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 
 tasks = DelegationTasks()
 reports = DelegationReports(tasks, conversation_id='conversation-1')

@@ -8,10 +8,10 @@ from types import ModuleType
 import pytest
 from pydantic import TypeAdapter
 
-import pydantic_ai_harness.filesystem as filesystem
+import pydantic_ai_harness.file_system as filesystem
 import pydantic_ai_harness.shell as shell
 import pydantic_ai_harness.step_persistence as step_persistence
-import pydantic_ai_harness.subagents as subagents
+import pydantic_ai_harness.sub_agents as subagents
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import (

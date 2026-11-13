@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.media import (
-    DiskMediaStore,
+    FileMediaStore,
     MediaContext,
     MediaStore,
     PostgresConnection,
@@ -78,18 +78,18 @@ class TestMediaUriHelpers:
 
 class TestDiskMediaStore:
     async def test_put_get_round_trip(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'hello bytes', context=MediaContext(media_type='application/octet-stream'))
         assert uri.startswith('media+sha256://')
         assert await store.get(uri) == b'hello bytes'
 
     async def test_put_with_empty_context_works(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'no context')
         assert await store.get(uri) == b'no context'
 
     async def test_dedup_on_repeated_put(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri1 = await store.put(b'same content')
         uri2 = await store.put(b'same content')
         assert uri1 == uri2
@@ -97,14 +97,14 @@ class TestDiskMediaStore:
         assert len(files) == 1
 
     async def test_exists(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'present')
         assert await store.exists(uri) is True
         missing_uri = media_uri_for(b'never put')
         assert await store.exists(missing_uri) is False
 
     async def test_get_missing_raises(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         with pytest.raises(FileNotFoundError):
             await store.get(media_uri_for(b'never put'))
 
@@ -112,7 +112,7 @@ class TestDiskMediaStore:
         def strategy(uri: str, ctx: MediaContext) -> str:
             return f'images/{parse_media_uri(uri)}.png'
 
-        store = DiskMediaStore(tmp_path, key_strategy=strategy)
+        store = FileMediaStore(tmp_path, key_strategy=strategy)
         uri = await store.put(b'pixels')
         assert (tmp_path / 'images' / f'{parse_media_uri(uri)}.png').exists()
         assert await store.get(uri) == b'pixels'
@@ -121,7 +121,7 @@ class TestDiskMediaStore:
         def evil(uri: str, ctx: MediaContext) -> str:
             return '../../../etc/passwd'
 
-        store = DiskMediaStore(tmp_path, key_strategy=evil)
+        store = FileMediaStore(tmp_path, key_strategy=evil)
         with pytest.raises(ValueError, match='traversal-unsafe'):
             await store.put(b'attack')
 
@@ -131,12 +131,12 @@ class TestDiskMediaStore:
         def evil(uri: str, ctx: MediaContext) -> str:
             return '/etc/passwd'
 
-        store = DiskMediaStore(tmp_path, key_strategy=evil)
+        store = FileMediaStore(tmp_path, key_strategy=evil)
         with pytest.raises(ValueError, match='traversal-unsafe'):
             await store.put(b'attack')
 
     async def test_metadata_round_trips_via_sidecar(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(
             b'tagged',
             context=MediaContext(metadata={'origin': 'user', 'tenant': 'acme'}),
@@ -146,13 +146,13 @@ class TestDiskMediaStore:
         assert await store.get_metadata(uri) == {'origin': 'user', 'tenant': 'acme'}
 
     async def test_metadata_absent_when_not_supplied(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'no tags')
         assert list(tmp_path.glob('*.meta.json')) == []
         assert await store.get_metadata(uri) == {}
 
     async def test_get_metadata_rejects_non_object_sidecar(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'with meta', context=MediaContext(metadata={'k': 'v'}))
         sidecar = next(iter(tmp_path.glob('*.meta.json')))
         sidecar.write_text('"not an object"')
@@ -160,7 +160,7 @@ class TestDiskMediaStore:
             await store.get_metadata(uri)
 
     async def test_get_metadata_rejects_non_string_values(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'with meta', context=MediaContext(metadata={'k': 'v'}))
         sidecar = next(iter(tmp_path.glob('*.meta.json')))
         sidecar.write_text('{"k": 1}')
@@ -169,12 +169,12 @@ class TestDiskMediaStore:
 
     async def test_get_metadata_missing_raises(self, tmp_path: Path) -> None:
         """A blob that was never stored raises `FileNotFoundError`, like every other store."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         with pytest.raises(FileNotFoundError):
             await store.get_metadata(media_uri_for(b'never put'))
 
     async def test_later_put_with_metadata_replaces_the_sidecar(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'tagged twice', context=MediaContext(metadata={'writer': 'first'}))
         await store.put(b'tagged twice', context=MediaContext(metadata={'writer': 'second'}))
         assert await store.get_metadata(uri) == {'writer': 'second'}
@@ -187,7 +187,7 @@ class TestDiskMediaStore:
         The first writer's `replace` runs a whole second `put`, which writes and
         renames its own temporary file, before the first writer renames its own.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         data = b'raced'
         context = MediaContext(metadata={'k': 'v'})
         real_replace = Path.replace
@@ -212,7 +212,7 @@ class TestDiskMediaStore:
         ]
 
     async def test_failed_write_leaves_no_temporary_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
 
         def fail_replace(self: Path, target: Path) -> Path:
             raise OSError('disk full')
@@ -230,7 +230,7 @@ class TestDiskMediaStore:
         def splice(uri: str, ctx: MediaContext) -> str:
             return 'images/' + uri.removeprefix('media+sha256://') + '.bin'
 
-        store = DiskMediaStore(tmp_path, key_strategy=splice)
+        store = FileMediaStore(tmp_path, key_strategy=splice)
         stored = await store.put(b'addressed by its digest')
         assert await store.get(stored) == b'addressed by its digest'
         forged = 'media+sha256://other'
@@ -424,7 +424,7 @@ async def _restore_as_pre_escaping_reader(node: dict[str, object], store: MediaS
 class TestExternalizeRestoreWalker:
     async def test_round_trip_with_inline_binary(self, tmp_path: Path) -> None:
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         big_payload = b'\x00' * 70_000
         b64_payload = base64.b64encode(big_payload).decode('ascii')
         node: object = {
@@ -457,7 +457,7 @@ class TestExternalizeRestoreWalker:
             )
         ]
         node: object = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
 
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         restored = await restore_media(externalized, media_store=store)
@@ -480,7 +480,7 @@ class TestExternalizeRestoreWalker:
             seen_contexts.append(context)
             return f'{context.media_type or "none"}/{parse_media_uri(uri)}'
 
-        store = DiskMediaStore(tmp_path, key_strategy=key_strategy)
+        store = FileMediaStore(tmp_path, key_strategy=key_strategy)
         node = {
             'kind': 'binary',
             'data': base64.b64encode(b'\x00' * 128).decode('ascii'),
@@ -493,7 +493,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_threshold_boundary_keeps_small_inline(self, tmp_path: Path) -> None:
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         small_payload = b'\x42' * 32
         node = {
             'kind': 'binary',
@@ -509,7 +509,7 @@ class TestExternalizeRestoreWalker:
     async def test_binary_threshold_boundary_is_inclusive(self, tmp_path: Path) -> None:
         """Exactly `threshold_bytes` externalizes; one byte under stays inline."""
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         threshold = 256
 
         def binary_node(size: int) -> dict[str, object]:
@@ -526,7 +526,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_text_threshold_boundary_is_inclusive(self, tmp_path: Path) -> None:
         """Exactly `threshold_bytes` externalizes; one byte under stays inline."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         threshold = 256
 
         under = {'content': 'y' * (threshold - 1), 'part_kind': 'text'}
@@ -539,7 +539,7 @@ class TestExternalizeRestoreWalker:
         assert await restore_media(externalized, media_store=store) == at
 
     async def test_restore_raises_when_marker_missing_uri(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         bad_node = {'__harness_external_media__': True, 'media_type': 'image/png'}
         with pytest.raises(ValueError, match='missing string uri'):
             await restore_media(bad_node, media_store=store)
@@ -547,7 +547,7 @@ class TestExternalizeRestoreWalker:
     async def test_round_trip_preserves_unknown_binary_fields(self, tmp_path: Path) -> None:
         """A field the walker doesn't know about survives externalize -> restore."""
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         big = base64.b64encode(b'\x01' * 70_000).decode('ascii')
         node = {
             'kind': 'binary',
@@ -564,7 +564,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_restore_raises_when_blob_is_missing(self, tmp_path: Path) -> None:
         """A well-formed marker whose blob was pruned surfaces the store's error."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         marker = {
             '__harness_external_media__': True,
             '__harness_external_uri__': 'media+sha256://' + '0' * 64,
@@ -575,7 +575,7 @@ class TestExternalizeRestoreWalker:
             await restore_media(marker, media_store=store)
 
     async def test_walker_passes_through_scalars(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         for value in [None, 1, 'foo', True]:
             assert await externalize_media(value, media_store=store, threshold_bytes=1) == value
             assert await restore_media(value, media_store=store) == value
@@ -587,7 +587,7 @@ class TestExternalizeRestoreWalker:
         push a snapshot past MongoDB's 16MB document cap.
         """
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         big_text = 'x' * 70_000
         node: object = {
             'parts': [{'content': big_text, 'tool_name': 'scrape', 'tool_call_id': 'c1', 'part_kind': 'tool-return'}]
@@ -610,7 +610,7 @@ class TestExternalizeRestoreWalker:
             seen_contexts.append(context)
             return f'{context.media_type or "none"}/{parse_media_uri(uri)}'
 
-        store = DiskMediaStore(tmp_path, key_strategy=key_strategy)
+        store = FileMediaStore(tmp_path, key_strategy=key_strategy)
         node = {'content': 'x' * 128, 'part_kind': 'text'}
 
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64)
@@ -618,7 +618,7 @@ class TestExternalizeRestoreWalker:
         assert seen_contexts == [MediaContext(media_type='text/plain'), MediaContext(media_type='text/plain')]
 
     async def test_small_text_part_stays_inline(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'content': 'short', 'part_kind': 'text', 'id': None}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         assert externalized == node
@@ -626,7 +626,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_non_string_content_is_not_externalized(self, tmp_path: Path) -> None:
         """A structured (non-string) `content` is walked, not treated as text."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'content': ['a', 'b'], 'part_kind': 'user-prompt'}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=1)
         assert externalized == node
@@ -635,7 +635,7 @@ class TestExternalizeRestoreWalker:
     async def test_text_measured_in_utf8_bytes_not_characters(self, tmp_path: Path) -> None:
         """A multi-byte string below the char count but above the byte threshold externalizes."""
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         # 'é' is 2 UTF-8 bytes: 40 chars, 80 bytes.
         node = {'content': 'é' * 40, 'part_kind': 'text'}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64)
@@ -649,7 +649,7 @@ class TestExternalizeRestoreWalker:
         Its own `uri` field must survive untouched -- treating it as a part
         would overwrite `uri` with a media URI and drop it on restore.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'content': 'x' * 70_000, 'uri': 'source-id'}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         assert externalized == node
@@ -658,7 +658,7 @@ class TestExternalizeRestoreWalker:
     async def test_text_part_externalizes_nested_binary(self, tmp_path: Path) -> None:
         """A large text part with a nested large binary externalizes both and round-trips."""
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         big_text = 'x' * 70_000
         big_bin_b64 = base64.b64encode(b'\x01' * 70_000).decode('ascii')
         node = {
@@ -685,7 +685,7 @@ class TestExternalizeRestoreWalker:
         so the payload's own `uri` must survive externalize -> restore intact.
         """
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {
             'part_kind': 'tool-return',
             'content': 'x' * 70_000,
@@ -701,7 +701,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_namespaced_marker_fields_round_trip(self, tmp_path: Path) -> None:
         """Caller-owned marker metadata is escaped before the marker writes its values."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {
             'kind': 'binary',
             'data': base64.b64encode(b'\x01' * 70_000).decode('ascii'),
@@ -723,7 +723,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_text_marker_field_round_trips(self, tmp_path: Path) -> None:
         """A text part can use the text marker key without losing its value."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {
             'part_kind': 'tool-return',
             'content': 'x' * 70_000,
@@ -784,7 +784,7 @@ class TestExternalizeRestoreWalker:
         stash's shape and a version stamp from the format's own namespace
         together; short of both, it leaves them alone.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         payload = b'\x03' * 16
         uri = await store.put(payload)
         marker: dict[str, object] = {
@@ -809,7 +809,7 @@ class TestExternalizeRestoreWalker:
         strip the caller's values. This reader is the only one that can reject a
         later format, so it has to.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         uri = await store.put(b'payload')
         marker = {
             '__harness_external_media__': True,
@@ -830,7 +830,7 @@ class TestExternalizeRestoreWalker:
         intact, the caller's escaped value still sitting in the stash rather
         than back under its own key.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         b64_payload = base64.b64encode(b'\x04' * 70_000).decode('ascii')
         node: dict[str, object] = {
             'kind': 'binary',
@@ -879,7 +879,7 @@ class TestExternalizeRestoreWalker:
         Restore falls back to it when `_URI_KEY` is absent, so those snapshots
         stay readable after the key rename.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         big_text = 'x' * 70_000
         uri = await store.put(big_text.encode('utf-8'), context=MediaContext(media_type='text/plain'))
         legacy_marker = {
@@ -905,7 +905,7 @@ class TestExternalizeRestoreWalker:
         UTF-8 refuses to encode. Below-threshold content must pass through
         untouched rather than raising on an eager encode.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'content': '\ud800' * 4, 'part_kind': 'text'}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         assert externalized == node
@@ -913,7 +913,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_above_threshold_surrogate_round_trips(self, tmp_path: Path) -> None:
         """A large string with an unpaired surrogate externalizes and restores exactly."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         content = '\ud800' + 'x' * 70_000
         node = {'content': content, 'part_kind': 'tool-return'}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
@@ -931,7 +931,7 @@ class TestExternalizeRestoreWalker:
         then be written whole into the snapshot record.
         """
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         big_text = 'q' * 70_000
         messages: list[ModelMessage] = [
             ModelRequest(
@@ -958,7 +958,7 @@ class TestExternalizeRestoreWalker:
         It serializes `kind: 'structured-content'`, so matching only `'text-content'` would leave its
         text inline. Its `value` isn't a string payload, so it stays inline.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         item = StructuredContent({'rows': ['q' * 10] * 7_000}, tag='report')
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
         dumped = _json.loads(ModelMessagesTypeAdapter.dump_json(messages))
@@ -984,7 +984,7 @@ class TestExternalizeRestoreWalker:
     @pytest.mark.parametrize('kind', [[], {}, ['text-content']], ids=['empty-list', 'dict', 'list'])
     async def test_unhashable_kind_with_string_content_is_left_alone(self, tmp_path: Path, kind: object) -> None:
         """Tool-return data can be any mapping, so a list or dict `kind` is not a text item, and doesn't raise."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'kind': kind, 'content': 'x' * 70_000}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         assert externalized == node
@@ -992,7 +992,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_unknown_kind_with_string_content_is_left_alone(self, tmp_path: Path) -> None:
         """A `kind` that is not a discriminator we know does not make a dict a text part."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'kind': 'note', 'content': 'x' * 70_000, 'uri': 'source://original'}
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         assert externalized == node
@@ -1001,7 +1001,7 @@ class TestExternalizeRestoreWalker:
     async def test_marker_mirrors_reference_to_uri_for_pre_uri_key_readers(self, tmp_path: Path) -> None:
         """A marker written now still restores on a reader that only knows plain `uri`."""
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         b64_payload = base64.b64encode(b'\x02' * 70_000).decode('ascii')
         node: dict[str, object] = {'kind': 'binary', 'data': b64_payload, 'media_type': 'image/png'}
         marker = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
@@ -1021,7 +1021,7 @@ class TestExternalizeRestoreWalker:
     async def test_text_marker_requires_current_reader_after_downgrade(self, tmp_path: Path) -> None:
         """The pre-PR binary reader cannot reconstruct externally stored text."""
 
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         original: object = _json.loads(
             ModelMessagesTypeAdapter.dump_json([ModelResponse(parts=[TextPart(content='x' * 128)])])
         )
@@ -1040,7 +1040,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_genuine_uri_suppresses_the_compat_mirror(self, tmp_path: Path) -> None:
         """A node with its own `uri` gets no mirror, so rollback fails loudly instead of lying."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node: dict[str, object] = {'part_kind': 'tool-return', 'content': 'x' * 70_000, 'uri': 'source://original'}
         marker = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
         assert _is_marker_dict(marker)
@@ -1054,7 +1054,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_unusable_uri_key_does_not_fall_back_to_a_genuine_uri(self, tmp_path: Path) -> None:
         """A corrupt `_URI_KEY` raises; the node's own `uri` is never read as a reference."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         marker = {
             '__harness_external_media__': True,
             '__harness_external_uri__': None,
@@ -1066,7 +1066,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_rejects_trees_that_are_not_json(self, tmp_path: Path) -> None:
         """A message object or a `dump_python()` tree raises instead of passing through unexternalized."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'\x00' * 128, media_type='image/png')])])
         ]
@@ -1100,7 +1100,7 @@ class TestExternalizeRestoreWalker:
     )
     async def test_tool_return_with_reserved_keys_round_trips(self, tmp_path: Path, content: dict[str, object]) -> None:
         """A tool return that carries the marker's own keys restores as the tool returned it, never as a marker."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         await store.put(b'another blob')
         messages: list[ModelMessage] = [
             ModelRequest(parts=[ToolReturnPart(tool_name='fetch', tool_call_id='c1', content=content)])
@@ -1116,7 +1116,7 @@ class TestExternalizeRestoreWalker:
         Trusting it would let a tool return forge one. Each `externalize_media`
         pass therefore needs its own `restore_media`.
         """
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'part_kind': 'text', 'content': 'x' * 128}
         once = await externalize_media(node, media_store=store, threshold_bytes=64)
         twice = await externalize_media(once, media_store=store, threshold_bytes=64)
@@ -1124,7 +1124,7 @@ class TestExternalizeRestoreWalker:
         assert await restore_media(once, media_store=store) == node
 
     async def test_externalized_part_inside_a_wrapped_dict_restores(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {
             '__harness_external_media__': 'caller-value',
             'image': {'kind': 'binary', 'data': base64.b64encode(b'\x06' * 128).decode('ascii')},
@@ -1147,13 +1147,13 @@ class TestExternalizeRestoreWalker:
     )
     async def test_binary_shaped_dict_without_canonical_base64_stays_inline(self, tmp_path: Path, data: str) -> None:
         """A tool dict shaped like `BinaryContent` whose `data` is not canonical base64 is left as it is."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {'kind': 'binary', 'data': data}
         assert await externalize_media(node, media_store=store, threshold_bytes=1) == node
         assert list(tmp_path.iterdir()) == []
 
     async def test_urlsafe_and_standard_base64_restore_in_their_own_alphabet(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         raw = bytes([0xFB, 0xFF, 0xBF]) * 64
         urlsafe = {'kind': 'binary', 'data': base64.urlsafe_b64encode(raw).decode('ascii')}
         standard = {'kind': 'binary', 'data': base64.b64encode(raw).decode('ascii')}
@@ -1169,7 +1169,7 @@ class TestExternalizeRestoreWalker:
         assert await restore_media(standard_marker, media_store=store) == standard
 
     async def test_real_binary_content_restores_to_the_identical_dump(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         messages: list[ModelMessage] = [
             ModelRequest(
                 parts=[UserPromptPart(content=[BinaryContent(data=bytes(range(256)) * 4, media_type='image/png')])]
@@ -1182,7 +1182,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_pre_wrapper_data_under_the_literal_key_is_not_unwrapped(self, tmp_path: Path) -> None:
         """Only a stamped wrapper is unwrapped, so a snapshot from before the wrapper keeps its shape."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         legacy = {'__harness_external_literal__': {'caller': 'data'}}
         assert await restore_media(legacy, media_store=store) == legacy
         stamped_by_caller = {
@@ -1195,14 +1195,14 @@ class TestExternalizeRestoreWalker:
 
     async def test_unsupported_literal_format_raises(self, tmp_path: Path) -> None:
         """A wrapper from a later format version fails loudly instead of restoring as caller data."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         wrapper = {'__harness_external_literal__': {'k': 'v'}, '__harness_external_marker_format__': 'literal-v2'}
         with pytest.raises(ValueError, match='unsupported format'):
             await restore_media(wrapper, media_store=store)
 
     async def test_pre_stamp_marker_keeps_a_caller_urlsafe_field(self, tmp_path: Path) -> None:
         """A marker written before the URL-safe stamp keeps a caller field of that name and the standard alphabet."""
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         raw = bytes([0xFB, 0xFF, 0xBF]) * 8
         uri = await store.put(raw)
         marker = {
@@ -1218,7 +1218,7 @@ class TestExternalizeRestoreWalker:
         }
 
     async def test_caller_owned_urlsafe_key_is_escaped(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         node = {
             'kind': 'binary',
             'data': base64.b64encode(b'\x08' * 128).decode('ascii'),
@@ -1709,7 +1709,7 @@ class TestPublicUrl:
     """
 
     async def test_disk_store_without_resolver_returns_none(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(tmp_path)
+        store = FileMediaStore(tmp_path)
         assert await store.public_url(media_uri_for(b'x')) is None
 
     async def test_sqlite_store_without_resolver_returns_none(self, tmp_path: Path) -> None:
@@ -1727,7 +1727,7 @@ class TestPublicUrl:
         assert await store.public_url(media_uri_for(b'x')) is None
 
     async def test_sync_callable_resolver(self, tmp_path: Path) -> None:
-        store = DiskMediaStore(
+        store = FileMediaStore(
             tmp_path,
             public_url=lambda uri, ctx: f'https://cdn.example.com/{parse_media_uri(uri)}.bin',
         )
@@ -1739,7 +1739,7 @@ class TestPublicUrl:
         async def signer(uri: str, ctx: MediaContext) -> str:
             return f'https://signed.example.com/{parse_media_uri(uri)}?sig=abc'
 
-        store = DiskMediaStore(tmp_path, public_url=signer)
+        store = FileMediaStore(tmp_path, public_url=signer)
         result = await store.public_url(media_uri_for(b'payload'))
         assert result is not None
         assert result.startswith('https://signed.example.com/')
@@ -1753,7 +1753,7 @@ class TestPublicUrl:
             seen.append(ctx)
             return 'https://example.com/x'
 
-        store = DiskMediaStore(tmp_path, public_url=resolver)
+        store = FileMediaStore(tmp_path, public_url=resolver)
         await store.public_url(
             media_uri_for(b'p'),
             context=MediaContext(media_type='image/png', metadata={'tag': 'v'}),
@@ -1763,19 +1763,19 @@ class TestPublicUrl:
 
     async def test_resolver_can_return_none(self, tmp_path: Path) -> None:
         """Resolvers may opt out per-URI (e.g. small payloads keep inline)."""
-        store = DiskMediaStore(tmp_path, public_url=lambda uri, ctx: None)
+        store = FileMediaStore(tmp_path, public_url=lambda uri, ctx: None)
         assert await store.public_url(media_uri_for(b'x')) is None
 
     async def test_make_static_public_url_helper(self, tmp_path: Path) -> None:
         resolver = make_static_public_url('https://pub-abc.r2.dev', key_prefix='media/', extension='.bin')
-        store = DiskMediaStore(tmp_path, public_url=resolver)
+        store = FileMediaStore(tmp_path, public_url=resolver)
         uri = media_uri_for(b'payload')
         digest = parse_media_uri(uri)
         assert await store.public_url(uri) == f'https://pub-abc.r2.dev/media/{digest}.bin'
 
     async def test_make_static_public_url_strips_trailing_slash(self, tmp_path: Path) -> None:
         resolver = make_static_public_url('https://cdn.example.com/')
-        store = DiskMediaStore(tmp_path, public_url=resolver)
+        store = FileMediaStore(tmp_path, public_url=resolver)
         digest = parse_media_uri(media_uri_for(b'p'))
         assert await store.public_url(media_uri_for(b'p')) == f'https://cdn.example.com/{digest}.bin'
 
@@ -1816,7 +1816,7 @@ class _UnusedPostgresPool:
 
 
 def test_concrete_stores_satisfy_protocol(tmp_path: Path) -> None:
-    _assert_media_store_protocol(DiskMediaStore(tmp_path))
+    _assert_media_store_protocol(FileMediaStore(tmp_path))
     _assert_media_store_protocol(SqliteMediaStore(database=tmp_path / 'm.db'))
     _assert_media_store_protocol(PostgresMediaStore(_UnusedPostgresPool()))
     _assert_media_store_protocol(

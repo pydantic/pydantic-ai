@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import DelegationFinishedEvent, DelegationStartedEvent, DelegationTaskEvent
+from pydantic_ai_harness.sub_agents import DelegationFinishedEvent, DelegationStartedEvent, DelegationTaskEvent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
