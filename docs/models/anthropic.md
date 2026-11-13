@@ -678,7 +678,7 @@ Responses that ran in fast mode carry `provider_details['speed'] == 'fast'`, so 
 
 ## Data residency
 
-To control where model inference runs, set [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]: `'us'` keeps inference on US-based infrastructure, and `'global'` lets it run in any available geography. When it's unset, the workspace's default inference geo applies. US-only inference is priced at 1.1x the standard rate. The setting is sent on the Claude API, Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), including in [Message Batches](#batch-api). See the [Anthropic data residency docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for supported models, pricing and workspace-level restrictions.
+To control where model inference runs, set [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]: `'us'` keeps inference on US-based infrastructure, and `'global'` lets it run in any available geography. When it's unset, the workspace's default inference geo applies. US-only inference is priced at 1.1x the standard rate, which [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) don't include yet. The setting is sent on the Claude API, Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), including in [Message Batches](#batch-api). See the [Anthropic data residency docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for supported models, pricing and workspace-level restrictions.
 
 ```python
 from pydantic_ai import Agent

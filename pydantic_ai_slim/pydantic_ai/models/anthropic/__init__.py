@@ -794,8 +794,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_inference_geo: Literal['us', 'global'] | str
     """Where model inference runs for this request, sent as Anthropic's `inference_geo` parameter.
 
-    `'us'` keeps inference on US-based infrastructure, at 1.1x the standard price; `'global'` lets it run in any
-    available geography. Other values are sent as given, for the API to accept or reject. When unset, the
+    `'us'` keeps inference on US-based infrastructure, at 1.1x the standard price, which Pydantic AI's computed cost
+    ([`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost]) doesn't include yet; `'global'` lets it run in
+    any available geography. Other values are sent as given, for the API to accept or reject. When unset, the
     workspace's default inference geo applies. Where the request ran is reported
     in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
 

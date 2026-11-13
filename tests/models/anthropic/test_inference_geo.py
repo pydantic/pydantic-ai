@@ -273,7 +273,7 @@ async def test_inference_geo_provider_profile_wins(
 
 
 async def test_inference_geo_profile_override(allow_model_requests: None):
-    """A profile that sets the flag wins over the client-class default."""
+    """A user's `profile=` wins over the client-class default."""
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
         client = AsyncAnthropicFoundry(api_key='x', base_url='https://example.com/anthropic', http_client=http_client)
