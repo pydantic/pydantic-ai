@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import (
     ModelOverloadedError,
     ModelRateLimitError,
     ModelRequestRejectedError,
+    ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
     UnexpectedModelBehavior,
@@ -2045,13 +2046,33 @@ async def test_google_image_generation_maps_non_http_api_error():
             None,
             id='not-found',
         ),
+        pytest.param(
+            504,
+            None,
+            {
+                'code': 504,
+                'message': 'Deadline expired before operation could complete.',
+                'status': 'DEADLINE_EXCEEDED',
+            },
+            ModelServerError,
+            None,
+            id='status-without-category',
+        ),
+        pytest.param(
+            502,
+            None,
+            {'code': 502, 'message': 'Bad Gateway'},
+            ModelServerError,
+            None,
+            id='no-status',
+        ),
     ],
 )
 async def test_google_image_generation_status_error(
     status_code: int,
     headers: dict[str, str] | None,
     error: dict[str, object],
-    expected_error: type[ModelRateLimitError | ModelUnavailableError | ModelRequestRejectedError],
+    expected_error: type[ModelRateLimitError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError],
     expected_retry_after: float | None,
 ):
     """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
@@ -2074,7 +2095,7 @@ async def test_google_image_generation_status_error(
         ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gemini-2.5-flash-image')
     )
     assert exc_info.value.status_code == status_code
-    assert exc_info.value.provider_error_code == error['status']
+    assert exc_info.value.provider_error_code == error.get('status')
     assert exc_info.value.body == {'error': error}
     assert exc_info.value.retry_after == expected_retry_after
 
