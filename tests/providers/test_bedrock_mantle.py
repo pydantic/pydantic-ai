@@ -8,7 +8,7 @@ from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
-from pydantic_ai import Agent, ModelSettings, UserError
+from pydantic_ai import Agent, ComputerTool, ModelSettings, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -348,7 +348,7 @@ def test_bedrock_mantle_profiles() -> None:
             'computer_use_screenshot_max_side': 2560,
             'computer_use_screenshot_max_pixels': 3686400,
             'openai_responses_tool_call_ids_are_response_scoped': True,
-            'supported_native_tools': frozenset(),
+            'supported_native_tools': frozenset({ComputerTool}),
             'openai_supports_computer_tool': True,
         }
     )
