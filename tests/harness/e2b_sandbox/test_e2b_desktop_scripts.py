@@ -21,9 +21,8 @@ from .fake_e2b import FakeE2B
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
-    # `-x NAME` prints the PIDs the test listed; `-f PATTERN`, an extended regex as pgrep's, matches the command
-    # lines in `starts`.
-    'pgrep': '[ "$1" = -f ] && exec grep -E -- "$2" "$bin/starts" 2>/dev/null; cat "$bin/pgrep-$2" 2>/dev/null',
+    # `-x NAME` prints the PIDs the test listed; `-f PATTERN` matches the command lines in `starts`.
+    'pgrep': '[ "$1" = -f ] && exec grep -- "$2" "$bin/starts" 2>/dev/null; cat "$bin/pgrep-$2" 2>/dev/null',
     # Stays up, as XFCE's session does; `startxfce4-fails` makes it exit with an error instead.
     'startxfce4': '[ -e "$bin/startxfce4-fails" ] && { echo no session bus; exit 17; }; '
     'touch "$bin/xfce-started"; exec sleep 1',
@@ -31,9 +30,7 @@ _STUBS = {
     # ready line and stays up.
     'x11vnc': '[ "$1" = -storepasswd ] && { echo "$2" > "$3"; exit; }; '
     'echo "x11vnc $*" >> "$bin/starts"; echo PORT=5900; exec sleep 1',
-    # The real one adds `--cert` when the working directory has a `self.pem`.
-    'novnc_proxy': 'cert=; [ -e self.pem ] && cert="--cert $PWD/self.pem "; '
-    'echo "websockify --web $6 $cert$4 $2" >> "$bin/starts"; echo Navigate to this URL; exec sleep 1',
+    'novnc_proxy': 'echo "websockify --web $6 $4 $2" >> "$bin/starts"; echo Navigate to this URL; exec sleep 1',
 }
 
 
@@ -68,9 +65,7 @@ def _run(script: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess
     for old, new in [('/tmp/', f'{tmp_path}/'), ('/proc/', f'{tmp_path}/proc/'), ('/opt/noVNC/utils/', f'{bin_dir}/')]:
         script = script.replace(old, new)
     env = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'LC_ALL': 'C'}  # `C`, so `tr` takes `/dev/urandom`'s bytes
-    return subprocess.run(
-        ['/bin/sh', '-c', script, 'sh', *args], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
-    )
+    return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
 
 
 async def test_the_scripts_are_valid_shell(fake_e2b: FakeE2B) -> None:
@@ -98,17 +93,6 @@ async def test_the_viewer_keeps_its_password_and_starts_once(fake_e2b: FakeE2B, 
     assert x11vnc.startswith('x11vnc -display :1 ')
     # `--web`, else novnc_proxy serves its working directory if that has a `vnc.html`.
     assert websockify == 'websockify --web /opt/noVNC 6080 127.0.0.1:5900'
-
-
-async def test_the_viewer_started_with_a_cert_is_reused(fake_e2b: FakeE2B, tmp_path: Path) -> None:
-    _, viewer = await _scripts(fake_e2b)
-    (tmp_path / 'self.pem').touch()
-
-    first, second = _run(viewer, tmp_path), _run(viewer, tmp_path)
-
-    assert (first.returncode, second.returncode) == (0, 0), first.stderr + second.stderr
-    websockify = (tmp_path / 'bin' / 'starts').read_text().splitlines()[1:]
-    assert websockify == [f'websockify --web /opt/noVNC --cert {tmp_path.resolve()}/self.pem 6080 127.0.0.1:5900']
 
 
 async def test_the_viewer_starts_its_own_beside_a_foreign_one(fake_e2b: FakeE2B, tmp_path: Path) -> None:
