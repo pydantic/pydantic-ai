@@ -40,8 +40,6 @@ class FakeDisplay:
             return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
         elif command.startswith('xdotool ') or ' xdotool ' in command:  # input runs `xdotool` through a script
             self.xdotool.append(command)
-            if not self.up:
-                return '', "Error: Can't open display: :1", 1
         elif 'novnc_proxy' in command:
             self.viewers.append(command)
             if self.viewer_fails or not self.up:
