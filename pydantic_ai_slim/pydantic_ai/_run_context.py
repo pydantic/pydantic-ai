@@ -1008,7 +1008,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`Hooks`][pydantic_ai.capabilities.Hooks], whose functions are the application's, it stamps each
         [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] that has no `capability_id` yet with the capability's
         run id, and warns on a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or user text that looks
-        like a framework frame, which a capability part should say instead.
+        like a framework frame, which a capability part should say instead. Nothing it enqueues gets more authority than
+        the capability's [`authority`][pydantic_ai.capabilities.AbstractCapability] ceiling: a part whose source has more
+        is stored with the capability as its source, a `SystemPromptPart` below `'operator'` becomes an instruction part
+        lowered to the ceiling, and user content or a `UserPromptPart` at `'none'` becomes data framed as the
+        capability's.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.

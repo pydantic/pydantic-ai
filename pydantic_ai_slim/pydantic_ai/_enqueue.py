@@ -30,6 +30,7 @@ from .messages import (
     ModelRequestPart,
     ModelResponse,
     ModelSettingsDeltaPart,
+    OperatorText,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
@@ -39,6 +40,8 @@ from .messages import (
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
+    _CapabilityContentPart,  # pyright: ignore[reportPrivateUsage]
+    _CapabilityInstructionPart,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -167,12 +170,33 @@ def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str,
     A part with no `capability_id` yet gets `capability_id`, and a part whose source has more authority than the
     capability's `ceiling` gets a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] with that authority
     instead, so the history says who wrote it and with how much authority.
+
+    Prompt parts that would speak with more authority than `ceiling` become capability parts at it: a
+    `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
+    authority on its way to the model.
     """
     for message in messages:
         if isinstance(message, ModelRequest):
+            message.parts = [_within_ceiling(part, capability_id, ceiling) for part in message.parts]
             for part in message.parts:
                 if isinstance(part, CapabilityPart):
                     _stamp_capability_part(part, capability_id, ceiling)
+
+
+def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+    """`part` as a capability part at `ceiling` if it's a prompt part that would speak with more authority."""
+    source = CapabilitySource(capability_id, authority=ceiling)
+    if isinstance(part, SystemPromptPart) and ceiling != 'operator':
+        return _CapabilityInstructionPart(
+            content=OperatorText(part.content),
+            source=source,
+            scope=part.scope,
+            metadata=part.metadata,
+            timestamp=part.timestamp,
+        )
+    if isinstance(part, UserPromptPart) and ceiling == 'none':
+        return _CapabilityContentPart(content=part.content, source=source, timestamp=part.timestamp)
+    return part
 
 
 def _stamp_capability_part(part: CapabilityPart, capability_id: str, ceiling: Authority) -> None:

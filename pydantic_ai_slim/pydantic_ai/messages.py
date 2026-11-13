@@ -5442,6 +5442,25 @@ _CAPABILITY_PART_ENVELOPE_FIELDS = frozenset(f.name for f in dataclasses.fields(
 """Fields every capability part has, as opposed to a kind's typed fields, which ride in `data` on an unknown part."""
 
 
+@dataclass(repr=False, kw_only=True)
+class _CapabilityContentPart(
+    DataCapabilityPart, namespace='pydantic_ai', name='capability_content', tag='capability_content'
+):
+    """User content a capability with no more than `'none'` authority enqueued, as data framed on the user channel.
+
+    `ctx.enqueue` turns such a capability's user content into this, so it can't reach the model as the user's words.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class _CapabilityInstructionPart(InstructionCapabilityPart, namespace='pydantic_ai', name='capability_instruction'):
+    """A `SystemPromptPart` a capability with less than `'operator'` authority enqueued, downgraded to that authority.
+
+    `ctx.enqueue` turns such a capability's system prompt into this, so it can't reach the model in the application's
+    voice.
+    """
+
+
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
 
