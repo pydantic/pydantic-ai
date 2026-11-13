@@ -252,7 +252,9 @@ def map_computer_call(
 
 def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any]) -> dict[str, Any]:
     """A `computer_call` item's actions as the `computer` tool's arguments, noting scrolls in `provider_details`."""
-    if 'actions' in dumped:
+    if 'actions' in dumped and 'action' in dumped:
+        raw = None  # As in OpenAI's SDK, a call with both is malformed, so none of it runs.
+    elif 'actions' in dumped:
         raw = dumped['actions']
     elif 'action' in dumped:
         # As in OpenAI's SDK, a single-action call without its safety checklist is refused: its checks may be lost.
