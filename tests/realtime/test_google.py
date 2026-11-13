@@ -13,7 +13,6 @@ import weakref
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
@@ -4112,22 +4111,31 @@ def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     # A setting translated as the model builds its config warns from that module, once per config.
     with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, {'google_async_tool_calls': False}) == 'BLOCKING'
-    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
-        [('`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.', 'google.py')]
-    )
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
     # Within one layer, the shared setting wins.
     with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, {'google_async_tool_calls': True, 'async_tool_calls': False}) == 'BLOCKING'
-    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
-        [('`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.', 'google.py')]
-    )
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
     # A model-level setting assigned after construction is still translated when it's used.
     model.settings = GoogleRealtimeModelSettings(google_async_tool_calls=True)
     with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, None) == 'NON_BLOCKING'
-    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
-        [('`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.', 'google.py')]
-    )
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -4137,27 +4145,23 @@ def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
             {'async_tool_calls': True},
             {'google_async_tool_calls': False},
             'BLOCKING',
-            snapshot(
-                [
-                    (
-                        '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
-                        'google.py',
-                    )
-                ]
-            ),
+            [
+                (
+                    '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+                    'google.py',
+                )
+            ],
         ),
         (
             {'google_async_tool_calls': False},
             {'async_tool_calls': True},
             'NON_BLOCKING',
-            snapshot(
-                [
-                    (
-                        '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
-                        'test_google.py',
-                    )
-                ]
-            ),
+            [
+                (
+                    '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+                    'test_google.py',
+                )
+            ],
         ),
     ],
 )
@@ -4183,7 +4187,10 @@ async def test_agent_realtime_session_setting_overrides_the_model_setting_in_eit
 
         async with agent.realtime(model, model_settings=session_settings).session():
             pass
-    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == expected_warnings
+    files = {'google.py': rt_google.__file__, 'test_google.py': __file__}
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (message, files[name]) for message, name in expected_warnings
+    ]
     config = captured['config']
     assert isinstance(config, genai_types.LiveConnectConfig) and config.tools
     genai_tool = config.tools[0]
@@ -4204,9 +4211,12 @@ async def test_deprecated_google_async_tool_calls_setting_reaches_the_connection
             model_request_parameters=ModelRequestParameters(),
         ) as conn:
             assert conn._async_tool_calls_enabled is True  # pyright: ignore[reportPrivateUsage]
-    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
-        [('`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.', 'google.py')]
-    )
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -4341,14 +4351,12 @@ def test_deprecated_google_requires_async_tool_calls_profile_key(requires: bool,
     )
     with pytest.warns(PydanticAIDeprecationWarning) as record:
         profile = model.profile
-    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
-        [
-            (
-                "`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use `async_tool_call_mode='always'` instead.",
-                'test_google.py',
-            )
-        ]
-    )
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            "`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use `async_tool_call_mode='always'` instead.",
+            __file__,
+        )
+    ]
     # `False` carried no signal of its own, so it leaves the model's mode alone.
     assert profile.get('async_tool_call_mode') == mode
     assert profile.get('supports_async_tool_calls') is requires
