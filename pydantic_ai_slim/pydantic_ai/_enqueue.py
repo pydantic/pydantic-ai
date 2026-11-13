@@ -42,6 +42,7 @@ from .messages import (
     UserPromptPart,
     _CapabilityContentPart,  # pyright: ignore[reportPrivateUsage]
     _CapabilityInstructionPart,  # pyright: ignore[reportPrivateUsage]
+    _client_safe_retry_feedback,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -186,6 +187,9 @@ def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str,
 def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
     """`part` as a capability part at `ceiling` if it's a prompt part that would speak with more authority."""
     source = CapabilitySource(capability_id, authority=ceiling)
+    if ceiling != 'operator' and isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # `'no_output'` feedback is the one retry the model reads in the application's voice: below it, it's user text.
+        part = _client_safe_retry_feedback(part)
     if isinstance(part, SystemPromptPart) and ceiling != 'operator':
         return _CapabilityInstructionPart(
             content=OperatorText(part.content),
