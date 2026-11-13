@@ -1233,7 +1233,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
                 case responses.ResponseComputerToolCall():
-                    items.extend(self._map_computer_call(item, response.id, model_request_parameters))
+                    items.extend(
+                        # A response without a status, as some compatible APIs send, counts as completed.
+                        self._map_computer_call(
+                            item, response.id, response.status in (None, 'completed'), model_request_parameters
+                        )
+                    )
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
@@ -1305,13 +1310,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self,
         item: responses.ResponseComputerToolCall,
         response_id: str,
+        response_completed: bool,
         model_request_parameters: ModelRequestParameters,
     ) -> list[ModelResponsePart]:
         """The `computer` tool's call, or nothing when the request has no `computer` tool to run it."""
         if not (computer_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
             return []
         call_id = response_tool_call_id(item.call_id, self._call_id_scope(response_id))
-        return [map_computer_call(item, computer_name, call_id, self.system)]
+        return [map_computer_call(item, computer_name, call_id, self.system, response_completed)]
 
     def _map_code_interpreter_call(
         self, item: responses.ResponseCodeInterpreterToolCall

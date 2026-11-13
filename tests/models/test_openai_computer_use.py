@@ -51,7 +51,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai.types import responses as resp
-    from openai.types.responses.response import Conversation
+    from openai.types.responses.response import Conversation, IncompleteDetails
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai._computer import (
@@ -566,16 +566,64 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     assert after == ([{'role': 'user', 'content': expected}] if note else [])
 
 
-@pytest.mark.parametrize('status', ['incomplete', 'in_progress'])
+@pytest.mark.parametrize(
+    'call_status, response_status, streamed',
+    [
+        pytest.param('incomplete', 'completed', False, id='call-incomplete'),
+        pytest.param('in_progress', 'completed', False, id='call-in-progress'),
+        # OpenAI says to stop when the response is incomplete, as when cut by a content filter, even if the call isn't.
+        pytest.param('completed', 'incomplete', False, id='response-incomplete'),
+        pytest.param('completed', 'incomplete', True, id='streamed-response-incomplete'),
+    ],
+)
 async def test_an_unfinished_call_runs_nothing(
-    allow_model_requests: None, status: Literal['incomplete', 'in_progress']
+    allow_model_requests: None,
+    call_status: Literal['completed', 'incomplete', 'in_progress'],
+    response_status: Literal['completed', 'incomplete'],
+    streamed: bool,
 ) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    cast(resp.ResponseComputerToolCall, response.output[0]).status = status
+    cast(resp.ResponseComputerToolCall, response.output[0]).status = call_status
+    response.status = response_status
+    if response_status == 'incomplete':
+        response.incomplete_details = IncompleteDetails(reason='content_filter')
+    done = _done()
+    done.status = 'completed'
     provider, computer = InMemoryProvider(), FakeComputer()
-    client = MockOpenAIResponses.create_mock([response, _done()])
+    # Streamed, the response's status comes only after the call.
+    streams: list[list[resp.ResponseStreamEvent]] = [
+        [
+            resp.ResponseOutputItemDoneEvent(
+                item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=0
+            ),
+            resp.ResponseIncompleteEvent(response=response, type='response.incomplete', sequence_number=1),
+        ],
+        [
+            resp.ResponseTextDeltaEvent(
+                item_id='msg_1',
+                output_index=0,
+                content_index=0,
+                delta='done',
+                logprobs=[],
+                type='response.output_text.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseCompletedEvent(response=done, type='response.completed', sequence_number=1),
+        ],
+    ]
+    client = (
+        MockOpenAIResponses.create_mock_stream(streams)
+        if streamed
+        else MockOpenAIResponses.create_mock([response, done])
+    )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
+    agent = Agent(model, capabilities=[computer, provider.capability()])
+    if streamed:
+        async with agent.run_stream_events('Go.') as events:
+            async for _ in events:
+                pass
+    else:
+        await agent.run('Go.')
 
     assert computer.actions == []
     _, second = get_mock_responses_kwargs(client)
@@ -786,7 +834,7 @@ def test_openai_actions_map_onto_the_computer_tool(
 def test_a_pixel_scroll_gpt_asks_for_keeps_a_note_on_how_it_runs() -> None:
     scroll = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}
     item = cast(resp.ResponseComputerToolCall, _computer_call(scroll).output[0])
-    call = _map_computer_call(item, 'computer', 'call_1', 'openai')
+    call = _map_computer_call(item, 'computer', 'call_1', 'openai', response_completed=True)
     assert call.provider_details is not None
     assert call.provider_details['computer_scroll_notes'] == [
         'scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.'
@@ -1171,7 +1219,7 @@ _VALID_ACTION: st.SearchStrategy[dict[str, Any]] = st.one_of(
         {
             'type': st.just('type'),
             # The tool refuses control characters other than these, so every backend types the same keys.
-            'text': st.text(st.characters(exclude_categories=['Cc']) | st.sampled_from('\n\t'), min_size=1),
+            'text': st.text(st.characters(exclude_categories=['Cc', 'Cs']) | st.sampled_from('\n\t'), min_size=1),
         }
     ),
     st.fixed_dictionaries({'type': st.sampled_from(['wait', 'screenshot'])}),
@@ -1209,7 +1257,7 @@ def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, 
 def test_any_call_maps_with_one_scroll_note_slot_per_tool_action(actions: Any) -> None:
     item = resp.ResponseComputerToolCall.model_validate({**_COMPUTER_ITEM, 'actions': [], 'pending_safety_checks': []})
     item.actions = actions  # the SDK doesn't validate a response
-    call = _map_computer_call(item, 'computer', 'call_1', 'openai')
+    call = _map_computer_call(item, 'computer', 'call_1', 'openai', response_completed=True)
     args = call.args_as_dict()['actions']
     assert args
     notes = (call.provider_details or {}).get('computer_scroll_notes')
