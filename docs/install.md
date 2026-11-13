@@ -78,6 +78,12 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `exa` - installs [Exa Search Tool](common-tools.md#exa-search-tool) dependency `exa-py` [PyPI ↗](https://pypi.org/project/exa-py){:target="_blank"}
 * `web-fetch` - installs [Web Fetch Tool](common-tools.md#web-fetch-tool) dependency `markdownify` [PyPI ↗](https://pypi.org/project/markdownify){:target="_blank"}
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
+* `realtime` - installs [Realtime Sessions](realtime/overview.md) dependency `websockets` [PyPI ↗](https://pypi.org/project/websockets){:target="_blank"}
+* `openai-realtime` - installs [OpenAI Realtime](realtime/openai.md) dependencies `openai` and `websockets`
+* `google-realtime` - installs [Google Realtime](realtime/gemini.md) dependencies `google-genai` and `websockets`
+* `xai-realtime` - installs [xAI Realtime](realtime/xai.md) dependencies `xai-sdk`, `openai`, and `websockets`
+* `elevenlabs-realtime` - installs [ElevenLabs Realtime](realtime/elevenlabs.md) dependencies `openai` and `websockets`
+* `elevenlabs-agents-realtime` - installs [ElevenLabs Conversational AI](realtime/elevenlabs.md) dependency `websockets`
 * `mcp` - installs [MCP](mcp/client.md) dependency `fastmcp-slim[client]` [PyPI ↗](https://pypi.org/project/fastmcp-slim){:target="_blank"}
 * `mcp-tasks` - installs the [MCP](mcp/client.md) FastMCP 4 tasks extension (`use_task=True`) dependency `fastmcp-tasks` [PyPI ↗](https://pypi.org/project/fastmcp-tasks){:target="_blank"}
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
