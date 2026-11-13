@@ -156,7 +156,8 @@ def export_spans(token: str, service: str, spans: list[dict[str, object]]) -> No
         headers={'Content-Type': 'application/json', 'Authorization': token},
     )
     try:
-        with urllib.request.urlopen(request, timeout=30):
+        # A run's export waits between the runs of its chain, inside the time budget of the run after it.
+        with urllib.request.urlopen(request, timeout=5):
             pass
     # Callers export while a failed run's own exception propagates, so a failed export must not replace it.
     except (OSError, ValueError, http.client.HTTPException) as error:

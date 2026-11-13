@@ -331,7 +331,7 @@ def main() -> None:
         changed = {change.path: change.positions for change in changes}
         result, private_report = check_result(check, files, stream, usage, changed=changed)
         values |= {'pr_review_checks.outcome': result.outcome, 'pr_review_checks.findings': len(result.findings)}
-    # A failed, rejected or cancelled review is exported too, under the exception's class name: its message can
+    # A failed, rejected or interrupted review is exported too, under the exception's class name: its message can
     # repeat model or provider text.
     except BaseException as error:
         values |= {'pr_review_checks.outcome': 'FAILED', 'pr_review_checks.exception': type(error).__name__}

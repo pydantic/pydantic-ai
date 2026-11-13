@@ -283,8 +283,9 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
   ends, a run the chain moved past included, it exports a child
   [`OpenCode run` span](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan) with the same
-  failure fields. A job that Actions cancels exports no review span: the interrupt reaches the
-  step's shell, not the runner. The spans of its runs that ended before the cancellation remain.
+  failure fields. A job that Actions cancels exports no review span: the step's bash does not pass
+  the interrupt on to `run_pr_review_check.py`. The spans of its runs that ended before the
+  cancellation remain.
   OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
