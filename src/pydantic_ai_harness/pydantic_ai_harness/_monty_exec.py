@@ -124,6 +124,7 @@ _REMOTE_TURN_SLACK_SECONDS = 10.0
 # Route the clock and unseeded randomness to the `os=` handler, as before Monty 1.0: without one they are
 # unavailable, which keeps sandbox code deterministic when a Temporal workflow replays it. Sleeps come back to
 # `MontyExecutor`, which waits on the run's own event loop (a durable timer inside a Temporal workflow).
+# `MontyRunState.os_policy` overrides these key by key.
 _OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_start': 'call_host'}
 
 
@@ -144,6 +145,8 @@ class MontyRunState:
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
+    os_policy: OSPolicy | None = None
+    """Session policies merged over `_OS_POLICY` at checkout, key by key."""
     pool_factory: Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None
     """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, metadata, and timeouts."""
     pool: AsyncMonty | AsyncMontyRemote | None = None
@@ -187,7 +190,7 @@ class MontyRunState:
                 limits=limits,
                 type_check=type_check,
                 type_check_stubs=type_check_stubs,
-                os_policy=_OS_POLICY,
+                os_policy=_OS_POLICY | (self.os_policy or {}),
             )
             self.session = await self._checkout_with_retry(checkout)
         return self.session
@@ -275,7 +278,7 @@ class MontyExecutor:
       scheduled as `asyncio.Task`s. Resolved at `FutureSnapshot` via `asyncio.gather`.
     - **Per-call sequential** (`def`, name in `sequential_names`): resolved inline at
       `FunctionSnapshot`. Any pending parallel tasks are awaited first (barrier).
-    - **Global sequential** (when selected by the run context): all calls deferred but
+    - **Global sequential** (selected by the caller): all calls deferred but
       stored as bare coroutines and awaited one-at-a-time to prevent interleaving.
     """
 
@@ -292,6 +295,10 @@ class MontyExecutor:
     sleep: Callable[[float], Coroutine[Any, Any, None]] = anyio.sleep
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
+    # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
+    # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
+    # parallel dispatch only: under `global_sequential`, calls start after this.
+    flush: Callable[[], Awaitable[None]] | None = None
 
     _slept_seconds: float = field(default=0.0, init=False)
     # Parallel calls deferred but not yet resolved, keyed by Monty call id.
@@ -342,7 +349,7 @@ class MontyExecutor:
         """Dispatch (or defer) a single external function call."""
         if snapshot.is_os_function:
             match snapshot.function_name:
-                case 'time.sleep' | 'asyncio.sleep':
+                case 'time.sleep' | 'asyncio.sleep' | 'system.sleep' | 'system.async_sleep':
                     return await self._sleep(snapshot)
                 case (
                     'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
@@ -408,7 +415,7 @@ class MontyExecutor:
                 ),
             )
         self._slept_seconds += seconds
-        if snapshot.function_name == 'time.sleep':
+        if snapshot.function_name in ('time.sleep', 'system.sleep'):
             await self.sleep(seconds)
             return await call_monty(self.portal, snapshot.resume, ExternalReturnValue(return_value=None))
         # `asyncio.sleep` is awaitable, so defer it like a parallel call and gathered sleeps overlap.
@@ -455,6 +462,8 @@ class MontyExecutor:
 
     async def _resolve_futures(self, snapshot: AsyncFutureSnapshot) -> AsyncSnapshot:
         """Resolve the deferred calls a `FutureSnapshot` is waiting on."""
+        if self.flush is not None:
+            await self.flush()
         pending_ids = snapshot.pending_call_ids
         results: dict[int, ExternalSettledResult] = {}
         for cid in pending_ids:

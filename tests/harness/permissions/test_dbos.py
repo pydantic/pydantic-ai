@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -80,6 +79,7 @@ def test_remembered_approval_holds_on_replay_and_in_the_next_run(dbos: DBOS) -> 
         return command
 
     attempts: list[list[ModelMessage]] = []
+    recovery_loops: list[asyncio.AbstractEventLoop] = []
 
     @DBOS.workflow(name='permissions_dbos')
     def workflow(history: list[ModelMessage] | None) -> None:
@@ -87,12 +87,9 @@ def test_remembered_approval_holds_on_replay_and_in_the_next_run(dbos: DBOS) -> 
         if len(attempts) == 1:
             raise _Crash
         if len(attempts) == 2:
-            # The resumed attempt runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing
-            # else closes. DBOS made its own executor that loop's default, and closing a loop shuts its default
-            # executor down, which the next run still needs, so the loop gets an unused one to shut down instead.
-            loop = asyncio.get_event_loop()
-            loop.set_default_executor(ThreadPoolExecutor())
-            loop.close()
+            # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+            # Attempts 1 and 3 run on the main thread, whose current loop is the shared `session_event_loop`.
+            recovery_loops.append(asyncio.get_event_loop())
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_Crash):
@@ -104,5 +101,8 @@ def test_remembered_approval_holds_on_replay_and_in_the_next_run(dbos: DBOS) -> 
     assert len(asked) == 2
 
     workflow(attempts[-1])
+    # Closing a loop shuts down its default executor, which older DBOS versions set to the DBOS executor itself,
+    # so the recovery loop is closed only after the last workflow run.
+    recovery_loops[0].close()
     assert len(asked) == 2
     assert _returns(attempts[-1]) == ['echo hi'] * 4
