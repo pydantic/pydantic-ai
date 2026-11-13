@@ -36,6 +36,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool, ProcessHistory
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import MCPServerTool
 
@@ -514,6 +515,26 @@ async def test_removed_messages_override_starts_a_new_thread(allow_model_request
 
     assert api.bodies[1]['thread'] == {'type': 'create'}
     assert _user_texts(api.bodies[1]) == ['Hi', 'OK', 'Again']
+
+
+async def test_compaction_request_is_sent_without_a_thread(allow_model_requests: None):
+    """A compaction request samples no reply, so it's sent without a thread or the beta, even after a thread run."""
+    compaction = {'type': 'compaction', 'content': 'Summary', 'signature': 'sig'}
+    api = _Api(replies=[{'type': 'text', 'text': 'OK'}, compaction])
+    async with _model(api, model_name='claude-haiku-5-5') as model:
+        result = await Agent(model, model_settings=_SETTINGS).run('Hi')
+        context = ModelRequestContext(
+            model=model,
+            messages=result.all_messages(),
+            model_settings=_SETTINGS,
+            model_request_parameters=ModelRequestParameters(),
+        )
+        await model.compact_messages(context)
+
+    assert api.bodies[0]['thread'] == {'type': 'create'}
+    assert 'thread' not in api.bodies[1]
+    assert _BETA in api.betas[0]
+    assert _BETA not in api.betas[1]
 
 
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
