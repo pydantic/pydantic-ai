@@ -658,7 +658,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # toolset on the Claude API.
     # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     computer_tool_version: AnthropicComputerToolVersion | None = None
-    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+    if model_name.startswith((*_COMPUTER_TOOLSET_MODELS, 'claude-mythos-preview')):
+        # Mythos Preview is left out of the larger screenshots below: Anthropic's vision page gives them to "Claude 4.7
+        # and later", which may not include it, and the toolset refuses an image larger than the model takes.
         computer_tool_version = 'computer_toolset_20260801'
     elif model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
         computer_tool_version = 'computer_20251124'

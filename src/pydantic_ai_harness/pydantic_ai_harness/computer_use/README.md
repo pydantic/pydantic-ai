@@ -157,7 +157,7 @@ Some models only take screenshots up to a size, set by `computer_use_screenshot_
 `computer_use_screenshot_max_pixels` in their profile:
 
 - Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and 3.6 megapixels.
-- Earlier Claude models: 1568 pixels and about 1.15 megapixels.
+- Earlier Claude models and Claude Mythos Preview: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
 
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the

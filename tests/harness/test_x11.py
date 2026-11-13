@@ -92,6 +92,7 @@ class ScriptedDesktop(DockerContainerBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        await anyio.lowlevel.checkpoint()  # as a real command does, so a deadline can cut it short
         if 'Xvfb' in str(command):
             self.starts += 1
             await anyio.sleep(0)  # a start takes a moment, so concurrent first uses overlap
@@ -319,6 +320,21 @@ async def test_x11_computer_tries_every_release_when_one_fails_and_says_what_may
     assert recovery(desktop.argvs) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'ctrl'])
 
 
+async def test_x11_computer_says_what_may_still_be_held_when_releasing_runs_out_of_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    move_on_after = anyio.move_on_after
+
+    def no_time_left(delay: float, shield: bool) -> anyio.CancelScope:
+        return move_on_after(0, shield=shield)
+
+    # As if stopping the failed command had used up all the time for releasing.
+    monkeypatch.setattr(anyio, 'move_on_after', no_time_left)
+    desktop = ScriptedDesktop(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
+    with pytest.raises(WorkspaceError, match='may still be held: releasing took longer than 10 seconds'):
+        await desktop.screen.act(Click(x=1, y=2))
+
+
 async def test_x11_computer_raises_a_lost_environment_while_releasing() -> None:
     failed = CommandResult(exit_code=1, stdout='', stderr='BadValue')
     desktop = ScriptedDesktop(
@@ -364,11 +380,24 @@ async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
             "exit code 1 on display :1: Can't open display: :1",
         ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'display_size', "output: 'garbage'"),
+        # A line's leading whitespace can't run into the next line, so this blank output is read in time linear in its
+        # length, not its square.
+        (CommandResult(exit_code=0, stdout=' \n' * 100_000, stderr=''), 'display_size', "output: ''"),
+        # An X screen is at most 65535 pixels wide, so a larger size can't make a drag move through millions of points.
+        (CommandResult(exit_code=0, stdout='Width: 1000000\nHeight: 800\n', stderr=''), 'display_size', 'Width'),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'cursor_position', 'getmouselocation'),
         (CommandResult(exit_code=0, stdout='bm90IGEgcG5n', stderr=''), 'screenshot', 'did not return a PNG'),
         (CommandResult(exit_code=0, stdout='abc', stderr=''), 'screenshot', 'did not return a PNG'),
     ],
-    ids=['display-size-fails', 'display-size-garbage', 'pointer-garbage', 'not-a-png', 'not-base64'],
+    ids=[
+        'display-size-fails',
+        'display-size-garbage',
+        'display-size-blank',
+        'display-size-too-wide',
+        'pointer-garbage',
+        'not-a-png',
+        'not-base64',
+    ],
 )
 async def test_x11_computer_failures_raise_workspace_error(result: CommandResult, call: str, message: str) -> None:
     # A failed look starts the display again and looks once more, so it fails twice.
