@@ -254,10 +254,25 @@ The agent can type only ASCII: an action that types or presses a character such 
 
 To watch the agent, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
 
-```python {test="skip" lint="skip"}
-backend = E2BSandboxBackend(desktop=True)
-print(await backend.live_view_url())  # starts the sandbox, its desktop and the template's noVNC viewer
-result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.', workspace=backend)
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(desktop=True), ComputerUse()])
+
+
+async def watch_the_agent() -> None:
+    backend = E2BSandboxBackend(desktop=True)
+    try:
+        print(await backend.live_view_url())  # starts the sandbox, its desktop and the template's noVNC viewer
+        result = await agent.run(
+            'Open the terminal from the dock, run `uname -a` and tell me what it printed.', workspace=backend
+        )
+        print(result.output)
+    finally:
+        if backend.ref is not None:
+            await E2BSandbox().destroy(backend.ref)
 ```
 
 The link includes the viewer's password, so anyone with it can see and use the desktop while the sandbox runs: don't log it or share it. The password is after the `#`, so the browser doesn't send it to E2B's servers. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC` for the link to work.
