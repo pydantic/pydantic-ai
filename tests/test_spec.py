@@ -375,7 +375,6 @@ class TestBuildSchemaTypes:
         assert list(validator.iter_errors(short_form))
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
-    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
         ('arguments', 'valid', 'value'),
         [
@@ -403,6 +402,7 @@ class TestBuildSchemaTypes:
         capabilities = Agent.from_spec(spec, custom_capability_types=[capability]).root_capability.capabilities
         assert [type(c) for c in capabilities if isinstance(c, capability)] == [capability]
 
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_unrepresentable_param_capability_schema(self):
         """A sole parameter with no JSON schema drops the capability's short form instead of raising."""
 
