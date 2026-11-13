@@ -40,7 +40,10 @@ from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.advisor import Advisor
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
+from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
+from pydantic_ai_harness.keenable import KeenableSearch
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 from pydantic_ai_harness.planning import (
@@ -52,7 +55,9 @@ from pydantic_ai_harness.planning import (
     SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
-from tests.conftest import detach_dbos_logging
+from pydantic_ai_harness.smart_search import SmartSearch
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
+from tests.conftest import detach_dbos_logging, without_admin_server
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -86,9 +91,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_tool_io',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance
@@ -219,6 +223,16 @@ class _YouClient:
         )
 
 
+class _KeenableClient:
+    async def search(self, query: str, *, max_results: int) -> list[dict[str, object]]:
+        _requests['keenable.search'] += 1
+        return [{'url': 'https://a.dev', 'title': 'A', 'snippet': 'excerpt'}]
+
+    async def fetch(self, url: str) -> dict[str, object]:
+        _requests['keenable.fetch'] += 1
+        return {'url': url, 'title': 'A', 'content': 'body'}
+
+
 def _counting_aws_cli() -> str:
     """An `aws` stand-in that counts its runs in the file named by `HARNESS_AWS_CLI_COUNT`."""
     directory = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_'))
@@ -228,7 +242,21 @@ def _counting_aws_cli() -> str:
     return str(script)
 
 
+def _counting_model(name: str, respond: Callable[[AgentInfo], ModelResponse]) -> FunctionModel:
+    def counted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        _requests[name] += 1
+        return respond(info)
+
+    return FunctionModel(counted)
+
+
+def _relevant(info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'entity': 1, 'operation': 1})])
+
+
 _CREATION_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_creation_'))
+_SEARCH_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_search_'))
+(_SEARCH_DIRECTORY / 'config.py').write_text('def load(path):\n    # parse the config file\n    return path\n')
 _PLAN_DATABASE = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_plan_')) / 'plan.db'
 _AUTHORED = """
 from pydantic_ai.capabilities import AbstractCapability
@@ -240,10 +268,13 @@ class Marker(AbstractCapability):
 """
 
 
-def _agent(name: str, capability: AbstractCapability[None], *calls: tuple[str, dict[str, Any]]) -> Agent[None, str]:
-    extra: list[AbstractCapability[None]] = []
-    if isinstance(capability, CapabilityCreation):
-        extra.append(LocalWorkspace[None](str(_CREATION_DIRECTORY)))
+def _agent(
+    name: str,
+    capability: AbstractCapability[None],
+    *calls: tuple[str, dict[str, Any]],
+    workspace: Path | None = None,
+) -> Agent[None, str]:
+    extra: list[AbstractCapability[None]] = [] if workspace is None else [LocalWorkspace[None](str(workspace))]
     return Agent(
         _call_tools(*calls),
         name=name,
@@ -274,6 +305,12 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('research', {'input': 'q'}),
         ('finance_research', {'input': 'q'}),
     ),
+    'keenable_search': _agent(
+        'keenable_search_agent',
+        KeenableSearch[None](client=_KeenableClient()),
+        ('web_search', {'query': 'q'}),
+        ('get_page', {'url': 'https://a.dev'}),
+    ),
     'localstack': _agent(
         'localstack_agent',
         LocalStack[None](aws_cli_path=_counting_aws_cli(), include_instructions=False),
@@ -285,6 +322,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('author_capability', {'name': 'marker', 'code': _AUTHORED}),
         ('list_authored_capabilities', {}),
         ('disable_authored_capability', {'name': 'marker'}),
+        workspace=_CREATION_DIRECTORY,
     ),
     'memory': _agent(
         'memory_agent',
@@ -300,6 +338,24 @@ _AGENTS: dict[str, Agent[None, str]] = {
         Planning[None](store=SqlitePlanStore(database=str(_PLAN_DATABASE))),
         ('write_plan', {'items': [{'id': 'first', 'content': 'Write the migration'}]}),
         ('add_task', {'content': 'Run the tests'}),
+    ),
+    'advisor': _agent(
+        'advisor_agent',
+        Advisor[None](
+            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), mode='local'
+        ),
+        ('advisor', {'prompt': 'q'}),
+    ),
+    'smart_search': _agent(
+        'smart_search_agent',
+        SmartSearch[None](_counting_model('smart_search.judge', _relevant), guidance=''),
+        ('smart_search', {'query': 'parse the config'}),
+        workspace=_SEARCH_DIRECTORY,
+    ),
+    'conversation_search': _agent(
+        'conversation_search_agent',
+        ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all', add_instructions=False),
+        ('search_conversation_history', {'query': 'tabs'}),
     ),
 }
 
@@ -317,7 +373,7 @@ _WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
 
 @pytest.fixture
 def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
-    """Count every request the scenarios' fakes, the `aws` stand-in, and the authoring store make."""
+    """Count every request the scenarios' fakes, the `aws` stand-in, and the stores make."""
     _requests.clear()
     aws_count = tmp_path / 'aws_cli_count'
     monkeypatch.setenv('HARNESS_AWS_CLI_COUNT', str(aws_count))
@@ -352,6 +408,14 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 
         monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
 
+    original_list_runs = SnapshotHistorySource.list_runs
+
+    async def counted_list_runs(self: SnapshotHistorySource) -> Any:
+        _requests['history.list_runs'] += 1
+        return await original_list_runs(self)
+
+    monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
+
     def snapshot() -> Counter[str]:
         counts = Counter(_requests)
         if aws_count.exists():
@@ -366,6 +430,7 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
     'exa_agent': ['exa_agent.create_run', 'exa_agent.resolve_run'],
     'you_search': ['you_search.web_search', 'you_search.get_page'],
     'you_research': ['you_research.answer', 'you_research.research', 'you_research.finance_research'],
+    'keenable_search': ['keenable_search.web_search', 'keenable_search.get_page'],
     'localstack': ['localstack.aws_cli'],
     'capability_creation': [
         'capability_creation.write',
@@ -374,6 +439,9 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
     ],
     'memory': ['memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'],
     'planning': ['planning.set_items', 'planning.add_item'],
+    'advisor': ['advisor.consult'],
+    'smart_search': ['smart_search.judge'],
+    'conversation_search': ['conversation_search.search'],
 }
 
 
@@ -601,8 +669,15 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
         pytest.param(lambda: ExaAgent[None](runs=_ExaAgentRuns()), id='exa_agent'),
         pytest.param(lambda: YouSearch[None](client=_YouClient()), id='you_search'),
         pytest.param(lambda: YouResearch[None](client=_YouClient()), id='you_research'),
+        pytest.param(lambda: KeenableSearch[None](client=_KeenableClient()), id='keenable_search'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),
         pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
+        pytest.param(lambda: Advisor[None]('test', mode='local'), id='advisor'),
+        pytest.param(lambda: SmartSearch[None]('test'), id='smart_search'),
+        pytest.param(
+            lambda: ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all'),
+            id='conversation_search',
+        ),
     ],
 )
 def test_toolset_can_be_wrapped_by_engines_that_wrap_function_tools(

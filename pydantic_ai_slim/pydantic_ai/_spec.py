@@ -288,50 +288,71 @@ def build_schema_types(
     schema_types: list[Any] = []
     for name, cls in registry.items():
         target = get_schema_target(cls) if get_schema_target is not None else cls
-        type_hints = get_function_type_hints(target)
-        type_hints.pop('return', None)
-
-        # Filter out non-serializable types (TypeVars, Callables) from unions
-        type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
-
-        required_type_hints: dict[str, Any] = {}
-
-        for p in inspect.signature(target).parameters.values():
-            # Skip self/cls (unbound instance/class methods) and *args/**kwargs
-            if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
-                type_hints.pop(p.name, None)
-                continue
-            if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
-                type_hints.pop(p.name, None)
-                continue
-            # Skip params whose type was entirely filtered out
-            if p.name not in type_hints:
-                continue
-            type_hints.setdefault(p.name, Any)
-            if p.default is not p.empty:
-                type_hints[p.name] = NotRequired[type_hints[p.name]]
-            else:
-                required_type_hints[p.name] = type_hints[p.name]
-
-        def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
-            td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)
+        type_hints, required_type_hints = _spec_param_type_hints(target)
+        keyword_only_params = _keyword_only_spec_params(target, type_hints)
 
         # Shortest form: just the name
         if len(type_hints) == 0 or not required_type_hints:
             schema_types.append(Literal[name])
 
-        # Short form: can be called with only one parameter
-        if len(type_hints) == 1:
-            [type_hint_type] = type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
-        elif len(required_type_hints) == 1:  # pragma: no branch
-            [type_hint_type] = required_type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
+        # Short form: the single argument must accept a positional value.
+        short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
+        if len(short_type_hints) == 1 and short_type_hints.keys().isdisjoint(keyword_only_params):
+            [type_hint_type] = short_type_hints.values()
+            schema_types.append(_make_typed_dict('short_spec', name, {name: type_hint_type}))
 
-        # Long form: multiple parameters, possibly required
-        if len(type_hints) > 1:
-            params_td = _make_typed_dict('spec_params', type_hints)
-            schema_types.append(_make_typed_dict('spec', {name: params_td}))
+        # Keyword form: required for keyword-only or multiple parameters.
+        if len(type_hints) > 1 or keyword_only_params:
+            params_td = _make_typed_dict('spec_params', name, type_hints)
+            schema_types.append(_make_typed_dict('spec', name, {name: params_td}))
 
     return schema_types
+
+
+def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`.
+
+    The second dict holds the type hints of its required parameters only.
+    """
+    type_hints = get_function_type_hints(target)
+    type_hints.pop('return', None)
+
+    # Filter out non-serializable types (TypeVars, Callables) from unions
+    type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
+
+    required_type_hints: dict[str, Any] = {}
+
+    for p in inspect.signature(target).parameters.values():
+        # Skip self/cls (unbound instance/class methods) and *args/**kwargs
+        if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            type_hints.pop(p.name, None)
+            continue
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            type_hints.pop(p.name, None)
+            continue
+        # Skip params whose type was entirely filtered out
+        if p.name not in type_hints:
+            continue
+        type_hints.setdefault(p.name, Any)
+        if p.default is not p.empty:
+            type_hints[p.name] = NotRequired[type_hints[p.name]]
+        else:
+            required_type_hints[p.name] = type_hints[p.name]
+
+    return type_hints, required_type_hints
+
+
+def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping[str, Any]) -> set[str]:
+    """The names of `target`'s keyword-only spec parameters.
+
+    A target accepting `**kwargs` keeps its existing mapping schema, so none of its parameters count.
+    """
+    params = inspect.signature(target).parameters.values()
+    if any(p.kind == p.VAR_KEYWORD for p in params):
+        return set()
+    return {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+
+
+def _make_typed_dict(cls_name_prefix: str, name: str, fields: dict[str, Any]) -> Any:
+    td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
+    return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)

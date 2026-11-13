@@ -50,33 +50,40 @@ class FunctionSchema:
     description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
-    # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
+    # if not None, the function takes a single by that name (besides potentially `info`)
     single_arg_name: str | None = None
+    single_field_name: str | None = None
+    """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
+
+    Covers both model-like single args (where it equals `single_arg_name`, which uses a wrap validator
+    to normalize to `{name: value}`) and primitive single args (where the schema is a
+    one-field TypedDict). `None` for multi-arg functions, any function taking `**kwargs`, and a
+    single primitive arg the JSON schema leaves out (e.g. one marked `SkipJsonSchema`).
+
+    This is the Python parameter name, which keys the validated args. The JSON schema property is
+    named after the parameter's alias instead.
+
+    The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
+    this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
+    outer `{data: ...}` envelope is the wrapper.
+    """
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
 
-    @property
-    def single_field_name(self) -> str | None:
-        """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
+    def revalidate(self, args_dict: dict[str, Any], *, context: Any = None) -> dict[str, Any]:
+        """Validate arguments that `validator` already produced, after they crossed a boundary as JSON.
 
-        Covers both model-like single args (via `single_arg_name`, which uses a wrap validator
-        to normalize to `{name: value}`) and primitive single args (where the schema is a
-        one-property TypedDict). Returns `None` for multi-arg functions and `**kwargs`-only.
-
-        The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
-        this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
-        outer `{data: ...}` envelope is the wrapper.
+        For a single model-like argument they're the `{name: value}` envelope, which `validator` reads as
+        unwrapped input when the model also has a field called `name` that accepts a dict. Here the
+        envelope's content is validated as the model's input, which is what the first validation produced.
         """
-        if self.single_arg_name is not None:
-            return self.single_arg_name
-        properties = self.json_schema.get('properties', {})
-        if len(properties) == 1:
-            return next(iter(properties))
-        return None
+        if self.single_arg_name is None:
+            return self.validator.validate_python(args_dict, context=context)
+        return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -107,7 +114,7 @@ class FunctionSchema:
         return args, args_dict
 
 
-def function_schema(  # noqa: C901
+def function_schema(
     function: Callable[..., Any],
     schema_generator: type[GenerateJsonSchema],
     *,
@@ -144,84 +151,26 @@ def function_schema(  # noqa: C901
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
-    var_kwargs_schema: core_schema.CoreSchema | None = None
-    fields: dict[str, core_schema.TypedDictField] = {}
-    positional_fields: list[str] = []
-    var_positional_field: str | None = None
-    decorators = _decorators.DecoratorInfos()
-
     description, field_descriptions = doc_descriptions(original_func, docstring_format=docstring_format)
-    missing_param_descriptions: set[str] = set()
-
-    # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call
-    # time; passing it as a keyword would double-bind with the values unpacked into `*args`. When
-    # there's no `*args`, such parameters keep being passed as keywords (the historical behavior).
-    has_var_positional = any(p.kind is Parameter.VAR_POSITIONAL for p in sig.parameters.values())
+    schema_context = _FunctionSchemaContext(
+        gen_schema=gen_schema,
+        type_hints=type_hints,
+        field_descriptions=field_descriptions,
+        require_parameter_descriptions=require_parameter_descriptions,
+        # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call
+        # time; passing it as a keyword would double-bind with the values unpacked into `*args`. When
+        # there's no `*args`, such parameters keep being passed as keywords (the historical behavior).
+        has_var_positional=any(p.kind is Parameter.VAR_POSITIONAL for p in sig.parameters.values()),
+        errors=errors,
+    )
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if index == 0 and takes_ctx is None:
             takes_ctx = p.annotation is not sig.empty and is_call_ctx(type_hints[name])
+        _add_parameter(schema_context, index, name, p, takes_ctx=takes_ctx)
 
-        if p.annotation is sig.empty:
-            if takes_ctx and index == 0:
-                # should be the `context` argument, skip
-                continue
-            # TODO warn?
-            annotation = Any
-        else:
-            annotation = type_hints[name]
-
-            if index == 0 and takes_ctx:
-                if not is_call_ctx(annotation):
-                    errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
-                continue
-            elif not takes_ctx and is_call_ctx(annotation):
-                errors.append('RunContext annotations can only be used with tools that take context')
-                continue
-            elif index != 0 and is_call_ctx(annotation):
-                errors.append('RunContext annotations can only be used as the first argument')
-                continue
-
-        field_name = p.name
-
-        if require_parameter_descriptions and field_name not in field_descriptions:
-            missing_param_descriptions.add(field_name)
-
-        if p.kind == Parameter.VAR_KEYWORD:
-            var_kwargs_schema = gen_schema.generate_schema(annotation)
-        else:
-            if p.kind == Parameter.VAR_POSITIONAL:
-                annotation = list[annotation]
-
-            required = p.default is Parameter.empty
-            # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
-            annotation = cast(type[Any], annotation)
-            if required:
-                field_info = FieldInfo.from_annotation(annotation)
-            else:
-                field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
-            if field_info.description is None:
-                field_info.description = field_descriptions.get(field_name)
-
-            fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
-                field_name,
-                field_info,
-                decorators,
-                required=required,
-            )
-            # noinspection PyTypeChecker
-            metadata = td_schema.setdefault('metadata', {})
-            metadata['is_model_like'] = is_model_like(annotation)
-
-            if p.kind == Parameter.POSITIONAL_ONLY or (
-                has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
-            ):
-                positional_fields.append(field_name)
-            elif p.kind == Parameter.VAR_POSITIONAL:
-                var_positional_field = field_name
-
-    if missing_param_descriptions:
-        errors.append(f'Missing parameter descriptions for {", ".join(missing_param_descriptions)}')
+    if schema_context.missing_param_descriptions:
+        errors.append(f'Missing parameter descriptions for {", ".join(schema_context.missing_param_descriptions)}')
 
     if errors:
         from .exceptions import UserError
@@ -231,7 +180,9 @@ def function_schema(  # noqa: C901
 
     core_config = config_wrapper.core_config(None)
 
-    schema, single_arg_name, single_arg_keys = _build_schema(fields, var_kwargs_schema, core_config)
+    schema, single_field_name, single_arg_name, single_arg_keys = _build_schema(
+        schema_context.fields, schema_context.var_kwargs_schema, core_config
+    )
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -252,6 +203,9 @@ def function_schema(  # noqa: C901
         # are exactly the top-level keys the model accepts (aliases already resolved by Pydantic).
         # `_validate_single_arg` reads this to tell unwrapped input from a wrapper envelope.
         single_arg_keys.update(json_schema.get('properties', {}))
+    elif not json_schema.get('properties'):
+        # The model wasn't asked for a field the JSON schema leaves out, so the validated args stay whole.
+        single_field_name = None
 
     # workaround for https://github.com/pydantic/pydantic/issues/10785
     # if we build a custom TypedDict schema (matches when `single_arg_name is None`), we manually set
@@ -286,13 +240,104 @@ def function_schema(  # noqa: C901
         validator=schema_validator,
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
-        positional_fields=positional_fields,
-        var_positional_field=var_positional_field,
+        single_field_name=single_field_name,
+        positional_fields=schema_context.positional_fields,
+        var_positional_field=schema_context.var_positional_field,
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
         return_schema=return_schema,
     )
+
+
+@dataclass(kw_only=True)
+class _FunctionSchemaContext:
+    """The validator fields `function_schema` builds from a tool function's parameters, one parameter at a time."""
+
+    gen_schema: _generate_schema.GenerateSchema
+    type_hints: dict[str, Any]
+    field_descriptions: dict[str, str]
+    require_parameter_descriptions: bool
+    has_var_positional: bool
+    errors: list[str]
+    """Where each parameter that can't be a tool argument is reported, shared with `function_schema`."""
+    fields: dict[str, core_schema.TypedDictField] = field(default_factory=dict[str, core_schema.TypedDictField])
+    positional_fields: list[str] = field(default_factory=list[str])
+    var_positional_field: str | None = None
+    var_kwargs_schema: core_schema.CoreSchema | None = None
+    missing_param_descriptions: set[str] = field(default_factory=set[str])
+    decorators: _decorators.DecoratorInfos = field(default_factory=_decorators.DecoratorInfos)
+
+
+def _add_parameter(
+    schema_context: _FunctionSchemaContext, index: int, name: str, p: Parameter, *, takes_ctx: bool | None
+) -> None:
+    """Add the parameter `p` at `index`, unless it is the `RunContext` argument or misuses `RunContext`."""
+    if p.annotation is Parameter.empty:
+        if takes_ctx and index == 0:
+            # should be the `context` argument, skip
+            return
+        # TODO warn?
+        annotation = Any
+    else:
+        annotation = schema_context.type_hints[name]
+
+        if index == 0 and takes_ctx:
+            if not is_call_ctx(annotation):
+                schema_context.errors.append(
+                    'First parameter of tools that take context must be annotated with RunContext[...]'
+                )
+            return
+        elif not takes_ctx and is_call_ctx(annotation):
+            schema_context.errors.append('RunContext annotations can only be used with tools that take context')
+            return
+        elif index != 0 and is_call_ctx(annotation):
+            schema_context.errors.append('RunContext annotations can only be used as the first argument')
+            return
+
+    _add_field(schema_context, p, annotation)
+
+
+def _add_field(schema_context: _FunctionSchemaContext, p: Parameter, annotation: Any) -> None:
+    field_name = p.name
+
+    if schema_context.require_parameter_descriptions and field_name not in schema_context.field_descriptions:
+        schema_context.missing_param_descriptions.add(field_name)
+
+    if p.kind == Parameter.VAR_KEYWORD:
+        schema_context.var_kwargs_schema = schema_context.gen_schema.generate_schema(annotation)
+        return
+
+    if p.kind == Parameter.VAR_POSITIONAL:
+        annotation = list[annotation]
+
+    required = p.default is Parameter.empty
+    # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
+    annotation = cast(type[Any], annotation)
+    if required:
+        field_info = FieldInfo.from_annotation(annotation)
+    else:
+        field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
+    if field_info.description is None:
+        field_info.description = schema_context.field_descriptions.get(field_name)
+
+    td_schema = schema_context.gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
+        field_name,
+        field_info,
+        schema_context.decorators,
+        required=required,
+    )
+    schema_context.fields[field_name] = td_schema
+    # noinspection PyTypeChecker
+    metadata = td_schema.setdefault('metadata', {})
+    metadata['is_model_like'] = is_model_like(annotation)
+
+    if p.kind == Parameter.POSITIONAL_ONLY or (
+        schema_context.has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
+    ):
+        schema_context.positional_fields.append(field_name)
+    elif p.kind == Parameter.VAR_POSITIONAL:
+        schema_context.var_positional_field = field_name
 
 
 P = ParamSpec('P')
@@ -320,7 +365,7 @@ def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
     core_config: core_schema.CoreConfig,
-) -> tuple[core_schema.CoreSchema, str | None, set[str] | None]:
+) -> tuple[core_schema.CoreSchema, str | None, str | None, set[str] | None]:
     """Generate a typed dict schema for function parameters.
 
     Args:
@@ -329,11 +374,15 @@ def _build_schema(
         core_config: The core configuration.
 
     Returns:
-        tuple of (generated core schema, single arg name, single arg model keys). The keys set is
-        empty here and filled in by `function_schema` from the generated JSON schema.
+        tuple of (generated core schema, single field name, single arg name, single arg model keys).
+        The single field name is set when there is exactly one field and no `**kwargs`, and the single
+        arg name only when that field is also model-like. `function_schema` drops the single field name
+        when the generated JSON schema leaves a primitive field out. The keys set is empty here and filled
+        in by `function_schema` from the generated JSON schema.
     """
+    single_field_name: str | None = None
     if len(fields) == 1 and var_kwargs_schema is None:
-        name = next(iter(fields))
+        name = single_field_name = next(iter(fields))
         td_field = fields[name]
         metadata = td_field.get('metadata') or {}
         if metadata.get('is_model_like'):
@@ -341,9 +390,9 @@ def _build_schema(
             # so the model generates its fields at the top level rather than inside a redundant wrapper.
             # The validator output is wrapped to `{name: value}` so validated args are always a dict
             # keyed by parameter name — matching the contract that hooks and `call_tool` rely on.
-            # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape,
-            # which is what Temporal (and any other caller) passes when re-validating previously
-            # validated args after serialization round-trip.
+            # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape, which
+            # a caller re-validating previously validated args after a serialization round-trip passes
+            # unless it goes through `FunctionSchema.revalidate`.
             # `accepted_keys` lets the validator tell that wrapper shape apart from genuine unwrapped
             # input for a model with a field (or alias) named `name`; `function_schema` fills it from
             # the generated JSON schema so we don't rebuild the model's schema just to read its keys.
@@ -353,6 +402,7 @@ def _build_schema(
                     partial(_validate_single_arg, name=name, accepted_keys=accepted_keys),
                     td_field['schema'],
                 ),
+                name,
                 name,
                 accepted_keys,
             )
@@ -364,7 +414,14 @@ def _build_schema(
         extra_behavior=extra_behavior,
         extras_schema=var_kwargs_schema,
     )
-    return td_schema, None, None
+    return td_schema, single_field_name, None, None
+
+
+@dataclass
+class _Revalidated:
+    """A single model-like argument's already-validated value, passed in by `FunctionSchema.revalidate`."""
+
+    value: Any
 
 
 def _is_wrapped_single_arg(value: Any, name: str) -> TypeIs[dict[Any, Any]]:
@@ -378,17 +435,20 @@ def _validate_single_arg(
     name: str,
     accepted_keys: set[str],
 ) -> dict[str, Any]:
+    if isinstance(value, _Revalidated):
+        return {name: handler(value.value)}
     if not _is_wrapped_single_arg(value, name):
         # Plain unwrapped model input, as emitted against the flattened JSON schema.
         return {name: handler(value)}
     if name not in accepted_keys:
         # `name` isn't a key the model accepts, so `{name: ...}` can only be a wrapper envelope (e.g.
-        # re-validated args after a Temporal round-trip). Unwrap it; a bad payload still raises here.
+        # re-validated args after a serialization round-trip). Unwrap it; a bad payload still raises here.
         return {name: handler(value[name])}
     # `name` is a real field or alias, so `{name: ...}` is normally genuine unwrapped input. Validate it
     # as-is, falling back to unwrapping the envelope only when that fails (the round-trip of such a model).
     # If the field accepts both shapes (e.g. it's typed `Any`) the two are indistinguishable; we prefer
-    # the unwrapped reading, so re-validation isn't idempotent for that (rare) collision.
+    # the unwrapped reading, so re-validating such a model's envelope here isn't idempotent. Callers that
+    # know they hold an envelope use `FunctionSchema.revalidate`, which doesn't guess.
     try:
         return {name: handler(value)}
     except ValidationError:

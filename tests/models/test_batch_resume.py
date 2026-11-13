@@ -297,8 +297,13 @@ async def test_resuming_many_histories_checks_each_batch_once() -> None:
     """Histories resumed one after another in one process share a check of their batch per `poll_interval`."""
     api = _BatchAPI()
     submitting = _agent(api, batching=BatchModelRequests(**FAST_POLLING, max_requests=3, max_wait=None))
-    results = await asyncio.gather(*(submitting.run(f'Question {i}') for i in range(6)))
-    histories = [result.all_messages_json() for result in results]
+    # Concurrent submissions can create their batches in either order, so the second batch is queued after the first
+    # exists, which makes Questions 0-2 `batch_0`.
+    histories = [
+        result.all_messages_json()
+        for questions in (range(3), range(3, 6))
+        for result in await asyncio.gather(*(submitting.run(f'Question {i}') for i in questions))
+    ]
     assert list(api.batches) == ['batch_0', 'batch_1']
 
     hourly = BatchModelRequests(poll_interval=timedelta(hours=1), max_poll_interval=timedelta(hours=1))
