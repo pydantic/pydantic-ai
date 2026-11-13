@@ -20,7 +20,25 @@ which `StepPersistence` works alongside.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](https://pydantic.dev/docs/ai/img/harness/step-persistence.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Step Persistence: save a run so you can continue or fork it later
+    accDescr: StepPersistence hooks write an agent run to the step store: before_run a RunRecord, after_model_request an event, after_tool_execute a completed tool effect, after_node_run a complete snapshot, and before_tool_execute the next tool effect as started. The worker then crashes. Later, your code calls list_runs and continue_run, gets the latest complete snapshot and starts a new Agent.run from it.
+    participant agent as Agent run
+    participant store as Step store
+    participant code as Your code, later
+    Note over agent,store: StepPersistence() hooks
+    agent->>store: before_run<br/>RunRecord
+    agent->>store: after_model_request<br/>event appended
+    agent->>store: after_tool_execute<br/>tool effect completed
+    agent->>store: after_node_run<br/>complete snapshot
+    agent->>store: before_tool_execute<br/>next tool effect started
+    agent->>agent: worker crashes
+    code->>store: list_runs
+    code->>store: continue_run
+    store-->>code: latest complete<br/>snapshot
+    code->>agent: new Agent.run, message_history=history
+```
 
 ## What it gives you
 
@@ -911,11 +929,13 @@ or shortened history rewrites. Put the recorder before capabilities whose
 message values are copied before storage so later mutations cannot alter a saved
 in-memory checkpoint through shared references.
 
-`SnapshotSaved` is a typed capability event emitted after a checkpoint write
+`SnapshotSavedEvent` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+`state`. Subscribe using core's `hooks.on.event(SnapshotSavedEvent)`, which a CLAI plugin
 returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
+`STEP_PERSISTENCE_EVENTS` is the namespace of that event (`step_persistence`), not of the
+persisted `StepEvent` log.
 
 Automatic execution recovery is not implemented. Snapshots are saved per settled
 batch, not per tool, so a hard kill during a parallel batch can leave a completed

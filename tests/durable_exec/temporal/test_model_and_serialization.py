@@ -45,7 +45,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -3215,11 +3215,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
+    # Foundry serves no mid-conversation system messages, so the system prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nleading',
+                'system': f'{lookalike_note_announcement(system_role=False)}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3234,6 +3234,63 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'setting, standing_prompt',
+    [
+        # Both put the announcement ahead of the standing prompt: `'when_needed'` here because of the mid-conversation
+        # prompt, `'always'` because there is a standing prompt.
+        pytest.param(None, ['<announcement>', 'leading'], id='default'),
+        pytest.param('always', ['<announcement>', 'leading'], id='always'),
+        pytest.param('never', ['leading'], id='never'),
+    ],
+)
+def test_temporal_model_reprepare_applies_the_framing_announcement_setting(
+    setting: str | None, standing_prompt: list[str]
+) -> None:
+    """The activity's re-prepare restores `framing_announcement` from the request's settings.
+
+    The private parameter field that carries it to `prepare_messages` isn't serialized, so without that the activity
+    would prepare with the profile's default, `'when_needed'`, whatever the run asked for.
+    """
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_lookalike_notes = True
+
+    concrete = AnnouncingFunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__reprepare_framing_announcement',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    params = _RequestParams(
+        messages=[
+            ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+        ],
+        model_settings={'framing_announcement': setting} if setting else None,
+        # As the activity receives them: the private field doesn't survive serialization.
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_id='anthropic:claude-opus-5',
+    )
+
+    prepared = temporal_model._reprepare_messages(params, concrete)  # pyright: ignore[reportPrivateUsage]
+
+    first = prepared[0]
+    assert isinstance(first, ModelRequest)
+    announcement = lookalike_note_announcement(system_role=False)
+    assert [
+        '<announcement>' if part.content == announcement else part.content
+        for part in first.parts
+        if isinstance(part, SystemPromptPart)
+    ] == standing_prompt
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
