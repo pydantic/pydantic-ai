@@ -14,7 +14,7 @@ from typing import Any
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelResponse
+from pydantic_ai import Agent, ModelMessage, ModelResponse
 from pydantic_ai.profiles import ModelProfile
 
 from ...conftest import try_import
@@ -91,7 +91,7 @@ def _handler(bodies: list[dict[str, Any]]):
     return handle
 
 
-def _last_response(messages: list[Any]) -> ModelResponse:
+def _last_response(messages: list[ModelMessage]) -> ModelResponse:
     response = messages[-1]
     assert isinstance(response, ModelResponse)
     return response
