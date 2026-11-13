@@ -12,7 +12,7 @@ import pydantic_core
 import pytest
 from griffe import Docstring
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
-from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue, SkipJsonSchema
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
 from typing_extensions import TypedDict
@@ -5044,6 +5044,55 @@ def test_single_base_model_arg_validator_accepts_parameter_named_alias_choice():
 
     expected = Payload.model_validate({'argument': 'Mexico City'})
     assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': expected}
+
+
+class TreeNode(BaseModel):
+    value: int
+    children: list['TreeNode'] = []
+
+
+def test_tool_aliased_recursive_model_arg():
+    """A tool with an aliased recursive-model arg and a hidden aliased arg advertises and receives the alias.
+
+    Building the tool's schema resolves the recursive model's definition for the aliased arg alone.
+    Not a VCR test: building a tool's JSON schema and validating its arguments is in-memory framework behavior.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            assert info.function_tools[0].parameters_json_schema == snapshot(
+                {
+                    '$defs': {
+                        'TreeNode': {
+                            'properties': {
+                                'value': {'type': 'integer'},
+                                'children': {'default': [], 'items': {'$ref': '#/$defs/TreeNode'}, 'type': 'array'},
+                            },
+                            'required': ['value'],
+                            'title': 'TreeNode',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'tree': {'$ref': '#/$defs/TreeNode'}},
+                    'required': ['tree'],
+                    'type': 'object',
+                }
+            )
+            tree = {'value': 1, 'children': [{'value': 2}]}
+            return ModelResponse(parts=[ToolCallPart('sum_tree', {'tree': tree})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def sum_tree(
+        node: Annotated[TreeNode, Field(alias='tree')], offset: SkipJsonSchema[Annotated[int, Field(alias='by')]] = 0
+    ) -> int:
+        return node.value + sum(child.value for child in node.children) + offset
+
+    result = agent.run_sync('hello')
+    assert [part.content for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)] == [3]
 
 
 def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():
