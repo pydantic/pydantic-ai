@@ -53,6 +53,7 @@ from pydantic_ai_harness import (
     RelevanceCompaction,
     RepoContext,
     Researcher,
+    ResetCompaction,
     Shell,
     Skills,
     SlidingWindowCompaction,
@@ -65,6 +66,7 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
     TrajectoryJudge,
     WarnNearLimits,
+    WorkLog,
 )
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.github import GitHub
@@ -296,6 +298,12 @@ def _time_reminder(ctx: RunContext[Any]) -> str:
     return f'It is now {CLOCK.now:%H:%M} UTC.'
 
 
+def _reset_compaction(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    # The reset requires the `WorkLog` it points the model at to be registered on the agent.
+    work_log = WorkLog[Any]()
+    return [work_log, ResetCompaction(work_log, max_messages=6, keep_messages=2)]
+
+
 FIXTURES: dict[str, Fixture] = {
     **{cls.__name__: _hosted(cls) for cls in _HOSTED_MCP},
     'Advisor': lambda _: Advisor(TestModel()),
@@ -327,6 +335,7 @@ FIXTURES: dict[str, Fixture] = {
     'RepoContext': _repo_context,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
+    'ResetCompaction': _reset_compaction,
     'Shell': _workspace(Shell),
     'Skills': _skills,
     'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
@@ -539,6 +548,7 @@ ALLOWED: dict[str, Allowed] = {
     # With a 20-token trigger every request is over it, so each request with an older step outside the
     # one-token tail judges and rewrites it: two in this conversation.
     'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
+    'ResetCompaction': Allowed(_COMPACTION, _HISTORY),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     # The compaction, which removes the load's reveal of `forecast` (sent as a system message) with the rest, and on
     # Chat Completions, which has no deferred-tool channel, the first run's reveal adding `forecast` to `tools`

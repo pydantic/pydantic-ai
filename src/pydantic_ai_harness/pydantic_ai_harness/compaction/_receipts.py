@@ -169,6 +169,12 @@ def last_reset_notice(messages: Sequence[ModelMessage]) -> TextContent | None:
     return None
 
 
+def reset_notice_count(notice: TextContent | None, key: str) -> int:
+    """The count a reset notice records under *key* in its metadata, such as its `number`; 0 without one."""
+    value: object = notice.metadata.get(key) if notice is not None else 0
+    return value if isinstance(value, int) else 0
+
+
 # ---------------------------------------------------------------------------
 # Span-event plumbing
 # ---------------------------------------------------------------------------

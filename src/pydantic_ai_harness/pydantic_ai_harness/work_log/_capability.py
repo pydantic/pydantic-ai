@@ -8,6 +8,8 @@ from dataclasses import KW_ONLY, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic_core import PydanticSerializationError
+
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
@@ -43,8 +45,8 @@ from pydantic_ai_harness._line_slice import MAX_READ_CHARS, slice_lines
 from pydantic_ai_harness._typeguards import is_object_list
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness._workspace import require_workspace
-from pydantic_ai_harness.compaction._receipts import last_reset_notice
-from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from pydantic_ai_harness.compaction._receipts import last_reset_notice, reset_notice_count
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, indented_json
 from pydantic_ai_harness.tool_output_limits._payload import to_text
 from pydantic_ai_harness.work_log._store import (
     InMemoryWorkLogStore,
@@ -232,8 +234,12 @@ class WorkLog(AbstractCapability[AgentDepsT]):
             valid = f'entries run from 1 to {count}' if count else 'the work log is empty'
             return RetryRequest(f'No work log entry has `seq` {seq}: {valid}.')
         entry = found[0]
-        window = slice_lines(entry['content'], offset=offset, limit=limit, from_end=from_end, pattern=pattern)
-        end = offset + window.shown
+        window = slice_lines(
+            entry['content'], offset=offset, limit=limit, from_end=from_end, pattern=pattern, cap_keeps_end=from_end
+        )
+        # A capped window reads on from its first line not returned whole. A line longer than the cap on its
+        # own is skipped instead: no read can return more of it.
+        end = offset + (max(window.whole, 1) if window.capped else window.shown)
         return WorkLogRead(
             seq=entry['seq'],
             context=entry['context'],
@@ -247,6 +253,7 @@ class WorkLog(AbstractCapability[AgentDepsT]):
             offset=offset,
             next_offset=end if end < window.total else None,
             total_lines=window.total,
+            capped=window.capped,
         )
 
 
@@ -263,13 +270,11 @@ def _record(
     outcome: WorkLogOutcome | None = None,
 ) -> WorkLogRecord:
     """Build a record, numbering its context from the latest reset notice in the run's messages."""
-    notice = last_reset_notice(ctx.messages)
-    number: object = notice.metadata.get('number') if notice is not None else 0
     return WorkLogRecord(
         key=key,
         run_id=ctx.run_id,
         step=ctx.run_step,
-        context=number if isinstance(number, int) else 0,
+        context=reset_notice_count(last_reset_notice(ctx.messages), 'number'),
         kind=kind,
         tool_name=tool_name,
         tool_call_id=tool_call_id,
@@ -355,7 +360,12 @@ def _item_text(item: object) -> str:
     if isinstance(item, TextContent):
         return item.content
     if not is_multi_modal_content(item):
-        return to_text(item)
+        # One field per line, so `read_work_log` pages a large structured result by line.
+        try:
+            return indented_json(item)
+        except PydanticSerializationError:
+            # A leaf with no JSON form, such as a type: `to_text` renders it as its `repr`.
+            return to_text(item)
     try:
         media_type = item.media_type
     except ValueError:

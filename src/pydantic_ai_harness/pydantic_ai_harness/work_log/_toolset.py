@@ -61,6 +61,8 @@ class WorkLogRead(TypedDict):
     """The `offset` that reads on, or `None` when this window reached the end (the start, with `from_end`)."""
     total_lines: int
     """Lines matching `pattern`, or all lines without one."""
+    capped: bool
+    """Whether the size cap cut `text`. `next_offset` then points at the first line not returned whole."""
 
 
 class WorkLogToolset(FunctionToolset[AgentDepsT]):

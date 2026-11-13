@@ -35,7 +35,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceError
 from pydantic_ai_harness import CodeMode, ToolOutputLimits, WorkLog
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Truncate
 from pydantic_ai_harness.work_log import (
     WORK_LOG_READ_KIND,
     WORK_LOG_SEARCH_KIND,
@@ -348,8 +348,33 @@ class TestWorkLog:
             ('captioned', 'success', 'a caption\n[image/png content not logged]'),
             ('rich', 'success', 'first\nsecond\n[image/png content not logged]'),
             ('visible', 'success', 'what the model sees'),
-            ('structured', 'success', '{"count":1}'),
+            ('structured', 'success', '{\n  "count": 1\n}'),
             ('linked', 'success', '[image-url content not logged]'),
+        ]
+
+    async def test_a_structured_result_is_logged_one_field_per_line(self) -> None:
+        def rows() -> object:
+            return {'ids': [1, 2]}
+
+        def typed() -> object:
+            return {'kind': int}
+
+        store = InMemoryWorkLogStore()
+        agent = Agent(
+            _scripted(
+                [ToolCallPart('rows', {}, tool_call_id='rows')], [ToolCallPart('typed', {}, tool_call_id='typed')]
+            ),
+            # Core can't send a `type` to the model, so the result reaches it truncated to text.
+            capabilities=[WorkLog(store), ToolOutputLimits(bands=[Band(over=20, action=Truncate(max_chars=10))])],
+            tools=[rows, typed],
+        )
+
+        await agent.run('Go', conversation_id=_CONVERSATION)
+
+        assert _tool_entries(await store.read(_CONVERSATION)) == [
+            ('rows', 'success', '{\n  "ids": [\n    1,\n    2\n  ]\n}'),
+            # A leaf with no JSON form is rendered as its `repr` instead, in compact JSON.
+            ('typed', 'success', '{"kind":"<class \'int\'>"}'),
         ]
 
     async def test_a_tool_call_id_reused_across_steps_gives_two_entries(self) -> None:
@@ -679,6 +704,7 @@ class TestWorkLogTools:
             'offset': 0,
             'next_offset': 3,
             'total_lines': 10,
+            'capped': False,
         }
 
     async def test_read_is_capped_in_lines_and_characters(self) -> None:
@@ -691,8 +717,46 @@ class TestWorkLogTools:
         )
 
         lines, chars = (_READ.validate_python(result) for result in found)
-        assert (len(lines['text'].split('\n')), lines['next_offset']) == (1_000, 1_000)
-        assert (len(chars['text']), chars['next_offset']) == (50_000, None)
+        assert (len(lines['text'].split('\n')), lines['next_offset'], lines['capped']) == (1_000, 1_000, False)
+        assert (len(chars['text']), chars['capped']) == (50_000, True)
+        # The cap cut the second line, so reading on starts at it rather than past the window.
+        assert chars['next_offset'] == 1
+
+    async def test_a_capped_read_reads_on_from_the_first_line_not_returned_whole(self) -> None:
+        # Each line is 20,000 characters, so a window of all four holds two whole and cuts the third.
+        content = '\n'.join(letter * 20_000 for letter in 'abcd')
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', content))
+        await store.append(_CONVERSATION, _record('k2', 'z' * 60_000 + '\nshort'))
+
+        found = await _call_tools(
+            store,
+            ('read_work_log', {'seq': 1, 'limit': 4}),
+            ('read_work_log', {'seq': 1, 'offset': 2, 'limit': 4}),
+            ('read_work_log', {'seq': 1, 'limit': 4, 'from_end': True}),
+            ('read_work_log', {'seq': 1, 'offset': 2, 'limit': 4, 'from_end': True}),
+            ('read_work_log', {'seq': 2}),
+            ('read_work_log', {'seq': 2, 'from_end': True}),
+        )
+
+        reads = [_READ.validate_python(result) for result in found]
+        assert [(read['offset'], read['next_offset'], read['capped']) for read in reads] == [
+            (0, 2, True),
+            (2, None, False),
+            # From the end the cap keeps the lines nearest the end, and reading on goes back from the cut one.
+            (0, 2, True),
+            (2, None, False),
+            # A line longer than the cap on its own is cut, and reading on skips it: no read returns more of it.
+            (0, 1, True),
+            (0, 1, True),
+        ]
+        first, rest, last, earlier, long, long_from_end = (read['text'] for read in reads)
+        assert first == f'{"a" * 20_000}\n{"b" * 20_000}\n{"c" * 9_998}'
+        assert rest == f'{"c" * 20_000}\n{"d" * 20_000}'
+        assert last == f'{"b" * 9_998}\n{"c" * 20_000}\n{"d" * 20_000}'
+        assert earlier == f'{"a" * 20_000}\n{"b" * 20_000}'
+        assert long == 'z' * 50_000
+        assert long_from_end == f'{"z" * 49_994}\nshort'
 
     async def test_bad_read_arguments_ask_for_a_retry(self) -> None:
         store = InMemoryWorkLogStore()

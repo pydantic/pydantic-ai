@@ -64,6 +64,7 @@ from pydantic_ai_harness import (
     Planning,
     RelevanceCompaction,
     Researcher,
+    ResetCompaction,
     SlidingWindowCompaction,
     SpendLimits,
     SSHWorkspace,
@@ -73,6 +74,7 @@ from pydantic_ai_harness import (
     SummarizingCompaction,
     SystemReminders,
     ToolOutputLimits,
+    WorkLog,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
@@ -195,6 +197,10 @@ def _check_compact_on_request(merged: Any) -> None:
     assert merged.max_per_run == 2
 
 
+def _check_reset(merged: Any) -> None:
+    assert merged.keep_messages == 7
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -277,6 +283,14 @@ COMBINE_POLICY: dict[str, Policy] = {
             CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
         ),
         _check_compact_on_request,
+    ),
+    'ResetCompaction': Combines(
+        'two would each clear the history, the second clearing what the first just kept',
+        lambda: (
+            ResetCompaction[Any](WorkLog[Any](), max_messages=50, keep_messages=3),
+            ResetCompaction[Any](WorkLog[Any](), max_messages=50, keep_messages=7),
+        ),
+        _check_reset,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',

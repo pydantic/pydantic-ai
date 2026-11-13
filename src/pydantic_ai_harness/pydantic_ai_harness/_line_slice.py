@@ -42,12 +42,17 @@ class LineSlice:
     """Lines matching `pattern`, or all lines without one."""
     capped: bool
     """Whether the character cap cut `text`."""
+    whole: int
+    """Lines of the window that `text` holds whole, counted from the side the cap kept: `shown` unless `capped`."""
 
 
-def slice_lines(text: str, *, offset: int, limit: int, from_end: bool, pattern: str | None) -> LineSlice:
+def slice_lines(
+    text: str, *, offset: int, limit: int, from_end: bool, pattern: str | None, cap_keeps_end: bool = False
+) -> LineSlice:
     """Filter `text` by `pattern`, then take `limit` lines after skipping `offset`, from the start or the end.
 
-    `limit` is used as given: clamp it with `check_window` first.
+    `limit` is used as given: clamp it with `check_window` first. A window over `MAX_READ_CHARS` keeps its
+    first characters, or with `cap_keeps_end` its last, so a read from the end returns the lines nearest it.
     """
     lines = text.splitlines()
     if pattern is not None:
@@ -61,4 +66,12 @@ def slice_lines(text: str, *, offset: int, limit: int, from_end: bool, pattern: 
         window = lines[offset : offset + limit]
 
     body = '\n'.join(window)
-    return LineSlice(text=body[:MAX_READ_CHARS], shown=len(window), total=total, capped=len(body) > MAX_READ_CHARS)
+    if len(body) <= MAX_READ_CHARS:
+        return LineSlice(text=body, shown=len(window), total=total, capped=False, whole=len(window))
+    # A cut that falls on a line break leaves the line before it whole: the character past the cut is that break.
+    if cap_keeps_end:
+        kept, edge = body[-MAX_READ_CHARS:], body[-MAX_READ_CHARS - 1]
+    else:
+        kept, edge = body[:MAX_READ_CHARS], body[MAX_READ_CHARS]
+    whole = kept.count('\n') + (1 if edge == '\n' else 0)
+    return LineSlice(text=kept, shown=len(window), total=total, capped=True, whole=whole)

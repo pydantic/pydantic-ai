@@ -997,12 +997,23 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
     return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
+def is_user_turn_part(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
+    """Whether *part* is a user turn: a `UserPromptPart` that is not harness bookkeeping or data."""
+    return isinstance(part, UserPromptPart) and not _is_harness_marker_part(part)
+
+
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for message in messages:
-        if isinstance(message, ModelRequest) and any(
-            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in message.parts
-        ):
+        if isinstance(message, ModelRequest) and any(is_user_turn_part(part) for part in message.parts):
+            return message
+    return None
+
+
+def find_latest_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
+    """Return the last `ModelRequest` that contains a user turn, or `None`: the reverse of `find_first_user_message`."""
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest) and any(is_user_turn_part(part) for part in message.parts):
             return message
     return None
 
