@@ -14,7 +14,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, AgentRunResult, RunContext
+from pydantic_ai import Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.framing import wrap
@@ -125,6 +125,15 @@ def sequence_model(calls: list[tuple[str, dict[str, str]]]) -> FunctionModel:
             yield 'done'
 
     return FunctionModel(respond, stream_function=stream)
+
+
+def peer_parts(messages: Sequence[ModelMessage]) -> list[UserPromptPart]:
+    return [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and read_peer_message(part) is not None
+    ]
 
 
 async def delivered_parts(inbox: LocalPeerInbox) -> list[UserPromptPart]:
@@ -920,6 +929,40 @@ class TestPeers:
         assert [item.text for item in received if item is not None] == ['for the owner']
         assert not inbox.running
         assert await inbox.pending() == []
+
+    async def test_message_queued_while_paused_for_approval_arrives_once_on_resume(self, tmp_path: Path) -> None:
+        inbox = LocalPeerInbox(path=tmp_path / 'inbox.json')
+        network = InMemoryPeerNetwork()
+        sender = network.join(handle='api')
+        receiving = network.join(handle='client', inbox=inbox)
+        requests: list[list[ModelMessage]] = []
+        agent = Agent(
+            tool_model('deploy', {}, requests=requests),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[Peers(network=receiving, inbox=inbox)],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def deploy() -> str:
+            return 'deployed'
+
+        paused = await agent.run('deploy it')
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert not inbox.running
+        target = (await sender.peers())[0]
+        assert (await sender.send(target.id, 'hold the deploy', key='hold')).status == 'queued'
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'call': True}),
+        )
+        followup = await agent.run('anything else?', message_history=resumed.all_messages())
+
+        assert tool_results(resumed.new_messages()) == ['deployed']
+        assert [len(peer_parts(request)) for request in requests] == [0, 1, 1]
+        assert len(peer_parts(followup.all_messages())) == 1
+        assert await inbox.pending() == []
+        assert (await sender.send(target.id, 'hold the deploy', key='hold')).status == 'delivered'
 
     async def test_unacknowledged_message_is_redelivered_after_run_ends(self, tmp_path: Path) -> None:
         path = tmp_path / 'pending.json'
