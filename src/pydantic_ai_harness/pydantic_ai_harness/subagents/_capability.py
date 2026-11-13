@@ -258,7 +258,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Return the child's `Workspace`; the caller owns
     its resources, including keeping it alive for background tasks. Omission keeps the parent workspace.
     The callback validates paths and decides which delegates and backends may change directory.
-    Parent and delegate read-only restrictions still apply. Tools that bypass the workspace API need
+    Parent and delegate read-only restrictions still apply, and the child's workspace gets the lowest
+    authority the parent gives anything in or above its directory. Tools that bypass the workspace API need
     their own restrictions. Remote and durable delegations cannot request another directory.
     Resuming a task keeps its saved directory; the resolver is called again for that directory.
     This does not change where `agent_folders` are discovered (see `workspace`)."""
