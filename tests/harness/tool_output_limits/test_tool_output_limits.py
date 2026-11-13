@@ -81,11 +81,7 @@ if TYPE_CHECKING:
 
 
 def _make_ctx(
-    *,
-    run_id: str | None = 'run-1',
-    retry: int = 0,
-    model: Any = None,
-    usage_limits: UsageLimits | None = None,
+    *, run_id: str | None = 'run-1', retry: int = 0, model: Any = None, usage_limits: UsageLimits | None = None
 ) -> Any:
     """Build a minimal RunContext-like object for testing the hook directly."""
 
@@ -1555,13 +1551,19 @@ class TestAgentIntegration:
         spilled = sorted(path.read_bytes() for path in tmp_path.rglob('*') if path.is_file())
         assert spilled == [b'first payload\n' * 100, b'middle payload\n' * 100, b'second payload\n' * 100]
 
-    async def test_a_failed_run_does_not_keep_its_spill_names(self, tmp_path: Path, anyio_backend: str):
-        """A run that fails never reaches `after_run`, so its names must be dropped from `wrap_run`."""
+    async def test_a_reused_tool_call_id_is_tracked_per_run(self, tmp_path: Path, anyio_backend: str):
+        """A later run's first spill of a name keeps the plain handle, whatever an earlier run spilled."""
+        runs: list[int] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'first'}, tool_call_id='call_0')])
-            return ModelResponse(parts=[ToolCallPart('boom', tool_call_id='call_1')])
+                runs.append(1)
+                # The second run spills `call_0` first at a later step than the first run did.
+                size = 100 if len(runs) == 1 else 1
+                return ModelResponse(parts=[ToolCallPart('dump', {'size': size}, tool_call_id='call_0')])
+            if len(runs) == 2 and len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('dump', {'size': 100}, tool_call_id='call_0')])
+            return ModelResponse(parts=[TextPart('done')])
 
         store = LocalFileStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -1570,14 +1572,13 @@ class TestAgentIntegration:
         agent = Agent(FunctionModel(respond), capabilities=[cap])
 
         @agent.tool_plain
-        def dump(tag: str) -> str:
-            return f'{tag} payload\n' * 100
+        def dump(size: int) -> str:
+            return 'payload\n' * size
 
-        @agent.tool_plain
-        def boom() -> str:
-            raise RuntimeError('boom')
-
-        with pytest.raises(RuntimeError, match='boom'):
-            await agent.run('go')
-
-        assert cap._spilled_calls == {}  # pyright: ignore[reportPrivateUsage] -- the run's names are released
+        handles: list[str] = []
+        for _ in range(2):
+            result = await agent.run('go')
+            returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+            handles += [p.metadata['overflow_handle'] for p in returns if p.metadata is not None]
+        assert len(handles) == 2
+        assert [handle.count('/') for handle in handles] == [1, 1]

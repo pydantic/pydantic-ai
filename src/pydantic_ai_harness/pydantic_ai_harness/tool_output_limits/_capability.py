@@ -10,10 +10,10 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
-from pydantic_ai import AgentRunResult, FunctionToolset, Tool, ToolKind
+from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
@@ -212,16 +212,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
-    _spilled_calls: dict[str, dict[str, int]] = field(
-        default_factory=dict[str, dict[str, int]], init=False, repr=False, compare=False
-    )
-    """Run id -> spill name -> the run step that first wrote it.
+    _spilled_calls: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Spill name -> the run step that first wrote it, on the per-run instance `for_run` returns.
 
     A `tool_call_id` is only unique within one response, so a later response can reuse one. The step
     of a name's first spill is what tells the two apart: the call that wrote it first keeps the
     documented `run_id/tool_call_id.retry` handle, and a later call that would land on the same name
-    is parked one level down. Kept per instance and per run rather than read off the history, which
-    a capability such as a compaction may rewrite mid-run.
+    is parked one level down. Kept on the instance rather than read off the history, which a
+    capability such as a compaction may rewrite mid-run.
     """
 
     def __post_init__(self) -> None:
@@ -272,16 +270,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 'to keep spills on this machine.'
             )
 
-    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Drop the run's spill names however the run ends: no step is left to reuse one of its handles.
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolOutputLimits[AgentDepsT]:
+        """Return a copy with no spill names recorded, so runs don't share them.
 
-        `after_run` is skipped for a cancelled run and for a failure that no `on_run_error` recovers,
-        so the names are released here, where the `finally` sees either exit.
+        A shallow copy rather than `replace`, which would rebuild the toolset that `get_toolset`
+        builds once for durable execution.
         """
-        try:
-            return await handler()
-        finally:
-            self._spilled_calls.pop(ctx.run_id or 'run', None)
+        return replace_no_init(self, _spilled_calls={})
 
     @property
     def _spills_to_run_workspace(self) -> bool:
@@ -577,7 +572,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         """
         run_id = ctx.run_id or 'run'
         name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
-        first_step = self._spilled_calls.setdefault(run_id, {}).setdefault(name, ctx.run_step)
+        first_step = self._spilled_calls.setdefault(name, ctx.run_step)
         if first_step == ctx.run_step:
             return f'{run_id}/{name}'
         return f'{run_id}/{ctx.run_step}/{name}'
