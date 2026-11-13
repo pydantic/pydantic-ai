@@ -77,8 +77,8 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--update`, `clai2 update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
-| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
-| `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `clai2` too |
+| `clai2 plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
 | `clai2 sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
 
 ### Settings
@@ -891,14 +891,17 @@ in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
 
-When no keyring backend exists at all (keyring raises `NoKeyringError` or
-`InitError`, typical on a headless Linux box or over SSH), credentials go to a
+When no usable keyring backend exists (keyring raises `NoKeyringError`,
+`InitError`, `RuntimeError`, or `PasswordSetError`, `kwallet.DBusKeyring`
+cannot open a wallet, or the backend does not retain the key, typical on a headless
+Linux box, over SSH, or on KDE / Steam Deck with KWallet disabled or unconfigured), credentials go to a
 `0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
-these files are per user, so `--database PATH` does not move them. `/login` says so in its confirmation. A locked keyring is not treated as
-missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh encrypts the credentials and deletes the plaintext file.
+these files are per user, so `--database PATH` does not move them; `/login` says so in its
+confirmation. Reading or writing one logs a single warning per process. A locked keyring is not
+treated as missing; unlock it instead. Once a keyring becomes available, the next login or token
+refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
@@ -1865,14 +1868,19 @@ not the filesystem the file tools act on there.
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
-  `read_only_patterns` set, or a `ToolGuardrail` (a plugin's or the agent's own)
-  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`.
+  `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
+  or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
+  or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
+  the agent's own, or a plugin's) mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
-  `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
-  one, a supplied agent that does not expose its capabilities, or a plugin that
-  adds a capability function or
-  `DynamicCapability` (which could supply one at run time). File access then
-  goes through the file tools only.
+  `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
+  `FileSystem`, more than one, a supplied agent that does not expose its
+  capabilities, or a plugin that adds a capability function or
+  `DynamicCapability` (which could supply one at run time). So does any
+  `Hooks`, such as a `before_tool` hooks table, and a `ToolCallJudge` over
+  every tool or chosen by metadata or a function: which tools they check can't
+  be read before the run. An `after_tool` table only reports, so it keeps the
+  mount. File access then goes through the file tools only.
 
 While the model writes:
 
@@ -1971,8 +1979,9 @@ that code mode's sandbox keeps the folder as the turn mounted it until the next 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
-only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
-gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
+sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
+`read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
 can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
@@ -2748,10 +2757,10 @@ For a repository where Git cannot perform the cleanup you want, set
 canonical absolute Git common directory to a nonempty argv list. Find the key
 with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
 The match is exact, with no wildcards. Keys resolving to the same directory are
-rejected rather than silently choosing one command. For example:
+rejected rather than silently choosing one command. For example, in a CLAI session:
 
-```sh
-clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
+```text
+/set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
 ```
 
 The executable is your own cleanup program. Only whole argv tokens are
@@ -3071,7 +3080,7 @@ CLAI2's separate `notifications` plugin is unchanged; use
 
 ### Agent of Empires integration
 
-Run `clai2 plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
+Run `/plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
 (AoE) show CLAI2 sessions as `running`, `waiting`, `idle`, or `error` and reopen a
 restarted session's conversation. Titling the AoE session after the conversation is
 opt-in: turn off AoE's `session.tie_workdir_to_name` first, so a rename does not move the

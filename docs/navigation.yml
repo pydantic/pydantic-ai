@@ -610,9 +610,6 @@ navigation:
           - page: "Handle Deferred Tool Calls"
             path: "capabilities/handle-deferred-tool-calls.md"
             slug: "capabilities/handle-deferred-tool-calls"
-          - page: "Request Input"
-            path: "capabilities/request-input.md"
-            slug: "capabilities/request-input"
           - page: "Ask User"
             path: "harness/ask-user.md"
             slug: "harness/ask-user"
@@ -1616,6 +1613,9 @@ redirects:
     to: "capabilities/durable_execution/overview"
     status: 302
   # Removed pages.
+  - from: "capabilities/request-input"
+    to: "capabilities/handle-deferred-tool-calls"
+    status: 302
   - from: "capabilities/durable_execution/kitaru"
     to: "capabilities/durable_execution/overview"
     status: 302
