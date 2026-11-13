@@ -2723,12 +2723,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         call_id, _ = split_combined_tool_call_id(call_id)
         call_id = provider_response_tool_call_id(call_id, context.response_id)
         computer_call = context.computer_calls.get(part.tool_call_id)
-        if call_id in context.computer_call_ids or (
+        if part.tool_call_id in context.computer_call_ids or (
             # A call not replayed here is in the stored response (`previous_response_id` or a
             # conversation), where this model made it as a `computer_call`, whatever the tool is now.
             computer_call is not None
             and computer_call.provider_name == self.system
-            and call_id not in context.replayed_call_ids
+            and part.tool_call_id not in context.replayed_call_ids
         ):
             context.openai_messages.extend(map_computer_call_output(part, call_id, computer_call))
         elif call_id in context.client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
@@ -2932,7 +2932,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             else None,
         )
         id = id or item.id
-        context.replayed_call_ids.add(call_id)
+        context.replayed_call_ids.add(item.tool_call_id)
 
         if computer_call := self._replayed_computer_call(
             item, call_id, context, should_send_item_id=should_send_item_id
@@ -2975,7 +2975,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None
         if not (computer_call := stored_computer_call(item)):
             return None
-        context.computer_call_ids.add(call_id)
+        context.computer_call_ids.add(item.tool_call_id)
         replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
         # The ID its output is sent with, which may be fitted to this request.
         replayed_call['call_id'] = call_id
@@ -3441,7 +3441,10 @@ class _ResponsesMapMessagesContext:
     """Each `computer_call` this API made in the whole history, by tool call ID, so its output can read it."""
     computer_is_native: bool = False
     computer_call_ids: set[str] = field(default_factory=set[str])
-    """Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s."""
+    """Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
+
+    Both sets hold history tool call IDs, not wire IDs: a provider may reuse a wire ID in a later response.
+    """
     replayed_call_ids: set[str] = field(default_factory=set[str])
     # Mirrors the Anthropic renderer's per-request `tool_addition` dedupe: several history
     # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
