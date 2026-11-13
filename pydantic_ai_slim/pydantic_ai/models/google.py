@@ -112,6 +112,7 @@ try:
         FileDataDict,
         FileSearchDict,
         FinishReason as GoogleFinishReason,
+        FunctionCall,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -1855,6 +1856,8 @@ class GeminiStreamedResponse(StreamedResponse):
         if part.text is not None:
             yield from self._map_text(part.text, part.thought, provider_details)
         elif part.function_call:
+            if part.function_call.name is None:
+                raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
             yield from self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=uuid4(),
                 tool_name=part.function_call.name,
@@ -1880,8 +1883,8 @@ class GeminiStreamedResponse(StreamedResponse):
         elif _is_signature_only_part(part):
             # See the signature-only media-processing comment in `_map_response_part`.
             pass
-        else:
-            assert part.function_response is not None, f'Unexpected part: {part}'
+        elif part.function_response is None:
+            raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     def _track_text_run(self, part: Part) -> None:
         # A new request's first text starts a new part, like any text after a non-text part.
@@ -2308,6 +2311,15 @@ def _process_part(
     return item, code_execution_tool_call_id
 
 
+def _map_function_call_part(part: Part, function_call: FunctionCall) -> ToolCallPart:
+    if function_call.name is None:
+        raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
+    item = ToolCallPart(tool_name=function_call.name, args=function_call.args)
+    if function_call.id is not None:
+        item.tool_call_id = function_call.id
+    return item
+
+
 def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | None:
     """Map a part other than a code execution step, or return `None` for a part the response leaves out."""
     if part.text is not None:
@@ -2318,11 +2330,7 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
             return ThinkingPart(content=part.text)
         return TextPart(content=part.text)
     if part.function_call:
-        assert part.function_call.name is not None
-        item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
-        if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id
-        return item
+        return _map_function_call_part(part, part.function_call)
     if part.tool_call:
         return _map_tool_call(part.tool_call, provider_name)
     if part.tool_response:

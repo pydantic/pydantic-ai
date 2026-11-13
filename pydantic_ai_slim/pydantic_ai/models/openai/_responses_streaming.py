@@ -478,9 +478,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=item.id,
                     part=map_compaction_item(item, self.provider_name),
                 )
-            case _:  # pragma: no cover
+            case _:
                 warnings.warn(
-                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {type(item).__name__}',
                     UserWarning,
                 )
 

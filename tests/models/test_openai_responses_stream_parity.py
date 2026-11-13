@@ -8,6 +8,7 @@ replays each recorded stream, from OpenAI and the other providers recorded throu
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -196,15 +197,26 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
         # SDK's own stream accumulator does.
         complete = complete.model_copy(update={'output': [done_items[index] for index in sorted(done_items)]})
 
-    streamed = await model._process_streamed_response(  # pyright: ignore[reportPrivateUsage]
-        await open_stream(), {}, model_request_parameters
-    )
-    async for _ in streamed:
-        pass
+    # Both paths warn about an item they can't handle yet, so the warnings are compared too.
+    with warnings.catch_warnings(record=True) as streamed_warnings:
+        warnings.simplefilter('always')
+        streamed = await model._process_streamed_response(  # pyright: ignore[reportPrivateUsage]
+            await open_stream(), {}, model_request_parameters
+        )
+        async for _ in streamed:
+            pass
+    with warnings.catch_warnings(record=True) as complete_warnings:
+        warnings.simplefilter('always')
+        complete_response = model._process_response(complete, {}, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
     return (
-        _comparable(streamed.get()),
-        _comparable(model._process_response(complete, {}, model_request_parameters)),  # pyright: ignore[reportPrivateUsage]
+        {**_comparable(streamed.get()), 'warnings': _warning_kinds(streamed_warnings)},
+        {**_comparable(complete_response), 'warnings': _warning_kinds(complete_warnings)},
     )
+
+
+def _warning_kinds(caught: list[warnings.WarningMessage]) -> list[str]:
+    """Each warning's category and full message."""
+    return [f'{w.category.__name__}: {w.message}' for w in caught]
 
 
 async def test_recorded_streams_match_the_complete_response() -> None:
