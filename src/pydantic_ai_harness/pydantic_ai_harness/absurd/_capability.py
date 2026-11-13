@@ -105,7 +105,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         task_ctx = current_async_task_context()
         # Only called in the durable context, which guarantees a task.
         assert task_ctx is not None
-        await task_ctx.sleep_for(f'{self.name}__sleep', seconds)
+        await task_ctx.sleep_for(f'{self.name}__sleep', max(seconds, 0))
 
     def get_durable_operation_backend(self) -> AbsurdOperationBackend:
         return AbsurdOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)
