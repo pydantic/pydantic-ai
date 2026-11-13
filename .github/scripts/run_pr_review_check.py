@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -19,7 +20,7 @@ from typing import Literal, TextIO
 from urllib.parse import quote
 
 from douwebot_opencode_result import final_text, rejection_reason, unfenced
-from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback
+from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback, step_tokens
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -33,8 +34,6 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
-_EVENT = TypeAdapter(dict[str, object])
-_TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 
 
 class ModelResult(BaseModel):
@@ -155,23 +154,6 @@ def build_prompt(check: ReviewCheck, context: Path, workspace: Path, *, pr_numbe
     return prompt
 
 
-def step_tokens(line: str) -> int | None:
-    """Return the tokens a `step_finish` event reports, or None for any other event."""
-    try:
-        event = _EVENT.validate_json(line)
-        if event.get('type') != 'step_finish':
-            return None
-        part = _EVENT.validate_python(event.get('part'))
-        tokens = _TOKENS.validate_python(part.get('tokens', {}))
-    except ValidationError:
-        # A validation error repeats its input, a stream line can hold model text, and job logs are public.
-        raise ValueError('OpenCode wrote an invalid stream event') from None
-    total = 0.0
-    for value in tokens.values():
-        total += sum(value.values()) if isinstance(value, dict) else value
-    return int(total)
-
-
 def run_opencode(
     command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], log: TextIO, seconds: float
 ) -> Usage:
@@ -290,6 +272,10 @@ def main() -> None:
         'github.run_id': env['GITHUB_RUN_ID'],
         'github.run_attempt': env['GITHUB_RUN_ATTEMPT'],
     }
+    # Actions cancels a step with SIGINT to its entry process, which the Review step `exec`s into this script, and with
+    # SIGTERM 7.5 s later. Both raise `KeyboardInterrupt`, so the `finally` below still exports the review's span.
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, signal.default_int_handler)
     started = time.time_ns()
     # The review's span, which each OpenCode run's span names as its parent.
     trace_id, span_id = secrets.token_hex(16), secrets.token_hex(8)

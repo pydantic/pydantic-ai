@@ -9,15 +9,17 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import traceback
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from urllib.parse import quote
 
 import pytest
+import yaml
 from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -39,6 +41,16 @@ from run_pr_review_check import (
 CHECK = dataclasses.replace(GENERAL, max_steps=3, max_minutes=5)
 WORKSPACE = Path(__file__).parents[2]
 CHANGED = {'a.py': frozenset({('RIGHT', 3)})}
+
+
+@pytest.fixture(autouse=True)
+def restore_signal_handlers() -> Iterator[None]:
+    """`main` makes SIGINT and SIGTERM raise `KeyboardInterrupt`; give the test process its own handlers back."""
+    handlers = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    yield
+    for signum, handler in handlers.items():
+        if handler is not None:
+            signal.signal(signum, handler)
 
 
 def _stream(tmp_path: Path, text: str, *, finish: str = 'stop') -> Path:
@@ -325,6 +337,14 @@ def test_time_budget_stop_is_not_retried(
     assert (provider, usage.stopped, expire_budget) == (OPENCODE_GO, True, [300])
 
 
+def test_review_step_execs_the_runner() -> None:
+    """Actions signals only a cancelled step's entry process, so the review step `exec`s the runner as that process."""
+    workflow = (WORKSPACE / '.github' / 'workflows' / 'pr-review-checks.yml').read_text(encoding='utf-8')
+    steps = yaml.load(workflow, Loader=yaml.BaseLoader)['jobs']['review']['steps']
+    [script] = [step['run'] for step in steps if step.get('name') == 'Review with OpenCode']
+    assert script.splitlines()[-1] == 'exec python3 .github/scripts/run_pr_review_check.py'
+
+
 def _returning(value: object) -> Callable[..., object]:
     def stub(*args: object, **kwargs: object) -> object:
         return value
@@ -412,7 +432,9 @@ def _runs_of(review: dict[str, object], runs: list[dict[str, object]]) -> list[d
     return [_span_attributes(span) for span in runs]
 
 
-def _run(provider: Provider, attempt: int, failure: Mapping[str, object]) -> dict[str, object]:
+def _run(
+    provider: Provider, attempt: int, failure: Mapping[str, object], *, steps: int, tokens: int
+) -> dict[str, object]:
     """The attributes of a run's span; `failure` names how its process failed, without the attribute prefix."""
     return {
         **REVIEW_ATTRIBUTES,
@@ -420,6 +442,8 @@ def _run(provider: Provider, attempt: int, failure: Mapping[str, object]) -> dic
         'opencode_fallback.plan': provider.plan,
         'opencode_fallback.attempt': str(attempt),
         'opencode_fallback.provider': provider.name,
+        'opencode_fallback.steps': str(steps),
+        'opencode_fallback.tokens': str(tokens),
         **{f'opencode_fallback.{key}': value for key, value in failure.items()},
     }
 
@@ -444,7 +468,7 @@ ANSWER = [
 
 
 @pytest.mark.parametrize(
-    ('zai', 'raised', 'outcome', 'failure'),
+    ('zai', 'raised', 'outcome', 'failure', 'usage'),
     [
         pytest.param(
             f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}',
@@ -456,6 +480,7 @@ ANSWER = [
                 'pr_review_checks.tokens': '5',
             },
             {},
+            (1, 5),
             id='complete',
         ),
         pytest.param(
@@ -468,6 +493,7 @@ ANSWER = [
                 'pr_review_checks.tokens': '21',
             },
             {},
+            (1, 21),
             id='rejected-answer',
         ),
         *(
@@ -476,6 +502,7 @@ ANSWER = [
                 subprocess.CalledProcessError,
                 {'pr_review_checks.outcome': 'FAILED', 'pr_review_checks.exception': 'CalledProcessError'},
                 {**RATE_LIMIT, 'step_finish': finished},
+                (1, 21) if finished else (0, 0),
                 id=f'rate-limited-{"after" if finished else "before"}-a-step',
             )
             for steps, finished in [('', False), (shlex.quote(_step(10)), True)]
@@ -490,10 +517,11 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
     raised: type[BaseException] | None,
     outcome: dict[str, object],
     failure: dict[str, object],
+    usage: tuple[int, int],
 ) -> None:
     """A complete, rejected or failed review exports its span, with its plan, its runs and how its last run failed.
 
-    Each run also exports a child span that says how it failed.
+    Each run also exports a child span with its steps and tokens and how it failed.
     """
     _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1', zai)
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
@@ -510,15 +538,19 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
         'pr_review_checks.plan': 'the primary Coding Plan',
         'pr_review_checks.attempts': '2',
     }
-    assert _runs_of(span, runs) == [_run(OPENCODE_GO, 1, GO_LIMIT), _run(ZAI, 2, failure)]
+    steps, tokens = usage
+    assert _runs_of(span, runs) == [
+        _run(OPENCODE_GO, 1, GO_LIMIT, steps=0, tokens=0),
+        _run(ZAI, 2, failure, steps=steps, tokens=tokens),
+    ]
     assert [run.get('status') for run in runs] == [{'code': 2}, {'code': 2} if failure else None]
 
 
 @pytest.mark.parametrize(
-    ('steps', 'restart'),
+    ('steps', 'restart', 'usage'),
     [
-        pytest.param(shlex.quote(_step(10)), {'pr_review_checks.restarted': True}, id='after-a-step'),
-        pytest.param('', {}, id='before-a-step'),
+        pytest.param(shlex.quote(_step(10)), {'pr_review_checks.restarted': True}, (1, 21), id='after-a-step'),
+        pytest.param('', {}, (0, 0), id='before-a-step'),
     ],
 )
 def test_review_span_marks_a_review_the_chain_restarted(
@@ -527,6 +559,7 @@ def test_review_span_marks_a_review_the_chain_restarted(
     exported: list[dict[str, object]],
     steps: str,
     restart: dict[str, object],
+    usage: tuple[int, int],
 ) -> None:
     """A review the first account rate-limited after steps is marked restarted; a handover before a step is not.
 
@@ -552,28 +585,32 @@ def test_review_span_marks_a_review_the_chain_restarted(
         'pr_review_checks.attempts': '3',
         **restart,
     }
+    # The first account's run keeps its steps and tokens, though the review's own come from the run that served.
+    run_steps, run_tokens = usage
     assert _runs_of(span, runs) == [
-        _run(OPENCODE_GO, 1, GO_LIMIT),
-        _run(ZAI, 2, {**RATE_LIMIT, 'step_finish': bool(restart)}),
-        _run(ZAI_BACKUP, 3, {}),
+        _run(OPENCODE_GO, 1, GO_LIMIT, steps=0, tokens=0),
+        _run(ZAI, 2, {**RATE_LIMIT, 'step_finish': bool(restart)}, steps=run_steps, tokens=run_tokens),
+        _run(ZAI_BACKUP, 3, {}, steps=1, tokens=5),
     ]
 
 
-def test_interrupted_review_exports_its_span(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
+@pytest.mark.parametrize('signum', [signal.SIGINT, signal.SIGTERM], ids=['sigint', 'sigterm'])
+def test_cancelled_review_exports_its_span(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]], signum: signal.Signals
 ) -> None:
-    """An interrupt in the run in flight still exports that run's span, and the review's span names its plan."""
+    """The signals Actions sends a cancelled step export the run in flight's span and the review's span."""
     _fake_opencode(tmp_path, monkeypatch, 'exit 1')
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
 
     def cancelled(*args: object, **kwargs: object) -> Usage:
-        raise KeyboardInterrupt
+        os.kill(os.getpid(), signum)
+        raise AssertionError(f'{signum.name} did not interrupt the review')
 
     monkeypatch.setattr(run_pr_review_check, 'run_opencode', cancelled)
     with pytest.raises(KeyboardInterrupt):
         run_pr_review_check.main()
     run, span = exported
-    assert _runs_of(span, [run]) == [_run(OPENCODE_GO, 1, {})]
+    assert _runs_of(span, [run]) == [_run(OPENCODE_GO, 1, {}, steps=0, tokens=0)]
     assert run['status'] == {'code': 2}
     assert _span_attributes(span) == {
         **REVIEW_ATTRIBUTES,

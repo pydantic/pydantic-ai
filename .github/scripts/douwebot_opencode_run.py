@@ -22,6 +22,7 @@ from pydantic import TypeAdapter, ValidationError
 
 T = TypeVar('T')
 _EVENT = TypeAdapter(dict[str, object])
+_TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 # The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
 ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
 # The shape of a provider's own error code, such as Z.AI's `1302` request-rate limit or `1305` overload.
@@ -97,12 +98,33 @@ class Attempt:
     """When the run started, in nanoseconds since the epoch."""
     ended: int = 0
     """When the run's process exited or was interrupted, in nanoseconds since the epoch; 0 while it runs."""
+    steps: int | None = None
+    """The `step_finish` events in the run's stream; `None` until the run's process ends."""
+    tokens: int | None = None
+    """The tokens those events report, every kind summed; `None` until the run's process ends."""
     error_type: str | None = None
     status: int | None = None
     code: str | None = None
     """The provider's own error code from the response body, such as Z.AI's `1302`."""
     finished: bool | None = None
     """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
+
+
+def step_tokens(line: str) -> int | None:
+    """Return the tokens a `step_finish` event reports, or None for any other event."""
+    try:
+        event = _EVENT.validate_json(line)
+        if event.get('type') != 'step_finish':
+            return None
+        part = _EVENT.validate_python(event.get('part'))
+        tokens = _TOKENS.validate_python(part.get('tokens', {}))
+    except ValidationError:
+        # A validation error repeats its input, a stream line can hold model text, and job logs are public.
+        raise ValueError('OpenCode wrote an invalid stream event') from None
+    total = 0.0
+    for value in tokens.values():
+        total += sum(value.values()) if isinstance(value, dict) else value
+    return int(total)
 
 
 def logfire_endpoint() -> str:
@@ -220,13 +242,29 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     return config
 
 
+def _stream_usage(output: Path) -> tuple[int, int]:
+    """Count a run's `step_finish` events and their tokens, skipping every line that is not a valid event."""
+    steps = tokens = 0
+    for line in output.read_bytes().decode(errors='replace').split('\n'):
+        try:
+            step = step_tokens(line)
+        except ValueError:
+            continue
+        if step is not None:
+            steps += 1
+            tokens += step
+    return steps, tokens
+
+
 def _export_run(
     token: str, attempt: Attempt, resource: Mapping[str, str], *, trace_id: str, parent_id: str | None, served: bool
 ) -> None:
-    """Export the `OpenCode run` span of one ended run, with its provider and how it failed, if `token` is set."""
+    """Export the `OpenCode run` span of one ended run, with its provider, usage and how it failed, if `token` is set."""
     if not token:
         return
-    failure = {
+    fields = {
+        'steps': attempt.steps,
+        'tokens': attempt.tokens,
         'error_type': attempt.error_type,
         'error_status': attempt.status,
         'error_code': attempt.code,
@@ -235,7 +273,7 @@ def _export_run(
     values = {
         **resource,
         'opencode_fallback.provider': attempt.provider.name,
-        **{f'opencode_fallback.{key}': value for key, value in failure.items() if value is not None},
+        **{f'opencode_fallback.{key}': value for key, value in fields.items() if value is not None},
     }
     span = otlp_span(
         'OpenCode run',
@@ -341,8 +379,13 @@ def run_with_fallback(
                     '--format',
                     'json',
                 ]
-                result = launch(command, env, stream)
-                served = True
+                try:
+                    result = launch(command, env, stream)
+                    served = True
+                finally:
+                    # The next run overwrites the stream, and a failed run's usage is recorded nowhere else.
+                    stream.flush()
+                    attempt.steps, attempt.tokens = _stream_usage(output)
         except subprocess.CalledProcessError:
             report_failure(attempt)
             raise
