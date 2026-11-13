@@ -243,7 +243,7 @@ def _validation_reason(exc: ValidationError) -> str:
 
 
 def _log_failures(workers: Mapping[str, asyncio.Task[str]]) -> None:
-    """Retrieve, as `gather` did, each finished worker's error, so asyncio doesn't report it when collected."""
+    """Log each finished worker's error, retrieving it so asyncio doesn't report it as never retrieved."""
     for task_id, worker in workers.items():
         if not worker.cancelled() and (exc := worker.exception()) is not None:
             logging.getLogger(__name__).error('Delegation task %s failed while closing', task_id, exc_info=exc)
