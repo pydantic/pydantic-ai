@@ -18,7 +18,7 @@ which is not. envd types only a missing path; its other path failures arrive as 
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
 
-The `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `scrot`, `setsid` and
+The `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `xwininfo`, `scrot`, `setsid` and
 `google-chrome`, but runs no X server at boot: the `e2b-desktop` package starts its own.
 """
 
@@ -150,7 +150,9 @@ _START_VIEWER = (
     # x11vnc writes its port once it listens, and exits without one if the port is taken. `-noipv6`: with the IPv4
     # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
     + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
-    + f"fi; if ! pgrep -f '[w]ebsockify .* {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
+    # A viewer counts only with our web root: a foreign one, such as `--web /home/user`, would serve those files
+    # without the password, so ours starts instead and fails while that one holds the port.
+    + f"fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
     # `--web`, else novnc_proxy serves the working directory if it has a `vnc.html`.
     f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} --web /opt/noVNC '
@@ -314,7 +316,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     `UserError` before it reaches E2B.
 
     With `desktop`, the sandbox gets a display on first use. A custom template then needs Xvfb,
-    `xdotool`, `scrot` and `setsid`.
+    `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.

@@ -94,10 +94,11 @@ async def test_the_viewer_keeps_its_password_and_starts_once(fake_e2b: FakeE2B, 
 
 
 async def test_the_viewer_starts_its_own_beside_a_foreign_one(fake_e2b: FakeE2B, tmp_path: Path) -> None:
-    """A VNC server without our password, such as one `e2b_desktop` started, and its viewer don't count as ours."""
+    """A VNC server without our password, such as one `e2b_desktop` started, and a viewer serving another web root,
+    which would hand out its files without the password, don't count as ours."""
     _, viewer = await _scripts(fake_e2b)
     _run('true', tmp_path)  # writes the stubs
-    foreign = 'x11vnc -display :0 -nopw -forever\nwebsockify --web /opt/noVNC 6080 localhost:5900\n'
+    foreign = 'x11vnc -display :0 -nopw -forever\nwebsockify --web /home/user 6080 127.0.0.1:5900\n'
     (tmp_path / 'bin' / 'starts').write_text(foreign)
 
     result = _run(viewer, tmp_path)

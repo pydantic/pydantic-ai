@@ -103,9 +103,11 @@ async def test_the_live_view_starts_an_x_server_that_stopped(fake_e2b: FakeE2B, 
     assert len(display.starts) == 2
 
 
-async def test_commands_see_the_desktop(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    await E2BSandboxBackend(desktop=True).run('true', shell=True)
-    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
+async def test_commands_see_the_desktop_and_the_env(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    await E2BSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('true', shell=True)
+
+    assert fake_e2b.create_calls[0].envs == {'DISPLAY': ':1', 'FOO': 'bar'}
+    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'FOO': 'bar'}
 
 
 async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
