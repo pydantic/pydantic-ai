@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
@@ -12,12 +13,14 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     OutputTokenLimitExceeded,
     RetryModelRequest,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, AgentModel, CapabilityOrdering
@@ -45,13 +48,14 @@ _SpecFallbackError = Literal[
     'ModelRequestTimeout',
     'ContentFilterError',
     'OutputTokenLimitExceeded',
+    'UnsupportedSettingWarning',
 ]
 """The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: every public `ModelAPIError` class,
-`ContentFilterError` and `OutputTokenLimitExceeded`."""
+`ContentFilterError`, `OutputTokenLimitExceeded` and `UnsupportedSettingWarning`."""
 
-_SPEC_FALLBACK_ERRORS: dict[str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded]] = {
-    name: getattr(exceptions, name) for name in get_args(_SpecFallbackError)
-}
+_SPEC_FALLBACK_ERRORS: dict[
+    str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded | UnsupportedSettingWarning]
+] = {name: getattr(exceptions, name) for name in get_args(_SpecFallbackError)}
 
 
 @dataclass(init=False)
@@ -137,7 +141,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 response is accepted, so in `fallback_on` they stand for that response. Leave
                 `ContentFilterError` out to accept refusals instead: an empty one ends the run with
                 `ContentFilterError`, and one with text is the output. Leave `OutputTokenLimitExceeded` out to accept
-                cut-off responses, as when `max_tokens` is a deliberate cap: cut-off text is then the output. Accepts:
+                cut-off responses, as when `max_tokens` is a deliberate cap: cut-off text is then the output. Naming
+                [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] moves on from a model
+                that would ignore a setting the request relies on, like `stop_sequences`, before anything is sent,
+                instead of sending the request without it. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
@@ -198,6 +205,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         anyway, so those keep working either way.
         """
         return replace_no_init(self, _supplies_model=agent.model is None)
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        """With `UnsupportedSettingWarning` in `fallback_on`, have each attempt's model raise the warning it would emit."""
+        if not self._predicates.unsupported_setting:
+            return None
+        return _JudgingSettingsModel(model, self._predicates)
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         if not self._supplies_model:
@@ -379,8 +392,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         `ModelFallback(...)` is, so a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability's
         aliases work in a spec too. `fallback_on` takes the names of exception classes in
         [`pydantic_ai.exceptions`][pydantic_ai.exceptions] that subclass
-        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], `ContentFilterError` or `OutputTokenLimitExceeded`;
-        exception and response handlers can only be passed to `ModelFallback(...)` directly.
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], `ContentFilterError`, `OutputTokenLimitExceeded`
+        or `UnsupportedSettingWarning`; exception and response handlers can only be passed to `ModelFallback(...)`
+        directly.
 
         YAML form:
 
@@ -408,10 +422,46 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             unknown = [name for name in given_errors if not (isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS)]
             raise UserError(
                 '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
-                '`ContentFilterError` and `OutputTokenLimitExceeded`, '
+                '`ContentFilterError`, `OutputTokenLimitExceeded` and `UnsupportedSettingWarning`, '
                 f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
             )
         return cls(*model_names, fallback_on=tuple(error_types), sticky=sticky)
+
+
+class _JudgingSettingsModel(WrapperModel):
+    """Raises the `UnsupportedSettingWarning` its model would emit for a request, so `ModelFallback` moves on from it.
+
+    The warning is raised before anything is sent, as the attempt's error, so the agent records it as a failed attempt.
+    """
+
+    def __init__(self, wrapped: Model, predicates: FallbackPredicates):
+        super().__init__(wrapped)
+        self._predicates = predicates
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        with self._predicates.judging_settings():
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with AsyncExitStack() as stack:
+            # Only while the stream is opened, which is when the model prepares the request.
+            with self._predicates.judging_settings():
+                response = await stack.enter_async_context(
+                    super().request_stream(messages, model_settings, model_request_parameters, run_context)
+                )
+            yield response
 
 
 def _spec_list(value: object, name: str) -> Sequence[object]:

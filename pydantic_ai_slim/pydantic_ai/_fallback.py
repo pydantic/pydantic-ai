@@ -18,19 +18,21 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 from opentelemetry.trace import Span, Tracer
 
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
+from ._unsupported_settings import raise_warnings as raise_unsupported_setting_warnings
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import (
     ContentFilterError,
     FallbackExceptionGroup,
     IncompleteToolCall,
     OutputTokenLimitExceeded,
+    UnsupportedSettingWarning,
     UserError,
 )
 from .messages import (
@@ -150,6 +152,13 @@ class FallbackPredicates:
     otherwise the run's output, and the rare response with complete output, such as tool calls that all parse, that
     still reached the limit. Streamed responses skip it without a warning, like refusals.
     """
+    unsupported_setting: bool = False
+    """Whether `fallback_on` names `UnsupportedSettingWarning`, so a model that would ignore a setting the request
+    relies on is moved on from.
+
+    The model raises the warning as the attempt's error instead of emitting it (see `judging_settings`), before
+    anything is sent, so it's recorded as a failed attempt like any other error `fallback_on` matches.
+    """
 
     @classmethod
     def parse(cls, fallback_on: FallbackOn, *, owner: str, default: str) -> FallbackPredicates:
@@ -195,6 +204,17 @@ class FallbackPredicates:
             exception_type, IncompleteToolCall
         ):
             self.output_token_limit = True
+        if exception_type is UnsupportedSettingWarning:
+            self.unsupported_setting = True
+        elif issubclass(exception_type, UnsupportedSettingWarning):
+            # A model raises `UnsupportedSettingWarning` itself, which a subclass's handler would never match.
+            raise UserError(
+                f'`fallback_on` takes `UnsupportedSettingWarning` itself, not its subclass `{exception_type.__name__}`.'
+            )
+
+    def judging_settings(self) -> AbstractContextManager[None]:
+        """Around an attempt, have the model raise the `UnsupportedSettingWarning` it would emit, if `fallback_on` names it."""
+        return raise_unsupported_setting_warnings() if self.unsupported_setting else nullcontext()
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""

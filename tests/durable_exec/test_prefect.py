@@ -105,12 +105,14 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -4270,6 +4272,30 @@ async def test_prefect_durability_runtime_registered_model() -> None:
 
     assert await run_by_key() == 'alt-response'
     assert await run_by_instance() == 'alt-response'
+
+
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+async def test_prefect_durability_fallback_on_unsupported_setting_warning() -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a Prefect flow too."""
+    agent = Agent(
+        _IgnoresStopSequences(_prefect_alt_model_fn, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('alt', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            PrefectDurability(models={'alt': _prefect_alt_model}),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('hello')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_agent() == ('alt', ['primary error'])
 
 
 class _BehaviorChangingWrapper(WrapperModel):
