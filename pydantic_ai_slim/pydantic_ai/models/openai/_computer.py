@@ -239,7 +239,7 @@ def map_computer_call(
         # runs. OpenAI says not to run a partially generated action.
         args = '{"actions": ['
     else:
-        args = _map_actions(dumped, provider_details)
+        args = _map_actions(dumped, provider_details, sent=item.model_fields_set)
     return ComputerCallPart(
         tool_name,
         args,
@@ -250,10 +250,14 @@ def map_computer_call(
     )
 
 
-def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any]) -> dict[str, Any]:
-    """A `computer_call` item's actions as the `computer` tool's arguments, noting scrolls in `provider_details`."""
-    if 'actions' in dumped and 'action' in dumped:
-        raw = None  # As in OpenAI's SDK, a call with both is malformed, so none of it runs.
+def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any], *, sent: set[str]) -> dict[str, Any]:
+    """A `computer_call` item's actions as the `computer` tool's arguments, noting scrolls in `provider_details`.
+
+    `sent` names the fields the response had, including those it sent as `null`, which `dumped` leaves out.
+    """
+    given = sent & {'action', 'actions'}
+    if len(given) > 1 or not given <= dumped.keys():
+        raw = None  # As in OpenAI's SDK, a call needs one of the two, not as `null`: none of a malformed call runs.
     elif 'actions' in dumped:
         raw = dumped['actions']
     elif 'action' in dumped:
