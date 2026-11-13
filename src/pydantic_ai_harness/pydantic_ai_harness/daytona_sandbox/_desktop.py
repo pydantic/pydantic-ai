@@ -9,7 +9,8 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 - `mouse.scroll`'s amount is wheel clicks; `left` and `right` send X buttons 6 and 7.
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
-- `keyboard.type` types Unicode up to U+FFFF, newlines as Enter, and drops emoji and anything beyond.
+- `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
+  emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
   scroll lock and media keys.
 - Its numpad names are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
@@ -268,7 +269,7 @@ class DaytonaDesktop:
     async def _type(self, text: str) -> None:
         """Type `text`, `_TYPED_PER_REQUEST` characters at a time, pressing Tab for each tab, which `type` refuses."""
         if any(ord(character) > 0xFFFF for character in text):
-            raise UnsupportedActionError("Daytona's desktop cannot type emoji or other characters beyond U+FFFF.")
+            raise UnsupportedActionError("Daytona's desktop cannot type characters beyond U+FFFF, such as most emoji.")
         keyboard = self._computer_use.keyboard
         for index, segment in enumerate(text.split('\t')):
             if index:
