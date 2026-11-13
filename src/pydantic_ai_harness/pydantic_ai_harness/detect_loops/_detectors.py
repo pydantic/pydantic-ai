@@ -242,6 +242,8 @@ class LoopJudge(LoopDetector[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.every is not None and self.every < 1:
             raise ValueError(f'`every` must be at least 1 or `None`, got {self.every}.')
+        if self.max_chars < 1:
+            raise ValueError(f'`max_chars` must be at least 1, got {self.max_chars}.')
         if self.agent is None:
             if self.model is None:
                 raise ValueError('Provide a judge `model` or a judge `agent`.')

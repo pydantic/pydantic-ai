@@ -338,7 +338,7 @@ class TestDetectLoops:
     async def test_channels_can_be_turned_off(self):
         loops: list[DetectedLoop] = []
         detector = DetectLoops[object](stream_channels=('text',), action=lambda ctx, loop: loops.append(loop))
-        script = _script([*(_thinking(LOOP) for _ in range(30)), 'answer'])
+        script = _script([*(_thinking(LOOP) for _ in range(40)), 'answer'])
 
         result = await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
@@ -670,6 +670,7 @@ class TestDetectLoops:
                 'Provide either a judge `model` or a judge `agent`, not both.',
             ),
             (lambda: LoopJudge[object](model=_judge([]), every=0), '`every` must be at least 1 or `None`, got 0.'),
+            (lambda: LoopJudge[object](model=_judge([]), max_chars=0), '`max_chars` must be at least 1, got 0.'),
         ],
     )
     def test_rejects_invalid_settings(self, create: Callable[[], object], message: str):
