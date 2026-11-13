@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import pytest
 
 import pydantic_ai.models
+import pydantic_ai_harness.ask_user  # pyright: ignore[reportUnusedImport] # noqa: F401
+import pydantic_ai_harness.detect_loops  # pyright: ignore[reportUnusedImport] # noqa: F401
 import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
@@ -20,10 +22,11 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-# `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
-# harness imports it lazily. A registration after any test has escaped framing text emits a
-# `UserWarning`, which fails the test that first imports `Planning`. Pytest imports this conftest
-# during collection, before any test runs, so the import above registers the tag first.
+# `AskUser`, `DetectLoops` and `Planning` register their `answer_note`, `streamed_output` and
+# `plan_reminder` framing tags when their modules are first imported, and the harness imports them
+# lazily. A registration after any test has escaped framing text emits a `UserWarning`, which fails the
+# test that first imports them. Pytest imports this conftest during collection, before any test runs,
+# so the imports above register the tags first.
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
