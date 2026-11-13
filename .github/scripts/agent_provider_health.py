@@ -602,6 +602,7 @@ def _fetch_zai_quota(api_key: str) -> Quota:
             except ValueError:
                 return _unknown_quota('invalid_json', 200)
     except urllib.error.HTTPError as exc:
+        exc.close()
         return _unknown_quota('http_error', _safe_http_status(exc.code))
     except ssl.SSLError:
         return _unknown_quota('tls_error')
@@ -1680,6 +1681,7 @@ def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None
             response = client.request('GET', f'actions/runs/{task_id}')
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
+                exc.close()
                 return f'Dispatch run {task_id} no longer exists.'
             raise
         run = _mapping(response)
@@ -1743,6 +1745,8 @@ def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run
                 client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
             client.close_issue(issue.number)
         except (OSError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
             print(f'Could not retire task incident #{issue.number}: {exc}')
             continue
         print(f'Retired task incident #{issue.number}: {reason}')
@@ -1878,6 +1882,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
         print(f'provider-health failed: {exc}', file=sys.stderr)
         return 1
 

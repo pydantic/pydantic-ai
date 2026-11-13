@@ -1756,7 +1756,7 @@ CASES = [
             413,
             {'type': 'error', 'error': {'type': 'request_too_large', 'message': 'Request exceeds the maximum size'}},
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 413, 'provider_error_type': 'request_too_large'},
     ),
     Case(

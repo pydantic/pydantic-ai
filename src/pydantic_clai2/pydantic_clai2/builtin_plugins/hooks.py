@@ -20,7 +20,7 @@ from opentelemetry.trace import INVALID_SPAN, Span, StatusCode
 from pydantic_core import to_json
 
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AgentCapability, Hooks, ValidatedToolArgs
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, ValidatedToolArgs
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
@@ -144,15 +144,15 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         self.store = None if not self.programs or database is None else SettingsStore(database)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        before, after = self.table('before_tool'), self.table('after_tool')
-        if not (before or after):
-            return ()
-        hooks = Hooks[DepsT]()
-        for command in before:
-            hooks.on.before_tool_execute(tools=command.tools)(self._before(command))
-        for command in after:
-            hooks.on.after_tool_execute(tools=command.tools)(self._after(command))
-        return (hooks,)
+        capabilities: list[AgentCapability[DepsT]] = []
+        if before := self.table('before_tool'):
+            hooks = Hooks[DepsT]()
+            for command in before:
+                hooks.on.before_tool_execute(tools=command.tools)(self._before(command))
+            capabilities.append(hooks)
+        if after := self.table('after_tool'):
+            capabilities.append(_ReportAfterTools(self, after))
+        return capabilities
 
     def _before(self, command: HookCommand):
         async def before_tool(
@@ -165,21 +165,6 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
             return args
 
         return before_tool
-
-    def _after(self, command: HookCommand):
-        async def after_tool(
-            ctx: RunContext[DepsT],
-            *,
-            call: ToolCallPart,
-            tool_def: ToolDefinition,
-            args: ValidatedToolArgs,
-            result: object,
-        ) -> object:
-            payload = {'tool_name': call.tool_name, 'args': args, 'result': summary(result)}
-            await self.run('after_tool', command, payload, args=args, tool=call.tool_name)
-            return result
-
-        return after_tool
 
     def table(self, event: HookEvent) -> list[HookCommand]:
         """The commands for `event`, or none in a session outside the project whose table this is."""
@@ -305,3 +290,30 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
             message = f'{headline}: {shown}: {done.stderr}'
         span.set_status(StatusCode.ERROR, message if content else headline)
         self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
+
+
+@dataclass
+class _ReportAfterTools(AbstractCapability[DepsT]):
+    """Run a table's `after_tool` commands, which report a call's outcome and never stop it.
+
+    Not a `Hooks`: code mode leaves the workspace unmounted with any `Hooks` bound, because which tools
+    one checks can't be read before the run, and a table that only reports stops nothing `pathlib` could skip.
+    """
+
+    plugin: HooksPlugin[DepsT]
+    commands: Sequence[HookCommand]
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[DepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: object,
+    ) -> object:
+        payload = {'tool_name': call.tool_name, 'args': args, 'result': summary(result)}
+        for command in self.commands:
+            if command.tools is None or call.tool_name in command.tools:
+                await self.plugin.run('after_tool', command, payload, args=args, tool=call.tool_name)
+        return result
