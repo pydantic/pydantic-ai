@@ -233,7 +233,10 @@ async def test_output_type(allow_model_requests: None):
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'urgent': 0.82, 'area': 0.88},
-            'probabilities': {'area': {'billing': 0.94, 'bug': 0.06}},
+            'probabilities': {
+                'urgent': {'true': 0.91, 'false': 0.08999999999999997},
+                'area': {'billing': 0.94, 'bug': 0.06},
+            },
             'scores': {},
         }
     )

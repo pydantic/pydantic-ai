@@ -325,7 +325,7 @@ async def test_output_type(
             provider_url='https://api.openai.com/v1/',
             provider_details={
                 'confidence': {'urgent': 0.06, 'area': 1.0},
-                'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
+                'probabilities': {'urgent': {'true': 0.53, 'false': 0.47}, 'area': {'billing': 1.0, 'bug': 0.0}},
                 'scores': {},
             },
             finish_reason='tool_call',
@@ -376,7 +376,7 @@ async def test_yes_no_meanings_and_rubric(
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'refund': 1.0, 'frustration': 0.52},
-            'probabilities': {'frustration': {'0': 0.0, '1': 0.32, '2': 0.68}},
+            'probabilities': {'refund': {'true': 0.0, 'false': 1.0}, 'frustration': {'0': 0.0, '1': 0.32, '2': 0.68}},
             'scores': {'frustration': 1.68},
         }
     )
@@ -467,7 +467,10 @@ async def test_conversation_and_route(
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'urgent': 0.42, 'area': 1.0},
-            'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
+            'probabilities': {
+                'urgent': {'true': 0.71, 'false': 0.29000000000000004},
+                'area': {'billing': 1.0, 'bug': 0.0},
+            },
             'scores': {},
             'route': {
                 'choice': 'Ticket',
@@ -1742,7 +1745,7 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     )
     assert result.response.provider_details == {
         'confidence': {'urgent': 0.8, 'area': 1.0},
-        'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
+        'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}, 'urgent': {'true': 0.9, 'false': 0.09999999999999998}},
         'scores': {},
         'route': {'choice': 'Ticket', 'probabilities': {'Ticket': 1.0, 'Mood': 0.0}, 'offered': ['Ticket', 'Mood']},
         'requests': 2,

@@ -160,6 +160,83 @@ async def test_decision_model_extension_point(allow_model_requests: None):
     assert result.response.provider_url == 'https://example.test/decisions'
 
 
+class NoulDecisionModel(InMemoryDecisionModel):
+    """Answers each yes/no question with the probability given for its key, and anything else as the base does."""
+
+    def __init__(self, noul: dict[str, float]):
+        super().__init__()
+        self.noul = noul
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        for key, p in self.noul.items():
+            response.answers[key] = NoulAnswer(noul=p)
+        return response
+
+
+class UrgentAndRisk(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need an immediate response?')
+    channels: list[Literal['email', 'sms']] = Field(description='Which channels should receive updates?')
+    action: Literal['approve', 'review'] = Field(description='What should happen next?')
+
+
+@pytest.mark.parametrize(
+    'threshold,urgent',
+    [pytest.param(0.5, True, id='default bar: 0.62 is a yes'), pytest.param(0.9, False, id='raised bar: a no')],
+)
+async def test_a_yes_no_field_reports_its_raw_probability_at_any_boolean_threshold(
+    allow_model_requests: None, threshold: float, urgent: bool
+):
+    model = NoulDecisionModel({'urgent': 0.62})
+    result = await Agent(model, output_type=Triage).run(
+        'x', model_settings=DecisionModelSettings(decision_boolean_threshold=threshold)
+    )
+
+    assert result.output.urgent is urgent
+    probabilities = (result.response.provider_details or {})['probabilities']
+    assert probabilities['urgent'] == {'true': 0.62, 'false': pytest.approx(0.38)}
+
+
+async def test_a_bare_bool_output_reports_its_raw_probability(allow_model_requests: None):
+    model = NoulDecisionModel({'response': 0.62})
+    agent = Agent(model, output_type=bool, instructions='Is it urgent?')
+    result = await agent.run('x', model_settings=DecisionModelSettings(decision_boolean_threshold=0.9))
+
+    assert result.output is False
+    probabilities = (result.response.provider_details or {})['probabilities']
+    assert probabilities == {'response': {'true': 0.62, 'false': pytest.approx(0.38)}}
+
+
+async def test_a_yes_no_field_beside_a_list_and_a_choice_leaves_their_probabilities_as_they_were(
+    allow_model_requests: None,
+):
+    model = NoulDecisionModel({'urgent': 0.62, 'channels.email': 0.7, 'channels.sms': 0.2})
+    result = await Agent(model, output_type=UrgentAndRisk).run('x')
+
+    assert result.output == UrgentAndRisk(urgent=True, channels=['email'], action='review')
+    assert (result.response.provider_details or {})['probabilities'] == {
+        'urgent': {'true': 0.62, 'false': pytest.approx(0.38)},
+        'channels': {'email': 0.7, 'sms': 0.2},
+        'action': {'approve': 0.0, 'review': 1.0},
+    }
+
+
+async def test_a_probability_field_has_no_probabilities_entry_of_its_own(allow_model_requests: None):
+    """A bounded float already returns the probability as its value, so it is not reported twice."""
+
+    class Scored(BaseModel):
+        """Score a support ticket."""
+
+        risk: float = Field(ge=0, le=1, description='Is this ticket likely to cause customer harm?')
+
+    result = await Agent(NoulDecisionModel({'risk': 0.62}), output_type=Scored).run('x')
+
+    assert result.output == Scored(risk=0.62)
+    assert (result.response.provider_details or {})['probabilities'] == {}
+
+
 class ImageEnabledDecisionModel(InMemoryDecisionModel):
     supports_image_input: ClassVar[bool] = True
 

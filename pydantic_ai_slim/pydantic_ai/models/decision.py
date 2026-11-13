@@ -1415,6 +1415,8 @@ def _read_noul(
         chosen, sureness = _verdict(answer.noul, boolean_threshold)
         _set(read.args, name, chosen)
         read.confidence[name] = read.by_question[name] = sureness
+        # The raw probability, which the threshold turned into `chosen` and so cannot be recovered from it.
+        read.probabilities[name] = {'true': answer.noul, 'false': 1 - answer.noul}
 
 
 def _read_choice(

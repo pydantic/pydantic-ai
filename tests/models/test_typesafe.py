@@ -204,7 +204,10 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'verdict': 0.61, 'irreversible': 0.3},
-            'probabilities': {'verdict': {'run': 0.12, 'ask': 0.74, 'reject': 0.14}},
+            'probabilities': {
+                'verdict': {'run': 0.12, 'ask': 0.74, 'reject': 0.14},
+                'irreversible': {'true': 0.65, 'false': 0.35},
+            },
             'scores': {},
         }
     )
@@ -254,7 +257,11 @@ async def test_bare_bool_output(
 
     assert result.output == snapshot(True)
     assert result.response.provider_details == snapshot(
-        {'confidence': {'response': 0.92}, 'probabilities': {}, 'scores': {}}
+        {
+            'confidence': {'response': 0.92},
+            'probabilities': {'response': {'true': 0.96, 'false': 0.040000000000000036}},
+            'scores': {},
+        }
     )
     assert request_capture.body('/v1/systemone')['questions'] == snapshot(
         {
@@ -349,10 +356,14 @@ async def test_message_history(
     # is reported is confidence in the answer given, not the probability of yes, so both read as ~0.95+ and a
     # threshold means the same thing whichever way the answer went.
     assert first.response.provider_details == snapshot(
-        {'confidence': {'response': 0.98}, 'probabilities': {}, 'scores': {}}
+        {
+            'confidence': {'response': 0.98},
+            'probabilities': {'response': {'true': 0.99, 'false': 0.010000000000000009}},
+            'scores': {},
+        }
     )
     assert second.response.provider_details == snapshot(
-        {'confidence': {'response': 0.9}, 'probabilities': {}, 'scores': {}}
+        {'confidence': {'response': 0.9}, 'probabilities': {'response': {'true': 0.05, 'false': 0.95}}, 'scores': {}}
     )
     first_body, second_body = request_capture.bodies('/v1/systemone')
     assert first_body['state'] == snapshot('I like apples.')
@@ -824,9 +835,11 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
             },
             'probabilities': {
                 'team': {'billing': 0.1, 'technical': 0.9},
+                'urgent': {'true': 0.95, 'false': 0.050000000000000044},
                 'channels': {'email': 0.9, 'sms': 0.1},
                 'window': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
                 'contact.method': {'email': 0.9, 'phone': 0.1},
+                'contact.urgent_only': {'true': 0.9, 'false': 0.09999999999999998},
             },
             'scores': {},
             'route': {
@@ -1237,9 +1250,23 @@ async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to
     assert result.output == Ticket(urgent=expected)
     assert result.response.provider_details == {
         'confidence': {'urgent': expected_confidence},
-        'probabilities': {},
+        'probabilities': {'urgent': {'true': 0.7, 'false': pytest.approx(0.3)}},
         'scores': {},
     }
+
+
+async def test_a_yes_no_field_reports_its_raw_probability_whatever_the_boolean_threshold(allow_model_requests: None):
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(urgent={'type': 'noul', 'noul': 0.7})
+
+    agent = Agent(mock_model(record), output_type=Ticket)
+    for threshold, urgent in [(0.5, True), (0.9, False)]:
+        result = await agent.run('x', model_settings=TypeSafeModelSettings(decision_boolean_threshold=threshold))
+
+        assert result.output == Ticket(urgent=urgent)
+        assert (result.response.provider_details or {})['probabilities'] == {
+            'urgent': {'true': 0.7, 'false': pytest.approx(0.3)}
+        }
 
 
 async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_model_requests: None):
@@ -2131,6 +2158,7 @@ async def test_nested_fields_lists_and_optionals(
         {
             'confidence': {'customer.angry': 0.98, 'areas': 0.14, 'plan': 1.0},
             'probabilities': {
+                'customer.angry': {'true': 0.99, 'false': 0.010000000000000009},
                 'areas': {'billing': 0.97, 'account': 0.77, 'bug': 0.57},
                 'plan': {'pro': 1.0, 'free': 0.0, 'enterprise': 0.0, 'none': 0.0},
             },
@@ -2822,7 +2850,11 @@ async def test_streaming_gives_the_whole_answer_as_one_event(allow_model_request
         assert await stream.get_output() is True
     response = stream.response
     assert response.model_name == 'jev-latest'
-    assert response.provider_details == {'confidence': {'response': 0.8}, 'probabilities': {}, 'scores': {}}
+    assert response.provider_details == {
+        'confidence': {'response': 0.8},
+        'probabilities': {'response': {'true': 0.9, 'false': pytest.approx(0.1)}},
+        'scores': {},
+    }
     assert response.usage == RequestUsage(input_tokens=10, cost=Decimal('4.2E-7'))
 
 
@@ -3114,7 +3146,7 @@ async def test_a_union_asks_every_members_fields_up_front_and_reads_only_the_tak
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'security': 0.8},
-            'probabilities': {},
+            'probabilities': {'security': {'true': 0.9, 'false': 0.09999999999999998}},
             'scores': {},
             'route': {
                 'choice': 'Escalation',

@@ -97,7 +97,12 @@ assert result.response.provider_details is not None
 print(result.response.provider_details['confidence'])
 #> {'area': 1.0, 'urgent': 0.86}
 print(result.response.provider_details['probabilities'])
-#> {'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0}}
+"""
+{
+    'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0},
+    'urgent': {'true': 0.93, 'false': 0.07},
+}
+"""
 ```
 
 Every answer comes with how sure the model is of it. `provider_details['confidence']` has one number per field, from 0 to 1, and `provider_details['probabilities']` the whole distribution over each pick-one's options: Jev is certain this is billing, and fairly sure it should jump the queue. [Confidence and thresholds](#confidence-and-thresholds) covers what the numbers mean and how to act on them, such as handing the unsure answers to a language model.
@@ -733,7 +738,7 @@ agent = Agent(
 
 Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field. It is a margin, not a probability that the answer is right. For a yes/no it is how far the probability of yes sits from the threshold that decided it, scaled to run from 0 at the threshold to 1 at certainty — at the default of 0.5 that is the distance from the coin flip, doubled, so a `False` answered from a probability of 0.01 reports 0.98 and one answered from 0.45 reports 0.10. The bar it measures from is the one [actually used](#what-true-has-to-mean), so a yes at 0.8 under a threshold of 0.75 reports 0.2 rather than the 0.6 it would report against a coin flip, and a [fallback on low confidence](#falling-back-on-low-confidence) keeps meaning what it meant. For a pick-one or a rubric it is the confidence the backend reports, from how its probabilities are spread; for a list of options it is the least sure option's. The kinds of question arrive at the number differently, so a bar tuned on a yes/no does not carry over to a pick-one — TypeSafe [say as much](https://docs.typesafe.ai/model-jaggedness/jev-1.13#common-sense-structural-invariants) of Jev — and neither does a bar tuned on one field carry over to another: [set one per field](#falling-back-on-low-confidence).
 
-`provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field — a pick-one's options keyed by the label the model picked them by, and a rubric's levels by their number as a string — and each option's probability for a list. `provider_details['scores']` holds each rubric field's unrounded position along its levels.
+`provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field — a pick-one's options keyed by the label the model picked them by, and a rubric's levels by their number as a string — and each option's probability for a list. A yes/no field has its raw probability there as `{'true': ..., 'false': ...}`, whatever `decision_boolean_threshold` is, so the threshold can be tuned without another request; a field that asks for a probability returns it as its value and has no entry. `provider_details['scores']` holds each rubric field's unrounded position along its levels.
 
 A `float` field has no entry in any of them. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means the model is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give at the default threshold; against a `decision_boolean_threshold` of your own, the margin is the distance from *that* bar scaled to the room left on the side the answer fell — `(value - t) / (1 - t)` at or above it, `(t - value) / t` below.
 
@@ -745,7 +750,13 @@ result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
 #> True
 print(result.response.provider_details)
-#> {'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}}
+"""
+{
+    'confidence': {'response': 0.84},
+    'probabilities': {'response': {'true': 0.92, 'false': 0.08}},
+    'scores': {},
+}
+"""
 ```
 
 Two thresholds turn a probability into what the agent does with it. They are [`DecisionModelSettings`][pydantic_ai.models.decision.DecisionModelSettings], set like any other [model settings](../agent.md#model-run-settings), and apply to every decision model:

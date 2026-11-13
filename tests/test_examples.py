@@ -1598,7 +1598,10 @@ async def model_logic(  # noqa: C901
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
                 provider_details={
                     'confidence': {'area': 1.0, 'urgent': 0.86},
-                    'probabilities': {'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0}},
+                    'probabilities': {
+                        'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0},
+                        'urgent': {'true': 0.93, 'false': 0.07},
+                    },
                     'scores': {},
                 },
             )
@@ -1647,7 +1650,10 @@ async def model_logic(  # noqa: C901
                 parts=[ToolCallPart(tool_name='final_result', args={'harmful': False, 'target': 'code'})],
                 provider_details={
                     'confidence': {'harmful': 0.98, 'target': 1.0},
-                    'probabilities': {'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0}},
+                    'probabilities': {
+                        'harmful': {'true': 0.01, 'false': 0.99},
+                        'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0},
+                    },
                     'scores': {},
                 },
             )
@@ -1665,7 +1671,11 @@ async def model_logic(  # noqa: C901
             # docs/models/decision.md and docs/models/typesafe.md: the confidence rides on `provider_details`
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
-                provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
+                provider_details={
+                    'confidence': {'response': 0.84},
+                    'probabilities': {'response': {'true': 0.92, 'false': 0.08}},
+                    'scores': {},
+                },
             )
         elif m.content == 'My invoice lists a plan I never signed up for.':
             # docs/models/decision.md: `UndecidedModel` answers every question with no preference
@@ -1673,7 +1683,10 @@ async def model_logic(  # noqa: C901
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
                 provider_details={
                     'confidence': {'urgent': 0.0, 'area': 0.0},
-                    'probabilities': {'area': {'billing': 0.5, 'bug': 0.5}},
+                    'probabilities': {
+                        'urgent': {'true': 0.5, 'false': 0.5},
+                        'area': {'billing': 0.5, 'bug': 0.5},
+                    },
                     'scores': {},
                 },
             )
