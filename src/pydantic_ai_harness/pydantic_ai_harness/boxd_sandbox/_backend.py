@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 import anyio
 import anyio.lowlevel
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
