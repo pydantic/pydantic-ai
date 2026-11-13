@@ -271,6 +271,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         speculate: Sequence[str] | Literal['declared'] | None = None,
         monty_sandbox: str | None = None,
         dynamic_catalog: bool = True,
+        allow_final_output: bool = False,
         **kwargs: Any,
     ) -> CodeMode[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -294,6 +295,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             speculate=speculate,
             monty_sandbox=monty_sandbox,
             dynamic_catalog=dynamic_catalog,
+            allow_final_output=allow_final_output,
             **kwargs,
         )
 

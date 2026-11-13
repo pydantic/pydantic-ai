@@ -206,6 +206,15 @@ class TestCodeModeFinalOutput:
 
         assert result.output == Receipt(payment_id='pay_ord_8Kq2ZpVxL0mN3rT6yB1c')
 
+    async def test_output_function_in_text_output_mode(self):
+        """Plain text output gets one output function, which takes the text as `response`."""
+        code = 'order = await load_order(order_id="ord_8Kq2ZpVxL0mN3rT6yB1c")\nfinal_result(response=f"Order {order[\'id\']} is ready.")'
+        agent = Agent(run_code_model(code), tools=[load_order], capabilities=[CodeMode(allow_final_output=True)])
+
+        result = await agent.run('Summarize the order.')
+
+        assert result.output == 'Order ord_8Kq2ZpVxL0mN3rT6yB1c is ready.'
+
     async def test_rejected_output_keeps_the_repl_for_a_fix(self):
         """A value only known at run time is rejected by validation, and the REPL keeps `order` for the retry."""
         agent = Agent(
@@ -271,7 +280,7 @@ The output was rejected:
             {
                 'output': """\
 caught: The final output was submitted, so the code stopped here.
-caught: This code already submitted the final output, so it cannot call more functions.
+caught: This code already submitted the final output, or had a submission blocked, so it cannot call more functions.
 """
             }
         )

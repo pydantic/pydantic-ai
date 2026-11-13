@@ -5579,6 +5579,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([CodeMode])['$defs']
     assert sorted(definitions['spec_params_CodeMode']['properties']) == snapshot(
         [
+            'allow_final_output',
             'defer_loading',
             'description',
             'dynamic_catalog',
@@ -5596,7 +5597,12 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
 
 def test_from_spec_forwards_the_spec_fields() -> None:
     code_mode = CodeMode[None].from_spec(
-        tools=['add'], max_tool_calls=5, resource_limits={'max_duration_seconds': 2.0}, speculate='declared', id='code'
+        tools=['add'],
+        max_tool_calls=5,
+        resource_limits={'max_duration_seconds': 2.0},
+        speculate='declared',
+        id='code',
+        allow_final_output=True,
     )
     assert (
         code_mode.tools,
@@ -5604,10 +5610,12 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         code_mode.resource_limits,
         code_mode.speculate,
         code_mode.id,
+        code_mode.allow_final_output,
     ) == (
         ['add'],
         5,
         {'max_duration_seconds': 2.0},
         'declared',
         'code',
+        True,
     )
