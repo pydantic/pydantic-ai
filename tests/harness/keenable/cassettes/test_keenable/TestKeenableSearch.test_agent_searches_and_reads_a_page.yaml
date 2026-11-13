@@ -1,0 +1,236 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://api.keenable.ai/v1/fetch/public?url=https%3A%2F%2Fexample.com%2F
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.keenable.ai
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      access-control-expose-headers:
+      - >-
+        Content-Type,Authorization,X-Request-Id,Server-Timing,PAYMENT-REQUIRED,PAYMENT-RESPONSE
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "248"
+      content-type:
+      - application/json; charset=utf-8
+      etag:
+      - W/"f1-AH25/dRFJoHDtzxyIOezEXkv4Yc"
+      vary:
+      - Origin, Accept-Encoding
+    body:
+      type: json
+      content:
+        url: https://example.com/
+        title: Example Domain
+        content: >-
+          This domain is for use in documentation examples without needing permission.
+          This is not a service; avoid relying on it for testing and monitoring purposes.
+        description: ""
+  recorded_at: 2026-11-03T22:36:18.272602+00:00
+- request:
+    method: POST
+    uri: https://api.keenable.ai/v1/search/public
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "55"
+      content-type:
+      - application/json
+      host:
+      - api.keenable.ai
+    body:
+      type: json
+      content:
+        query: Pydantic AI agent framework
+        max_results: 2
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      access-control-expose-headers:
+      - >-
+        Content-Type,Authorization,X-Request-Id,Server-Timing,PAYMENT-REQUIRED,PAYMENT-RESPONSE
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-type:
+      - application/json; charset=utf-8
+      etag:
+      - W/"2757-BRwNTqeavk1S3W4w94rJXmTSCxc"
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin, Accept-Encoding
+    body:
+      type: json
+      content:
+        query: Pydantic AI agent framework
+        mode: pro
+        results:
+        - title: "GitHub - NVIDIA-AI-Blueprints/pydantic-ai: AI Agent Framework, the Pydantic way"
+          url: https://github.com/NVIDIA-AI-Blueprints/pydantic-ai
+          description: ""
+          snippet: |-
+            ### *Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.*
+
+            1. **Built by the Pydantic Team**: [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. *Why use the derivative when you can go straight to the source?* 😃
+            2. **Model-agnostic**: Supports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).
+
+            6. **Extensible by Design**: Build agents from composable [capabilities](https://ai.pydantic.dev/capabilities) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools), [thinking](https://ai.pydantic.dev/capabilities#thinking), and [MCP](https://ai.pydantic.dev/capabilities#provider-adaptive-tools), pick from the [Pydantic AI Harness](https://ai.pydantic.dev/harness/overview) capability library, build your own, or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec) -- no code required.
+
+            Here's a minimal example of Pydantic AI:
+            ```
+            from pydantic_ai import Agent
+            # Define a very simple agent including the model to use, you can also set the model when running the agent.
+            agent = Agent(
+            'anthropic:claude-sonnet-4-6',
+            # Register static instructions using a keyword argument to the agent.
+            # For more complex dynamically-generated instructions, see the example below.
+            instructions='Be concise, reply with one sentence.',
+            )
+            # Run the agent synchronously, conducting a conversation with the LLM.
+            result = agent.run_sync('Where does "hello world" come from?')
+            print(result.output)
+            """
+            The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+            """
+            ```
+
+            Not very interesting yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions), [structured outputs](https://ai.pydantic.dev/output), or composable [capabilities](https://ai.pydantic.dev/capabilities) to build more powerful agents.
+
+            ```
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import Thinking, WebSearch
+            agent = Agent(
+            'anthropic:claude-sonnet-4-6',
+            instructions='Be concise, reply with one sentence.',
+            capabilities=[Thinking(), WebSearch()],
+            )
+            result = agent.run_sync('What was the mass of the largest meteorite found this year?')
+            print(result.output)
+            ```
+
+            from pydantic import BaseModel, Field
+            from pydantic_ai import Agent, RunContext
+            from bank_database import DatabaseConn
+            # SupportDependencies is used to pass data, connections, and logic into the model that will be needed when running
+            # instructions and tool functions. Dependency injection provides a type-safe way to customise the behavior of your agents.
+            @dataclass
+            class SupportDependencies:
+            customer_id: int
+            db: DatabaseConn
+            # This Pydantic model defines the structure of the output returned by the agent.
+            class SupportOutput(BaseModel):
+            support_advice: str = Field(description='Advice returned to the customer')
+            block_card: bool = Field(description="Whether to block the customer's card")
+            risk: int = Field(description='Risk level of query', ge=0, le=10)
+            # This agent will act as first-tier support in a bank.
+            # Agents are generic in the type of dependencies they accept and the type of output they return.
+            # In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
+            support_agent = Agent(
+            'openai:gpt-5.2',
+            deps_type=SupportDependencies,
+            # The response from the agent will, be guaranteed to be a SupportOutput,
+            # if validation fails the agent is prompted to try again.
+            output_type=SupportOutput,
+            instructions=(
+            'You are a support agent in our bank, give the '
+            'customer support and judge the risk level of their query.'
+            ),
+            )
+            # Dynamic instructions can make use of dependency injection.
+            # Dependencies are carried via the `RunContext` argument, which is parameterized with the `deps_type` from above.
+            # If the type annotation here is wrong, static type checkers will catch it.
+            @support_agent.instructions
+            async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+            customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+            return f"The customer's name is {customer_name!r}"
+            # The `tool` decorator let you register functions which the LLM may call while responding to a user.
+            # Again, dependencies are carried via `RunContext`, any other arguments become the tool schema passed to the LLM.
+            # Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+            @support_agent.tool
+            async def customer_balance(
+            ctx: RunContext[SupportDependencies], include_pending: bool
+            ) -> float:
+            """Returns the customer's current account balance."""
+            # The docstring of a tool is also passed to the LLM as the description of the tool.
+            # Parameter descriptions are extracted from the docstring and added to the parameter schema sent to the LLM.
+            balance = await ctx.deps.db.customer_balance(
+            id=ctx.deps.customer_id,
+            include_pending=include_pending,
+            )
+            return balance
+          acquired_at: 2026-09-28T08:28:20Z
+        - title: "GitHub - ZacharyHampton/pydantic-ai: AI Agent Framework, the Pydantic way"
+          url: https://github.com/ZacharyHampton/pydantic-ai
+          description: ""
+          snippet: |-
+            ### GenAI Agent Framework, the Pydantic way
+
+            1. **Built by the Pydantic Team**: [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. *Why use the derivative when you can go straight to the source?* 😃
+            2. **Model-agnostic**: Supports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Z.AI. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).
+
+            6. **Extensible by Design**: Build agents from composable [capabilities](https://ai.pydantic.dev/capabilities/overview/) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities/web-search/), [thinking](https://ai.pydantic.dev/capabilities/thinking/), and [MCP](https://ai.pydantic.dev/capabilities/mcp/), pick from the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) capability library, build your own, or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec) -- no code required.
+
+            Here's a minimal example of Pydantic AI:
+            ```
+            from pydantic_ai import Agent
+            # Define a very simple agent including the model to use, you can also set the model when running the agent.
+            agent = Agent(
+            'anthropic:claude-sonnet-4-6',
+            # Register static instructions using a keyword argument to the agent.
+            # For more complex dynamically-generated instructions, see the example below.
+            instructions='Be concise, reply with one sentence.',
+            )
+            # Run the agent synchronously, conducting a conversation with the LLM.
+            result = agent.run_sync('Where does "hello world" come from?')
+            print(result.output)
+            """
+            The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+            """
+            ```
+
+            # SupportDependencies is used to pass data, connections, and logic into the model that will be needed when running
+            # instructions and tool functions. Dependency injection provides a type-safe way to customise the behavior of your agents.
+
+            # This agent will act as first-tier support in a bank.
+            # Agents are generic in the type of dependencies they accept and the type of output they return.
+            # In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
+            support_agent = Agent(
+            'openai:gpt-5.2',
+            deps_type=SupportDependencies,
+            # The response from the agent will be guaranteed to be a SupportOutput,
+            # if validation fails the agent is prompted to try again.
+            output_type=SupportOutput,
+            instructions=(
+            'You are a support agent in our bank, give the '
+            'customer support and judge the risk level of their query.'
+            ),
+            )
+
+            The Pydantic Stack is everything you need to ship production-grade AI agents:
+            - [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) - Type-safe agent framework
+            - [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) - AI-first, full-stack observability
+            - [Logfire AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) - Unified LLM proxy
+          acquired_at: 2026-10-10T01:32:25Z
+  recorded_at: 2026-11-03T22:36:17.735710+00:00

@@ -11,6 +11,7 @@ from check_api_compatibility import (
     Finding,
     collection_entry_changes,
     emit_annotation,
+    is_field_description_change,
     literal_member_changes,
     load_allowlist,
     load_waivers,
@@ -159,12 +160,24 @@ _LITERAL_MEMBER_CHANGES: list[tuple[str, tuple[set[str], set[str]] | None]] = [
     ("Literal['a', 'b'] -> Literal['a']", (set(), {'b'})),
     ("Literal['a', 'b'] -> Literal['b', 'a']", (set(), set())),
     ("Literal['a -> b'] -> Literal['a -> b', 'c']", ({'c'}, set())),
-    ("str | Literal['a'] -> Literal['a']", None),
+    # A new side of nothing but string `Literal`s passes whatever the old side was; a dropped arm counts as removed.
+    ("str | Literal['a'] -> Literal['a']", (set(), {'str'})),
+    ("ModelParam -> Literal['a', 'b']", ({'a', 'b'}, {'ModelParam'})),
+    ("TypeAliasType('Names', ModelParam) -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("Literal['a', 1] -> Literal['a']", (set(), {"Literal['a', 1]"})),
+    ("ModelParam -> str | Literal['a']", None),
+    ('LatestNames -> str | LatestNames', None),
+    ("ModelParam -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("TypeAliasType('Old', ModelParam) -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", (set(), set())),
+    (
+        "TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])",
+        ({'b'}, set()),
+    ),
     ("str | Literal['a'] -> unset", None),
     ("str | Literal['a'] -> str | Literal['a'] | int", None),
     ("Literal['a'] -> Literal['a', 1]", None),
-    ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", None),
-    ("TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])", None),
+    ("TypeAliasType('Old', str | Literal['a']) -> TypeAliasType('New', str | Literal['a', 'b'])", None),
     ("Literal['a' -> Literal['a', 'b']", None),
 ]
 
@@ -194,8 +207,15 @@ def test_literal_member_changes_ignores_other_findings():
             'Model-name alias changes need no waiver. Removing a name from an alias without a `str |` arm is a '
             'permitted compatibility impact: add the `compatibility impact` label and a release note.\n',
         ),
+        (
+            "Names: Attribute value was changed: ModelParam -> Literal['a']",
+            True,
+            "::warning file=models.py,line=12::Names: model names added: ['a'], removed: ['ModelParam']. "
+            'Model-name alias changes need no waiver. Removing a name from an alias without a `str |` arm is a '
+            'permitted compatibility impact: add the `compatibility impact` label and a release note.\n',
+        ),
         ("Names: Attribute value was changed: Literal['a'] -> Literal['a', 'b']", False, '::error'),
-        ("Names: Attribute value was changed: str | Literal['a'] -> Literal['a']", True, '::error'),
+        ("Names: Attribute value was changed: ModelParam -> str | Literal['a']", True, '::error'),
         ('Names: Public object was removed', True, '::error'),
     ],
 )
@@ -279,6 +299,67 @@ def test_main_allows_additions_to_listed_growing_collections(
 ):
     finding = Finding('pydantic_clai2', 'config.py', 12, message)
     config = _config(tmp_path, {'growing_collections': [{'path': 'config.py', 'symbol': 'SETTINGS'}] if listed else []})
+
+    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+        return [finding]
+
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
+    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
+
+    if annotation == '::error':
+        with pytest.raises(SystemExit, match='1'):
+            check_api_compatibility.main()
+    else:
+        check_api_compatibility.main()
+
+    assert annotation in capsys.readouterr().out
+
+
+_FIELD_DESCRIPTION_CHANGES: list[tuple[str, bool]] = [
+    ("Field(default=False, description=\"A dir's file.\") -> Field(default=False, description='Every file.')", True),
+    ("Field(1, gt=0, description='a -> b') -> Field(1, gt=0, description='c')", True),
+    ("Field(default=1, description='Old.') -> Field(default=1)", True),
+    ("Field(default=1, description='Old.') -> Field(default=2, description='New.')", False),
+    ("Field(1, description='Old.') -> Field(2, description='Old.')", False),
+    ("Field(default=1, title='Old', description='Old.') -> Field(default=1, title='New', description='New.')", False),
+    ("Field(default=1, description='Old.') -> pydantic.Field(default=1, description='New.')", False),
+    ("Field(default=1, description='Old.') -> field(default=1, description='New.')", False),
+    ("Field(default=1, description='Old.') -> unset", False),
+    ("Field(default=1, description='Old.' -> Field(default=1, description='New.')", False),
+]
+
+
+@pytest.mark.parametrize('values, suppressed', _FIELD_DESCRIPTION_CHANGES)
+def test_is_field_description_change(values: str, suppressed: bool):
+    assert is_field_description_change(f'Settings.flag: Attribute value was changed: {values}') is suppressed
+
+
+def test_is_field_description_change_ignores_other_findings():
+    assert is_field_description_change('Settings.flag: Public object was removed') is False
+
+
+@pytest.mark.parametrize(
+    'message, annotation',
+    [
+        (
+            "Settings.flag: Attribute value was changed: Field(default=1, description='Old.') -> "
+            "Field(default=1, description='New.')",
+            '::notice file=settings.py,line=12::Settings.flag: `Field` description changed. '
+            'Description changes need no waiver.\n',
+        ),
+        (
+            "Settings.flag: Attribute value was changed: Field(default=1, description='Old.') -> "
+            "Field(default=2, description='New.')",
+            '::error',
+        ),
+    ],
+)
+def test_main_allows_field_description_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], message: str, annotation: str
+):
+    finding = Finding('pydantic_clai2', 'settings.py', 12, message)
+    config = _config(tmp_path)
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         return [finding]

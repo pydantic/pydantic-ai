@@ -278,6 +278,13 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
 
     In a main transcript the last message is the last one off a sidechain; a sub-agent's is all sidechain.
     """
+    chain = _chain(entries, main=main)
+    kept = chain | _parallel_results(entries, chain)
+    return [entry for entry in entries if text(entry.get('uuid')) in kept]
+
+
+def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
+    """The IDs of the entries behind the last message."""
     by_id = {text(entry.get('uuid')): entry for entry in entries}
     node = next(
         (
@@ -294,6 +301,11 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         # Popping each entry as it is visited also ends a malformed, cyclic chain.
         by_id.pop(text(node.get('uuid')), None)
         node = by_id.pop(text(node.get('parentUuid')), None)
+    return chain
+
+
+def _parallel_results(entries: list[JsonObject], chain: set[str]) -> set[str]:
+    """The IDs of the results off `chain` that answer its parallel tool calls, the first answer to each call winning."""
     on_chain = [entry for entry in entries if text(entry.get('uuid')) in chain]
     calls = {
         text(block.get('id'))
@@ -303,14 +315,18 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         if block.get('type') == 'tool_use'
     }
     answered = {call_id for entry in on_chain for call_id in _result_ids(entry)}
-    kept = set(chain)
+    kept: set[str] = set()
     for entry in entries:
         ids = _result_ids(entry)
-        if text(entry.get('uuid')) not in chain and text(entry.get('parentUuid')) in chain and ids:
-            if ids <= calls - answered:
-                kept.add(text(entry.get('uuid')))
-                answered |= ids
-    return [entry for entry in entries if text(entry.get('uuid')) in kept]
+        if (
+            text(entry.get('uuid')) not in chain
+            and text(entry.get('parentUuid')) in chain
+            and ids
+            and ids <= calls - answered
+        ):
+            kept.add(text(entry.get('uuid')))
+            answered |= ids
+    return kept
 
 
 def _result_ids(entry: JsonObject) -> set[str]:
@@ -351,19 +367,23 @@ def _user(history: HistoryBuilder, content: object, *, at: datetime) -> None:
     prompt: list[UserContent] = []
     for block in objects(content):
         if block.get('type') == 'tool_result':
-            items = _contents(block.get('content'))
-            result: ToolReturnContent = (
-                '\n'.join(item for item in items if isinstance(item, str))
-                if all(isinstance(item, str) for item in items)
-                else items
-            )
-            outcome = 'failed' if block.get('is_error') else 'success'
-            history.result(text(block.get('tool_use_id')), result, at=at, outcome=outcome)
+            _tool_result(history, block, at=at)
         elif (item := _content(block)) is not None:
             prompt.append(item)
     if isinstance(content, str):
         prompt = [content]
     history.prompt(prompt[0] if len(prompt) == 1 and isinstance(prompt[0], str) else prompt, at=at)
+
+
+def _tool_result(history: HistoryBuilder, block: JsonObject, *, at: datetime) -> None:
+    items = _contents(block.get('content'))
+    result: ToolReturnContent = (
+        '\n'.join(item for item in items if isinstance(item, str))
+        if all(isinstance(item, str) for item in items)
+        else items
+    )
+    outcome = 'failed' if block.get('is_error') else 'success'
+    history.result(text(block.get('tool_use_id')), result, at=at, outcome=outcome)
 
 
 def _meta(

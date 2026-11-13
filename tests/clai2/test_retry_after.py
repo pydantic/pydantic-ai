@@ -111,7 +111,7 @@ def sdk_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     # Replace only the SDK's module reference, not anyio.sleep process-wide.
     monkeypatch.setattr('anthropic._base_client.anyio', SimpleNamespace(sleep=sleep))
     monkeypatch.setattr(
-        'pydantic_clai2.models._retry_after.time.time', lambda: datetime(2026, 10, 23, tzinfo=UTC).timestamp()
+        'pydantic_clai2.models.retry_after.time.time', lambda: datetime(2026, 10, 23, tzinfo=UTC).timestamp()
     )
     return waits
 

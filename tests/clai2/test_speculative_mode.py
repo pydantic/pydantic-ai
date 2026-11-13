@@ -8,9 +8,11 @@ import io
 import json
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import anyio
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
@@ -20,7 +22,9 @@ from pydantic_ai.capabilities import (
     AgentCapability,
     CombinedCapability,
     DynamicCapability,
+    Hooks,
     LocalWorkspace,
+    ValidatedToolArgs,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -34,7 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import ToolDefinition, ToolSelector
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.code_mode import (
@@ -45,12 +49,16 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.permissions import PermissionMode, Permissions
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.builtin_plugins.hooks import HooksPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session_runtime import create_shell
@@ -417,6 +425,26 @@ def allow(call: object) -> GuardrailResult:
     return GuardrailResult.allow()  # pragma: no cover -- only inspected, never run.
 
 
+async def checked(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+) -> ValidatedToolArgs:
+    return args  # pragma: no cover -- only inspected, never run.
+
+
+def hooks_before_execute(tools: Sequence[str]) -> Hooks[None]:
+    capability = Hooks[None]()
+    capability.on.before_tool_execute(tools=tools)(checked)
+    return capability
+
+
+def selects(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    return True  # pragma: no cover -- only inspected, never run.
+
+
+def judge(tools: ToolSelector[None] = 'all') -> ToolCallJudge[None]:
+    return ToolCallJudge[None](TestModel(), question='Is this call risky?', tools=tools)
+
+
 class OpaqueAgent(WrapperAgent[None, str]):
     """A custom agent that does not expose its capability tree."""
 
@@ -471,6 +499,38 @@ class TestWorkspaceMount:
         """`pathlib` on a mount bypasses a guardrail as it bypasses `FileSystem`'s own checks."""
         coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
         assert mount([coder, guardrail]) == expected
+
+    @pytest.mark.parametrize(
+        ('check', 'expected'),
+        [
+            (judge(['edit_file']), 'read-only'),
+            (judge(['run_code']), 'read-only'),
+            (judge(['grep']), 'read-write'),
+            (judge(['read_file']), None),
+            (judge(), None),
+            (judge({'kind': 'write'}), None),
+            (judge(selects), None),
+            (hooks_before_execute(['write_file']), None),
+            # Registered hook functions aren't public, so any `Hooks` may hold one that checks `read_file`.
+            (Hooks[None](), None),
+        ],
+        ids=[
+            'judge_writes',
+            'judge_run_code',
+            'judge_other',
+            'judge_reads',
+            'judge_all',
+            'judge_metadata',
+            'judge_function',
+            'hooks_writes',
+            'hooks',
+        ],
+    )
+    def test_judges_and_hooks_limit_the_mount(self, check: AbstractCapability[None], expected: str | None) -> None:
+        """A `ToolCallJudge` limits the mount as a `ToolGuardrail` does, and any `Hooks` costs it, top-level or nested."""
+        coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
+        assert mount([coder, check]) == expected
+        assert mount([CombinedCapability[None]([coder, check])]) == expected
 
     @pytest.mark.parametrize(
         ('agent', 'expected'),
@@ -574,6 +634,125 @@ class TestWorkspaceMount:
         assert returned == ['original PermissionError']
         assert secret.read_text() == 'original'
 
+    @pytest.mark.parametrize(('mode', 'seen'), [('read-only', 'original PermissionError'), ('auto', 'original')])
+    async def test_read_only_permissions_mount_read_only(self, tmp_path: Path, mode: PermissionMode, seen: str) -> None:
+        """`/permissions read-only` asks before file writes, so `pathlib` in the sandbox must not make them unasked."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object](mode)
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system, permissions))
+        capabilities = [file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]
+        await Agent(streamed(respond), capabilities=capabilities).run('go')
+        assert returned == [seen]
+        mounted = 'read-only' if mode == 'read-only' else 'read-write'
+        assert all(f'mounted {mounted}' in (text or '') for text in instructions)
+        assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
+
+    @pytest.mark.parametrize(
+        ('table', 'expected'),
+        [
+            ({'after_tool': [{'command': ['true']}]}, 'read-write'),
+            ({'before_tool': [{'command': ['true'], 'tools': ['write_file']}]}, None),
+            ({'before_tool': [{'command': ['true']}], 'after_tool': [{'command': ['true']}]}, None),
+        ],
+        ids=['after_only', 'before', 'both'],
+    )
+    def test_a_hooks_table_that_only_reports_keeps_the_mount(
+        self, tmp_path: Path, table: dict[str, JsonValue], expected: str | None
+    ) -> None:
+        """`after_tool` commands can't stop a call, so they don't cost the mount; `before_tool` ones may."""
+        host = PluginHost[None](
+            name='hooks',
+            console=Console(file=io.StringIO()),
+            settings=table,
+            session_id=lambda: 'session-1',
+            workspace=lambda: tmp_path,
+        )
+        plugin = load_plugin(HooksPlugin, host)
+        coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
+        assert mount([coder, *plugin.capabilities]) == expected
+
+    @pytest.mark.parametrize(('mode', 'seen'), [('read-only', 'original PermissionError'), ('auto', 'original')])
+    async def test_one_permissions_passed_directly_limits_the_mount(
+        self, tmp_path: Path, mode: PermissionMode, seen: str
+    ) -> None:
+        """`WorkspaceCodeMode` and `SpeculativeExecution` still take a single `Permissions`, as they did."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object](mode)
+        sandbox = [
+            replace(capability, permissions=permissions)
+            if isinstance(capability, WorkspaceCodeMode | SpeculativeExecution)
+            else capability
+            for capability in speculative_capabilities(SpeculationCounters(), [file_system])
+        ]
+        await Agent(streamed(respond), capabilities=[file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]).run(
+            'go'
+        )
+        assert returned == [seen]
+        mounted = 'read-only' if mode == 'read-only' else 'read-write'
+        assert all(f'mounted {mounted}' in (text or '') for text in instructions)
+
+    @pytest.mark.parametrize('session_mode', [None, 'auto'])
+    async def test_agents_own_read_only_permissions_mount_read_only(
+        self, tmp_path: Path, session_mode: PermissionMode | None
+    ) -> None:
+        """The agent's own `Permissions` sits inside its root capability, beside the session's own one."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        agent = Agent(streamed(respond), capabilities=[file_system, Permissions[object]('read-only')])
+        session = [] if session_mode is None else [Permissions[object](session_mode)]
+        sandbox = speculative_capabilities(SpeculationCounters(), [agent.root_capability, *session])
+        await agent.run('go', capabilities=[*session, *sandbox, LocalWorkspace(tmp_path)])
+        assert returned == ['original PermissionError']
+        assert all('mounted read-only' in (text or '') for text in instructions)
+        assert secret.read_text() == 'original'
+
     async def test_sandbox_workspace_is_not_mounted(self, tmp_path: Path) -> None:
         """A sandbox plugin's workspace is elsewhere, so the host directory stays out of the sandbox."""
         secret = tmp_path.resolve() / '.env'
@@ -644,7 +823,9 @@ class TestSpeculativeExecution:
         for event in (
             claimed(ready=True, elapsed_ms=250),
             claimed(ready=False, elapsed_ms=900),
-            SpeculativeCallMissedEvent(sandbox_function='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'),
+            SpeculativeCallMissedEvent(
+                sandbox_function_name='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'
+            ),
             SpeculativeCallEvictedEvent(launch_id='l2', wrapped_tool_name='grep', state='ready'),
             EagerExecutionCompletedEvent(saved_ms=1_000),
             PartStartEvent(index=0, part=TextPart('ignored')),

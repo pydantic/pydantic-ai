@@ -172,9 +172,15 @@ Gotchas:
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
+- A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
+  raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
+  `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
+  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run, and a
+  remote worker applies the announced limits as received.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
-- Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
-  `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+- Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
+  `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
+  is `ok`/`timeout`/`budget`/`failed`/`contained`.
 
 ### Task control
 
@@ -202,16 +208,28 @@ orchestrator = Agent(
   its observer then gets every task event as `DelegationTaskEvent(event=...)`.
 - `TaskControl` fields `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False`
   are opt-in.
-- Every step is a `SubAgentMessage` capability event (`TaskAssignedEvent`, `TaskQuestionEvent`,
+- Every step is a `SubAgentMessageEvent` capability event (`TaskAssignedEvent`, `TaskQuestionAskedEvent`,
   `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
-  `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
+  `veto()` the ones sent to a task, and answer a `TaskQuestionAskedEvent` by setting `answer`.
 - Remote agents: `TaskControl(remote_agents=[RemoteSubAgent(name=...)], transport=...)` (`SubAgentTransport`;
   `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
-  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Don't use either with the deprecated
+  wrapper agents (`TemporalAgent`, ...). On Temporal and DBOS, `dynamic_agents` and task control run each
+  delegation other than to `self` in a durable unit of its own; a durable task can't ask questions, take messages
+  or be resumed, `cancel_task` stops it right away, and its report arrives when the run would otherwise end.
+  `UserError` under durability: task control with `include_self`, `remote_agents` or `forward_events`,
+  `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
+  `DelegationTasks` owner.
+- Non-`self` delegations run in an activity on Temporal and inline in the workflow on DBOS. To keep a delegate's
+  own durability, add `SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}})` (or `dbos=...`):
+  every delegate must be durable on that engine, and on Temporal registered with the worker (`AgentPlugin`).
+  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
+  `dynamic_agents`, `task_control`, or `max_calls`, a delegation raises `UserError`.
+  The delegate's usage isn't reliably counted in the parent's usage or bounded by its limits.
+  Depth isn't carried across, so nested opt-ins reset `max_depth` per child workflow.
 
 ## DelegationReports
 
@@ -223,7 +241,7 @@ metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTool
 metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
 history that round-trips through them returns the report as plain user text, and `is_task_report`
 no longer matches it. `message_history` is trusted as the caller's own, metadata included; load untrusted
-client history with a UI adapter (`sanitize_messages` joins once #10943 lands; until then it keeps `TextContent.metadata`).
+client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
 
 ```python
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -236,6 +254,9 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 - For a host-started, report-only continuation, use `priority='asap'` with `agent.run(None, ...)`, so
   the reports reach the first model request with no synthetic user prompt.
 - Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
+- With `DelegationTasks(directory=...)`, a damaged saved task file is skipped and listed in
+  `owner.problems` instead of stopping `opened()`. `await DelegationTasks.discover(directory)` reads the
+  saved task tree (`tasks` by ID, plus `problems`) without opening an owner or resuming anything.
 
 ## Peers
 
@@ -389,10 +410,15 @@ Gotchas:
 - Local path: the advisor sees only the consultation prompt (plus completed history, including
   `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
-  `max_uses`.
+  `max_uses`. A parent `count_tokens_before_request=True` is kept on an advisor model that implements
+  `count_tokens` and retried once without the up-front count (limits checked after the response) on any
+  pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
+  consultation started, in which case the error propagates.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
-  For durable runs use `mode='native'`; local execution is unsupported there.
+- Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
+  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
 
@@ -407,10 +433,10 @@ serialization and merging consecutive requests. The Vercel AI and AG-UI message 
 this metadata. A history loaded back from them keeps the text and its framing, but the follow-up
 is then an ordinary user prompt. `ToolReturn.metadata` is discarded.
 
-The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+The follow-up wraps what the tool returned in `<pyai:tool_result tool_name="..." tool_call_id="...">`
 tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
-completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
+completes. A closing `</pyai:tool_result>` tag inside the output is escaped, so the output cannot end the
 frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
 `ModelRetry` or `ToolFailed`.
 

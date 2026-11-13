@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -12,7 +13,12 @@ import pytest
 import pydantic_ai.models
 import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
 
 # `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
 # harness imports it lazily. A registration after any test has escaped framing text emits a
@@ -40,6 +46,7 @@ else:
     from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
 __all__ = (
+    'CountingModel',
     'IsDatetime',
     'IsInstance',
     'IsNow',
@@ -55,6 +62,29 @@ __all__ = (
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Fail collection when a `temporal` test lives in a module `test-durable-exec` wouldn't select.
+
+    That job only runs harness modules mentioning Temporal, and every other job deselects `temporal` tests, so such a
+    test would otherwise silently never run.
+    """
+    for module in {item.path for item in items if item.get_closest_marker('temporal')}:
+        # `test-durable-exec` selects `test_*.py` files that mention Temporal; pytest also collects `*_test.py`.
+        if not module.name.startswith('test_') or 'temporal' not in module.read_text().lower():  # pragma: no cover
+            raise pytest.UsageError(
+                f'{module} has `temporal` tests but `test-durable-exec` only runs `test_*.py` modules that mention '
+                'Temporal.'
+            )
+
+
+@pytest.fixture(scope='session', autouse=True)
+def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep Pixeltable's catalog out of `~/.pixeltable`; it reads the variable once per process."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path_factory.mktemp('pixeltable')))
+        yield
+
+
 @pytest.fixture(scope='session')
 def anyio_backend() -> str:
     """The harness suite is asyncio-only: capabilities lean on `asyncio.create_task`, Temporal, Monty and
@@ -63,13 +93,6 @@ def anyio_backend() -> str:
     Session-scoped like the root override so module-scoped async fixtures (`temporal_env`, Modal `session`)
     can depend on it."""
     return 'asyncio'
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
-    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
 
 
 @pytest.fixture
@@ -109,6 +132,33 @@ def instrument_all_agents() -> Iterator[None]:
         yield
     finally:
         Agent.instrument_all(False)
+
+
+@dataclass(init=False)
+class CountingModel(WrapperModel):
+    """Wraps a model that has no `count_tokens` (like `TestModel`) to report `input_tokens` for every request.
+
+    A run with `UsageLimits(count_tokens_before_request=True)` on the wrapped model alone fails with
+    `NotImplementedError`.
+    """
+
+    input_tokens: int
+
+    def __init__(self, wrapped: Model, *, input_tokens: int = 10) -> None:
+        super().__init__(wrapped)
+        self.input_tokens = input_tokens
+
+    @property
+    def provider(self) -> None:
+        return None
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=self.input_tokens)
 
 
 def agent_run_names(capfire: CaptureLogfire) -> list[str]:

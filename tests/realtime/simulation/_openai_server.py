@@ -42,7 +42,7 @@ _EVENT_ID = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
 Dialect = Literal['openai', 'azure', 'xai', 'elevenlabs']
 # `elevenlabs` serves what `openai` does, except for the divergences its recordings show, gated on
 # `self.dialect == 'elevenlabs'` as the xAI ones are: `conversation.created` after `session.created`, input
-# transcription that is always on, and no usage.
+# transcription that is always on, no usage, and tool calls abandoned by a reply to the user (see `_start_response`).
 
 _CONTENT_FRAME_PREFIXES = (
     'response.output_audio',
@@ -662,6 +662,17 @@ class OpenAIServer:
     ) -> None:
         truth = self.truth.new_response(trigger=trigger, answers=answers)
         truth.user_turn = user_turn
+        if self.dialect == 'elevenlabs':
+            # Eleven Realtime gives up on a finished response's calls still without results once a response starts after
+            # the user said something since the first of them (`ElevenLabsRealtimeConnection` documents it): their
+            # results never reach the model.
+            said = [input_.seq for input_ in self.truth.inputs if input_.kind in ('text', 'image', 'speech')]
+            for caller in self.truth.responses.values():
+                calls = [self.truth.tool_calls[call_id] for call_id in caller.tool_calls]
+                if caller.status == 'completed' and calls and any(seq > calls[0].seq for seq in said):
+                    for call in calls:
+                        if not call.output_received and call.abandoned_by is None:
+                            call.abandoned_by = truth.key
         if session.index > 0 and not session.restoration_checked:
             session.restoration_checked = True
             self.truth.restorations.append(
@@ -858,7 +869,9 @@ class OpenAIServer:
         item_id = self._new_item('item_fc')
         from ._truth import ToolCallTruth
 
-        self.truth.tool_calls[call_id] = ToolCallTruth(call_id=call_id, response=active.truth.key, name=name)
+        self.truth.tool_calls[call_id] = ToolCallTruth(
+            call_id=call_id, response=active.truth.key, name=name, seq=self.truth.tick()
+        )
         active.truth.tool_calls.append(call_id)
         item = {
             'id': item_id,

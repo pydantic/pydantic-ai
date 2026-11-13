@@ -7,15 +7,34 @@ description: "Set daily, monthly, or per-tenant USD and token budgets for a Pyda
 
 Track what an agent costs, and stop it when a budget is gone.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+```mermaid
+flowchart TB
+    accTitle: Spend: budgets that outlast one run
+    accDescr: On each model request of an agent run, SpendLimits before_model_request reads every window from the spend store (in memory, Redis or PostgreSQL). With all under ceiling the request goes to the model, and with a window spent it is not sent and ends in SpendLimitExceeded. SpendLimits wrap_model_request takes the model's response and adds its price to each window in the store.
+    run["agent run"]
+    before["SpendLimits()<br/>before_model_request"]:::capability
+    model(["model"])
+    refused["SpendLimitExceeded<br/>request is not sent"]:::blocked
+    wrap["SpendLimits()<br/>wrap_model_request"]:::capability
+    store[("spend store<br/>in memory, Redis<br/>or PostgreSQL")]:::external
+    run -->|"each model request"| before
+    before -->|"all under ceiling"| model
+    before -.-x|"a window is spent"| refused
+    model -->|"response"| wrap
+    before <-->|"reads every window"| store
+    wrap -->|"adds its price<br/>to each window"| store
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
-![SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.](../img/harness/spend.svg)
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem
 
-A loop that calls a model until a condition it never reaches will keep calling until something stops it. `UsageLimits` in Pydantic AI is that stop for one run: it caps tokens, requests and cost for the duration of a single `run()`. What it does not cover is a period longer than one run, a per-tenant share of a shared allowance, or a counter that several worker processes agree on. A daily ceiling spread across a queue's workers is exactly the case where each worker independently believes it has the whole budget.
+A loop that calls a model until a condition it never reaches keeps calling until something stops it. Pydantic AI's `UsageLimits` caps tokens, requests and cost for a single `run()`. It does not cover a period longer than one run, a per-tenant share of an allowance, or a counter that several worker processes share: with a daily ceiling spread across a queue's workers, each worker sees only its own spend.
 
-Provider usage APIs do not close that gap. They are billing and observability pipelines: usage is aggregated after the fact and read by polling, so a number there moves only once the requests behind it have already been made. That is enough to reconcile a ledger and not enough to refuse the request a runaway loop is about to make.
+Provider usage APIs aggregate usage after the fact and are read by polling, so they reflect requests only once those have been made. That is enough to reconcile a bill, not to refuse the next request of a runaway loop.
 
 ## The solution
 
@@ -65,13 +84,13 @@ SpendLimits(
 | `name` | distinguishes budgets sharing a window and scope |
 | `retain` | how long the counter is kept after its last write; `'window default'`, `'forever'`, or a `timedelta` |
 
-A window rolls over by producing a different store key rather than by resetting a counter, so a new day is simply a new key and nothing has to run at midnight. A `total` counter never expires. `run` and `conversation` buckets never roll over either, so expiry there hands back the ceiling rather than starting a new period -- but each mints a key per run or per conversation, so they carry a long horizon (24 hours and 30 days) instead, past which the counter is dropped rather than kept forever. That default is a compromise, and it is visible: a conversation resumed past its horizon starts from zero again, so set `retain='forever'` where a conversation ceiling has to hold for as long as the conversation does, and clean the keys up some other way.
+A window rolls over by producing a different store key rather than by resetting a counter, so a new day is a new key and nothing has to run at midnight. A `total` counter never expires. `run` and `conversation` buckets never roll over either, so expiry there hands back the ceiling rather than starting a new period -- but each mints a key per run or per conversation, so they carry a long horizon (24 hours and 30 days) instead, past which the counter is dropped rather than kept forever. A conversation resumed past its horizon therefore starts from zero again, so set `retain='forever'` where a conversation ceiling has to hold for as long as the conversation does, and clean the keys up some other way.
 
 Budgets that share a `name`, `window`, and `scope` share one counter, which is how a single window carries both a USD and a token ceiling. The response is added to that counter once, not once per budget. Two budgets that share a `name` and `window` but declare *different* `scope` callables are refused at construction: they are different dimensions -- per tenant and per user, say -- and nothing stops the two returning the same string, which would merge them into one counter. Give them different names, or pass the same callable to both. Budgets that do share a counter must also agree on `retain`: one counter has one expiry, and the accrual writes whichever of them is listed first, so disagreeing would let declaration order decide when a `'forever'` ceiling rolls over.
 
 `Budget` is generic in the agent's dependency type, so a `scope` is checked against it: pass the capability to an `Agent` with a `deps_type` and a scope reaching for a field those deps do not have is a type error rather than an `AttributeError` on the first request.
 
-**A budget with no ceiling is a counter.** It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
+A budget with no ceiling is a counter. It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
 ```python
 from pydantic_ai_harness import SpendLimits
@@ -84,7 +103,7 @@ SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id
 
 Once a recorded response spends a window, `SpendLimits` refuses the next request.
 
-Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller stops part-way is charged for the usage the provider had reported by then, which can fall short of what it bills, since many providers report output tokens only with a stream's last event. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
+Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller stops part-way is charged for the usage the provider had reported by then, which can fall short of what it bills, since many providers report output tokens only with a stream's last event. Reconcile against the provider's own numbers when you need exact totals.
 
 ## Reading the numbers
 
@@ -212,19 +231,23 @@ It adds no dependency: `RedisClient` is a protocol of the two coroutines used, s
 
 Every window a response counts against is applied as one Lua script, so no other client sees the response part-applied: not across the four counters of one window, and not across the windows themselves. A response counting against a day budget and a month budget is one script rather than two, so there is no failure between them to leave the day counted and the month not. The one exception is the overflow below: it aborts the script where it happens and leaves the windows already applied, which takes a counter near $9.22 billion to reach. Each key also costs a second read for as long as the compatibility fallback below is in place.
 
-A failure *after* the server has run a script does not say whether it committed -- the connection can drop once `EVAL` has landed -- so a write that errors leaves the outcome unknown rather than untried. Nothing retries it: counting a billed response twice is a direction the brake survives, and counting it zero times is not.
+A failure *after* the server has run a script does not say whether it committed -- the connection can drop once `EVAL` has landed -- so a write that errors leaves the outcome unknown rather than untried. Nothing retries it.
 
-The counters do not round. `HINCRBY` is 64-bit integer arithmetic and takes its increment as a string, so what Redis holds is exact, and the totals come back as bulk strings read with `HMGET` rather than as the integer replies `HINCRBY` returns -- those become Lua numbers, which are doubles, and would round a total past `2**53` billionths on the way out. What is left is `HINCRBY`'s own range: a counter passing the signed 64-bit range, around **$9.22 billion** against a single key, which Redis refuses before writing that field.
+The counters do not round. `HINCRBY` is 64-bit integer arithmetic and takes its increment as a string. Totals are read back with `HMGET` as bulk strings, not as the integer replies `HINCRBY` returns, which Lua converts to doubles that would round a total past `2**53` billionths. Redis refuses a write that would take a counter past the signed 64-bit range, around $9.22 billion against a single key.
 
-Keys are `{prefix}:budget-key`, with the braces around the prefix literal. That is a Redis Cluster hash tag, so the slot comes from the prefix alone and every key of one store lands in the same slot, which is what lets one script take several of them. The cost is that a cluster cannot spread a store's keys across its nodes, and that a `prefix` of your own is refused at construction if it is empty or carries a brace of its own, either of which stops the tag being read as one. `BudgetStatus.key` reports the budget key without the prefix, so what it shows is unchanged. The dedup markers below share that namespace, so a key beginning `dedup|` is refused: it would name a marker, which holds a string, and the counter would fail with `WRONGTYPE` rather than accumulate. No budget produces such a key -- the second segment of one is always a window -- so this only reaches a caller driving the store itself.
+Keys are `{prefix}:budget-key`, with literal braces around the prefix. That is a Redis Cluster hash tag: every key of one store maps to the same slot, which lets one script update several of them, and a cluster cannot spread a store's keys across its nodes. A `prefix` that is empty or contains a brace is refused at construction, since either breaks the tag. `BudgetStatus.key` reports the budget key without the prefix. The dedup markers below share that namespace, so a key beginning `dedup|` is refused: it would name a marker, and the counter would fail with `WRONGTYPE`. No budget produces such a key, so this only affects a caller driving the store directly.
 
-A counter written by an earlier release, under the untagged name, is read alongside the tagged one and added to it, so an upgrade needs no migration step. Added rather than moved: a move would have to decide when it is complete, and nothing here can know that, since a worker still on the old release can write to the old name at any point in a rolling deploy and a move that already ran would never pick that up. The cost is one extra read per key, on reads and writes alike.
+A counter written by an earlier release, under the untagged name, is read alongside the tagged one and added to it, so an upgrade needs no migration step. It is added rather than moved because a worker still on the old release can write to the old name at any point in a rolling deploy. This costs one extra read per key, on reads and writes alike.
 
-The compatibility only runs one way, which is worth planning around on three counts. A **rolling deploy** under-counts while it lasts: an upgraded worker sees both names, but one still on the old release reads only the untagged one and cannot see what the upgraded workers have written, so it admits requests against a total that is missing them. A **downgrade** loses the tagged counter outright for the same reason, and this release never writes the old name, so nothing carries back. And the old key's **expiry is frozen** at whatever the last old-release write set: nothing here refreshes it, so it goes when it goes and the total drops by what it held. Keep the deploy short, and treat a downgrade as a reset rather than a rollback.
+The compatibility runs one way only:
 
-The fallback goes away in 0.28.0. A counter still living under the old name stops being counted at that point, so a window set to `retain='forever'`, or one whose horizon outlasts the gap between the two releases, is worth moving by hand before then.
+- A rolling deploy under-counts while it lasts. A worker still on the old release reads only the untagged name, so it admits requests against a total missing what upgraded workers wrote. Keep the deploy short.
+- A downgrade loses the tagged counter, because this release never writes the old name. Treat a downgrade as a reset rather than a rollback.
+- The old key's expiry stays at whatever the last old-release write set. Nothing refreshes it, so when it expires the total drops by what it held.
 
-`add_many` carries a token identifying the response, and `RedisSpendStore` reads a marker for it before the increments and writes it after them, inside the same script. `PostgresSpendStore` claims a marker row in the same transaction as the increments. `InMemorySpendStore` remembers the same tokens under its lock, so the default store behaves the same way while its process survives. The token combines the run id and step with a digest of replay-stable response content, usage, and provider identity; it excludes clock-derived and arbitrary provider bookkeeping. The token layer protects recovery that presents an entry without consulting the journal only when the caller supplies the same `run_id` to `Agent.run` on the original run and its recovery. When `run_id` is omitted, Pydantic AI creates a fresh one and the store cannot recognise the entry. Ordinary durable replay remains protected by the journaled `_accrue` operation regardless. Markers are held for `dedup_retain`, a constructor argument on every bundled store, an hour by default, or for the window's own horizon where that is shorter, and cost one small key or row per response per window. That horizon is the window in which recovery outside the durable journal is recognised, not the counter's lifetime: a response presented again later is counted again, which is the direction to err in, since a brake that trips early survives and one that releases late does not. Set `dedup_retain=None` to hold no markers and apply every entry, which also gives up that store-side protection. Recognition starts at the upgrade either way: a response an earlier release counted left no marker behind, so presenting that response again counts it again.
+The fallback goes away in 0.28.0. A counter still under the old name stops being counted then, so move a window set to `retain='forever'`, or one whose horizon outlasts the gap between the two releases, by hand before then.
+
+`add_many` carries a token identifying the response, and `RedisSpendStore` reads a marker for it before the increments and writes it after them, inside the same script. `PostgresSpendStore` claims a marker row in the same transaction as the increments. `InMemorySpendStore` remembers the same tokens under its lock, so the default store behaves the same way while its process survives. The token combines the run id and step with a digest of replay-stable response content, usage, and provider identity; it excludes clock-derived and arbitrary provider bookkeeping. The token layer protects recovery that presents an entry without consulting the journal only when the caller supplies the same `run_id` to `Agent.run` on the original run and its recovery. When `run_id` is omitted, Pydantic AI creates a fresh one and the store cannot recognise the entry. Ordinary durable replay remains protected by the journaled `_accrue` operation regardless. Markers are held for `dedup_retain`, a constructor argument on every bundled store, an hour by default, or for the window's own horizon where that is shorter, and cost one small key or row per response per window. That horizon is the window in which recovery outside the durable journal is recognised, not the counter's lifetime: a response presented again later is counted again, so the error is an over-count rather than an under-count. Set `dedup_retain=None` to hold no markers and apply every entry, which also gives up that store-side protection. Recognition starts at the upgrade either way: a response an earlier release counted left no marker behind, so presenting that response again counts it again.
 
 `PostgresSpendStore` keeps the counters in PostgreSQL, for a deployment that already runs it -- alongside a Postgres-backed durable execution engine, for example -- and would rather not add Redis for this:
 
@@ -255,9 +278,9 @@ Every window a response counts against is applied in one transaction together wi
 
 Horizons are measured on the server's clock, as Redis measures expiry on its own, so every worker agrees on when a window rolls over. A new horizon runs from the moment its row is written (`clock_timestamp()`), so a write that waited on another transaction's lock still gets its full `ttl`. A rolled-over window reads as zero and starts again on its next write. Rows are not removed at their horizon the way Redis expires keys. Instead, every `sweep_every` entries it writes (256 by default), a store instance deletes the counters and markers past their horizons, after the write has committed and skipping rows another transaction holds. A sweep that fails is logged as a warning rather than raised, since the response it follows is already counted, and the next one runs `sweep_every` entries later. The count is held in memory per store instance, so a process that writes fewer than `sweep_every` entries before it exits never sweeps; lower `sweep_every` there, or delete rows whose `expires_at` has passed on a schedule of your own. `dedup_retain`, and an entry's `ttl` when you drive the store yourself, must be positive or `None`: a zero horizon would write rows that have already expired.
 
-The default store is built per capability, so two `SpendLimits` instances do not quietly share one counter. Pass the same store object to both when you want them to. `InMemorySpendStore` cannot survive worker replacement: a replacement process has neither the counters nor the deduplication markers accumulated by the first one. Use a shared store for durable workflows that can recover on another worker.
+The default store is built per capability, so two `SpendLimits` instances do not share one counter. Pass the same store object to both when you want them to. `InMemorySpendStore` cannot survive worker replacement: a replacement process has neither the counters nor the deduplication markers accumulated by the first one. Use a shared store for durable workflows that can recover on another worker.
 
-A store that fails does not fail quietly. An error reading the counter refuses the request, which is the safe direction. An error writing it propagates out of the run after the model has already answered and been charged. That is deliberate: a swallowed write would drift the counter down and weaken the gate, which is worse than a visible failure. If your deployment would rather keep the answer than the count, wrap the store and decide there.
+Store errors are not swallowed. An error reading the counter refuses the request, which is the safe direction. An error writing it propagates out of the run after the model has already answered and been charged. A swallowed write would leave the counter low and let requests through that should be refused. If your deployment would rather keep the answer than the count, wrap the store and decide there.
 
 Any object with `get_many` and `add_many` works, so a DynamoDB counter is a small class rather than a fork. Four obligations come with writing one. Return a total for every key you were handed, keyed by `SpendEntry.key`, including one you skipped as a replay. A missing total raises `UserError`, which names either this store contract or a non-deterministic scope during durable replay as the cause. Read a key that was never written as zero rather than leaving it out. Skip an entry whose `token` has already been applied to that key, or recovery outside the durable journal can count one response twice. And apply the whole call or none of it -- the guarantee at the top of this section is only as good as the backend behind it, and a store that commits each entry as it goes puts back the split write this seam exists to remove. Neither method is ever handed an empty sequence, so there is no such case to answer for.
 
@@ -279,7 +302,7 @@ SpendLimits(price=lambda response: Decimal('0.002') if response.model_name == 'i
 
 An amount returned by `price` must be finite and not negative. Anything else -- a credit, a `NaN`, an infinity -- fails the run with `UserError`, because a credit moves a budget away from its ceiling and the other two are a broken pricing function rather than a price. An exception raised by `price` is reported through the same `UserError` path. The response is still recorded first: it was billed by the provider whatever the function returned, so its tokens and request count are accrued and `on_spend` fires before the error is raised. When one lifecycle committed several provider responses, an error pricing or reporting one response is deferred until the remaining responses accrue.
 
-Under durable execution, `price` and each budget's `scope` callable must be deterministic for the same response and run context. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. Moving it into a durable operation would require the durability backend to serialize the complete provider response, including arbitrary metadata, so the callable remains outside that boundary. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
+Under durable execution, `price` and each budget's `scope` callable must be deterministic for the same response and run context. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
 
 `SpendLimits` calls `price` first. A finite, non-negative amount it returns is treated as the complete response price, including when usage is incomplete. Returning `None` falls through to the registry. When usage is incomplete, the registry can still supply a known cost subtotal, which `SpendLimits` records, but the response remains unpriced because its full cost is unknown. The `on_unpriced` policy still applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues with the known subtotal, while `'raise'` records the subtotal and fails the run with `UnpricedModelError`. Known token totals for incomplete usage are lower bounds. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model when no complete price is available. If callers choose the model, prefer `'raise'` or supply `price`.
 
@@ -292,7 +315,7 @@ reporting or promote the warning to an error to stop when the token ceiling cann
 
 State lives across runs deliberately, so `for_run` is not overridden: a daily budget that reset every run would not be a daily budget. Per-run isolation comes from `Budget(window='run')`, whose key carries the run id.
 
-`defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted -- a brake the thing being braked decides when to apply.
+`defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted.
 
 `SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a continuation chain (Anthropic `pause_turn`, OpenAI background mode) into one response, so `on_spend` and `SpendRecordedEvent` report it once with its combined usage. The counters are updated at each segment boundary instead, by what the response merged so far adds over what is already applied, so `price` also sees each of those intermediate responses. One it cannot price adds no USD and the merged response catches up, so pricing errors and `on_unpriced` apply to the merged response alone. Tokens add up to the merged response, and USD to the highest amount any boundary was priced at, so a boundary priced above the merged response is not taken back as a credit. A later boundary that adds nothing, such as an idle background poll, is not written. A run that resumes a turn from a message history ending in its `'suspended'` response is charged only for what was billed beyond that response, which the run that left it suspended was already charged for. A `run` window therefore holds what each run billed, and `conversation`, `day`, `month` and `total` windows hold what the provider billed for the turn once.
 
@@ -324,32 +347,11 @@ async def start_if_funded(
     await start_workflow()
 ```
 
-`exhausted` rather than `any(s.exhausted for s in await limits.status(...))`: `status` omits
-the budgets it cannot resolve, and `any()` over what is left is a brake that passes having
-inspected nothing -- which is exactly what a `SpendLimits` whose budgets are all scoped returns when
-the scope is missing. `exhausted` raises there instead, naming the budgets that need a
-`scope` or a run context. Use `status` for a reading, `exhausted` for a decision.
+Use `exhausted` rather than `any(s.exhausted for s in await limits.status(...))`. `status` omits the budgets it cannot resolve, so with every budget scoped and no `scope` given, the `any()` returns `False` without checking anything. `exhausted` raises instead, naming the budgets that need a `scope` or a run context.
 
-Admission is all that call does: it reserves nothing. The durable operations then account for the workflow's model responses. Issue [#531](https://github.com/pydantic/pydantic-ai-harness/issues/531) tracks this support and its remaining store-lifetime limits.
+The call only admits: it reserves nothing. The durable operations then account for the workflow's model responses.
 
-For a ceiling that covers one run and nothing else, Pydantic AI's own
-[`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) does the same job
-in-process with no store and no capability: `total_tokens_limit` for tokens and `cost_limit` for
-money, both over a single `run()`. An unpriced response with no known cost adds nothing to
-`RunUsage.cost`; `cost_limit` measures against the part that could be priced and emits
-`CostNotFoundWarning` when `RunUsage.cost` remains `None`. A response that omitted usage can
-still add its known cost subtotal, but `UsageLimitUnavailableWarning` reports that configured
-token and cost limits only see lower-bound totals. `SpendLimits` retains that subtotal and still
-applies `on_unpriced` to the incomplete response. `UsageLimits` also carries the two
-input-token granularities `SpendLimits` has no equivalent for: `input_tokens_limit` is cumulative
-over the run, and `per_request_input_tokens_limit` caps one request against the provider-reported
-input tokens of the response that already paid for it. `count_tokens_before_request=True` counts
-the pending request with the model's own `count_tokens` and applies both limits to that count
-before the send, so an oversized context is refused rather than billed on the providers that
-implement `count_tokens`; the field names them, and a model without it raises
-`NotImplementedError` instead. Reach for `Budget(tokens=..., window='run')` when the same
-configuration also has to express a window longer than one run, a tenant scope, or a counter
-shared between processes.
+For a ceiling that covers one run and nothing else, Pydantic AI's own [`UsageLimits`](../agent.md#usage-limits) does the job in-process with no store, and adds input-token limits (cumulative and per request) that `SpendLimits` has no equivalent for. Use `Budget(tokens=..., window='run')` when the same configuration also needs a window longer than one run, a tenant scope, or a counter shared between processes.
 
 ## Tracing
 
@@ -367,7 +369,7 @@ A refusal emits a `spend budget exhausted` span with `spend.budget` and `spend.w
     on_unpriced: raise
 ```
 
-`store`, `price`, `on_spend`, `clock`, and a budget's `scope` take callables or live objects. A spec naming them is rejected rather than silently ignored, because a spec that promises per-tenant scoping and does not deliver it is worse than one that refuses to load.
+`store`, `price`, `on_spend`, `clock`, and a budget's `scope` take callables or live objects. A spec naming them is rejected rather than ignored.
 
 The fields above are what `SpendLimits.from_spec` names in its signature, which is also what Pydantic AI reads to generate the spec's JSON schema -- so an editor following the `$schema` line completes and validates them. `BudgetSpec` is the entry shape, exported for anyone building a spec in code.
 

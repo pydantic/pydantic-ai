@@ -8,6 +8,7 @@ from difflib import get_close_matches
 from functools import cache
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
+from typing import TypeAlias
 
 from pydantic_ai import ModelRetry, Tool
 from pydantic_ai.capabilities import Capability
@@ -51,14 +52,17 @@ _HARNESS_DOCS = (
     'logfire_mcp',
     'notion',
     'ordinal',
+    'permissions',
     'posthog',
     'pylon',
+    'refine_output',
     'repo_context',
     'shell',
     'skills',
     'slack',
     'step_persistence',
     'subagents',
+    'tool_call_judge',
 )
 """The harness capabilities CLAI uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 
@@ -140,6 +144,11 @@ def _doc(doc_id: str) -> _Doc:
         prose = next(block for block in text.split('\n\n') if not block.lstrip().startswith(('#', '>', '[', '!', '|')))
         description = ' '.join(prose.split()).split('. ')[0].rstrip('.') + '.'
     lines = text.splitlines(keepends=True)
+    return _Doc(id=doc_id, description=description, lines=lines, sections=_sections(doc_id, lines))
+
+
+def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """The line index, level, and title of each heading outside a code fence."""
     headings: list[tuple[int, int, str]] = []
     fence = ''
     for index, line in enumerate(lines):
@@ -151,6 +160,11 @@ def _doc(doc_id: str) -> _Doc:
                 fence = ''
         elif not fence and (match := _HEADING.match(line)):
             headings.append((index, len(match.group(1)), match.group(2)))
+    return headings
+
+
+def _sections(doc_id: str, lines: list[str]) -> list[_Section]:
+    headings = _headings(lines)
     sections: list[_Section] = []
     seen: dict[str, int] = {}
     for position, (start, level, title) in enumerate(headings):
@@ -170,7 +184,7 @@ def _doc(doc_id: str) -> _Doc:
                 end=end,
             )
         )
-    return _Doc(id=doc_id, description=description, lines=lines, sections=sections)
+    return sections
 
 
 def _outline(sections: list[_Section]) -> str:
@@ -212,12 +226,16 @@ def _read_clai_docs(path: str = '') -> str:
             f'{doc.id} is {len(text) // 1000} KB, too long to read whole. Read a section by its path:\n\n'
             f'{_outline(doc.sections)}'
         )
+    return _read_section(doc, anchor)
+
+
+def _read_section(doc: _Doc, anchor: str) -> str:
     by_anchor = {section.path.partition('#')[2]: section for section in doc.sections}
     section = by_anchor.get(anchor)
     if section is None:
         close = get_close_matches(anchor, list(by_anchor), n=3)
-        hint = f' Did you mean {", ".join(f"{doc_id}#{other}" for other in close)}?' if close else ''
-        raise ModelRetry(f'{doc_id} has no section {anchor!r}.{hint} Read {doc_id!r} for its outline.')
+        hint = f' Did you mean {", ".join(f"{doc.id}#{other}" for other in close)}?' if close else ''
+        raise ModelRetry(f'{doc.id} has no section {anchor!r}.{hint} Read {doc.id!r} for its outline.')
     text = doc.text(section.start, section.end)
     if len(text) <= _READ_LIMIT:
         return text
@@ -228,6 +246,10 @@ def _read_clai_docs(path: str = '') -> str:
     if not subsections:
         return own
     return f'{own}\nThis section is too long to read whole. Read a subsection by its path:\n\n{_outline(subsections)}'
+
+
+_SearchResult: TypeAlias = tuple[int, int, int, str, str]
+"""A section's match: how many words, how many in its heading, how often they occur, its path, and its summary."""
 
 
 def _search_clai_docs(query: str) -> str:
@@ -244,35 +266,45 @@ def _search_clai_docs(query: str) -> str:
     terms = [word for word in words if len(word) > 2 and word not in _STOP_WORDS] or words
     if not terms:
         raise ModelRetry('Search for at least one word.')
-    scored: list[tuple[int, int, int, str, str]] = []
+    scored: list[_SearchResult] = []
     for doc_id in _DOC_IDS:
         doc = _doc(doc_id)
         for section in doc.sections:
-            title = section.title.lower()
-            body = doc.lines[section.start + 1 : section.body_end]
-            text = ''.join(body).lower()
-            matched = [term for term in terms if term in title or term in text]
-            if matched:
-                in_title = sum(term in title for term in matched)
-                score = sum(text.count(term) for term in matched)
-                summary = f'- {section.path}: {section.title}'
-                # The first matching line, cut to a window around the term.
-                for line in body:
-                    excerpt = line.strip()
-                    lowered = excerpt.lower()
-                    if found := [lowered.find(term) for term in matched if term in lowered]:
-                        start = max(0, min(found) - _SNIPPET_WIDTH // 3)
-                        end = start + _SNIPPET_WIDTH
-                        snippet = f'{"..." if start else ""}{excerpt[start:end]}{"..." if end < len(excerpt) else ""}'
-                        summary += f'\n  {snippet}'
-                        break
-                scored.append((len(matched), in_title, score, section.path, summary))
+            if (result := _search_result(doc, section, terms)) is not None:
+                scored.append(result)
     if not scored:
         return f'No CLAI docs section matches {query!r}. Call read_clai_docs with no path to list the docs.'
     # Sections that match more of the words first, then more of them in the heading, then more often.
     scored.sort(key=lambda result: (-result[0], -result[1], -result[2], result[3]))
     results = '\n'.join(summary for *_, summary in scored[:_SEARCH_RESULTS])
     return f'{results}\n\nRead a section with read_clai_docs(path).'
+
+
+def _search_result(doc: _Doc, section: _Section, terms: list[str]) -> _SearchResult | None:
+    title = section.title.lower()
+    body = doc.lines[section.start + 1 : section.body_end]
+    text = ''.join(body).lower()
+    matched = [term for term in terms if term in title or term in text]
+    if not matched:
+        return None
+    in_title = sum(term in title for term in matched)
+    score = sum(text.count(term) for term in matched)
+    summary = f'- {section.path}: {section.title}'
+    if (snippet := _snippet(body, matched)) is not None:
+        summary += f'\n  {snippet}'
+    return (len(matched), in_title, score, section.path, summary)
+
+
+def _snippet(body: list[str], matched: list[str]) -> str | None:
+    """The first matching line, cut to a window around the term."""
+    for line in body:
+        excerpt = line.strip()
+        lowered = excerpt.lower()
+        if found := [lowered.find(term) for term in matched if term in lowered]:
+            start = max(0, min(found) - _SNIPPET_WIDTH // 3)
+            end = start + _SNIPPET_WIDTH
+            return f'{"..." if start else ""}{excerpt[start:end]}{"..." if end < len(excerpt) else ""}'
+    return None
 
 
 class ClaiDocs(Capability[None]):

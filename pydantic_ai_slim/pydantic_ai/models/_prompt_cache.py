@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 T = TypeVar('T')
 
-CACHE_RETENTION_ORDER: tuple[CacheRetention, ...] = ('5m', '30m', '1h')
+CACHE_RETENTION_ORDER: tuple[CacheRetention, ...] = ('5m', '30m', '1h', '12h')
 """All retention tiers, shortest first."""
 
 
