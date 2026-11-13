@@ -123,7 +123,7 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
 
 
 async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
-    """An owner holds no settled task's history in memory, and closing it rewrites no settled task."""
+    """An owner holds no settled task's history in memory, and closing it rewrites no task it didn't change."""
     child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')
     settled: list[list[ModelMessage]] = []
 
@@ -153,9 +153,8 @@ async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
     assert path.stat().st_mtime_ns == saved_at
 
     async with DelegationTasks(directory=tmp_path).opened() as edited:
-        # Saving a change made to the task itself keeps its history.
+        # A change made to the task itself is still saved on close, with its history.
         edited.records[record.id].output = 'edited'
-        await edited.save(edited.records[record.id])
     async with DelegationTasks(directory=tmp_path).opened() as reread:
         assert reread.records[record.id].output == 'edited'
         assert await saved_history(reread, record.id) == first_history
@@ -941,10 +940,9 @@ async def test_interrupted_restore_and_copy_history(tmp_path: Path) -> None:
         (record,) = owner.records.values()
         history: list[ModelMessage] = [ModelResponse(parts=[TextPart('saved')])]
         record.messages = history
-        await owner.save(record)
-        copied = await saved_history(owner, record.id)
+        copied = owner.history(record.id)
         copied.clear()
-        assert await saved_history(owner, record.id) == history
+        assert record.messages
     path = tmp_path / f'{record.id}.json'
     data = json.loads(path.read_text())
     data['status'] = 'running'
@@ -953,9 +951,7 @@ async def test_interrupted_restore_and_copy_history(tmp_path: Path) -> None:
         saved = restored.records[record.id]
         assert saved.outcome == 'cancelled'
         assert 'process exit' in saved.output
-        assert await saved_history(restored, record.id) == history
-    # Settling it on load saved it, so it isn't settled again.
-    assert json.loads(path.read_text())['status'] == 'finished'
+        assert saved.messages == history
 
 
 async def test_cancellation_before_worker_starts_and_manual_resume(tmp_path: Path) -> None:
@@ -1018,10 +1014,9 @@ async def test_restore_interrupted_step_history(tmp_path: Path, snapshot: bool) 
     async with DelegationTasks(directory=directory, step_store=store).opened() as restored:
         saved = restored.records[record.id]
         assert saved.outcome == 'cancelled'
-        history = await saved_history(restored, record.id)
-        assert bool(history) == snapshot
+        assert bool(saved.messages) == snapshot
         if snapshot:
-            assert 'step evidence' in str(history)
+            assert 'step evidence' in str(saved.messages)
 
 
 async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path: Path) -> None:
@@ -1033,7 +1028,6 @@ async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path
             ModelRequest(parts=[UserPromptPart('start')]),
             ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')]),
         ]
-        await owner.save(record)
     path = tmp_path / f'{record.id}.json'
     data = json.loads(path.read_text())
     data['status'] = 'running'
@@ -1345,10 +1339,14 @@ async def test_close_logs_a_worker_that_failed_while_closing(
         await asyncio.Event().wait()
         return 'unreachable'  # pragma: no cover
 
+    owner = DelegationTasks()
+    save = owner.save
+
     async def fail(record: DelegationTask) -> None:
+        # Only the worker's own save: closing saves the record again, since it changed since it was saved.
+        monkeypatch.setattr(owner, 'save', save)
         raise OSError('disk full')
 
-    owner = DelegationTasks()
     async with owner.opened():
         await owner.delegate(
             agent_name='worker',
@@ -1363,6 +1361,8 @@ async def test_close_logs_a_worker_that_failed_while_closing(
         # The cancelled worker's final save fails, ending it with that error.
         monkeypatch.setattr(owner, 'save', fail)
     assert 'failed while closing' in caplog.text and 'disk full' in caplog.text
+    (record,) = owner.records.values()
+    assert record.outcome == 'cancelled'
 
 
 async def test_close_saves_a_settled_child_whose_save_was_cut_short(
@@ -1550,7 +1550,6 @@ async def test_restore_adds_a_finished_task_unless_it_has_run_since(tmp_path: Pa
         assert await owner.restore(replace(task, output='Again'))
         assert [update.task.output for update in seen] == ['Again']
         owner.records[task.id] = replace(task, run_id='c' * 32, output='Resumed')
-        await owner.save(owner.records[task.id])
         assert not await owner.restore(task)
     # A closed owner finds the later run on disk.
     assert not await DelegationTasks(directory=tmp_path / 'tasks').restore(task)

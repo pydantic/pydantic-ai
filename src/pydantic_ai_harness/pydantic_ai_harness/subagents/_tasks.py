@@ -293,10 +293,11 @@ class DelegationTasks:
         self._save_locks: dict[str, anyio.Lock] = {}
         self._holding: set[str] = set()
         """Settling tasks whose history `save` keeps in memory until their observers have been told."""
-        self._unsaved: set[str] = set()
-        """Tasks whose last `save` failed or was cut short by its bound, so closing saves them again."""
-        self._history_on_disk: dict[str, Path] = {}
-        """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory."""
+        self._history_on_disk: dict[str, tuple[Path, bytes]] = {}
+        """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory.
+
+        Maps its ID to that file and to the rest of the task as saved, so closing saves only a task changed since.
+        """
         self._questions: dict[str, _Question] = {}
         self._queued_questions: dict[str, str] = {}
         self._woken = anyio.Event()
@@ -371,7 +372,7 @@ class DelegationTasks:
                 logging.getLogger(__name__).error(message)
 
     async def _drain(self) -> None:
-        """Cancel running workers and wait for all of them at once, then save the unstarted and unsaved children."""
+        """Cancel running workers and wait for all of them at once, then save the children changed since saved."""
         for task_id, worker in self._workers.items():
             # A worker whose run ended is saving its record, which a cancellation would cut short.
             if self.records[task_id].status == 'running':
@@ -382,12 +383,12 @@ class DelegationTasks:
             # Unlike `gather`, a timed-out `wait` doesn't wait for a child that ignores cancellation.
             await asyncio.wait(pending.values())
             _log_failures(pending)
-        # Every other record saved itself when it settled, unless that save failed or was cut short.
+        # A record that saved itself when it settled compares as unchanged, so it isn't written again.
         for record in self.records.values():
             if record.status == 'running':
                 self._settle_unstarted(record)
                 await self.save(record)
-            elif record.id in self._unsaved:
+            elif not self._unchanged_since_saved(record):
                 await self.save(record)
 
     async def _load_saved(self, directory: Path) -> None:
@@ -402,9 +403,8 @@ class DelegationTasks:
         for record in saved.tasks.values():
             if record.status == 'running':
                 await self._settle_interrupted(record)
-                await self.save(record)
             else:
-                self._history_on_disk[record.id] = directory / f'{record.id}.json'
+                self._history_on_disk[record.id] = (directory / f'{record.id}.json', _ADAPTER.dump_json(record))
             self.records[record.id] = record
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
@@ -456,11 +456,7 @@ class DelegationTasks:
         if not _SAFE_ID.fullmatch(record.id):
             raise ValueError('Invalid task identity')
         if self.directory is not None:
-            # Marked until written, even when cut short waiting for the lock.
-            self._unsaved.add(record.id)
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
-                # Again, since an earlier save of this record clears it once its own write lands.
-                self._unsaved.add(record.id)
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
                 if (saved := self._saved_history(record)) is not None:
@@ -468,7 +464,6 @@ class DelegationTasks:
                 self._history_on_disk.pop(record.id, None)
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
-                self._unsaved.discard(record.id)
 
     @contextmanager
     def _holding_history(self, record: DelegationTask) -> Generator[None]:
@@ -483,7 +478,7 @@ class DelegationTasks:
         """Keep a settled, saved task's history in its file only."""
         if self.directory is not None and record.status == 'finished':
             record.messages = []
-            self._history_on_disk[record.id] = self.directory / f'{record.id}.json'
+            self._history_on_disk[record.id] = (self.directory / f'{record.id}.json', _ADAPTER.dump_json(record))
 
     async def restore(self, record: DelegationTask) -> bool:
         """Add a finished task made elsewhere, such as one imported from another agent's session.
@@ -793,7 +788,13 @@ class DelegationTasks:
 
         History a caller has set on the record since replaces the saved one.
         """
-        return None if record.messages else self._history_on_disk.get(record.id)
+        saved = None if record.messages else self._history_on_disk.get(record.id)
+        return None if saved is None else saved[0]
+
+    def _unchanged_since_saved(self, record: DelegationTask) -> bool:
+        """Whether `record`'s history is in its saved file only and the rest of it is as saved there."""
+        saved = None if record.messages else self._history_on_disk.get(record.id)
+        return saved is not None and _ADAPTER.dump_json(record) == saved[1]
 
     async def allow_resume(self, task_id: str) -> None:
         """Explicit user authorization to resume a stopped, resumable child."""
