@@ -334,6 +334,24 @@ class _ValidationDeferral(Exception):
         super().__init__()
 
 
+def _refuse_unfinished_computer_call(tool: ToolsetTool[Any], ctx: RunContext[Any]) -> None:
+    """Refuse a `computer` call, as a retry the model sees, when the response it came in didn't finish normally.
+
+    A provider can return a finished call in a response it then cut off, filtered or failed (OpenAI and Anthropic both
+    say not to act on one), and a stream can end before saying how the response finished. The latest response is the
+    one whose calls run. A `None` finish reason passes: many models never report one.
+    """
+    from .computer_use import COMPUTER_KIND
+
+    if tool.tool_def.tool_kind != COMPUTER_KIND.id:
+        return
+    response = next((m for m in reversed(ctx.messages) if isinstance(m, _messages.ModelResponse)), None)
+    if response is not None and (
+        response.state == 'incomplete' or response.finish_reason not in (None, 'stop', 'tool_call')
+    ):
+        raise ModelRetry('The response this call came in did not finish normally, so the computer did nothing.')
+
+
 def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
     """Make a `computer` call carrying a provider's safety checks wait for approval.
 
@@ -1005,6 +1023,7 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             _name, tool = self._resolve_tool(call)
             ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
+            _refuse_unfinished_computer_call(tool, ctx)
             validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
             validated = self._make_validation_success(call, tool, ctx, validated_args)
         except SkipToolValidation as e:
