@@ -902,7 +902,7 @@ Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/compu
 
 | Models | Claude API, Google Cloud and Foundry | Bedrock |
 |---|---|---|
-| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` | `computer_20251124` |
+| Claude Opus 4.8, Claude 5 and Claude Mythos Preview | `computer_toolset_20260801` | `computer_20251124` |
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
 | Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 | `computer_20250124` | `computer_20250124` |
 

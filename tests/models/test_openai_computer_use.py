@@ -424,16 +424,26 @@ async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_re
     assert 'Ran 0 of 1 actions. The next one failed: ' in str(second['input'])
 
 
-async def test_a_call_with_a_single_action_runs_it(allow_model_requests: None) -> None:
-    response = _computer_call()
-    item = cast(resp.ResponseComputerToolCall, response.output[0])
-    item.actions = None
-    item.action = resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left')
+@pytest.mark.parametrize('checklist', [pytest.param({'pending_safety_checks': []}, id='with-a-checklist'), {}])
+async def test_a_call_with_a_single_action_runs_it_only_with_its_safety_checklist(
+    allow_model_requests: None, checklist: dict[str, Any]
+) -> None:
+    # Built as the SDK builds a response, unvalidated: OpenAI's SDK refuses this shape without its checklist.
+    item = resp.ResponseComputerToolCall.model_construct(
+        id='cu_1',
+        call_id='call_1',
+        type='computer_call',
+        status='completed',
+        action=resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left'),
+        **checklist,
+    )
+    response = response_message([item])
     provider, computer = InMemoryProvider(), FakeComputer()
     client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
-    assert computer.actions == [Click(x=5, y=6)]
+    result = await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
+    assert result.output == 'done'
+    assert computer.actions == ([Click(x=5, y=6)] if checklist else [])
 
 
 _DROPPED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
@@ -591,13 +601,17 @@ async def test_an_unfinished_call_runs_nothing(
     done.status = 'completed'
     provider, computer = InMemoryProvider(), FakeComputer()
     # Streamed, the response's status comes only after the call.
+    created = response.model_copy(update={'status': 'in_progress', 'incomplete_details': None})
+    first: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=created, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemDoneEvent(
+            item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=1
+        ),
+    ]
+    if response_status == 'incomplete':
+        first.append(resp.ResponseIncompleteEvent(response=response, type='response.incomplete', sequence_number=2))
     streams: list[list[resp.ResponseStreamEvent]] = [
-        [
-            resp.ResponseOutputItemDoneEvent(
-                item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=0
-            ),
-            resp.ResponseIncompleteEvent(response=response, type='response.incomplete', sequence_number=1),
-        ],
+        first,
         [
             resp.ResponseTextDeltaEvent(
                 item_id='msg_1',
@@ -738,7 +752,13 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, tool_call_id='toolu_1')],
             provider_name='anthropic',
         ),
-        ModelRequest(parts=[ToolReturnPart('computer', ['Ran 1 action.'], tool_call_id='toolu_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer', ['Ran 1 action.', _SCREEN], tool_call_id='toolu_1', tool_kind=COMPUTER_KIND.id
+                )
+            ]
+        ),
     ]
     agent = Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability()])
     await agent.run('Go on.', message_history=history)
@@ -747,6 +767,9 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
     assert [item.get('type') for item in request['input']] == snapshot(
         [None, 'function_call', 'function_call_output', None]
     )
+    # As in a `computer_call_output`, so OpenAI doesn't downscale the screenshot the model points on.
+    [image] = [item for item in request['input'][2]['output'] if item['type'] == 'input_image']
+    assert image['detail'] == 'original'
 
 
 @pytest.mark.parametrize(
@@ -834,7 +857,12 @@ def test_openai_actions_map_onto_the_computer_tool(
 def test_a_pixel_scroll_gpt_asks_for_keeps_a_note_on_how_it_runs() -> None:
     scroll = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}
     item = cast(resp.ResponseComputerToolCall, _computer_call(scroll).output[0])
-    call = _map_computer_call(item, 'computer', 'call_1', 'openai', response_completed=True)
+    call = _map_computer_call(
+        item,
+        'computer',
+        'call_1',
+        'openai',
+    )
     assert call.provider_details is not None
     assert call.provider_details['computer_scroll_notes'] == [
         'scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.'
@@ -1257,7 +1285,12 @@ def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, 
 def test_any_call_maps_with_one_scroll_note_slot_per_tool_action(actions: Any) -> None:
     item = resp.ResponseComputerToolCall.model_validate({**_COMPUTER_ITEM, 'actions': [], 'pending_safety_checks': []})
     item.actions = actions  # the SDK doesn't validate a response
-    call = _map_computer_call(item, 'computer', 'call_1', 'openai', response_completed=True)
+    call = _map_computer_call(
+        item,
+        'computer',
+        'call_1',
+        'openai',
+    )
     args = call.args_as_dict()['actions']
     assert args
     notes = (call.provider_details or {}).get('computer_scroll_notes')
