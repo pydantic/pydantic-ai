@@ -1046,9 +1046,9 @@ async def test_a_deferred_capability_is_loaded_then_its_tool_called(
                 {'system': 'The following tool(s) are now available: `refund_status`'},
                 {
                     'system': """\
-<context id="capability:refunds">
+<pyai:context id="capability:refunds">
 Confirm the order ID before issuing a refund.
-</context>\
+</pyai:context>\
 """
                 },
             ],
