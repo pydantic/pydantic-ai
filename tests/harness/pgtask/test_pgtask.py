@@ -10,6 +10,7 @@ from __future__ import annotations
 import gc
 import weakref
 from collections.abc import AsyncIterable, AsyncIterator
+from typing import Self
 
 import anyio
 import pytest
@@ -304,6 +305,39 @@ class TestReplay:
                 ('d__model.request', 1),
             ]
         )
+
+    async def test_run_held_dynamic_toolset_is_entered_once_per_run(self, pgtask_db: PGTaskDatabase) -> None:
+        # pgtask runs its steps in the worker's own process, so they reuse the `per_run_step=False` toolset the run
+        # resolved and entered once, as on DBOS and Prefect, instead of each building and entering their own.
+        counts = {'factory': 0, 'enter': 0}
+
+        class CountingToolset(FunctionToolset[object]):
+            async def __aenter__(self) -> Self:
+                counts['enter'] += 1
+                return await super().__aenter__()
+
+        def build(ctx: RunContext[object]) -> FunctionToolset[object]:
+            counts['factory'] += 1
+            inner = CountingToolset(id='inner')
+
+            @inner.tool_plain
+            def greet(name: str) -> str:
+                return f'hi {name}'
+
+            return inner
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('greet', {'name': 'ada'})),
+            name='held',
+            toolsets=[DynamicToolset(build, per_run_step=False, id='dyn')],
+            capabilities=[PGTaskDurability()],
+        )
+
+        async def body(attempt: int) -> None:
+            assert (await agent.run('greet ada')).output == 'done'
+
+        await run_in_task(pgtask_db, body)
+        assert counts == {'factory': 1, 'enter': 1}
 
     async def test_registered_model_selected_per_run(self, pgtask_db: PGTaskDatabase) -> None:
         # The selected model checkpoints under its own id-scoped step name, and a replay serves it.
