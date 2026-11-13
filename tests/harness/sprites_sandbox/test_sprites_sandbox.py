@@ -887,28 +887,23 @@ class TestSpritesSandbox:
         # Three attempts for the command; with no socket opened there is no stderr capture to read back.
         assert (transport.connects, transport.execs) == (3, [])
 
-    async def test_the_command_timeout_starts_once_the_exec_socket_is_open(
-        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_the_command_timeout_starts_once_the_exec_socket_is_open(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
-        # Deadlines read the event loop's clock: each handshake moves it an hour on instead of taking that long.
-        loop = asyncio.get_running_loop()
-        real_loop_time = loop.time
-        skipped = 0.0
-        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
-        connect = transport.connect
+        # The handshake alone outlasts the timeout; the command itself is fast.
+        transport.exec_latency = 0.5
+        assert (await backend.run(['echo', 'ok'], timeout=0.3)).stdout == 'ok\n'
 
-        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
-            nonlocal skipped
-            skipped += 3600
-            return await connect(url, **kwargs)
-
-        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
-        # The first handshake fails before its socket opens, so the command waits out a retry too.
-        transport.connect_errors = [TimeoutError('connect stalled')]
-        assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
-        assert (transport.connects, len(transport.execs)) == (2, 1)
+    async def test_a_stalled_handshake_fails_after_its_retries(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._HANDSHAKE_TIMEOUT', 0.05)
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        transport.exec_latency = 5
+        with pytest.raises(NetworkError, match='handshake'):
+            await backend.run(['true'], timeout=0.3)
+        assert (transport.connects, transport.execs) == (3, [])
 
     async def test_exec_handshake_retries_when_command_cannot_have_started(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()

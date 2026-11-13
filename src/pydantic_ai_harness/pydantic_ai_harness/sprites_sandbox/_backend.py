@@ -123,6 +123,8 @@ _ACQUIRE_TIMEOUT = 150.0
 # Seconds before each retry of an exec handshake that failed before its socket opened: three
 # attempts over about five seconds. A single retry after 0.1 seconds ended 4 of 14 live eval runs.
 _HANDSHAKE_RETRY_DELAYS = (1.0, 4.0)
+# Bounds each exec handshake attempt, matching websockets' default `open_timeout`; a stalled attempt is retried.
+_HANDSHAKE_TIMEOUT = 10.0
 # Bounds the internal `pwd` probe behind `working_dir()`, which may first wake a sleeping Sprite.
 _INTERNAL_EXEC_TIMEOUT = 30
 # Bounds the control-plane lookup that confirms, after each command, the Sprite was not deleted while it ran.
@@ -319,7 +321,8 @@ async def _start_or_back_off(command: _ExecCommand, delay: float | None) -> bool
     A failure after the socket opened, or on the last attempt (`delay` is `None`), raises.
     """
     try:
-        await command.start()
+        with anyio.fail_after(_HANDSHAKE_TIMEOUT):
+            await command.start()
     except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
         if command.ws is not None:
             raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
@@ -715,8 +718,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # identifiers from the environment it passes on.
         args = _ending_with(marker, capture, self._command_args(command, shell, env))
 
-        # Acquiring the Sprite has its own bound, and each exec handshake the websockets 10-second open timeout:
-        # the command's deadline starts once its socket is open, so a slow handshake or a retry does not use it up.
+        # Acquiring the Sprite and each exec handshake attempt have their own bounds: the command's deadline
+        # starts once its socket is open, so a slow handshake or a retry does not use it up.
         if sandbox is None:
             sandbox = await self._get_sandbox()
         deadline = anyio.CancelScope()
