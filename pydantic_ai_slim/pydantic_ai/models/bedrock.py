@@ -976,12 +976,15 @@ class BedrockConverseModel(Model[BaseClient]):
 
     @property
     def _canonical_system_stamp(self) -> str | None:
-        """Stamp `canonical_system` on every response, since here it depends on the model, not just the provider.
+        """Also stamp `'bedrock'` on responses from models with the `openai_responses` thinking variant.
 
-        Claude's thinking signatures belong to the `'anthropic'` system while other models' belong to `'bedrock'`,
-        so a response left unstamped would be replayable into a different model family on the same provider.
+        Their encrypted reasoning would otherwise be accepted by name by a Claude model on Bedrock, which can't
+        verify it. Other responses are stamped only when their canonical system differs from `system`, so one from a
+        model the name doesn't identify, which may be Claude, stays acceptable to Claude models by name.
         """
-        return self.canonical_system
+        if self.profile.get('bedrock_thinking_variant') == 'openai_responses':
+            return self.canonical_system
+        return super()._canonical_system_stamp
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)

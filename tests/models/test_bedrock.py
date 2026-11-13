@@ -252,7 +252,6 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -873,7 +872,6 @@ async def test_bedrock_inference_profile_converse(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1044,7 +1042,6 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 timestamp=IsNow(tz=UTC),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1080,7 +1077,6 @@ The temperature in London on 1st January 2022 was 30°C.\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1124,7 +1120,6 @@ The temperature in London on 1st January 2022 was 30°C.\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1174,7 +1169,6 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1284,7 +1278,6 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1322,7 +1315,6 @@ The capital of France is Paris. If you need any further information, feel free t
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2445,7 +2437,6 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2579,7 +2570,6 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2613,7 +2603,6 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4571,7 +4560,6 @@ async def test_bedrock_thinking_high_openai_variant(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7571,7 +7559,6 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -7632,7 +7619,6 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -7726,7 +7712,6 @@ while True:
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7817,7 +7802,6 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -7847,7 +7831,6 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     provider_name='bedrock',
                 ),
-                canonical_system='bedrock',
             ),
             PartDeltaEvent(
                 index=0,
@@ -7864,7 +7847,6 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_name='bedrock',
                 ),
                 next_part_kind='builtin-tool-return',
-                canonical_system='bedrock',
             ),
             PartStartEvent(
                 index=1,
@@ -7877,7 +7859,6 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_details={'status': 'success'},
                 ),
                 previous_part_kind='builtin-tool-call',
-                canonical_system='bedrock',
             ),
             PartStartEvent(
                 index=2,
@@ -8022,7 +8003,7 @@ async def test_bedrock_model_with_instructions_only(
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     # Claude's thinking is verified by the Anthropic API too, so its responses record that.
-    canonical_system = 'anthropic' if 'anthropic' in model_name else 'bedrock'
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
@@ -8074,7 +8055,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     # Claude's thinking is verified by the Anthropic API too, so its responses record that.
-    canonical_system = 'anthropic' if 'anthropic' in model_name else 'bedrock'
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     first_result = await agent.run()

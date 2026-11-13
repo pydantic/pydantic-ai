@@ -5007,9 +5007,9 @@ class ModelResponse:
     when that differs from `provider_name`, such as `'openai'` for an `openai-codex` response. It's always set
     when the provider's canonical system depends on its client: the `google` and `google-cloud` providers each serve
     both the Gemini API (`'google'`) and Google Cloud (`'google-cloud'`), and `OpenAIProvider` serves OpenAI
-    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). Bedrock Converse always sets it too, as
-    there it depends on the model: `'anthropic'` for Claude, `'bedrock'` for any other. It applies to the parts
-    whose `provider_name` is this response's.
+    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). Bedrock Converse also sets `'bedrock'` on a
+    response from a model with OpenAI's encrypted reasoning, like GPT-5.6, which Claude models on Bedrock would
+    otherwise accept by name. It applies to the parts whose `provider_name` is this response's.
     Models read it to decide whether they can send that data, such as encrypted reasoning and thinking signatures,
     back to their own provider: see
     [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].

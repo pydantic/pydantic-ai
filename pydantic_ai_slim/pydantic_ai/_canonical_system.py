@@ -7,7 +7,7 @@ or Snowflake reasoning details. The system that verifies it is the producing pro
 [`canonical_system`][pydantic_ai.providers.Provider.canonical_system], which the response records in
 [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] when it differs
 from `provider_name`, and always when the provider's canonical system depends on its client (Google
-providers and `OpenAIProvider`) or on the model (Bedrock Converse).
+providers and `OpenAIProvider`), and on a Bedrock Converse response with OpenAI's encrypted reasoning.
 
 Server-side state (response, item, container and conversation ids) is judged by endpoint instead, with
 [`Model.accepts_server_state`][pydantic_ai.models.Model.accepts_server_state], and doesn't go through this module.

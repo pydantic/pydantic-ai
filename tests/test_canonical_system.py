@@ -518,8 +518,8 @@ def test_canonical_system_stamp_round_trips():
     """A model stamps its responses when its canonical system differs from its name, and the stamp is stored.
 
     Models on a provider whose canonical system depends on its client always do: either Google provider name
-    covers both transports, and `OpenAIProvider` covers OpenAI and Azure. So do Bedrock Converse models, whose
-    canonical system depends on the model.
+    covers both transports, and `OpenAIProvider` covers OpenAI and Azure. So do Bedrock Converse models with the
+    `openai_responses` thinking variant, whose encrypted reasoning Claude on Bedrock would otherwise accept by name.
     """
     assert RECEIVERS['openai']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['openai+azure-client']()._canonical_system_stamp == 'azure'  # pyright: ignore[reportPrivateUsage]
@@ -531,7 +531,12 @@ def test_canonical_system_stamp_round_trips():
     assert RECEIVERS['claude-code']()._canonical_system_stamp == 'anthropic'  # pyright: ignore[reportPrivateUsage]
     assert vertex_client_google_model()._canonical_system_stamp == 'google-cloud'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['bedrock-claude']()._canonical_system_stamp == 'anthropic'  # pyright: ignore[reportPrivateUsage]
-    assert RECEIVERS['bedrock-nova']()._canonical_system_stamp == 'bedrock'  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['bedrock-nova']()._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
+    gpt_5_6 = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider())
+    assert gpt_5_6._canonical_system_stamp == 'bedrock'  # pyright: ignore[reportPrivateUsage]
+    # A model the name doesn't identify may be Claude, so its responses stay acceptable to Claude by name.
+    arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123'
+    assert BedrockConverseModel(arn, provider=bedrock_provider())._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
     response = thinking_response('openai-codex', canonical_system='openai')
     dumped = ModelMessagesTypeAdapter.dump_python([response], mode='json')
     assert dumped[0]['canonical_system'] == 'openai'
