@@ -59,10 +59,11 @@ class FunctionSchema:
 
     Covers both model-like single args (where it equals `single_arg_name`, which uses a wrap validator
     to normalize to `{name: value}`) and primitive single args (where the schema is a
-    one-field TypedDict). `None` for multi-arg functions and any function taking `**kwargs`.
+    one-field TypedDict). `None` for multi-arg functions, any function taking `**kwargs`, and a
+    single primitive arg the JSON schema leaves out (e.g. one marked `SkipJsonSchema`).
 
     This is the Python parameter name, which keys the validated args. The JSON schema property is
-    named after the parameter's alias instead, and omits parameters marked `SkipJsonSchema`.
+    named after the parameter's alias instead.
 
     The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
     this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
@@ -202,6 +203,9 @@ def function_schema(
         # are exactly the top-level keys the model accepts (aliases already resolved by Pydantic).
         # `_validate_single_arg` reads this to tell unwrapped input from a wrapper envelope.
         single_arg_keys.update(json_schema.get('properties', {}))
+    elif not json_schema.get('properties'):
+        # The model wasn't asked for a field the JSON schema leaves out, so the validated args stay whole.
+        single_field_name = None
 
     # workaround for https://github.com/pydantic/pydantic/issues/10785
     # if we build a custom TypedDict schema (matches when `single_arg_name is None`), we manually set
@@ -372,8 +376,9 @@ def _build_schema(
     Returns:
         tuple of (generated core schema, single field name, single arg name, single arg model keys).
         The single field name is set when there is exactly one field and no `**kwargs`, and the single
-        arg name only when that field is also model-like. The keys set is empty here and filled in by
-        `function_schema` from the generated JSON schema.
+        arg name only when that field is also model-like. `function_schema` drops the single field name
+        when the generated JSON schema leaves a primitive field out. The keys set is empty here and filled
+        in by `function_schema` from the generated JSON schema.
     """
     single_field_name: str | None = None
     if len(fields) == 1 and var_kwargs_schema is None:

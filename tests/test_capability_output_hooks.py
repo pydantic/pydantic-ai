@@ -3984,6 +3984,10 @@ def hidden_first(a: SkipJsonSchema[int] = 1, b: int = 2) -> dict[str, int]:
     return {'a': a, 'b': b}
 
 
+def only_hidden(a: SkipJsonSchema[int] = 1) -> dict[str, int]:
+    return {'a': a}
+
+
 class TestHookSemanticValue:
     """Output hooks see the **semantic value** (what the model was asked to produce), not the
     internal dict-wrapped form used by the validator pipeline.
@@ -4274,12 +4278,13 @@ class TestHookSemanticValue:
             pytest.param(var_kwargs, {'a': 1, 'x': 2}, {'a': 1, 'x': 2}, id='var-kwargs'),
             pytest.param(hidden_second, {'a': 1, 'b': 5}, {'a': 1, 'b': 5}, id='hidden-second'),
             pytest.param(hidden_first, {'b': 5}, {'a': 1, 'b': 5}, id='hidden-first'),
+            pytest.param(only_hidden, {}, {'a': 1}, id='only-hidden'),
         ],
     )
     async def test_function_args_outside_json_schema(
         self, output_function: Callable[..., dict[str, int]], args: dict[str, int], expected: dict[str, int]
     ):
-        """`**kwargs` and `SkipJsonSchema` args make a multi-arg function even when the JSON schema lists one property.
+        """Args the JSON schema leaves out (`**kwargs`, `SkipJsonSchema`) keep the validated args whole.
 
         Hooks see the dict, and every value the model sends reaches the function.
         """
