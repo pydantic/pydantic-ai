@@ -317,26 +317,6 @@ async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDayt
     ]
 
 
-async def test_the_live_view_url_is_a_signed_link_to_the_desktops_viewer(fake_daytona: FakeDaytona) -> None:
-    backend, sandbox = await _started(fake_daytona)
-
-    url = await backend.live_view_url(expires_in=60)
-
-    assert url == 'https://6080-signed.proxy.example/vnc.html?autoconnect=true&resize=scale'
-    assert sandbox.desktop_calls == ['signed_preview 6080 60']
-
-
-async def test_the_live_view_url_signs_the_viewer_port_the_sandbox_sets(fake_daytona: FakeDaytona) -> None:
-    """Daytona's desktop serves its viewer on `NO_VNC_PORT`, read from the sandbox, so an attached one counts too."""
-    created = DaytonaSandboxBackend(desktop=True, env={'NO_VNC_PORT': '6090'})
-    sandbox_id = (await created.get_sandbox()).id
-    attached = DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id=sandbox_id), desktop=True)
-
-    url = await attached.live_view_url(expires_in=60)
-
-    assert url == 'https://6090-signed.proxy.example/vnc.html?autoconnect=true&resize=scale'
-
-
 async def test_looks_come_from_the_desktop(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
     workspace = screen(backend)
@@ -382,27 +362,6 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
 
 
-async def test_a_failed_start_of_a_running_desktop_starts_it_again_on_the_next_action(
-    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    backend, sandbox = await _started(fake_daytona)
-    computer_use = sandbox.computer_use
-    start = computer_use.start
-    computer_use.stop_with_sandbox()
-
-    async def failing_start(request_timeout: float | None = None) -> None:
-        monkeypatch.setattr(computer_use, 'start', start)
-        raise DaytonaInternalServerError('the X server did not start', status_code=500)
-
-    monkeypatch.setattr(computer_use, 'start', failing_start)
-    # The live view link starts the desktop even when it last ran.
-    with pytest.raises(WorkspaceError, match='did not start'):
-        await backend.live_view_url()
-    await screen(backend).act(Click(x=1, y=1))
-
-    assert sandbox.desktop_calls == ['start', 'click 1 1 left clicks=1 modifiers=[]']
-
-
 async def test_after_aclose_the_desktop_is_started_again_before_any_input(fake_daytona: FakeDaytona) -> None:
     """The sandbox may stop and start before a later run attaches to it again."""
     backend, sandbox = await _started(fake_daytona)
@@ -427,18 +386,8 @@ async def test_every_action_checks_that_the_desktop_runs(fake_daytona: FakeDayto
     assert sandbox.desktop_calls == ['click 1 1 left clicks=1 modifiers=[]']
 
 
-async def test_the_live_view_starts_a_desktop_that_stopped_with_the_sandbox(fake_daytona: FakeDaytona) -> None:
-    backend, sandbox = await _started(fake_daytona)
-    sandbox.computer_use.stop_with_sandbox()
-
-    await backend.live_view_url()
-
-    assert sandbox.computer_use.started
-    assert sandbox.desktop_calls == ['start', 'signed_preview 6080 3600']
-
-
 async def test_a_public_sandbox_desktop_is_refused_before_it_starts(fake_daytona: FakeDaytona) -> None:
-    """Daytona serves a public sandbox's preview links without a token, so its desktop would be open to anyone."""
+    """Daytona's own desktop viewer runs with the desktop, and a public sandbox serves it to anyone without a token."""
     backend = DaytonaSandboxBackend(desktop=True)
     await backend.get_sandbox()
     (sandbox,) = fake_daytona.sandboxes
@@ -447,8 +396,6 @@ async def test_a_public_sandbox_desktop_is_refused_before_it_starts(fake_daytona
 
     with pytest.raises(UserError, match='is public'):
         await screen(backend).screenshot()
-    with pytest.raises(UserError, match='is public'):
-        await backend.live_view_url()
     assert sandbox.desktop_calls == []
 
 
@@ -533,13 +480,8 @@ def test_an_attached_sandbox_keeps_its_own_size_whatever_desktop_says() -> None:
     assert backend.display is not None
 
 
-async def test_a_sandbox_without_a_desktop_has_no_display(fake_daytona: FakeDaytona) -> None:
-    backend = DaytonaSandboxBackend()
-
-    assert backend.display is None
-    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
-        await backend.live_view_url()
-    assert fake_daytona.sandboxes == []
+def test_a_sandbox_without_a_desktop_has_no_display() -> None:
+    assert DaytonaSandboxBackend().display is None
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:

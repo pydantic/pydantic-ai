@@ -76,8 +76,6 @@ _OUTPUT_LIMIT_MESSAGE = (
 )
 _REQUEST_TIMEOUT = 30
 
-_VNC_PORT = 6080
-"""Where the desktop's noVNC viewer listens, once `computer_use.start()` has started it, unless `NO_VNC_PORT` is set."""
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.
@@ -902,10 +900,10 @@ class DaytonaSandboxBackend(
         # It may have been made public since it was fetched.
         await sandbox.refresh_data(request_timeout=_REQUEST_TIMEOUT)
         if sandbox.public:
-            # Daytona serves a public sandbox's preview links without a token, so the desktop could be used by anyone.
+            # Daytona's own desktop viewer runs whenever the desktop does, and a public sandbox serves it without a token.
             raise UserError(
-                f'The Daytona sandbox {sandbox.id!r} is public, so anyone could open its desktop without the signed '
-                'link. Make it private with `await sandbox.set_public(False)` to use its desktop.'
+                f"The Daytona sandbox {sandbox.id!r} is public, so anyone could open its desktop through the sandbox's "
+                'preview link. Make it private with `await sandbox.set_public(False)` to use its desktop.'
             )
         computer_use = sandbox.computer_use
         try:
@@ -919,26 +917,6 @@ class DaytonaSandboxBackend(
                 f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
                 f'sandbox brings it back. ({error})'
             ) from error
-
-    async def live_view_url(self, *, expires_in: int = 3600) -> str:
-        """A link to watch the desktop, and use it, in a browser. The link works for `expires_in` seconds.
-
-        Anyone with the link can see and use the desktop. Daytona's proxy keeps a browser that opened it signed in for
-        up to an hour, even after the link expires.
-        """
-        if self._display is None:
-            raise UserError('This Daytona workspace has no display: create it with `desktop=True`.')
-        # The sandbox may have stopped and started since the desktop last started, which leaves the viewer down.
-        await self._display.start()
-        async with self._operation():
-            sandbox = await self.get_sandbox()
-            async with _mapped_errors('Could not create a live view link', sandbox=sandbox):
-                # Daytona's desktop serves its viewer on the port the sandbox's `NO_VNC_PORT` names.
-                port = int((sandbox.env or {}).get('NO_VNC_PORT', _VNC_PORT))
-                signed = await sandbox.create_signed_preview_url(
-                    port, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT
-                )
-        return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=true&resize=scale'
 
 
 def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:

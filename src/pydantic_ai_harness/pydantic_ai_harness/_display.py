@@ -79,20 +79,10 @@ class LazyDisplay:
         """Forget that the display runs, such as when the environment may restart: the next call starts it."""
         self._running = False
 
-    async def start(self) -> None:
-        """Start the display now unless it runs, such as before handing out a link to watch it.
-
-        It checks even a display known to run, since the environment may have restarted.
-        """
-        async with self._scope():
-            await self._start_unless_running(even_if_running=True)
-
-    async def _start_unless_running(self, *, even_if_running: bool = False) -> None:
+    async def _start_unless_running(self) -> None:
         # One start at a time: two would both find no display and start two.
         async with self._lock:
-            if even_if_running or not self._running:
-                # Known to run only once a start succeeds: one that fails leaves the next call to start it.
-                self._running = False
+            if not self._running:
                 await self._start()
                 self._running = True
 
