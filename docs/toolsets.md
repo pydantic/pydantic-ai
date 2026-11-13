@@ -878,7 +878,7 @@ Toolsets can be built dynamically ahead of each agent run or run step using a fu
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
-By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
+By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run. Either way, the toolset it returns gets the [per-run and per-step lifecycle](#per-run-and-per-step-lifecycle) hooks: `for_run` before it is entered, and `for_run_step` on every step.
 
 Instructions from the toolset the function returns are attributed to the dynamic toolset, so for them to use `on_change='append'`, give the decorator an `id`: `@agent.toolset(id='orders')`.
 

@@ -30,7 +30,8 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             toolset_func: A function that takes the run context and returns a toolset or None.
-            per_run_step: Whether to re-evaluate the toolset for each run step.
+            per_run_step: Whether to re-evaluate the toolset for each run step. Either way, the toolset it
+                returns gets `for_run` before it is entered and `for_run_step` on every step.
             id: An optional unique ID for the toolset. Required for durable execution environments like Temporal.
         """
         self.toolset_func = toolset_func
