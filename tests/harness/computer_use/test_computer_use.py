@@ -500,7 +500,13 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, COMPUTER_KIND.id)
         # The call's display work is its own durable unit with its own policy, so no engine wraps the whole tool.
-        assert tool.metadata == {'temporal': False, 'prefect': False, 'render_workflows': False, 'aws_lambda': False}
+        assert tool.metadata == {
+            'temporal': False,
+            'prefect': False,
+            'render_workflows': False,
+            'aws_lambda': False,
+            'azure_durable_task': False,
+        }
         # A model with a native computer tool sends it in this tool's place, declaring the latest screenshot's size,
         # which its positions are scaled from, even after the display changed size. With `native=False`, every model
         # gets the function tool.

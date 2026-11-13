@@ -325,6 +325,34 @@ async def test_a_computer_call_with_safety_checks_waits_for_approval_however_its
     assert ran == []
 
 
+async def test_a_computer_call_with_safety_checks_waits_for_approval_whatever_kind_history_stored() -> None:
+    from pydantic_ai import Agent, DeferredToolRequests, Tool
+
+    ran: list[object] = []
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        ran.append(actions)  # pragma: no cover
+        return ['Done.', SCREEN]  # pragma: no cover
+
+    # The stored kind names some other tool, but the call still runs the computer tool.
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'click', 'x': 1, 'y': 2}]},
+        tool_call_id='call_1',
+        tool_kind='other',
+        provider_details={'safety_checks': [{'id': 'sc_1', 'message': 'Check it.'}]},
+    )
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])),
+        tools=[Tool(computer, tool_kind=COMPUTER_KIND)],
+        output_type=[str, DeferredToolRequests],
+    )
+    paused = await agent.run(message_history=[ModelResponse(parts=[call])])
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in paused.output.approvals] == ['call_1']
+    assert ran == []
+
+
 @pytest.mark.parametrize('hook_asks', [pytest.param(False, id='alone'), pytest.param(True, id='a-hook-asks-too')])
 async def test_a_computer_call_with_safety_checks_refuses_an_external_executor(hook_asks: bool) -> None:
     from pydantic_ai import Agent, DeferredToolRequests

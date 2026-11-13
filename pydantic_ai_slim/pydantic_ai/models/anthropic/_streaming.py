@@ -105,9 +105,11 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
-    # A response's computer toolset calls are one batch: one `computer` call at the first one's place, mapped and
-    # started once when the response ends, since the batch runs only then.
+    # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started when
+    # another block or the response's end follows a member, so no later part's event comes before it.
     _computer_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
+    _computer_started: int = field(default=0, init=False)
+    """How many of the batch's calls the `computer` call last started held."""
     _computer_input: list[str] = field(default_factory=list[str], init=False)
     # Calls whose input didn't arrive whole, and the other tools called between the batch's calls.
     _computer_incomplete: set[str] = field(default_factory=set[str], init=False)
@@ -132,16 +134,22 @@ class AnthropicStreamedResponse(StreamedResponse):
                 raise UnexpectedModelBehavior(
                     'The response ended before Claude finished its computer use calls, so none of them ran.'
                 )
-            if native_computer and self._computer_blocks:
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=self._computer_blocks[0]['id'],
-                    part=native_computer.call_part(
-                        self._computer_blocks,
-                        self.provider_name,
-                        incomplete=self._computer_incomplete,
-                        split=self._computer_split,
-                    ),
-                )
+            for event_ in self._start_computer_batch():
+                yield event_
+
+    def _start_computer_batch(self) -> Iterator[ModelResponseStreamEvent]:
+        native_computer = self._native_computer
+        if native_computer and len(self._computer_blocks) > self._computer_started:
+            self._computer_started = len(self._computer_blocks)
+            yield self._parts_manager.handle_part(
+                vendor_part_id=self._computer_blocks[0]['id'],
+                part=native_computer.call_part(
+                    self._computer_blocks,
+                    self.provider_name,
+                    incomplete=self._computer_incomplete,
+                    split=self._computer_split,
+                ),
+            )
 
     def _map_event(self, event: BetaRawMessageStreamEvent) -> Iterator[ModelResponseStreamEvent]:
         match event:
@@ -198,6 +206,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                 self._computer_split[current_block.id] = self._computer_between
                 self._computer_between = []
             return
+        yield from self._start_computer_batch()
         if self._computer_blocks and isinstance(current_block, BetaToolUseBlock):
             self._computer_between.append(current_block.name)
         match current_block:
@@ -446,12 +455,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                 computer_args = {}
         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
         if native_computer.is_toolset:
-            if not self._computer_blocks:
-                # Holds the batch's place among the parts; the whole batch replaces it when the response ends.
-                self._parts_manager.handle_part(
-                    vendor_part_id=block['id'],
-                    part=native_computer.call_part([block], self.provider_name, incomplete=self._computer_incomplete),
-                )
             self._computer_blocks.append(block)
         else:
             yield self._parts_manager.handle_part(

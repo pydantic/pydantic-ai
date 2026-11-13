@@ -228,8 +228,9 @@ def map_computer_call(
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     provider_details: dict[str, Any] = {'computer_call': dumped}
-    if checks := dumped.get('pending_safety_checks'):
-        # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved.
+    if (checks := dumped.get('pending_safety_checks')) is not None and checks != []:
+        # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved. A value
+        # that isn't a list of checks, even a falsy one like `{}`, is kept so the call still waits for approval.
         provider_details[_SAFETY_CHECKS] = checks
     args: dict[str, Any] | str
     if item.status == 'incomplete':
