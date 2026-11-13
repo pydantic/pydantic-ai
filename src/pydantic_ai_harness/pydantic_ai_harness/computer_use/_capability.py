@@ -7,7 +7,7 @@ import weakref
 from collections import Counter
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 import anyio
@@ -163,7 +163,7 @@ def _candidate_models(model: AbstractModel) -> list[Model]:
     """The models that may answer for `model`: itself, a `FallbackModel`'s models, or a profile-less wrapper's."""
     if isinstance(model, FallbackModel):
         return [answering for inner in model.models for answering in _candidate_models(inner)]
-    if not isinstance(model, Model):
+    if not isinstance(model, Model):  # pragma: no cover - a model outside `Model`, such as a realtime one
         return []
     try:
         model.profile
@@ -402,9 +402,15 @@ async def _perform(
             performed += 1
     finally:
         # A call releases every button it presses, so one is still pressed only after a failure or cancellation.
-        for button in held:
+        for button in list(held):
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await display.act(MouseUp(button=button))
+                held.remove(button)
+    if held:
+        raise ToolFailed(
+            f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}. '
+            f'Releasing the {" and ".join(held)} mouse button failed too, so it may still be held.'
+        )
     await steps.settle()
     return performed, error, steps.outputs
 
@@ -432,12 +438,12 @@ def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
     """The index of the response that made this call, and the call as the model made it."""
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
-        if not isinstance(message, ModelResponse):
+        if not isinstance(message, ModelResponse):  # pragma: no cover - the call's response is the latest
             continue
-        for part in message.parts:
+        for part in message.parts:  # pragma: no branch
             if (call := _as_computer_call(part, ctx.tool_call_id)) is not None:
                 return index, call
-    return None
+    return None  # pragma: no cover - a tool runs only for a call in the run's messages
 
 
 def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> ComputerCallPart | None:
@@ -570,6 +576,22 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the fields, keeping the smallest value each action limit is given, then rebuild the tool."""
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        limits: dict[str, float] = {}
+        for capability in capabilities:
+            assert isinstance(capability, cls)
+            for name, value in asdict(capability.action_limits).items():
+                if value is not None:
+                    limits[name] = min(value, limits.get(name, value))
+        merged.action_limits = _ACTION_LIMITS.validate_python(limits)
+        # The tool was built for the last capability, so it would read that one's fields.
+        merged.__post_init__()
+        return merged
 
     def __post_init__(self) -> None:
         if self.settle_seconds < 0:

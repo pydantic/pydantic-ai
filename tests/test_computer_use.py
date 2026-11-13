@@ -35,6 +35,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, MemoryTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -66,7 +67,11 @@ def test_a_computer_call_without_complete_actions_or_safety_checks() -> None:
     assert ComputerCallPart('computer', {'actions': [{'type': 'screenshot'}]}).safety_checks == []
 
 
-@pytest.mark.parametrize('checks', ['flagged', ['flagged'], [{'id': 5}]], ids=['text', 'list-of-text', 'bad-id'])
+@pytest.mark.parametrize(
+    'checks',
+    ['flagged', ['flagged'], [{'id': 5}], {}, '', 0, False],
+    ids=['text', 'list-of-text', 'bad-id', 'empty-dict', 'empty-text', 'zero', 'false'],
+)
 def test_safety_checks_a_history_garbled_still_flag_the_call(checks: object) -> None:
     # A history can come back from storage or a UI: what it kept for the checks can't be read, but the call was flagged.
     call = ComputerCallPart(
@@ -177,6 +182,16 @@ def test_computer_tool_does_not_count_a_computer_tool_another_native_tool_replac
     assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
     with pytest.raises(UserError, match=r'needs a tool of each of the kinds .* has none the model can call'):
         _prepare(ModelRequestParameters(function_tools=[replaced], native_tools=natives))
+
+
+def test_computer_tool_counts_a_computer_tool_kept_because_an_empty_tool_search_is_dropped() -> None:
+    # The optional tool search has nothing to search, so it isn't sent and the tool standing in for it stays.
+    stand_in = ToolDefinition(name='search_computer', tool_kind=COMPUTER_KIND, unless_native='tool_search')
+    natives: list[AbstractNativeTool] = [ToolSearchTool(optional=True), ComputerTool(display_size=(1, 1))]
+    params = _prepare(ModelRequestParameters(function_tools=[stand_in], native_tools=natives))
+    assert params.tool_name_for_kind(COMPUTER_KIND) == 'search_computer'
+    with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one the model can call'):
+        _prepare(ModelRequestParameters(function_tools=[stand_in, _computer_tool_def()], native_tools=natives))
 
 
 async def test_a_grid_model_is_told_its_grid_in_every_computer_tool() -> None:

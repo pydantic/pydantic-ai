@@ -533,7 +533,7 @@ def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]
     still waits for approval.
     """
     checks = (provider_details or {}).get(_SAFETY_CHECKS)
-    if not checks:
+    if checks is None:
         return []
     try:
         return _SAFETY_CHECKS_TA.validate_python(checks)
