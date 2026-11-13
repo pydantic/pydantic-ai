@@ -282,7 +282,7 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
     try:
         if org is None:
             return await client.machines.get(name)
-        # boxd 0.3 returns a `list` subclass that doesn't carry its item type; copied, it gets one.
+        # Copied into a `list[Machine]`, so Pyright knows the items' type.
         machines: list[Machine] = list(await client.machines.list(org=org))
         return next((m for m in machines if m.name == name), None)
     except boxd.BoxdError:
