@@ -315,7 +315,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   A rectangle on the screenshot, from its top left corner to its bottom right one.
-                  
+
                   `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                 properties:
                   left:
@@ -390,7 +390,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -403,7 +403,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                  
+
                   `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                   is validated, so every backend types the same keys.
                 properties:
@@ -478,34 +478,34 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzXjgL6YWuX5TNMqEL8c","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":738,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}         }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01HrP4yyHBgjDei87kE8PsDN","name":"load_capability","input":{},"caller":{"type":"direct"}}   }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comput"}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er\"}"}             }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0         }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":738,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":49,"output_tokens_details":{"thinking_tokens":0}} }
-        
+
         event: message_stop
         data: {"type":"message_stop"               }
-        
+
   recorded_at: 2026-11-13T07:26:47.508903+00:00
 - request:
     method: POST
@@ -628,52 +628,52 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzXjkqTw5fnNE52prtVT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":5880,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_012fwePRzDk2Jv8ncJM4GCNd","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}  }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}            }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0               }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_015dr4VQFEJC1wG8jLSQYwAL","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}    }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}     }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1         }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01UcxZVoH9FfDvspmYACwXZX","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}            }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}      }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}         }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":2               }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":5880,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}         }
-        
+
         event: message_stop
         data: {"type":"message_stop"             }
-        
+
   recorded_at: 2026-11-13T07:26:48.596222+00:00
 - request:
     method: POST
@@ -846,23 +846,23 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzXjqP4a6QQ14PeBozJ7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7377,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}           }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0               }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7377,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}     }
-        
+
         event: message_stop
         data: {"type":"message_stop"         }
-        
+
   recorded_at: 2026-11-13T07:26:49.298109+00:00
