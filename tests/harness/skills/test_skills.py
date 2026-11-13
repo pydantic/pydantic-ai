@@ -10,6 +10,7 @@ from typing import Any
 
 import anyio.to_thread
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -25,11 +26,12 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
@@ -354,6 +356,159 @@ async def _descriptions(skills: Skills[Any], workspace: Path) -> str:
     # Between the catalog's opening sentence and the closing tag its changes are appended under.
     entries = run.instructions.split('\n', 2)[2]
     return entries.rsplit('\n</pyai:context>\n', 1)[0]
+
+
+def _untrusted(path: Path) -> AuthorityWorkspace:
+    return AuthorityWorkspace(Workspace(LocalWorkspaceBackend(path)), authority='none')
+
+
+def _calling(*calls: ToolCallPart) -> tuple[FunctionModel, list[ModelRequest], list[str]]:
+    """A model that makes `calls` one per step and then answers, recording every request and the first step's tools."""
+    requests: list[ModelRequest] = []
+    tools: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        requests.append(request)
+        if len(requests) == 1:
+            tools.extend(tool.name for tool in info.function_tools)
+        if len(requests) <= len(calls):
+            return ModelResponse(parts=[calls[len(requests) - 1]])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond), requests, tools
+
+
+def _tool_results(requests: list[ModelRequest]) -> list[object]:
+    return [part.content for request in requests for part in request.parts if isinstance(part, ToolReturnPart)]
+
+
+class TestUntrustedWorkspaces:
+    async def test_skills_reach_the_model_only_as_tool_returns(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'alpha', description='Alpha help.', body='Alpha directions.')
+        _write_skill(
+            tmp_path / 'skills', 'hidden', frontmatter='description: Hidden help.\ndisable-model-invocation: true'
+        )
+        model, requests, tools = _calling(
+            ToolCallPart('list_skills', {}),
+            ToolCallPart('load_skill', {'name': 'hidden'}),
+            ToolCallPart('load_skill', {'name': 'alpha'}),
+        )
+
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+
+        assert tools == ['list_skills', 'load_skill']
+        assert requests[0].instructions == snapshot(
+            'Skills, instructions for particular tasks, are listed by `list_skills`. At the start of a task, call `list_skills` to check whether one applies, and `load_skill` to read the one that does.'
+        )
+        assert _tool_results(requests) == [
+            {'alpha': 'Alpha help.'},
+            "No skill is named 'hidden'. Call `list_skills` to see the skills.",
+            _loaded(tmp_path.resolve() / 'skills', 'alpha', 'Alpha directions.'),
+        ]
+        system_voice = [request.instructions or '' for request in requests] + [
+            str(part.content) for request in requests for part in request.parts if isinstance(part, SystemPromptPart)
+        ]
+        assert not any('alpha' in text or 'Alpha' in text for text in system_voice)
+
+    @pytest.mark.parametrize(
+        'run_trusted,app_trusted,in_catalog,listed',
+        [(False, True, 'packaged', 'project'), (True, False, 'project', 'packaged')],
+        ids=['untrusted-run', 'untrusted-app'],
+    )
+    async def test_trust_follows_the_workspace_each_library_is_read_from(
+        self, tmp_path: Path, run_trusted: bool, app_trusted: bool, in_catalog: str, listed: str
+    ) -> None:
+        _write_skill(tmp_path / 'run' / 'skills', 'project', description='Project help.')
+        _write_skill(tmp_path / 'app' / 'skills', 'packaged', description='Packaged help.')
+        run = LocalWorkspaceBackend(tmp_path / 'run') if run_trusted else _untrusted(tmp_path / 'run')
+        app = LocalWorkspaceBackend(tmp_path / 'app') if app_trusted else _untrusted(tmp_path / 'app')
+        model, requests, tools = _calling(ToolCallPart('list_skills', {}))
+
+        await Agent(model, capabilities=[Skills('skills'), Skills('skills', workspace=app)]).run('go', workspace=run)
+
+        assert tools == ['load_capability', 'list_skills', 'load_skill']
+        assert f'- {in_catalog}: {in_catalog.capitalize()} help.' in (requests[0].instructions or '')
+        assert listed not in (requests[0].instructions or '')
+        assert _tool_results(requests) == [{listed: f'{listed.capitalize()} help.'}]
+
+    async def test_skills_passed_to_the_run_replace_the_agents(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'agent', 'alpha', description='Alpha help.')
+        _write_skill(tmp_path / 'run', 'beta', description='Beta help.')
+        model, requests, tools = _calling(ToolCallPart('list_skills', {}))
+
+        await Agent(model, capabilities=[Skills('agent')]).run(
+            'go', capabilities=[Skills('run')], workspace=_untrusted(tmp_path)
+        )
+
+        assert tools == ['list_skills', 'load_skill']
+        assert _tool_results(requests) == [{'beta': 'Beta help.'}]
+
+    async def test_a_trusted_skill_may_share_the_capabilitys_id(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'app' / 'library', 'skills', description='Skill help.')
+        _write_skill(tmp_path / 'run' / 'library', 'project', description='Project help.')
+        app = LocalWorkspaceBackend(tmp_path / 'app')
+
+        trusted_only = await _run(Skills('library'), tmp_path / 'app')
+        model, requests, tools = _calling()
+        await Agent(model, capabilities=[Skills('library'), Skills('library', workspace=app)]).run(
+            'go', workspace=_untrusted(tmp_path / 'run')
+        )
+
+        assert trusted_only.instructions == _catalog('- skills: Skill help.')
+        assert '- skills: Skill help.' in (requests[0].instructions or '')
+        assert tools == ['load_capability', 'list_skills', 'load_skill']
+
+    async def test_a_skill_linked_from_outside_keeps_an_operator_librarys_level(self, tmp_path: Path) -> None:
+        # Sharing a skill between projects by linking its directory into the library is the operator's choice.
+        _write_skill(tmp_path / 'shared', 'review', description='Review help.')
+        (tmp_path / 'repo' / 'skills').mkdir(parents=True)
+        (tmp_path / 'repo' / 'skills' / 'review').symlink_to(tmp_path / 'shared' / 'review', target_is_directory=True)
+        model, requests, tools = _calling()
+
+        await Agent(model, capabilities=[Skills('skills')]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path / 'repo')
+        )
+
+        assert tools == ['load_capability']
+        assert '- review: Review help.' in (requests[0].instructions or '')
+
+    async def test_each_skill_takes_its_own_files_authority(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'own', description='Own help.')
+        _write_skill(tmp_path / 'skills', 'vendored', description='Vendored help.')
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'skills/vendored': 'none'}
+        )
+        model, requests, tools = _calling(ToolCallPart('list_skills', {}))
+
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=workspace)
+
+        assert tools == ['load_capability', 'list_skills', 'load_skill']
+        assert '- own: Own help.' in (requests[0].instructions or '')
+        assert 'vendored' not in (requests[0].instructions or '')
+        assert _tool_results(requests) == [{'vendored': 'Vendored help.'}]
+
+    @pytest.mark.parametrize('lowered', ['vendor', 'vendor/skills', 'vendor/skills/evil'])
+    async def test_a_skill_linked_out_of_a_lowered_directory_stays_lowered(self, tmp_path: Path, lowered: str) -> None:
+        # The repository controls `vendor`, so it can make a skill there a link to outside the workspace. Naming the
+        # skill's directory at `'operator'` doesn't lift the target: `authority_of` gives a link's target no more than
+        # the link's written location, here at `'none'`: the link itself, its library, or the directory above.
+        _write_skill(tmp_path / 'outside', 'evil', description='Evil help.')
+        (tmp_path / 'repo' / 'vendor' / 'skills').mkdir(parents=True)
+        (tmp_path / 'repo' / 'vendor' / 'skills' / 'evil').symlink_to(
+            tmp_path / 'outside' / 'evil', target_is_directory=True
+        )
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path / 'repo')), authority='operator', path_authority={lowered: 'none'}
+        )
+        model, requests, tools = _calling(ToolCallPart('list_skills', {}))
+
+        await Agent(model, capabilities=[Skills('vendor/skills')]).run('go', workspace=workspace)
+
+        assert tools == ['list_skills', 'load_skill']
+        assert 'evil' not in (requests[0].instructions or '')
+        assert _tool_results(requests) == [{'evil': 'Evil help.'}]
 
 
 class TestSkillValidation:

@@ -160,6 +160,24 @@ shows a file loader, and
 [Loading runbooks from a database](https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database)
 reads the instructions at run time.
 
+## Skills from files you didn't write
+
+The model reads the catalog as your instructions, so a skill whose `SKILL.md` is
+below `'operator'`
+[authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority),
+such as one in a repository the operator doesn't control, stays out of it. The
+instructions point the model at two tools instead: it calls
+`list_skills` for their names and descriptions and `load_skill` for one's
+instructions. Both reach it as tool output rather than as your instructions.
+This costs a tool call when a task may need a skill.
+
+Each skill takes the level of its own file, `Workspace.authority_of(path)`, in
+the workspace its library is read from. So with a run workspace at
+`authority='none'`, `Skills('skills', workspace=LocalWorkspaceBackend('/app'))`
+keeps its skills in the catalog, while `Skills('skills')`, read from the run's
+workspace, offers its skills through `list_skills`; and a `path_authority` entry
+such as `{'skills/vendored': 'none'}` moves just those skills.
+
 ## Choose which skills to expose
 
 By default, all discovered skills are included. Use `include` or `exclude` to
