@@ -139,8 +139,6 @@ class _Plan:
     limit: _Limit
     """The largest screenshot both that model and the run's model take; a larger screen is refused."""
     model_name: str
-    acts: bool
-    """Whether any action changes the screen."""
 
 
 @dataclass
@@ -478,11 +476,6 @@ def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> Comp
     )
 
 
-def _changed(call: ComputerCallPart, actions: list[ComputerToolAction]) -> bool:
-    """Whether `actions` differ from the ones the model asked for, such as after an approval changed them."""
-    return call.actions != actions
-
-
 def _display(ctx: RunContext[Any]) -> Display | None:
     """The workspace backend's display, if it has one."""
     backend = ctx.workspace.backend
@@ -654,12 +647,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             grid=grid,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
-            changed=call is not None and _changed(call, actions),
+            changed=call is not None and call.actions != actions,
             # The next request goes to the run's model, or with a sticky `ModelFallback` to the one that made the call,
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_min_limit(made_limit, _model_limit(ctx.model)),
             model_name=ctx.model.model_name,
-            acts=acts,
         )
         if not ctx.in_durable_context:
             # Run here, so an error keeps its traceback.

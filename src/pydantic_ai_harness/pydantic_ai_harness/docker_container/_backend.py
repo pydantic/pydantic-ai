@@ -282,7 +282,10 @@ _START_DESKTOP = (
     f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
     # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
     # running: the pointer goes back to the middle and held buttons are let go.
-    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
+    # `-nolisten local` closes Linux's abstract socket, which `--network host` would share with every host user; the
+    # socket file in /tmp/.X11-unix stays for commands run in the container.
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
+    f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
     + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
     + 'setsid tint2 >/dev/null 2>&1 9>&- & fi; '
     'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
