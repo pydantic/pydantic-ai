@@ -465,7 +465,8 @@ async def converse():
 
 `opened()` cancels and drains workers on exit. If a child hasn't released its resources within
 ten seconds, it raises `RuntimeError`, or only logs when an error is already closing the owner,
-so that error isn't masked. A task still running when its process exited is
+so that error isn't masked. Closing saves only the tasks still running and any whose last save
+failed; call `save()` to persist other changes to a record. A task still running when its process exited is
 loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
 names the question, so the parent can resume it with the answer. Keep workspace and plugin
 resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;

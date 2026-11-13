@@ -285,6 +285,8 @@ class DelegationTasks:
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._holding: set[str] = set()
+        self._unsaved: set[str] = set()
+        """Tasks whose last `save` failed or was cut short by its bound, so closing saves them again."""
         """Settling tasks whose history `save` keeps in memory until their observers have been told."""
         self._history_on_disk: dict[str, Path] = {}
         """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory."""
@@ -374,10 +376,12 @@ class DelegationTasks:
                 # Retrieved, as `gather` did, so asyncio doesn't report it when the worker is collected.
                 if not worker.cancelled() and (exc := worker.exception()) is not None:
                     logging.getLogger(__name__).error('Delegation task %s failed while closing', task_id, exc_info=exc)
-        # Every other record saved itself when it settled.
+        # Every other record saved itself when it settled, unless that save failed or was cut short.
         for record in self.records.values():
             if record.status == 'running':
                 self._settle_unstarted(record)
+                await self.save(record)
+            elif record.id in self._unsaved:
                 await self.save(record)
 
     async def _load_saved(self, directory: Path) -> None:
@@ -437,7 +441,9 @@ class DelegationTasks:
         Once a settled task is saved, its history is kept in the file only: `history` reads it from there, and
         a resume loads it back first.
         """
+        self._unsaved.add(record.id)
         await self._write(record)
+        self._unsaved.discard(record.id)
         if record.id not in self._holding:
             self._release(record)
 

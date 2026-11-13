@@ -1365,6 +1365,36 @@ async def test_close_logs_a_worker_that_failed_while_closing(
     assert 'failed while closing' in caplog.text and 'disk full' in caplog.text
 
 
+async def test_close_saves_a_settled_child_whose_save_was_cut_short(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original_bound, original_write = anyio.move_on_after, anyio.Path.write_bytes
+    blocked = False
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        # Only the worker's own 5 s bound on its final save.
+        return original_bound(0.01 if delay == 5 else delay, shield=shield)
+
+    async def write_bytes(path: anyio.Path, data: bytes) -> int:
+        nonlocal blocked
+        if b'"status":"finished"' in data and not blocked:
+            blocked = True
+            await anyio.sleep_forever()
+        return await original_write(path, data)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    monkeypatch.setattr(anyio.Path, 'write_bytes', write_bytes)
+    owner = DelegationTasks(directory=tmp_path)
+    async with owner.opened():
+        await delegate(owner, background=True)
+        (record,) = owner.records.values()
+        (worker,) = [task for task in asyncio.all_tasks() if task.get_name() == f'delegate-{record.id}']
+        await worker
+        path = tmp_path / f'{record.id}.json'
+        assert json.loads(path.read_text())['status'] == 'running'
+    assert (json.loads(path.read_text())['status'], record.outcome) == ('finished', 'ok')
+
+
 async def test_close_drains_many_children_concurrently(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
