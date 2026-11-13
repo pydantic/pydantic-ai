@@ -3,12 +3,16 @@
 from __future__ import annotations as _annotations
 
 from pydantic_ai.computer_use import MoveMouse, Point, Region
-from pydantic_ai_harness._png import png_size
 from pydantic_ai_harness.computer_use import (
     Display,
     SupportsCursorPosition,
     SupportsZoom,
 )
+
+
+def png_size(png: bytes) -> tuple[int, int]:
+    """Width and height from a PNG's header chunk, at bytes 16 to 24."""
+    return int.from_bytes(png[16:20], 'big'), int.from_bytes(png[20:24], 'big')
 
 
 async def check_display_contract(display: Display) -> None:
