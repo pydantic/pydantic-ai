@@ -339,8 +339,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     """Thinking levels the Live model accepts. Default: unset.
 
     Same meaning as [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
-    on a standard model: unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
-    scale, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
+    on a standard model: unset means [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS],
+    every level but `XHIGH`, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
     nearest level in the set.
     """
 

@@ -13,6 +13,11 @@ threads and a queue:
 A step body dispatched on the handler thread schedules its async operation back onto the agent
 loop and blocks on the result, so the loop stays free while the handler thread waits.
 
+`run_parallel` runs operations as the branches of one `context.parallel(...)`. The SDK runs each
+branch on a thread of its own, against a child context whose step IDs derive from the branch's
+position, and that thread services the branch operation's steps the way the handler thread services
+the root context's.
+
 The active bridge is published in a `ContextVar` rather than passed around, so the capability
 does not have to be handed a `DurableContext` per invocation.
 
@@ -29,11 +34,11 @@ import functools
 import inspect
 import threading
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from queue import Queue
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, overload
 
 import anyio
 
@@ -41,7 +46,7 @@ from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
+    from aws_durable_execution_sdk_python.config import CallbackConfig, ParallelConfig, StepConfig
 
 T = TypeVar('T')
 
@@ -114,6 +119,17 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: CallbackConfig | None = None,
     ) -> DurableCallback: ...
+
+
+class _DurableParallelContext(DurableStepContext, Protocol):
+    """A `DurableContext` that also runs `parallel` operations, which the real one always does."""
+
+    def parallel(  # pragma: no cover - structural declaration, never executed
+        self,
+        functions: Sequence[Callable[[Any], Any]],
+        name: str | None = None,
+        config: Any = None,
+    ) -> Any: ...
 
 
 ContextT = TypeVar('ContextT', bound=DurableStepContext)
@@ -267,17 +283,29 @@ class _CallbackRequest:
 
 
 @dataclass
+class _ParallelRequest:
+    name: str
+    branches: list[Callable[[Any], Any]]
+    config: ParallelConfig | None
+    reply: Callable[[bool, Any], None]
+    context: contextvars.Context
+
+
+_Request = _StepRequest | _CallbackRequest | _ParallelRequest
+
+
+@dataclass
 class _Finished(Generic[T]):
     result: T | None
     error: BaseException | None
 
 
-def _record(item: _StepRequest | _CallbackRequest, *, executed: bool) -> None:
+def _record(item: _Request, *, executed: bool) -> None:
     """Report a completed step in the requesting task's context, so it counts for the spans it ran under.
 
-    A callback wait runs no work of its own, so it says nothing about what was replayed.
+    A callback wait runs no work of its own, and a `parallel` operation's branches report their own steps.
     """
-    if not isinstance(item, _CallbackRequest):
+    if isinstance(item, _StepRequest):
         item.context.run(record_durable_unit, executed=executed)
 
 
@@ -286,7 +314,7 @@ class StepBridge:
 
     def __init__(self, context: DurableStepContext) -> None:
         self._context = context
-        self._queue: Queue[_StepRequest | _CallbackRequest | _Finished[Any]] = Queue()
+        self._queue: Queue[_Request | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
@@ -299,15 +327,6 @@ class StepBridge:
         config: StepConfig | None = None,
     ) -> T:
         """Checkpoint `operation` as a durable step. Runs on the agent loop."""
-        if _in_step_body.get():
-            raise UserError(
-                f'A durable step was requested from inside another {ENGINE_NAME} durable step. Lambda '
-                'durable steps cannot be nested, and the handler thread is blocked servicing the outer '
-                'step, so the inner one could never run. This usually means a tool starts a nested agent '
-                'run that also has `AWSLambdaDurability` attached; drop the capability from the nested '
-                "agent, or opt the tool out of checkpointing with `metadata={'aws_lambda': False}`."
-            )
-
         loop = asyncio.get_running_loop()
         body = functools.partial(_run_step_body, loop, name, operation)
         return await self._submit(
@@ -315,6 +334,24 @@ class StepBridge:
                 name=name, body=body, config=config, reply=reply, context=contextvars.copy_context()
             )
         )
+
+    async def run_parallel(
+        self, name: str, operations: Sequence[Callable[[], Awaitable[T]]], config: ParallelConfig | None = None
+    ) -> list[T]:
+        """Run `operations` concurrently as the branches of one durable `parallel` operation. Runs on the agent loop.
+
+        Each branch gets a child context of its own, whose step IDs derive from the branch's index, so
+        the steps of one operation replay into it however the branches interleave. Each operation runs
+        on the agent loop with a bridge of its own, serviced by the thread the SDK runs its branch on.
+        """
+        loop = asyncio.get_running_loop()
+        branches = [functools.partial(_run_branch, loop, contextvars.copy_context(), op) for op in operations]
+        batch = await self._submit(
+            lambda reply: _ParallelRequest(
+                name=name, branches=branches, config=config, reply=reply, context=contextvars.copy_context()
+            )
+        )
+        return [item.result for item in sorted(batch.all, key=lambda item: item.index)]
 
     async def wait_for_callback(
         self,
@@ -346,8 +383,16 @@ class StepBridge:
             )
         )
 
-    async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _StepRequest | _CallbackRequest]) -> Any:
+    async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _Request]) -> Any:
         """Queue a request for the handler thread and wait for its reply."""
+        if _in_step_body.get():
+            raise UserError(
+                f'A durable step was requested from inside another {ENGINE_NAME} durable step. Lambda '
+                'durable steps cannot be nested, and the handler thread is blocked servicing the outer '
+                'step, so the inner one could never run. This usually means a tool starts a nested agent '
+                'run that also has `AWSLambdaDurability` attached; drop the capability from the nested '
+                "agent, or opt the tool out of checkpointing with `metadata={'aws_lambda': False}`."
+            )
         loop = asyncio.get_running_loop()
         async with self._order:
             future: asyncio.Future[Any] = loop.create_future()
@@ -411,9 +456,14 @@ class StepBridge:
                 _record(item, executed=executed)
                 item.reply(True, value)
 
-    def _run(self, item: _StepRequest | _CallbackRequest, body: Callable[[Any], Any]) -> Any:
+    def _run(self, item: _Request, body: Callable[[Any], Any]) -> Any:
         if isinstance(item, _CallbackRequest):
             return item.context.run(self._wait_for_callback, item)
+        if isinstance(item, _ParallelRequest):
+            # The real `DurableContext` has `parallel`. `DurableStepContext` declares only what every
+            # stand-in implements.
+            context = cast(_DurableParallelContext, self._context)
+            return item.context.run(context.parallel, item.branches, name=item.name, config=item.config)
         return item.context.run(self._context.step, body, name=item.name, config=item.config)
 
     def _wait_for_callback(self, request: _CallbackRequest) -> str | None:
@@ -432,6 +482,48 @@ class StepBridge:
         return callback.result()
 
 
+def _run_branch(
+    loop: asyncio.AbstractEventLoop,
+    context: contextvars.Context,
+    operation: Callable[[], Awaitable[T]],
+    branch_context: DurableStepContext,
+) -> T:
+    # Runs on the thread the SDK runs this branch on, which services the operation's steps
+    # against the branch's own child context, as the handler thread does for the root context.
+    bridge = StepBridge(branch_context)
+    context = context.copy()
+    context.run(_active_bridge.set, bridge)
+    _schedule(loop, 'a parallel branch', lambda: loop.create_task(_finish(bridge, operation), context=context))
+    return bridge.consume()
+
+
+async def _replay_scoped(agent_run: Callable[[], Awaitable[T]]) -> T:
+    with replay_scope():
+        return await agent_run()
+
+
+async def _finish(bridge: StepBridge, operation: Callable[[], Awaitable[Any]]) -> None:
+    """Run `operation` on the agent loop, and hand its outcome to the thread consuming `bridge`."""
+    try:
+        bridge.finish(result=await operation())
+    except BaseException as exc:
+        bridge.finish(error=exc)
+
+
+def _schedule(loop: asyncio.AbstractEventLoop, what: str, callback: Callable[[], object]) -> None:
+    """Hand `callback` to the agent loop from another thread, failing if the loop has stopped."""
+    try:
+        if not loop.is_running():
+            raise RuntimeError
+        loop.call_soon_threadsafe(callback)
+    except RuntimeError:
+        raise AgentLoopGone(
+            f'The {ENGINE_NAME} agent event loop stopped before {what} could be scheduled, so its '
+            'result can never arrive. This should not happen; please report it at '
+            'https://github.com/pydantic/pydantic-ai/issues.'
+        ) from None
+
+
 def _run_step_body(
     loop: asyncio.AbstractEventLoop, name: str, operation: Callable[[], Awaitable[T]], _step_context: object
 ) -> T:
@@ -441,16 +533,11 @@ def _run_step_body(
     step_context = contextvars.copy_context()
     step_context.run(_in_step_body.set, True)
 
-    try:
-        if not loop.is_running():
-            raise RuntimeError
-        loop.call_soon_threadsafe(_schedule_step_operation, loop, step_context, operation, result)
-    except RuntimeError:
-        raise AgentLoopGone(
-            f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
-            'scheduled, so its result can never arrive. This should not happen; please report '
-            'it at https://github.com/pydantic/pydantic-ai/issues.'
-        ) from None
+    _schedule(
+        loop,
+        f'durable step {name!r}',
+        functools.partial(_schedule_step_operation, loop, step_context, operation, result),
+    )
     while True:
         try:
             return result.result(timeout=_LOOP_LIVENESS_POLL_SECONDS)
@@ -675,17 +762,11 @@ def _run_durable_on_agent_loop(
     tasks: list[asyncio.Task[None]] = []
     started = threading.Event()
 
-    async def run() -> None:
-        try:
-            with replay_scope():
-                result = await agent_run()
-            bridge.finish(result=result)
-        except BaseException as exc:
-            bridge.finish(error=exc)
-
     def schedule_run() -> None:
         try:
-            tasks.append(run_context.run(lambda: loop.create_task(run())))
+            tasks.append(
+                run_context.run(lambda: loop.create_task(_finish(bridge, functools.partial(_replay_scoped, agent_run))))
+            )
         except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
             # Nothing else will ever call `bridge.finish()` if the run never started, so
             # `consume()` below would block until Lambda timed the function out. Resolve it here.

@@ -10,7 +10,28 @@ It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.](../img/harness/researcher.svg)
+```mermaid
+flowchart TB
+    accTitle: Researcher: a ready-made web research stack
+    accDescr: Researcher adds research instructions and tools the model calls. Its WebSearch(local=True) and WebFetch(local=True) search and fetch the web natively, or by duckduckgo_search and web_fetch. SubAgents' delegate_task sends a sub-question to a 'researcher' sub-agent with its own search and fetch, and ToolOutputLimits spills results to the run workspace, read by read_tool_result.
+    model(["model"])
+    researcher["Researcher()<br/>research instructions"]:::capability
+    web["WebSearch(local=True)<br/>WebFetch(local=True)"]:::capability
+    sub["SubAgents<br/>delegate_task"]:::capability
+    limits["ToolOutputLimits<br/>read_tool_result"]:::capability
+    internet["the web"]:::external
+    child["'researcher' sub-agent<br/>own search and fetch"]
+    workspace[("run workspace<br/>spilled results")]:::external
+    model <-->|"tool call, result"| researcher
+    researcher --> web
+    researcher --> sub
+    researcher --> limits
+    web <-->|"native search and fetch,<br/>or duckduckgo_search<br/>and web_fetch"| internet
+    sub -->|"sub-question"| child
+    limits <-->|"spills, reads"| workspace
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Usage
 

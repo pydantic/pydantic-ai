@@ -76,6 +76,7 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
+    HandleDeferredToolCalls,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -83,7 +84,6 @@ from pydantic_ai.capabilities import (
     NativeTool,
     PrepareTools,
     ProcessEventStream,
-    RequestInput,
     ResolveModelId,
     SelectModel,
     SetToolMetadata,
@@ -2013,27 +2013,27 @@ def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token
     raise AssertionError('unreachable')  # pragma: no cover
 
 
-_request_input_agent = Agent(
+_external_event_agent = Agent(
     FunctionModel(_approval_needed_fn),
-    name='request_input_test',
+    name='external_event_test',
     deps_type=type(None),
     capabilities=[
         TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
-        RequestInput[None](_ask_in_process),
+        HandleDeferredToolCalls[None](_ask_in_process),
     ],
 )
 
 
-@_request_input_agent.tool_plain(name='delete', requires_approval=True)
+@_external_event_agent.tool_plain(name='delete', requires_approval=True)
 def _delete_needs_approval(path: str) -> str:
     raise AssertionError('unreachable')  # pragma: no cover
 
 
 @workflow.defn
-class RequestInputDurableWorkflow:
+class ExternalEventWaitWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _request_input_agent.run(prompt)
+        result = await _external_event_agent.run(prompt)
         return result.output  # pragma: no cover
 
 
@@ -2042,14 +2042,14 @@ async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[RequestInputDurableWorkflow],
-        plugins=[AgentPlugin(_request_input_agent)],
+        workflows=[ExternalEventWaitWorkflow],
+        plugins=[AgentPlugin(_external_event_agent)],
     ):
         with pytest.raises(WorkflowFailureError) as exc_info:
             await client.execute_workflow(
-                RequestInputDurableWorkflow.run,
+                ExternalEventWaitWorkflow.run,
                 args=['clean up'],
-                id=RequestInputDurableWorkflow.__name__,
+                id=ExternalEventWaitWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
 

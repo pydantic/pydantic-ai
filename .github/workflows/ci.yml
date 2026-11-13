@@ -426,10 +426,61 @@ jobs:
 
       # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
       # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
-      # policy check does not hide type errors.
+      # that script enforces. The check runs whenever the install succeeded, so a failing pre-commit
+      # hook or policy check does not hide type errors.
+      #
+      # A pull request checks with pyright-rs first: a Rust port of pyright's command-line check
+      # that prints pyright's output and exit code for the same command line and configuration, in
+      # about a fifth of the time (https://github.com/dsfaccini/pyright-rs). The release is pinned
+      # by tag and checksum, and used only when it ports the pyright version `uv.lock` installs, so a
+      # pyright bump is never checked by an older port. When the install or the pyright-rs check
+      # fails, pyright checks, and its result counts, so a pull request never fails on a pyright-rs
+      # mistake. A merge group checks with pyright alone, so a wrong pyright-rs pass never reaches
+      # `main`; a push to `main` checks with pyright too.
+      - name: Install pyright-rs
+        id: pyright-rs
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        continue-on-error: true
+        env:
+          PYRIGHT_RS_RELEASE: v1.1.414-1
+          PYRIGHT_RS_SHA256: 8eacc246abfabff2bfc1d2735b756050047471b1468cb29a7ddcf42c56ae3cdc
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+          UV_NO_SYNC: "1"
+        run: |
+          trap 'echo "::warning title=pyright-rs::Installing pyright-rs failed, so pyright checks this run."' ERR
+          name="pyright-rs-$PYRIGHT_RS_RELEASE-x86_64-unknown-linux-gnu"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/dsfaccini/pyright-rs/releases/download/$PYRIGHT_RS_RELEASE/$name.tar.gz"
+          echo "$PYRIGHT_RS_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          ported=$("$RUNNER_TEMP/$name/pyright-rs" --version)
+          locked=$(uv run pyright --version)
+          if [ "$ported" != "$locked" ]; then
+            echo "::notice title=pyright-rs::pyright-rs ports $ported but uv.lock installs $locked, so pyright checks this run."
+            exit 0
+          fi
+          echo "path=$RUNNER_TEMP/$name/pyright-rs" >> "$GITHUB_OUTPUT"
+
+      - name: Type-check with pyright-rs
+        id: pyright-rs-check
+        if: ${{ !cancelled() && steps.pyright-rs.outputs.path != '' }}
+        continue-on-error: true
+        env:
+          PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
+          # A failure here only hands the check to pyright and its own budget below, so a slowdown
+          # fails the pull request only when pyright shows it too. On 2026-11-12 eight runners each
+          # checked one pull request with both (https://github.com/pydantic/pydantic-ai/actions/runs/43321752660):
+          # pyright-rs took 35.3 to 47.6 s (median 40.0 s), and pyright 6.0 to 6.6 times as long. 55
+          # is pyright's 370 s budget divided by the highest of those ratios, so a pyright-rs run that
+          # points to a pyright run over that budget hands the check to pyright. It is about 1.15x the
+          # slowest of those pyright-rs runs, and a run 1.5x their median exceeds it.
+          PYRIGHT_TIME_BUDGET: "55"
+          UV_NO_SYNC: "1"
+        run: make typecheck-changed
+
       - name: Type-check with Pyright
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' && steps.pyright-rs-check.outcome != 'success' }}
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
@@ -464,7 +515,15 @@ jobs:
           # (146 pull request, 20 merge queue, 15 `main`) ran 145 to 288 s (median 231 s, p95 254 s,
           # p99 274 s); 280 keeps about 10% above that p95, and 1 of the 146 pull request runs
           # exceeded it.
-          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '280' || '' }}
+          # From 2026-11-09 to 12 the step ran 169 to 335 s over 100 `main` push runs (median 249 s,
+          # p95 300 s), and three pull request runs failed on the 280 s budget at 291 to 307 s with
+          # zero type errors. No change is known to explain the rise from the 2026-10-29 to 30 median
+          # of 231 s. 370 is about 1.1x the `main` maximum. Passing `main` runs now reach the 328 s of
+          # #8077's fastest regressed run, so the budget no longer fails that absolute range; #8077 took
+          # the median from 88.5 s to at least 3.7x that, and a run 1.5x today's median fails 370.
+          # A pull request reaches this step only when pyright-rs did not run or did not pass. The
+          # budget times this step alone, so a pyright-rs run before it never counts against it.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
