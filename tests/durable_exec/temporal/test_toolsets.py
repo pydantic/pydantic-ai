@@ -13,6 +13,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -1047,10 +1048,10 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("""\
-<context id="toolset:mcp">
+<pyai:context id="toolset:mcp">
 Be a helpful assistant.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
 
 
@@ -1111,7 +1112,7 @@ async def test_oversized_tool_return_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133494)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133520)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedToolReturnWorkflow.run,
@@ -1191,6 +1192,75 @@ async def test_tool_metadata_crosses_activity_boundary_as_json():
     )
     with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
         await pydantic_data_converter.encode([binary_params])
+
+
+class Job(BaseModel):
+    data: Any = None
+    dry_run: bool = False
+
+
+_received_jobs: list[Job] = []
+"""The arguments `run_job` ran with, recorded in the activity."""
+
+
+def run_job(data: Job) -> str:
+    """Run a job."""
+    _received_jobs.append(data)
+    return 'Job finished.'
+
+
+def _run_job_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        args = {'data': {'path': '/reports'}, 'dry_run': True}
+        return ModelResponse(parts=[ToolCallPart('run_job', args, tool_call_id='c1')])
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_run_job_durable_agent = Agent(
+    FunctionModel(_run_job_model),
+    name='tool_args_durable',
+    tools=[run_job],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_run_job_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_run_job_model), name='tool_args_wrapped', tools=[run_job]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class RunJobWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _run_job_durable_agent if path == 'durability' else _run_job_wrapped_agent
+        result = await agent.run('Run the reports job as a dry run.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_single_model_arg_named_like_its_field_keeps_its_arguments(client: Client, path: str):
+    """A tool's validated arguments reach the activity as JSON and are validated again there.
+
+    For `run_job(data: Job)` they're `{'data': Job(...)}`, transported as `{'data': {...fields}}`. Since `Job` also
+    has a field `data` that accepts a dict, that envelope reads like `Job`'s own input; the tool must still run
+    with the arguments the workflow validated, not with `Job`'s defaults.
+    """
+    _received_jobs.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunJobWorkflow],
+        plugins=[AgentPlugin(_run_job_durable_agent if path == 'durability' else _run_job_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunJobWorkflow.run,
+            args=[path],
+            id=f'{RunJobWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert _received_jobs == [Job(data={'path': '/reports'}, dry_run=True)]
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

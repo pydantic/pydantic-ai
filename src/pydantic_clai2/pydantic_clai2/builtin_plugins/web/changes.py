@@ -18,16 +18,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Literal
 
 from anyio import fail_after, run_process, to_thread
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import EditFileCallPart, ReplacementArgs, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web.protocol import Diff
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.session import STEERING
+from pydantic_clai2.runtime.temporary_directory import temporary_directory
 
 ChangeScope = Literal['turn', 'session', 'uncommitted', 'branch']
 FileStatus = Literal['A', 'M', 'D']
@@ -119,15 +119,28 @@ def _file_calls(messages: Sequence[ModelMessage]) -> tuple[list[_FileCall], list
             prompt = next((part for part in message.parts if is_typed_prompt(part)), None)
             if prompt is not None and not (message.metadata or {}).get(STEERING):
                 starts.append(prompt.timestamp)
-            for part in message.parts:
-                if isinstance(part, ToolReturnPart) and part.outcome == 'success':
-                    if (call := pending.pop(part.tool_call_id, None)) is not None:
-                        found.append(call)
+            found += _returned_calls(message, pending)
             continue
-        for part in message.parts:
-            if isinstance(part, ToolCallPart) and (call := _file_call(part, len(starts))) is not None:
-                pending[part.tool_call_id] = call
+        pending.update(_requested_calls(message, len(starts)))
     return found, starts
+
+
+def _returned_calls(request: ModelRequest, pending: dict[str, _FileCall]) -> list[_FileCall]:
+    """The calls in `pending` that `request` returns a success for, in order, each taken out of `pending`."""
+    found: list[_FileCall] = []
+    for part in request.parts:
+        if isinstance(part, ToolReturnPart) and part.outcome == 'success' and part.tool_call_id in pending:
+            found.append(pending.pop(part.tool_call_id))
+    return found
+
+
+def _requested_calls(response: ModelResponse, turn: int) -> dict[str, _FileCall]:
+    """The file system's writes and edits that `response` calls in `turn`, by tool call ID."""
+    return {
+        part.tool_call_id: call
+        for part in response.parts
+        if isinstance(part, ToolCallPart) and (call := _file_call(part, turn)) is not None
+    }
 
 
 def _file_call(part: ToolCallPart, turn: int) -> _FileCall | None:
@@ -169,20 +182,26 @@ def _tool_changes(
         first = next((index for index, op in enumerate(ops) if turn is None or op.turn == turn), None)
         if first is None:
             continue
-        base = committed.get(path)
-        try:
-            now = _read(workspace / path)
-        except _Undiffable as exc:
-            created = first == 0 and ops[0].content is not None and (base is None or base in _states(base, ops))
-            files.append(_undiffed(path, 'A' if created else 'M', str(exc)))
-            continue
-        before = _before(ops, first, now, base)
-        if isinstance(before, _Unknown):
-            note = 'Its content before these changes is not known, so it has no diff.'
-            files.append(_undiffed(path, 'D' if now is None else 'M', note))
-        elif (change := _file_change(path, before, now, diffs=diffs)) is not None:
+        change = _tool_change(workspace, path, ops, first=first, base=committed.get(path), diffs=diffs)
+        if change is not None:
             files.append(change)
     return files
+
+
+def _tool_change(
+    workspace: Path, path: str, ops: list[_FileCall], *, first: int, base: str | None, diffs: bool
+) -> FileChange | None:
+    """The change `ops` made to `path` from `ops[first]` on; `base` is its last commit's content."""
+    try:
+        now = _read(workspace / path)
+    except _Undiffable as exc:
+        created = first == 0 and ops[0].content is not None and (base is None or base in _states(base, ops))
+        return _undiffed(path, 'A' if created else 'M', str(exc))
+    before = _before(ops, first, now, base)
+    if isinstance(before, _Unknown):
+        note = 'Its content before these changes is not known, so it has no diff.'
+        return _undiffed(path, 'D' if now is None else 'M', note)
+    return _file_change(path, before, now, diffs=diffs)
 
 
 async def _other_changes(workspace: Path, since: datetime, called: set[str]) -> list[FileChange]:
@@ -267,9 +286,7 @@ def _before(ops: list[_FileCall], first: int, now: str | None, base: str | None)
     if written is not None:
         return _replay(ops[written].content, ops[written + 1 : first])
     if all(op.content is None for op in ops[first:]):
-        undone = now
-        for op in reversed(ops[first:]):
-            undone = _apply(undone, [(new, old) for old, new in reversed(op.replacements)])
+        undone = _undone(now, ops[first:])
         if not isinstance(undone, _Unknown):
             return undone
     if ops[0].content is not None and (base is None or base in _states(base, ops)):
@@ -277,6 +294,13 @@ def _before(ops: list[_FileCall], first: int, now: str | None, base: str | None)
     if base is None or _replay(base, ops) != now:
         return _UNKNOWN
     return _replay(base, ops[:first])
+
+
+def _undone(text: _Content, ops: list[_FileCall]) -> _Content:
+    """`text` with the edits of `ops` undone, the last first."""
+    for op in reversed(ops):
+        text = _apply(text, [(new, old) for old, new in reversed(op.replacements)])
+    return text
 
 
 def _replay(text: _Content, ops: list[_FileCall]) -> _Content:
@@ -455,9 +479,9 @@ async def _uncommitted(workspace: Path, options: tuple[str, ...], *, diffs: bool
     (`git add --intent-to-add`), leaving the repository's own index untouched.
     """
     own = workspace / (await _git(workspace, 'rev-parse', '--git-path', 'index')).strip()
-    with TemporaryDirectory() as folder:
-        index = Path(folder) / 'index'
-        if own.exists():
+    async with temporary_directory() as folder:
+        index = folder / 'index'
+        if await to_thread.run_sync(own.exists):
             await to_thread.run_sync(shutil.copyfile, own, index)
         await _git(workspace, 'add', '--intent-to-add', '--', ':/', index=index)
         listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, 'HEAD', index=index)

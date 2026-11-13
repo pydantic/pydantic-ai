@@ -68,7 +68,7 @@ def test_coder_explains_sandbox_creation_timing() -> None:
 
 def test_durable_guidance_lives_in_the_workspace_guide() -> None:
     guide = (_ROOT / 'docs/workspace.md').read_text()
-    assert 'FileChangeRequestEvent' in guide
+    assert 'FileChangeRequestedEvent' in guide
     assert '.pydantic-ai-harness/shell/run-state/' in guide
     temporal = (_ROOT / 'docs/durable_execution/temporal.md').read_text()
     assert 'agent_folders=None' in temporal and 'start_to_close_timeout=timedelta(minutes=30)' in temporal

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from anyio.from_thread import BlockingPortal
@@ -291,8 +292,65 @@ async def test_a_failing_hook_says_why(repo: Path) -> None:
     hook.write_text('#!/bin/sh\necho "lint: notes.txt is not formatted" >&2\nexit 1\n')
     hook.chmod(0o755)
     (repo / 'notes.txt').write_text('changed\n')
+    (repo / 'new.txt').write_text('new\n')
+    (repo / 'old.txt').write_text('staged\n')
+    git(repo, 'add', 'old.txt')
+    (repo / 'old.txt').write_text('staged, then changed\n')
     with pytest.raises(GitError, match=r'lint: notes.txt is not formatted'):
         await commit(repo, message='Change the notes')
+    # The index is as it was: nothing the failed commit staged stays staged.
+    assert git(repo, 'diff', '--cached', '--name-only') == 'old.txt\n'
+    assert git(repo, 'show', ':old.txt') == 'staged\n'
+
+
+async def test_a_failed_restore_keeps_why_the_commit_failed(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    hook = repo / '.git' / 'hooks' / 'pre-commit'
+    hook.write_text('#!/bin/sh\necho "lint: notes.txt is not formatted" >&2\nexit 1\n')
+    hook.chmod(0o755)
+    (repo / 'notes.txt').write_text('changed\n')
+    real_git = git_actions._git  # pyright: ignore[reportPrivateUsage]
+
+    async def git_without_restore(workspace: Path, *args: str, **kwargs: Any) -> str:
+        if args[0] == 'read-tree':
+            raise GitError('index.lock exists')
+        return await real_git(workspace, *args, **kwargs)
+
+    monkeypatch.setattr(git_actions, '_git', git_without_restore)
+    with pytest.raises(GitError, match=r'lint: notes.txt is not formatted'):
+        await commit(repo, message='Change the notes')
+
+
+async def test_commit_around_a_rebase_conflict(repo: Path) -> None:
+    """Without `MERGE_HEAD`, files other than the conflicted one are committed, though the index cannot be saved."""
+    git(repo, 'checkout', '-q', '-b', 'other')
+    (repo / 'old.txt').write_text('other\n')
+    git(repo, 'commit', '-qam', 'other')
+    git(repo, 'checkout', '-q', 'main')
+    (repo / 'old.txt').write_text('main\n')
+    git(repo, 'commit', '-qam', 'main')
+    subprocess.run(['git', '-C', str(repo), 'rebase', 'other'], check=False, capture_output=True)
+    assert git(repo, 'diff', '--name-only', '--diff-filter=U') == 'old.txt\n'
+    (repo / 'notes.txt').write_text('changed\n')
+    hook = repo / '.git' / 'hooks' / 'pre-commit'
+    hook.write_text('#!/bin/sh\necho "lint: notes.txt is not formatted" >&2\nexit 1\n')
+    hook.chmod(0o755)
+    with pytest.raises(GitError, match=r'lint: notes.txt is not formatted'):
+        await commit(repo, message='Change the notes', files=['notes.txt'])
+    hook.unlink()
+    await commit(repo, message='Change the notes', files=['notes.txt'])
+    assert git(repo, 'show', '--name-only', '--format=', 'HEAD') == 'notes.txt\n'
+
+
+async def test_commit_without_a_git_identity_says_how_to_set_one(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for role in ('AUTHOR', 'COMMITTER'):
+        monkeypatch.delenv(f'GIT_{role}_NAME')
+        monkeypatch.delenv(f'GIT_{role}_EMAIL')
+    monkeypatch.delenv('EMAIL', raising=False)
+    git(repo, 'config', 'user.useConfigOnly', 'true')
+    (repo / 'new.txt').write_text('new\n')
+    with pytest.raises(ValueError, match=r'git config user\.name .* and git config user\.email'):
+        await commit(repo, message='Add new')
+    assert git(repo, 'diff', '--cached', '--name-only') == ''
 
 
 async def test_git_and_its_hooks_never_see_api_keys(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -34,7 +34,7 @@ result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug
 print(result.output)
 ```
 
-`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Sprites, Daytona, or boxd); see [Workspaces](#workspaces).
+`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Render, Sprites, Daytona, or boxd); see [Workspaces](#workspaces).
 
 With [Modal](modal-sandbox.md), for example:
 
@@ -133,15 +133,16 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
 | [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
 | [Smol Sandbox](smol-sandbox.md) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](boxlite-sandbox.md) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
 | [OpenSandbox](opensandbox-sandbox.md) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
-| [Docker Sandbox](docker-sandbox.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
+| [Docker Container](docker-container.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
-| [Bubblewrap Sandbox](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
+| [Bubblewrapped Workspace](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
 ### Tools & native abilities
 
@@ -186,6 +187,7 @@ Finding and reading things on the open web.
 | [Exa Agent](exa-search.md) | Harness | Delegate open-ended research to the Exa Agent API |
 | [You.com Search](youdotcom.md) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |
 | [You.com Research](youdotcom.md) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
+| [Keenable Search](keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](browser-use.md) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](playwright.md) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
 
@@ -245,10 +247,11 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Call Judge](tool-call-judge.md) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](approval-reviewer.md) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
 | [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
-| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approval-deferred tool calls programmatically |
+| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
+| [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
 
 ### Self-extension
 

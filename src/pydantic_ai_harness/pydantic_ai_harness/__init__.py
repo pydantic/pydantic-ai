@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
-    from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+    from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
-    from .coder import Coder
+    from .coder import BenchmarkInstructions, Coder
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
@@ -36,7 +36,10 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .detect_loops import DetectLoops
-    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
+    from .docker_container import DockerContainer, DockerContainerBackend
+
+    # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
+    from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -54,6 +57,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
+    from .keenable import KeenableSearch
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -69,7 +73,9 @@ if TYPE_CHECKING:
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
+    from .refine_output import DEFAULT_REFINE_OUTPUT_INSTRUCTIONS, RefineOutput
     from .render import RenderWorkflows
+    from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -97,12 +103,13 @@ __all__ = [
     'AskUser',
     'AzureDurableTaskDurability',
     'BackgroundTools',
+    'BenchmarkInstructions',
     'BoxdSandbox',
     'BoxdSandboxBackend',
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
-    'BubblewrapSandbox',
+    'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
     'ClampOversizedMessages',
@@ -111,14 +118,15 @@ __all__ = [
     'Coder',
     'CompactOnRequest',
     'ConversationSearch',
+    'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
     'DetectLoops',
-    'DockerSandbox',
-    'DockerSandboxBackend',
+    'DockerContainer',
+    'DockerContainerBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -134,6 +142,7 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KeenableSearch',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -157,7 +166,10 @@ __all__ = [
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RefineOutput',
     'RelevanceCompaction',
+    'RenderSandbox',
+    'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
@@ -198,12 +210,13 @@ _LAZY_EXPORTS = {
     'AskUser': 'ask_user',
     'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
+    'BenchmarkInstructions': 'coder',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
-    'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
@@ -216,10 +229,11 @@ _LAZY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
-    'DockerSandbox': 'docker_sandbox',
-    'DockerSandboxBackend': 'docker_sandbox',
+    'DockerContainer': 'docker_container',
+    'DockerContainerBackend': 'docker_container',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
@@ -234,6 +248,7 @@ _LAZY_EXPORTS = {
     'InputGuardrail': 'guardrails',
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
+    'KeenableSearch': 'keenable',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -256,7 +271,10 @@ _LAZY_EXPORTS = {
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'RefineOutput': 'refine_output',
     'RelevanceCompaction': 'compaction',
+    'RenderSandbox': 'render_sandbox',
+    'RenderSandboxBackend': 'render_sandbox',
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
@@ -287,13 +305,18 @@ _LAZY_EXPORTS = {
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
-    # Pre-rename names; `pydantic_ai_harness.guardrails.__getattr__` emits the
+    # Pre-rename names; the target module's `__getattr__` emits the
     # deprecation warning when these resolve.
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
     'GuardResult': 'guardrails',
     'InputGuard': 'guardrails',
     'InputGuardFunc': 'guardrails',
     'OutputGuard': 'guardrails',
     'OutputGuardFunc': 'guardrails',
+    # Pre-rename names; importing the `pydantic_ai_harness.docker_sandbox` shim emits
+    # the deprecation warning.
+    'DockerSandbox': 'docker_sandbox',
+    'DockerSandboxBackend': 'docker_sandbox',
 }
 
 

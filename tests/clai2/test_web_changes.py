@@ -1,15 +1,19 @@
 """The Changes panel's data: a session's changed files from its own file tools, and from Git."""
 
+import json
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from itertools import count
 from pathlib import Path
 from typing import Literal
 
+import anyio
 import pytest
+from anyio.from_thread import BlockingPortal
 
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -18,7 +22,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai_harness.filesystem import EditFileCallPart, WriteFileCallPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.filesystem import WRITE_FILE_KIND, EditFileCallPart, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.runtime.session import STEERING
@@ -441,3 +446,41 @@ def test_changes_route(make_fleet: MakeFleet) -> None:
     assert fleet.get('/api/changes?scope=uncommitted').json()['note'] == 'This workspace is not in a Git repository.'
     assert fleet.get('/api/sessions/nope/changes').status_code == 404
     assert fleet.get(f'/api/sessions/{conversation}/changes?scope=everything').status_code == 422
+
+
+def test_changes_route_counts_a_running_turns_writes(make_fleet: MakeFleet, tmp_path: Path) -> None:
+    """While a turn runs, the session's scopes include the files its finished tool calls wrote."""
+    events: list[anyio.Event] = []
+
+    async def turn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if isinstance(messages[-1].parts[-1], UserPromptPart):
+            arguments = json.dumps({'path': 'a.py', 'content': A1})
+            yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='write')}
+        else:
+            asked, release = events
+            asked.set()
+            await release.wait()
+            yield 'Done'
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        events.extend(portal.call(anyio.Event) for _ in range(2))
+        agent = Agent(FunctionModel(stream_function=turn))
+
+        @agent.tool_plain(tool_kind=WRITE_FILE_KIND)
+        def write_file(path: str, content: str) -> str:
+            (tmp_path / 'work' / path).write_text(content)
+            return f'Wrote {path}.'
+
+        return {'work': agent}
+
+    fleet = make_fleet(agents)
+    conversation = fleet.new('work')
+    asked, release = events
+    assert fleet.post(f'/api/sessions/{conversation}/input', {'text': 'write a.py'}).status_code == 200
+    fleet.portal.call(asked.wait)
+    try:
+        for scope in ('session', 'turn'):
+            files = fleet.get(f'/api/sessions/{conversation}/changes?scope={scope}').json()['files']
+            assert [(file['path'], file['status']) for file in files] == [('a.py', 'A')]
+    finally:
+        fleet.portal.call(release.set)

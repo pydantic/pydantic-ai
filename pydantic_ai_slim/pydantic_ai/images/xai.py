@@ -27,7 +27,6 @@ try:
     from xai_sdk.proto import usage_pb2
     from xai_sdk.types import (
         ImageAspectRatio as XaiImageAspectRatio,
-        ImageGenerationModel as LatestXaiImageGenerationModelNames,
         ImageResolution,
     )
 
@@ -41,8 +40,16 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+LatestXaiImageGenerationModelNames = Literal[
+    'grok-imagine-image-2.0', 'grok-imagine-image-quality', 'grok-imagine-image'
+]
+"""Latest xAI image generation models."""
+
 XaiImageGenerationModelName = str | LatestXaiImageGenerationModelNames
-"""Possible xAI image generation model names."""
+"""Possible xAI image generation model names.
+
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too, as a `str`.
+"""
 
 
 class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
@@ -220,23 +227,24 @@ class XaiImageGenerationModel(ImageGenerationModel):
         order_violated = False
 
         for image in images:
-            if isinstance(image, UploadedFile):
-                self._validate_uploaded_file_provider(image)
-                if seen_reference:
-                    order_violated = True
-                file_ids.append(image.file_id)
-            elif isinstance(image, BinaryImage):
-                image_references.append(image.data_uri)
-                seen_reference = True
-            elif isinstance(image, ImageUrl):
-                if image.force_download:
-                    downloaded_image = await download_item(image, data_format='base64_uri')
-                    image_references.append(downloaded_image['data'])
-                else:
-                    image_references.append(image.url)
-                seen_reference = True
-            else:
-                assert_never(image)
+            match image:
+                case UploadedFile():
+                    self._validate_uploaded_file_provider(image)
+                    if seen_reference:
+                        order_violated = True
+                    file_ids.append(image.file_id)
+                case BinaryImage():
+                    image_references.append(image.data_uri)
+                    seen_reference = True
+                case ImageUrl():
+                    if image.force_download:
+                        downloaded_image = await download_item(image, data_format='base64_uri')
+                        image_references.append(downloaded_image['data'])
+                    else:
+                        image_references.append(image.url)
+                    seen_reference = True
+                case _:
+                    assert_never(image)
 
         if len(images) == 1:
             if file_ids:

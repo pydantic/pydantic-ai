@@ -6,7 +6,7 @@ import re
 from enum import Enum
 from pathlib import Path
 
-import httpx
+import httpx2
 from pydantic import TypeAdapter
 
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -140,10 +140,10 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         """Fetch `file` from the live source, or raise a descriptive error."""
         url = f'{_REMOTE_BASE}/{file}'
         try:
-            async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
+            async with httpx2.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             local = 'no local checkout configured' if self._local_docs_path is None else str(self._local_docs_path)
             raise RuntimeError(
                 f'Could not locate {file!r} in the Pydantic AI docs. Local source: {local}. '

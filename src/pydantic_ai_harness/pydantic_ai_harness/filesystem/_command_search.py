@@ -72,34 +72,7 @@ async def run_posix_search(
     if explicit_file:
         # An explicit path bypasses gitignore, but still passes through canonical authorization.
         enumeration = 'printf "%s\\0" ' + shlex.quote(target)
-    # Carry the canonical path with each candidate, so a single search command can
-    # authorize thousands of files without per-result sandbox round trips.
-    canonical = realpath_snippet('continue')
-    if pattern is None:
-        processing = "xargs -0 sh -c 'for file do " + canonical + 'printf "%s\\0%s\\0" "$file" "$real"; done\' sh'
-    else:
-        flags = '-nIhF' if literal else '-nIhE'
-        if ignore_case:
-            flags += 'i'
-        if context:
-            flags += f' -C {context}'
-        # Grep's 1 means no matches, while 2 (including an invalid ERE or a read error)
-        # must not be turned into a plausible empty result by xargs or the output pipe.
-        processing = (
-            "xargs -0 sh -c 'tmp=$(mktemp) || exit 2; "
-            # When head closes the pipe at the cap, remove the temp file, then die of SIGPIPE
-            # again so xargs still reports the signal that marks the output as cut.
-            'trap "rm -f -- \\"\\$tmp\\"; trap - PIPE; kill -PIPE \\$\\$" PIPE; '
-            'pattern=$1; shift; for file do ' + canonical + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
-            # A file grep cannot read is skipped and reported; any other error (an invalid ERE
-            # fails on every file) still ends the search.
-            'if [ "$code" -gt 1 ]; then if [ -r "$file" ] || [ ! -e "$file" ]; then rm -f -- "$tmp"; exit "$code"; fi; '
-            f'printf "{_UNREADABLE}%s\\0" "$file" >&2; continue; fi; '
-            # With -n, every output line is numbered except the `--` between context groups.
-            'while IFS= read -r line; do [ "$line" = -- ] && continue; '
-            'printf "%s\\0%s\\0%s\\n" "$file" "$real" "$line"; done < "$tmp"; '
-            'done; rm -f -- "$tmp"\' sh ' + shlex.quote(pattern)
-        )
+    processing = _processing(pattern, literal=literal, ignore_case=ignore_case, context=context)
     # Capture enumeration's and sort's statuses separately: a failed git/find/sort must not
     # masquerade as an empty successful search through the pipeline's final xargs status.
     script = (
@@ -132,6 +105,37 @@ async def run_posix_search(
                 break
             results.append(kept)
     return results, cut, unreadable
+
+
+def _processing(pattern: str | None, *, literal: bool, ignore_case: bool, context: int) -> str:
+    """The command that reads the NUL-separated file list and prints a record per file, or per line `grep` prints."""
+    # Carry the canonical path with each candidate, so a single search command can
+    # authorize thousands of files without per-result sandbox round trips.
+    canonical = realpath_snippet('continue')
+    if pattern is None:
+        return "xargs -0 sh -c 'for file do " + canonical + 'printf "%s\\0%s\\0" "$file" "$real"; done\' sh'
+    flags = '-nIhF' if literal else '-nIhE'
+    if ignore_case:
+        flags += 'i'
+    if context:
+        flags += f' -C {context}'
+    # Grep's 1 means no matches, while 2 (including an invalid ERE or a read error)
+    # must not be turned into a plausible empty result by xargs or the output pipe.
+    return (
+        "xargs -0 sh -c 'tmp=$(mktemp) || exit 2; "
+        # When head closes the pipe at the cap, remove the temp file, then die of SIGPIPE
+        # again so xargs still reports the signal that marks the output as cut.
+        'trap "rm -f -- \\"\\$tmp\\"; trap - PIPE; kill -PIPE \\$\\$" PIPE; '
+        'pattern=$1; shift; for file do ' + canonical + f'grep {flags} -e "$pattern" -- "$file" > "$tmp"; code=$?; '
+        # A file grep cannot read is skipped and reported; any other error (an invalid ERE
+        # fails on every file) still ends the search.
+        'if [ "$code" -gt 1 ]; then if [ -r "$file" ] || [ ! -e "$file" ]; then rm -f -- "$tmp"; exit "$code"; fi; '
+        f'printf "{_UNREADABLE}%s\\0" "$file" >&2; continue; fi; '
+        # With -n, every output line is numbered except the `--` between context groups.
+        'while IFS= read -r line; do [ "$line" = -- ] && continue; '
+        'printf "%s\\0%s\\0%s\\n" "$file" "$real" "$line"; done < "$tmp"; '
+        'done; rm -f -- "$tmp"\' sh ' + shlex.quote(pattern)
+    )
 
 
 def _parse_records(output: str, *, listing: bool) -> tuple[list[Record], bool]:

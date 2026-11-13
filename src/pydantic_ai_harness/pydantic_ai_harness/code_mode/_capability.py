@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
@@ -31,6 +32,7 @@ from pydantic_ai_harness.code_mode._speculation import (
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
+    CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
     as_os_handler,
@@ -39,7 +41,7 @@ from pydantic_ai_harness.code_mode._toolset import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMontyWebsocket
+    from pydantic_monty import AsyncMontyRemote
 
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
@@ -80,13 +82,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Two parameters open it up:
+    variables, or clock. Three parameters open it up:
 
     - `mount` shares specific host directories: reach for it when the agent reads or
       writes real files.
     - `os_access` routes the sandbox's OS calls to a handler you provide: reach for it
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
+    - `os_policy` sets the sandbox's own clock and time zone (or sleep and random-seed
+      policies), merged over the defaults that route them to `os_access`.
 
     The built-in `OSAccess` has an isolated filesystem and environment but uses the
     host clock by default; custom OS handlers can expose other host resources.
@@ -133,10 +137,24 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
+    os_policy: CodeModeOSPolicy | None = None
+    """Monty session policies for the sandbox's clock, timezone, sleep, and randomness.
+
+    Keys you set are merged over the defaults, which route the clock, sleeps, and random seeding
+    to `os_access` (so without a handler, the clock and unseeded `random` are unavailable).
+    `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives sandboxed code the worker's clock
+    in that zone without any handler; a `datetime` value freezes the clock at that instant;
+    `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but makes `astimezone()`,
+    `%Z`, and `time.tzname` report that zone. See `pydantic_monty.OSPolicy` for every key.
+
+    Inside a Temporal workflow, a `'system'` clock or `random_start` is read again on replay; keep
+    the defaults (or fixed values) there.
+    """
+
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_seconds` is per
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
@@ -164,13 +182,13 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
-    A function's pool limits how long code runs between tool calls with its own `request_timeout`
-    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
+    Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
     output stay in your process.
     """
 
@@ -237,6 +255,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
         self.monty_sandbox_url = None
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeMode')
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -263,7 +282,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         """Build from an agent spec, naming the fields a spec can express.
 
         Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
-        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyWebsocket` hint is a
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyRemote` hint is a
         `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
         would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
         no JSON schema, and would drop the keyword form.
@@ -327,6 +346,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                os_policy=self.os_policy,
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
@@ -341,6 +361,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            os_policy=self.os_policy,
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
