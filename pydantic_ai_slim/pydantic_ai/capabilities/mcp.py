@@ -202,7 +202,8 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.
 
-        Precedence: explicit `id` → the native `MCPServerTool`'s id → the hostname of `url`.
+        Precedence: explicit `id` → the native `MCPServerTool`'s id → the hostname of `url`, with `-` in
+        place of the `:`s of an IPv6 address.
         Returns `None` when there's nothing to derive from — no `id`, no native `MCPServerTool`,
         and no hostname (e.g. a non-URL `local=` client that carries its own connection).
 
@@ -218,7 +219,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return self.native.id
         if url is None:
             return None
-        return urlparse(url).hostname or None
+        host = urlparse(url).hostname
+        # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead,
+        # as `MCPToolset` does for its own hostname-derived id.
+        return host.replace(':', '-') if host else None
 
     @cached_property
     def _resolved_id(self) -> str:
