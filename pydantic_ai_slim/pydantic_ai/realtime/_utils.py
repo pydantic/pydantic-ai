@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, assert_never, overload
 
 import anyio
 
+from .. import _model_errors
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
@@ -244,14 +245,10 @@ async def reconnect_with_backoff(
 
 
 def read_rejected_upgrade(error: InvalidStatus) -> tuple[str, dict[str, str]]:
-    """The body, or the reason phrase when it has none, and the headers of a rejected WebSocket upgrade's response.
-
-    The values of a repeated header, like `Set-Cookie`, are joined as `httpx` joins them: `dict(response.headers)`
-    raises `MultipleValuesError` on one.
-    """
+    """The body, or the reason phrase when it has none, and the headers of a rejected WebSocket upgrade's response."""
     response = error.response
     body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-    return body, {name: ', '.join(response.headers.get_all(name)) for name in response.headers}
+    return body, _model_errors.joined_headers(response.headers)
 
 
 def inject_trace_context(headers: MutableMapping[str, str]) -> None:

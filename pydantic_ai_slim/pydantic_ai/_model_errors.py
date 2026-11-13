@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Protocol, cast
 
 import pydantic_core
@@ -130,10 +130,12 @@ def openai_compatible_category(
     return http_status_category(status_code, message) if status_code is not None else None
 
 
-def parse_error_body(text: str | None) -> tuple[object, dict[str, str]]:
-    """`text` parsed as JSON, or `None` when it isn't JSON, and the string fields of its `error` object.
+def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
+    """Read an error response body that no SDK read, the way the provider SDKs read one.
 
-    OpenAI-compatible and Google APIs send `{"error": {...}}`; an object without an `error` gives its own fields.
+    Returns `text` parsed as JSON, or `None` when it isn't JSON; its `error` value, which OpenAI-compatible and Google
+    APIs send as `{"error": {...}}`, or the parsed object itself when it has no `error`, or `None` when it isn't an
+    object; and the string fields of that error object.
     """
     try:
         parsed: object = pydantic_core.from_json(text) if text else None
@@ -141,7 +143,23 @@ def parse_error_body(text: str | None) -> tuple[object, dict[str, str]]:
         parsed = None
     error = parsed.get('error', parsed) if is_str_dict(parsed) else None
     fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
-    return parsed, fields
+    return parsed, error, fields
+
+
+class MultiValueHeaders(Protocol):
+    """Response headers that can repeat a name, like `websockets`' `Headers`."""
+
+    def __iter__(self) -> Iterator[str]: ...
+
+    def get_all(self, key: str) -> list[str]: ...
+
+
+def joined_headers(headers: MultiValueHeaders) -> dict[str, str]:
+    """`headers` as a `dict`, with a repeated header's values joined as `httpx` joins them.
+
+    `dict()` of `websockets`' `Headers` raises `MultipleValuesError` on a repeated header, like two `Set-Cookie` lines.
+    """
+    return {name: ', '.join(headers.get_all(name)) for name in headers}
 
 
 def openai_compatible_response_error(
@@ -152,7 +170,7 @@ def openai_compatible_response_error(
     It gets the category, error code and error type the SDK's error for the same response gets, and keeps `body` as
     the response text. A status below 400 isn't an error response, so it gets no category.
     """
-    _, fields = parse_error_body(body)
+    _, _, fields = parse_error_body(body)
     code, error_type = fields.get('code'), fields.get('type')
     category = openai_compatible_category(status_code, code, error_type, fields.get('message', body))
     return ModelHTTPError.for_category(

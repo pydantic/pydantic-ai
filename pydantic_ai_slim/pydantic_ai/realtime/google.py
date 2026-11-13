@@ -1037,7 +1037,7 @@ def _rejected_upgrade_error(error: websockets.InvalidStatus, model_name: str) ->
     A status below 400 isn't an error response, so it gets no category.
     """
     body, headers = read_rejected_upgrade(error)
-    parsed, fields = _model_errors.parse_error_body(body)
+    parsed, _, fields = _model_errors.parse_error_body(body)
     status = fields.get('status')
     message = fields.get('message', body)
     status_code = error.response.status_code
