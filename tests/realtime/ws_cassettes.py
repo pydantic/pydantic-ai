@@ -623,11 +623,11 @@ class ReplayWebSocket:
                     self._interactions.insert(self._position, self._interactions.pop(index))
                 return
 
-    def unsent(self, *, final_heartbeat: bool = True) -> list[dict[str, Any]]:
+    def unsent(self, *, excuse_final_heartbeat: bool = False) -> list[dict[str, Any]]:
         """The recorded sends replay has reached that the run hasn't made, up to the next recorded inbound frame.
 
         A send recorded after an inbound frame the run hasn't read is one it hasn't reached: a session can close
-        sooner in replay than it did live. `final_heartbeat=False` leaves out the last of them when it is an
+        sooner in replay than it did live. `excuse_final_heartbeat` leaves out the last of them when it is an
         ElevenLabs `pong` answer or a frame of the idle pump's audio (see `pumps_audio`).
         """
         unsent: list[dict[str, Any]] = []
@@ -635,7 +635,7 @@ class ReplayWebSocket:
             if not isinstance(interaction, CassetteMessage) or interaction.direction == 'received':
                 break
             unsent.append(interaction.data)
-        if not final_heartbeat and unsent:
+        if excuse_final_heartbeat and unsent:
             last = unsent[-1]
             if last.get('type') == 'pong' or (self.pumps_audio and _is_audio_send(last)):
                 unsent.pop()
@@ -787,7 +787,7 @@ def patched_ws_connect(
     ):
         yield
     # A recorded send the run never made after the last inbound frame it read has no read waiting on it to fail.
-    if replay is not None and (unsent := replay.unsent(final_heartbeat=not unsent_heartbeat)):
+    if replay is not None and (unsent := replay.unsent(excuse_final_heartbeat=unsent_heartbeat)):
         raise AssertionError(f'The run never made these recorded sends: {unsent!r}')
 
 

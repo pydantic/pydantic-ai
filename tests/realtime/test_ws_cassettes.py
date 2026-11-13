@@ -502,14 +502,14 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
     )
     assert replay.unsent() == [pong, audio]
     # Without the pump, audio is the application's own microphone.
-    assert replay.unsent(final_heartbeat=False) == [pong, audio]
+    assert replay.unsent(excuse_final_heartbeat=True) == [pong, audio]
     # Only the final heartbeat is excused.
     replay.pumps_audio = True
-    assert replay.unsent(final_heartbeat=False) == [pong]
+    assert replay.unsent(excuse_final_heartbeat=True) == [pong]
     trailing_expected = RealtimeCassette(
         interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, expected)]
     )
-    assert ReplayWebSocket(trailing_expected).unsent(final_heartbeat=False) == [pong, expected]
+    assert ReplayWebSocket(trailing_expected).unsent(excuse_final_heartbeat=True) == [pong, expected]
 
 
 _LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
