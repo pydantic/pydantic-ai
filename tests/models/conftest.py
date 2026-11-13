@@ -156,7 +156,8 @@ def mock_downloads(
     """Route file URL downloads through an `httpx2.MockTransport`, so the real download path runs.
 
     A test in a module that records cassettes also needs `@pytest.mark.vcr(ignore_hosts=[...])` for the mocked
-    host, so the request reaches the mock transport instead of a recording.
+    host, so the request reaches the mock transport instead of a recording. Use a public IP literal as the host:
+    SSRF validation accepts it without a DNS lookup, which would need the network and is a blocking call.
     """
 
     def create_http_client(*, timeout: float | httpx2.Timeout) -> httpx2.AsyncClient:
