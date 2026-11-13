@@ -1181,7 +1181,7 @@ _VALID_ACTION: st.SearchStrategy[dict[str, Any]] = st.one_of(
         {
             'type': st.just('type'),
             # The tool refuses control characters other than these, so every backend types the same keys.
-            'text': st.text(st.characters(exclude_categories=['Cc']) | st.sampled_from('\n\t'), min_size=1),
+            'text': st.text(st.characters(exclude_categories=['Cc', 'Cs']) | st.sampled_from('\n\t'), min_size=1),
         }
     ),
     st.fixed_dictionaries({'type': st.sampled_from(['wait', 'screenshot'])}),
