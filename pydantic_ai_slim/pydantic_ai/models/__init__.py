@@ -541,19 +541,23 @@ class ModelRequestParameters:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
     def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
-        """The name of the function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that isn't deferred, or `None` if there is none.
+        """The name of the function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call, or `None` if there is none.
 
         A model adapter uses it to find the tool that runs a native tool's calls, through
         [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]. Unlike
         [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], it leaves out deferred
-        tools, as the check that decides whether a native tool is sent does.
+        tools history hasn't revealed yet, as the check that decides whether a native tool is sent does.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
         """
         kind_id = _tool_kind_id(kind)
         return next(
-            (t.name for t in self.function_tools if t.tool_kind == kind_id and not t.defer_loading),
+            (
+                t.name
+                for t in self.function_tools
+                if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+            ),
             None,
         )
 
@@ -4055,6 +4059,18 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _executor_kinds(params: ModelRequestParameters, native_tool: AbstractNativeTool) -> Counter[str | None]:
+    """How many tools of each kind could run `native_tool`'s calls: ones not deferred, or revealed by history.
+
+    A tool dropped when this native tool is sent can't run its calls.
+    """
+    return Counter(
+        t.tool_kind
+        for t in params.function_tools
+        if (not t.defer_loading or t.name in params.revealed_tool_names) and t.unless_native != native_tool.unique_id
+    )
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4068,12 +4084,7 @@ def _supported_native_tools(
     unsupported_natives: list[AbstractNativeTool] = []
     unapplied_settings: dict[str, frozenset[str]] = {}
     for native_tool in params.native_tools:
-        # A tool dropped when this native tool is sent can't run its calls.
-        executor_kinds = Counter(
-            t.tool_kind
-            for t in params.function_tools
-            if not t.defer_loading and t.unless_native != native_tool.unique_id
-        )
+        executor_kinds = _executor_kinds(params, native_tool)
         if not isinstance(native_tool, tuple(supported_types)):
             unsupported_natives.append(native_tool)
         elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
@@ -4084,13 +4095,13 @@ def _supported_native_tools(
             if not native_tool.optional:
                 raise UserError(
                     f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
-                    'and the request has none that is not deferred.'
+                    'and the request has none the model can call.'
                 )
         elif shared := sorted(kind.id for kind in native_tool.executed_by if executor_kinds[kind.id] > 1):
             # Which of them ran a call would depend on the order of the tools.
             raise UserError(
                 f'`{type(native_tool).__name__}` needs one tool of each of the kinds {shared} to run its calls, '
-                'and the request has more than one that is not deferred.'
+                'and the request has more than one the model can call.'
             )
         else:
             supported_natives.append(native_tool)
