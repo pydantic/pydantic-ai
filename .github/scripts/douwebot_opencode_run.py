@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
+import secrets
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+import urllib.request
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO, TypeVar
 from urllib.parse import quote
@@ -90,6 +93,10 @@ class Attempt:
     """One run of the fallback chain. A run whose process failed also records its stream's last `error` event."""
 
     provider: Provider
+    started: int = field(default_factory=time.time_ns)
+    """When the run started, in nanoseconds since the epoch."""
+    ended: int = 0
+    """When the run's process exited or was interrupted, in nanoseconds since the epoch; 0 while it runs."""
     error_type: str | None = None
     status: int | None = None
     code: str | None = None
@@ -101,6 +108,103 @@ class Attempt:
 def logfire_endpoint() -> str:
     """The Logfire base URL from `LOGFIRE_URL`, or Logfire's default."""
     return (os.environ.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
+
+
+def run_attributes(attributes: Mapping[str, str], provider: Provider, place: int) -> dict[str, str]:
+    """Name the workflow run, the caller's `attributes`, then the run's plan and its place in the chain, from 1."""
+    return {
+        'github.repository': os.environ['GITHUB_REPOSITORY'],
+        'github.run_id': os.environ['GITHUB_RUN_ID'],
+        'github.run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+        'github.job': os.environ['GITHUB_JOB'],
+        **attributes,
+        'opencode_fallback.plan': provider.plan,
+        'opencode_fallback.attempt': str(place),
+    }
+
+
+def otlp_span(
+    name: str,
+    attributes: Mapping[str, str | int | bool],
+    started: int,
+    ended: int,
+    *,
+    trace_id: str,
+    span_id: str,
+    parent_id: str | None = None,
+    failed: bool,
+) -> dict[str, object]:
+    """Build one OTLP/JSON span; `failed` sets its status to error."""
+    return {
+        'traceId': trace_id,
+        'spanId': span_id,
+        **({'parentSpanId': parent_id} if parent_id else {}),
+        'name': name,
+        'kind': 1,
+        'startTimeUnixNano': str(started),
+        'endTimeUnixNano': str(ended),
+        'attributes': [
+            {
+                'key': key,
+                'value': {'boolValue': value}
+                if isinstance(value, bool)
+                else {'intValue': str(value)}
+                if isinstance(value, int)
+                else {'stringValue': value},
+            }
+            for key, value in attributes.items()
+        ],
+        # OTLP's `STATUS_CODE_ERROR`.
+        **({'status': {'code': 2}} if failed else {}),
+    }
+
+
+def run_spans(
+    attempts: Sequence[Attempt], attributes: Mapping[str, str], *, trace_id: str, parent_id: str | None = None
+) -> list[dict[str, object]]:
+    """Build one `OpenCode run` span per run of the chain, with its provider and, if its process failed, how."""
+    spans: list[dict[str, object]] = []
+    for place, attempt in enumerate(attempts, start=1):
+        failure = {
+            'error_type': attempt.error_type,
+            'error_status': attempt.status,
+            'error_code': attempt.code,
+            'step_finish': attempt.finished,
+        }
+        values = {
+            **run_attributes(attributes, attempt.provider, place),
+            'opencode_fallback.provider': attempt.provider.name,
+            **{f'opencode_fallback.{key}': value for key, value in failure.items() if value is not None},
+        }
+        span = otlp_span(
+            'OpenCode run',
+            values,
+            attempt.started,
+            attempt.ended,
+            trace_id=trace_id,
+            span_id=secrets.token_hex(8),
+            parent_id=parent_id,
+            failed=attempt.finished is not None,
+        )
+        spans.append(span)
+    return spans
+
+
+def export_spans(token: str, service: str, spans: list[dict[str, object]]) -> None:
+    """Send `spans` to Logfire over OTLP/HTTP as `service`; a failed export only warns."""
+    resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': service}}]}
+    body = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'scope': {'name': service}, 'spans': spans}]}]}
+    request = urllib.request.Request(
+        f'{logfire_endpoint()}/v1/traces',
+        data=json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json', 'Authorization': token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30):
+            pass
+    # Callers export while a failed run's own exception propagates, so a failed export must not replace it.
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        print(f'::warning::Could not export spans to Logfire: {error}')
 
 
 def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
@@ -180,8 +284,8 @@ def run_with_fallback(
     the stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
     and an environment whose only provider key is that account's. A run whose process fails prints its model, OpenCode
     error type, status and provider code. Each run appends an `Attempt` to `attempts`, so a caller can report a chain
-    that raised. The returned result and `output` come from the run that served, so a run the chain moved past shows
-    only as its `Attempt`, whatever steps and tokens it spent.
+    that raised, and export each run as a span with `run_spans`. The returned result and `output` come from the run that
+    served, so a run the chain moved past shows only as its `Attempt`, whatever steps and tokens it spent.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in
@@ -191,7 +295,8 @@ def run_with_fallback(
     attempts = [] if attempts is None else attempts
 
     def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
-        attempts.append(Attempt(provider))
+        attempt = Attempt(provider)
+        attempts.append(attempt)
         with (
             tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp,
             output.open('w', encoding='utf-8') as stream,
@@ -211,15 +316,7 @@ def run_with_fallback(
             }
             if token:
                 # OpenCode's spans and logs carry no prompt or completion text.
-                resource = {
-                    'github.repository': os.environ['GITHUB_REPOSITORY'],
-                    'github.run_id': os.environ['GITHUB_RUN_ID'],
-                    'github.run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
-                    'github.job': os.environ['GITHUB_JOB'],
-                    **(attributes or {}),
-                    'opencode_fallback.plan': provider.plan,
-                    'opencode_fallback.attempt': str(len(attempts)),
-                }
+                resource = run_attributes(attributes or {}, provider, len(attempts))
                 env |= {
                     'OTEL_EXPORTER_OTLP_ENDPOINT': logfire_endpoint(),
                     'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
@@ -236,7 +333,10 @@ def run_with_fallback(
                 '--format',
                 'json',
             ]
-            result = launch(command, env, stream)
+            try:
+                result = launch(command, env, stream)
+            finally:
+                attempt.ended = time.time_ns()
         print(f'OpenCode run served by {provider.model} on {provider.plan}.')
         return result, provider
 
@@ -363,12 +463,18 @@ def main() -> None:
         'Return only one JSON object matching this schema: '
         + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))
     )
-    provider = run_read_only(
-        prompt,
-        cwd=workspace,
-        agent='reviewer',
-        output=Path(os.environ['RUNNER_TEMP']) / 'douwebot-opencode.ndjson',
-    )
+    attempts: list[Attempt] = []
+    try:
+        provider = run_read_only(
+            prompt,
+            cwd=workspace,
+            agent='reviewer',
+            output=Path(os.environ['RUNNER_TEMP']) / 'douwebot-opencode.ndjson',
+            attempts=attempts,
+        )
+    finally:
+        if attempts and (token := os.environ.get('LOGFIRE_TOKEN', '')):
+            export_spans(token, 'douwebot', run_spans(attempts, {}, trace_id=secrets.token_hex(16)))
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as github_output:
         github_output.write(f'engine={provider.review_engine}\n')
 

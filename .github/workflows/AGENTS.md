@@ -280,7 +280,10 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   tokens and duration. A validated answer adds the outcome and the number of findings. A review that
   raised has the outcome `FAILED`, the exception's class name and an error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
-  `error` event, and whether the stream holds a `step_finish`.
+  `error` event, and whether the stream holds a `step_finish`. Each OpenCode run of the review,
+  a run the chain moved past included, exports a child
+  [`OpenCode run` span](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan) with the same
+  failure fields.
   OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
@@ -395,6 +398,14 @@ caller's attributes. They end with the run's plan as `opencode_fallback.plan`, a
 from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
 accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
 attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
+
+douwebot's OpenCode fallback and `PR Review Checks` also export one `OpenCode run` span per run, built by
+`run_spans`. Each span carries its run's resource attributes above and `opencode_fallback.provider`. When the run's
+process failed, the span has an error status and adds the error type, status and provider code the job log names, as
+`opencode_fallback.error_type`, `opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the
+stream holds a `step_finish`, as `opencode_fallback.step_finish`. Outside the job log, these spans are the only record
+of how a run the chain moved past failed. A `PR Review Checks` review's run spans are children of its review span;
+douwebot's runs share one trace. `Category Classify`'s OpenCode fallback exports no run spans.
 
 Threat detection does not set the token. Its `gh-aw.detector.result` span records each detection's usage and outcome,
 and the provider and plan of its last run, which the detector step writes as its `provider` and `plan` outputs.

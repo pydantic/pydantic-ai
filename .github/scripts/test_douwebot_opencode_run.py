@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
 import subprocess
 import sys
+import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,7 +104,54 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
+        raise AssertionError('The review exported spans without LOGFIRE_TOKEN')
+
+    monkeypatch.setattr(douwebot_opencode_run.urllib.request, 'urlopen', urlopen)
     return github_output
+
+
+@pytest.fixture
+def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, object]]]:
+    """Give the review a Logfire token and its workflow run; return the spans of each export it sends."""
+    environment = {
+        'LOGFIRE_TOKEN': 'logfire-token',
+        'LOGFIRE_URL': 'https://logfire-eu.pydantic.info/',
+        'GITHUB_REPOSITORY': 'pydantic/pydantic-ai',
+        'GITHUB_RUN_ID': '43168376242',
+        'GITHUB_RUN_ATTEMPT': '2',
+        'GITHUB_JOB': 'douwebot-opencode',
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    exports: list[list[dict[str, object]]] = []
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
+        assert (request.full_url, request.get_header('Authorization')) == (
+            'https://logfire-eu.pydantic.info/v1/traces',
+            'logfire-token',
+        )
+        assert isinstance(request.data, bytes)
+        # Neither the provider's message nor its response body leaves the job.
+        assert b'Rate limit reached' not in request.data and LIMIT.encode() not in request.data
+        [resource] = json.loads(request.data)['resourceSpans']
+        assert resource['resource'] == {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'douwebot'}}]}
+        [scope] = resource['scopeSpans']
+        exports.append(scope['spans'])
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(douwebot_opencode_run.urllib.request, 'urlopen', urlopen)
+    return exports
+
+
+def span_attributes(span: dict[str, object]) -> dict[str, object]:
+    """The span's attributes as plain values."""
+    values: dict[str, object] = {}
+    for attribute in TypeAdapter(list[dict[str, object]]).validate_python(span['attributes']):
+        [value] = TypeAdapter(dict[str, object]).validate_python(attribute['value']).values()
+        values[str(attribute['key'])] = value
+    return values
 
 
 class OpenCodeConfig(BaseModel):
@@ -201,15 +250,9 @@ def test_launcher_sends_shared_review_and_restricts_environment(
 
 
 def test_logfire_token_tags_each_runs_telemetry_with_its_plan(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch
+    exported: list[list[dict[str, object]]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With `LOGFIRE_TOKEN`, each run exports OpenCode's telemetry, tagged with its workflow run, plan and place."""
-    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
-    monkeypatch.setenv('LOGFIRE_URL', 'https://logfire-eu.pydantic.info/')
-    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    monkeypatch.setenv('GITHUB_RUN_ID', '43168376242')
-    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
-    monkeypatch.setenv('GITHUB_JOB', 'douwebot-opencode')
     invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
     douwebot_opencode_run.main()
     run = 'github.repository=pydantic/pydantic-ai,github.run_id=43168376242,github.run_attempt=2'
@@ -411,6 +454,79 @@ RATE_LIMITED_AFTER_A_STEP: list[Mapping[str, object]] = [
     *FINISHED,
     {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')},
 ]
+
+
+RUN = {
+    'github.repository': 'pydantic/pydantic-ai',
+    'github.run_id': '43168376242',
+    'github.run_attempt': '2',
+    'github.job': 'douwebot-opencode',
+}
+
+
+@pytest.mark.parametrize(
+    ('last_run', 'raised', 'failure'),
+    [
+        pytest.param(FINISHED, None, {}, id='served'),
+        pytest.param(
+            RATE_LIMITED_AFTER_A_STEP,
+            subprocess.CalledProcessError,
+            {
+                'opencode_fallback.error_type': 'provider.rate-limit',
+                'opencode_fallback.error_status': '429',
+                'opencode_fallback.error_code': '1302',
+                'opencode_fallback.step_finish': True,
+            },
+            id='failed',
+        ),
+    ],
+)
+def test_logfire_token_exports_a_span_per_run(
+    exported: list[list[dict[str, object]]],
+    monkeypatch: pytest.MonkeyPatch,
+    last_run: list[Mapping[str, object]],
+    raised: type[BaseException] | None,
+    failure: dict[str, object],
+) -> None:
+    """Each run exports a span with its plan, its place and how it failed, a run the chain moved past included."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    handover = [REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}]
+    fake_opencode(monkeypatch, (REFUSED, refusal), (handover, refusal), (last_run, refusal if raised else None))
+    with pytest.raises(raised) if raised else contextlib.nullcontext():
+        douwebot_opencode_run.main()
+    [runs] = exported
+    assert [span['name'] for span in runs] == ['OpenCode run'] * 3
+    assert len({span['traceId'] for span in runs}) == 1
+    assert not [span for span in runs if 'parentSpanId' in span]
+    assert [span.get('status') for span in runs] == [{'code': 2}, {'code': 2}, {'code': 2} if raised else None]
+    assert [span_attributes(span) for span in runs] == [
+        {
+            **RUN,
+            'opencode_fallback.plan': 'OpenCode Go',
+            'opencode_fallback.attempt': '1',
+            'opencode_fallback.provider': 'opencode-go',
+            'opencode_fallback.error_type': 'provider.go-limit',
+            'opencode_fallback.error_status': '429',
+            'opencode_fallback.step_finish': False,
+        },
+        {
+            **RUN,
+            'opencode_fallback.plan': 'the primary Coding Plan',
+            'opencode_fallback.attempt': '2',
+            'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.error_type': 'provider.rate-limit',
+            'opencode_fallback.error_status': '429',
+            'opencode_fallback.error_code': '1302',
+            'opencode_fallback.step_finish': False,
+        },
+        {
+            **RUN,
+            'opencode_fallback.plan': 'the backup Coding Plan',
+            'opencode_fallback.attempt': '3',
+            'opencode_fallback.provider': 'zai-coding-plan',
+            **failure,
+        },
+    ]
 
 
 @pytest.mark.parametrize(
