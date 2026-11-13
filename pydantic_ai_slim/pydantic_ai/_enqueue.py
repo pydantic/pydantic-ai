@@ -408,6 +408,19 @@ def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessag
     return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
 
 
+def _pop_asap_for_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> list[PendingMessage]:
+    """The queued `'asap'` messages to deliver into `request_context`, taken out of the run's queue.
+
+    A request that resumes a suspended response gets none: the history it re-sends ends in that response,
+    which has to stay the tail as the provider's continuation seed, so there is nowhere to put new content.
+    Nothing is popped either, so the content waits for the request after it.
+    """
+    tail = request_context.messages[-1] if request_context.messages else None
+    if isinstance(tail, ModelResponse) and tail.state == 'suspended':
+        return []
+    return run_queue(ctx).pop_priority('asap')
+
+
 def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
     """Deliver the queued `'asap'` messages into the request being prepared.
 
@@ -423,8 +436,12 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
     describing it exactly as delivered. A UI adapter streams them in that order and its client loads them
     back in that order, so the client's history renders like the server's.
+
+    A request that resumes a suspended response is left alone, so its content waits for the request after
+    it: that request re-sends the history ending in the suspended response, which has to stay the tail as
+    the provider's continuation seed, so there is nowhere to put new content.
     """
-    drained = run_queue(ctx).pop_priority('asap')
+    drained = _pop_asap_for_request(ctx, request_context)
     if not drained:
         return request_context
 
