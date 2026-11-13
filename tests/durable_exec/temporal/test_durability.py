@@ -2973,6 +2973,11 @@ class _HooksOnlyWrapper(WrapperCapability[None]):
     pass
 
 
+class _ModelWrappingCombined(CombinedCapability[None]):
+    def get_wrapper_model(self, model: Model) -> Model | None:  # pragma: no cover
+        return None
+
+
 @pytest.mark.parametrize(
     ('capability', 'allowed'),
     [
@@ -2987,6 +2992,11 @@ class _HooksOnlyWrapper(WrapperCapability[None]):
             _HooksOnlyWrapper(wrapped=CombinedCapability([_PerRunModelWrapper()])),
             False,
             id='wrapper-over-combined-wraps-model',
+        ),
+        pytest.param(
+            _HooksOnlyWrapper(wrapped=_ModelWrappingCombined([_SkipEveryModelRequest()])),
+            False,
+            id='wrapper-over-model-wrapping-combined',
         ),
     ],
 )

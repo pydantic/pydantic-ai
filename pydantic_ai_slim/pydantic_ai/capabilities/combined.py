@@ -277,7 +277,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _can_wrap_model(self) -> bool:
-        return any(c.defer_loading is not True and c._can_wrap_model for c in self._dispatch)
+        return type(self).get_wrapper_model is not CombinedCapability.get_wrapper_model or any(
+            c.defer_loading is not True and c._can_wrap_model for c in self._dispatch
+        )
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
