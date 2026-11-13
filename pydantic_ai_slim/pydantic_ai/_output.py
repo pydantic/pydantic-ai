@@ -1583,8 +1583,11 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ):
         self._function_schema = _function_schema.function_schema(output_function, GenerateToolJsonSchema)
 
+        # A model-like arg takes the model's own JSON schema, so a model with one `str` field would pass the
+        # property check below, but the function would be handed the raw text instead of the model.
         if (
-            not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
+            self._function_schema.single_arg_name is not None
+            or not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
             or len(arguments_schema) != 1
             or not (argument_name := next(iter(arguments_schema.keys()), None))
             or arguments_schema.get(argument_name, {}).get('type') != 'string'

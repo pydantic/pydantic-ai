@@ -6,7 +6,7 @@ emits a `DeprecationWarning`. Import from `pydantic_ai_harness.media` instead.
 
 from pydantic_ai_harness.experimental._warn import warn_moved
 from pydantic_ai_harness.media import (
-    DiskMediaStore,
+    FileMediaStore as DiskMediaStore,
     KeyStrategy,
     MediaContext,
     MediaStore,

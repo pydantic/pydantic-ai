@@ -151,7 +151,9 @@ async def main(root: Path, mode: str) -> None:
                         (package / 'new_module.py').write_text('VALUE = 1\n')
                         app.write_text(updated + '\nfrom . import new_module\nraise RuntimeError("bad import")\n')
                     elif mode == 'harness':
-                        app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
+                        app.write_text(
+                            updated + '\nfrom pydantic_ai_harness.sub_agents import _missing_reload_symbol\n'
+                        )
                     elif mode == 'build':
                         runtime.write_text(
                             updated_runtime.replace(

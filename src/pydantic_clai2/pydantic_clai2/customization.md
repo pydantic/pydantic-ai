@@ -504,7 +504,7 @@ Use a renderer for output during a stream:
 
 ```python
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai_harness.filesystem import FileWrittenEvent
+from pydantic_ai_harness.file_system import FileWrittenEvent
 from rich.console import RenderableType
 from pydantic_clai2.plugins import Plugin
 
