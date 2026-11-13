@@ -112,7 +112,7 @@ def test_each_provider_names_its_key_variable(monkeypatch: pytest.MonkeyPatch) -
         ('PYDANTIC_AI_GATEWAY_API_KEY', 'PAIG_API_KEY'),
     ]
     assert key_profiles.key_variables('google-decisions') == ('GOOGLE_API_KEY', 'GEMINI_API_KEY')
-    assert key_profiles.key_variables('google-cloud') == ()
+    assert key_profiles.key_variables('google-cloud') == key_profiles.key_variables('litellm') == ()
     assert key_profiles.takes_key('gateway/openai')
 
     def missing_extra(provider: str) -> type[Provider[object]]:

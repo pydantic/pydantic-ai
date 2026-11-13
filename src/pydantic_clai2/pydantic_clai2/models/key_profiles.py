@@ -60,6 +60,7 @@ KEY_VARIABLES = {
     'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
     'google-decisions': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
     'google-cloud': (),  # Application Default Credentials win over its key variables.
+    'litellm': (),  # LiteLLM reads the key of the provider it routes to.
     'heroku': ('HEROKU_INFERENCE_KEY',),
     'huggingface': ('HF_TOKEN',),
     'snowflake': ('SNOWFLAKE_TOKEN',),
