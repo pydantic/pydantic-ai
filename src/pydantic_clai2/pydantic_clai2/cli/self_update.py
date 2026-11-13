@@ -283,7 +283,13 @@ async def tool_executable(uv: str) -> str | None:
 
 
 RUNNING = 'clai2-running'
-"""The folder in a `uv tool` environment where each `clai2` running from it locks a `PID-TOKEN.lock` file."""
+"""The folder in a `uv tool` environment where each `clai2` running from it locks a `PID-NAMESPACE-TOKEN.lock` file."""
+
+
+def _process_prefix() -> str:
+    # Containers sharing the environment can reuse a PID; on Linux, their PID namespaces tell them apart.
+    namespace = Path('/proc/self/ns/pid')
+    return f'{os.getpid()}-{namespace.stat().st_ino if namespace.exists() else 0}-'
 
 
 def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
@@ -296,8 +302,8 @@ def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
         return None
     import fcntl
 
-    # The token keeps processes with one PID in different PID namespaces apart.
-    pending = prefix / RUNNING / f'{os.getpid()}-{secrets.token_hex(4)}.pending'
+    # The token keeps the name of a file left behind before `/update` restarted this process apart.
+    pending = prefix / RUNNING / f'{_process_prefix()}{secrets.token_hex(4)}.pending'
     try:
         pending.parent.mkdir(exist_ok=True)
         file = pending.open('wb')
@@ -321,16 +327,16 @@ def running_elsewhere(environment: Path) -> list[str]:
     import fcntl
 
     pids: list[str] = []
+    own = _process_prefix()
     for path in (environment / RUNNING).glob('*.lock'):
-        pid = path.stem.partition('-')[0]
-        if pid == str(os.getpid()):
+        if path.name.startswith(own):
             continue
         try:
             with path.open('rb') as file:
                 fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 path.unlink()
         except BlockingIOError:
-            pids.append(pid)
+            pids.append(path.stem.partition('-')[0])
         except OSError:  # Removed meanwhile by another check.
             continue
     return sorted(pids)

@@ -514,13 +514,20 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
         updates.locate = AsyncMock(return_value=None)
         return updates, ran
 
-    with (running / '4343-1.lock').open('wb') as sibling, (running / '4545-2.lock').open('wb') as other:
-        fcntl.flock(sibling, fcntl.LOCK_EX)
-        fcntl.flock(other, fcntl.LOCK_EX)
+    # The last is a process in another PID namespace, such as a container, with this process's PID.
+    names = ['4343-0-a.lock', '4545-0-b.lock', f'{os.getpid()}-1-c.lock']
+    with (
+        (running / names[0]).open('wb') as one,
+        (running / names[1]).open('wb') as two,
+        (running / names[2]).open('wb') as three,
+    ):
+        for sibling in (one, two, three):
+            fcntl.flock(sibling, fcntl.LOCK_EX)
         refused, ran = updates()
+        pids = ', '.join(sorted(['4343', '4545', str(os.getpid())]))
         assert await refused.command([]) == (
             'Not updating to 9e08a34ee: other clai2 processes run from the install it would replace, '
-            'and would break (PID 4343, 4545). Quit them, then update again.'
+            f'and would break (PID {pids}). Quit them, then update again.'
         )
         assert ran == [], 'nothing is installed under a running sibling'
         assert (refused.failed, refused.restart_required) == (True, False)
