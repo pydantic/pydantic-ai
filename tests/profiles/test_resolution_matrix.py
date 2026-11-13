@@ -2388,7 +2388,6 @@ def test_azure_openai_gpt_5():
             'openai_supports_phase': True,
             'computer_use_screenshot_max_side': 2560,
             'computer_use_screenshot_max_pixels': 3686400,
-            'openai_supports_computer_tool': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': False,

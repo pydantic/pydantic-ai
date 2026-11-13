@@ -253,6 +253,8 @@ def test_a_desktop_needs_no_image_and_still_refuses_both_image_and_ref() -> None
         DockerContainerBackend(image='x', ref=ref, desktop=True)
     with pytest.raises(ValueError, match='pass exactly one of `image`'):
         DockerContainerBackend()
+    with pytest.raises(ValueError, match='must be a positive width and height'):
+        DockerContainerBackend(desktop=(0, 0))
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:
