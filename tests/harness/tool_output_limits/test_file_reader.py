@@ -11,16 +11,16 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, PrefixT
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.filesystem import READ_FILE_KIND, FileSystem
+from pydantic_ai_harness.file_system import READ_FILE_KIND, FileSystem
 from pydantic_ai_harness.tool_output_limits import (
     READ_TOOL_NAME,
     READ_TOOL_RESULT_KIND,
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore,
     OverflowStore,
     Spill,
     ToolOutputLimits,
-    WorkspaceStore,
+    WorkspaceOverflowStore,
 )
 
 _PAYLOAD = '\n'.join(f'line {i}' for i in range(500))
@@ -68,7 +68,7 @@ async def _run(workspace: Path, *capabilities: AbstractCapability[None]) -> tupl
     return recorder, result.output
 
 
-def _limits(store: OverflowStore | WorkspaceStore | None = None) -> ToolOutputLimits[None]:
+def _limits(store: OverflowStore | WorkspaceOverflowStore | None = None) -> ToolOutputLimits[None]:
     return ToolOutputLimits(bands=[Band(over=100, action=Spill())], store=store)
 
 
@@ -123,9 +123,9 @@ class TestReaderKept:
         spills = tmp_path / 'spills'
         spills.mkdir()
         store = (
-            WorkspaceStore(workspace=LocalWorkspaceBackend(spills))
+            WorkspaceOverflowStore(workspace=LocalWorkspaceBackend(spills))
             if own_store == 'workspace'
-            else LocalFileStore(base_dir=spills)
+            else LocalFileOverflowStore(base_dir=spills)
         )
         work = tmp_path / 'work'
         work.mkdir()

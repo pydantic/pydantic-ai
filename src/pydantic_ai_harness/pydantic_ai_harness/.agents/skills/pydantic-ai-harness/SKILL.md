@@ -172,15 +172,15 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 
 from pydantic_ai_harness import Coder, Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[
-        LocalWorkspace('.'),  # FileStore also writes into the run's workspace
+        LocalWorkspace('.'),  # FileMemoryStore also writes into the run's workspace
         Coder(),
         WebSearch(),  # core
-        Memory(FileStore('.agent-memory')),  # notes that persist across sessions
+        Memory(FileMemoryStore('.agent-memory')),  # notes that persist across sessions
     ],
 )
 ```
@@ -235,7 +235,7 @@ Some are submodule-only, including `GitHub`, `Linear`, `Notion`, `Slack`, `Googl
 the [Task-Family References](#task-family-references) table gives the import path that works for every
 capability. Top-level imports are lazy, so importing one capability does not pull in another's optional
 dependencies. Supporting types such as stores and policies are only in the submodule, for example
-`pydantic_ai_harness.memory.FileStore`.
+`pydantic_ai_harness.memory.FileMemoryStore`.
 
 ## Key Practices
 
@@ -267,12 +267,12 @@ any:
 
 | Reference | Capabilities |
 |---|---|
-| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder`, `BenchmarkInstructions` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `RenderSandbox` (`.render_sandbox`, `[render]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `BoxdSandbox` (`.boxd_sandbox`, `[boxd]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerContainer` (`.docker_container`); `OpenSandbox` (`.opensandbox_sandbox`, `[opensandbox]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrappedWorkspace` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
+| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder`, `BenchmarkInstructions` (`.coder`, `[coder]`); `FileSystem` (`.file_system`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `RenderSandbox` (`.render_sandbox`, `[render]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `BoxdSandbox` (`.boxd_sandbox`, `[boxd]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerContainer` (`.docker_container`); `OpenSandbox` (`.opensandbox_sandbox`, `[opensandbox]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrappedWorkspace` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`); `IPythonCodeMode` (`.ipython_code_mode`, `[ipython]`) |
-| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `Peers` (`.peers`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
+| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.sub_agents`); `Peers` (`.peers`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction`, `FallbackCompaction`, `CompactOnRequest`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |
 | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) | `Memory` (`.memory`); `Pixeltable` (`.pixeltable`, `[pixeltable]`); `ConversationSearch` (`.conversation_search`); `Skills` (`.skills`, `[skills]`); `PydanticAIDocs` (`.pydantic_ai_docs`) |
-| [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`, `[repair-tool-arguments]`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `ArtifactScanner` (`.artifact_scanning`); `ToolCallJudge` (`.tool_call_judge`); `ApprovalReviewer` (`.approval_reviewer`); `Permissions` (`.permissions`); `SpendLimits` (`.spend`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`); `DetectLoops` (`.detect_loops`); `RefineOutput` (`.refine_output`) |
+| [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`, `[repair-tool-arguments]`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `ArtifactScanner` (`.artifact_scanning`); `ToolCallJudge` (`.tool_call_judge`); `ApprovalReviewer` (`.approval_reviewer`); `Permissions` (`.permissions`); `SpendLimits` (`.spend_limits`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`); `DetectLoops` (`.detect_loops`); `RefineOutput` (`.refine_output`) |
 | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) | `Researcher` (`.researcher`, `[researcher]`); `ExaSearch`, `ExaAgent` (`.exa`, `[exa]`); `YouSearch`, `YouResearch` (`.youdotcom`, `[youdotcom]`); `KeenableSearch` (`.keenable`); `BrowserUse` (`.browser_use`, `[browser-use]`); `PlaywrightBrowser` (`.playwright`, `[playwright]`) |
 | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) | `GitHub` (`.github`, `[github]`); `Linear` (`.linear`, `[linear]`); `Notion` (`.notion`, `[notion]`); `GoogleWorkspace` (`.google_workspace`, `[google-workspace]`); `Slack` (`.slack`, `[slack]`); `StackOne` (`.stackone`, `[stackone]`); `Ordinal` (`.ordinal`, `[ordinal]`); `Grain` (`.grain`, `[grain]`); `DayAI` (`.day_ai`, `[day-ai]`); `PostHog` (`.posthog`, `[posthog]`); `Pylon` (`.pylon`, `[pylon]`); `LogfireMCP` (`.logfire_mcp`, `[logfire-mcp]`) |
 | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) | `StepPersistence` (`.step_persistence`, `[mongodb]` for MongoDB); `AWSLambdaDurability` (`.aws_lambda`, `[aws-lambda]`); `AbsurdDurability` (`.absurd`, `[absurd]`); `PGTaskDurability` (`.pgtask`, `[pgtask]`); `AzureDurableTaskDurability` (`.azure_durable_task`, `[azure-durable-task]`); `RenderWorkflows` (`.render`, `[render]`); `ManagedPrompt` (`.logfire`, `[logfire]`); `CapabilityCreation` (`.capability_creation`); experimental ACP server `run_acp_stdio` (`.experimental.acp`, `[acp]`) |
@@ -284,7 +284,7 @@ The full capability list, grouped by what each gives an agent, is on the
 
 ## Managed subagent lifetime
 
-For background subagents, use `DelegationTasks` from `pydantic_ai_harness.subagents`.
+For background subagents, use `DelegationTasks` from `pydantic_ai_harness.sub_agents`.
 Keep `async with tasks.opened()` outside parent turns and inside the lifetime of all
 shared workspace/plugin resources. Bind with `with tasks.bind()` and add
 `DelegationReports(tasks, conversation_id=...)` to parent runs. `SubAgents` then
