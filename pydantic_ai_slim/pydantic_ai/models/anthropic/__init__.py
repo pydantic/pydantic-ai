@@ -1185,7 +1185,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
-        computer_tool_version = _computer_tool_version_for_client(_profile.get('anthropic_computer_tool_version'), client)
+        computer_tool_version = _computer_tool_version_for_client(
+            _profile.get('anthropic_computer_tool_version'), client
+        )
         if computer_tool_version is None:
             supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
