@@ -590,6 +590,10 @@ trusted instructions, not `/` or all of home; repository links can select readab
 files beneath it. See
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
 for resolution, labels, and backend requirements.
+Below `'operator'` workspace authority, each walk-up file is read at `authority_of(path)` (an ancestor:
+its `path_authority` entry's level, else the workspace's), and only `'operator'` files go in the
+instructions: the working directory's own file is named for the model to read with its file tools, and
+an ancestor's file is sent once as a workspace-sourced `ContextFilePart` (again when it changes).
 
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the

@@ -92,6 +92,8 @@ Each snapshot is a `MemorySnapshotPart`, a [capability part](https://pydantic.de
 
 When combining it with compaction, list compaction before `Memory`, so `Memory` sees the history compaction leaves. If compaction drops the snapshot a run started with, `Memory` enqueues that same snapshot again on the same request, without reading the store again. It lands at the end of the request being sent, after its tool results, which is the one place every compaction keeps, native compaction included; on a later run's first request it records the current memory again if needed.
 
+A `FileStore` whose `MEMORY.md` is below `'operator'` [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority), such as one in the run's workspace when that's a repository the operator doesn't control, can hold text the agent never wrote. Its snapshot is still injected as data, but attributed to that file's author rather than to the agent. To keep memory the agent can rely on while working in such a workspace, keep it in an operator workspace of its own with `FileStore(..., workspace=LocalWorkspaceBackend(...))`. Writes work in either.
+
 Set `inject_memory=False` to keep memory out of the conversation entirely. The tools remain available, and the model can fetch memory only when it needs it. Snapshots that earlier runs added stay in the history:
 
 ```python

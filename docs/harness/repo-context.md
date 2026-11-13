@@ -190,6 +190,14 @@ the same note twice.
 
 Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) should hold only instruction files you would put in your own instructions.
 
+Whatever the workspace's [authority](../workspace.md#workspace-authority), the walk-up reads each file at its own level, `Workspace.authority_of(path)`. A file above the working directory gets the level of the `path_authority` entry covering it, or else the workspace's own level, so a plain workspace loads its ancestors' files as before. Only files at `'operator'` go in the instructions:
+
+- The working directory's own file below `'operator'` is named in the instructions, by its configured name, and the model reads it with its file tools, so its contents reach it as tool output.
+- An ancestor's file below `'operator'`, which the file tools can't reach, is sent as a `ContextFilePart` with the run's first request: repository data on the user channel, with a note saying who wrote it. It's sent again when its text changed, and put back on the next request when a compaction drops it.
+- When the workspace or any `path_authority` entry puts files below `'operator'`, the instructions leave out the sentence on how nested instruction files relate ("the more deeply nested one takes precedence"), which would rank repository files over the operator's.
+
+Give the operator's own files above an untrusted checkout their level with `path_authority`, such as `LocalWorkspace('./checkout', authority='none', path_authority={'~/AGENTS.md': 'operator'})`.
+
 Authorize a directory containing only trusted instruction files, such as
 `/opt/agent-context`, rather than `/` or your entire home directory. A repository's
 instruction symlinks can select any readable file beneath an authorized root,
