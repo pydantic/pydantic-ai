@@ -94,16 +94,12 @@ from ..models import (
     parse_model_id,
 )
 from ..models._speech import assistant_speech_text
-from ..models.openai import (
-    OpenAIResponsesModel,
-    _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
-    _map_reasoning_item as map_reasoning_item,  # pyright: ignore[reportPrivateUsage]
-    _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
-    _map_web_search_tool_call as map_web_search_tool_call,  # pyright: ignore[reportPrivateUsage]
-    _map_web_search_tool_param as map_web_search_tool_param,  # pyright: ignore[reportPrivateUsage]
-    _resolve_openai_thinking_effort,  # pyright: ignore[reportPrivateUsage]
-    _uploaded_file_to_response_content,  # pyright: ignore[reportPrivateUsage]
-)
+from ..models.openai import OpenAIResponsesModel
+from ..models.openai._errors import map_api_errors as map_openai_api_errors
+from ..models.openai._native_tools import map_web_search_tool_call, map_web_search_tool_param
+from ..models.openai._reasoning import map_reasoning_item, resolve_openai_thinking_effort
+from ..models.openai._response_fields import map_usage as map_openai_usage
+from ..models.openai._responses_model import uploaded_file_to_response_content
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles.openai import OpenAIModelProfile, openai_model_profile
 from ..providers import Provider, infer_provider
@@ -2230,7 +2226,7 @@ async def _tool_result_media(
         # An opaque Files-API id reports `application/octet-stream` and goes as `input_file`, as it does on
         # `OpenAIResponsesModel`: the backend reads what the id actually holds.
         _utils.validate_uploaded_file_provider(item, system=provider_name, model_type_name='OpenAILiveModel')
-        return _uploaded_file_to_response_content(item)
+        return uploaded_file_to_response_content(item)
     else:
         return await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns')  # pyright: ignore[reportPrivateUsage]
     raise UserError(
@@ -2358,7 +2354,7 @@ def _backend_reasoning_effort(
     profile = cast(OpenAIModelProfile, openai_model_profile(backend_model))
     if not (profile.get('supports_thinking', False) or profile.get('thinking_always_enabled', False)):
         return None
-    return _resolve_openai_thinking_effort(thinking, profile, supports_max=False)
+    return resolve_openai_thinking_effort(thinking, profile, supports_max=False)
 
 
 def _resolve_openai_model(model_id: str) -> Model | None:

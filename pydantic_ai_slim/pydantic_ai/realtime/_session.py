@@ -25,7 +25,7 @@ from typing_extensions import TypeAliasType
 from .. import _agent_graph, _instructions, _system_prompt
 from .._deferred_capabilities import LoadCapabilityCallPart, registered_loaded_capability_ids
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
-from .._framing import SYSTEM_TAG, wrap
+from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import (
     _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
@@ -568,7 +568,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
                 # User-channel text, including content a capability added such as a task report: never system voice.
                 from_user = True
             elif isinstance(part, SystemPromptPart):
-                texts.append(wrap(SYSTEM_TAG, part.content))
+                texts.append(frame(SYSTEM_TAG, part.content))
                 system_prompts.append(part.content)
             else:
                 raise error
@@ -1098,12 +1098,12 @@ class RealtimeSession:
                 return
             request = self._new_request([*statements, *update.parts])
             text = self._render_instruction_change(history, request)
-            frame: RealtimeInput = (
-                InstructionChangeContext(wrap(SYSTEM_TAG, text), system_prompt=text)
+            instruction_frame: RealtimeInput = (
+                InstructionChangeContext(frame(SYSTEM_TAG, text), system_prompt=text)
                 if self._profile.get('supports_system_messages', False)
-                else TextContext(wrap(SYSTEM_TAG, text))
+                else TextContext(frame(SYSTEM_TAG, text))
             )
-            await self._send_frame(frame, request=request)
+            await self._send_frame(instruction_frame, request=request)
             self._instruction_changes.append(request)
 
     async def __aenter__(self) -> RealtimeSession:

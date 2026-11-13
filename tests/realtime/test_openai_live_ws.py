@@ -343,14 +343,14 @@ async def test_instruction_change_updates_the_backend(
                         'instructions': """\
 Answer in one short sentence.
 
-<context id="agent:code_word">
+<pyai:context id="agent:code_word">
 The code word is BLUE. Tell the user when they ask for it.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
 
-<context id="agent:code_word">
+<pyai:context id="agent:code_word">
 The code word is ORANGE. Tell the user when they ask for it.
-</context>\
+</pyai:context>\
 """
                     },
                 }

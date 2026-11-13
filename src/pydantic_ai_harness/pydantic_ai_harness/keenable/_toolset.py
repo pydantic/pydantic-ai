@@ -6,12 +6,12 @@ import functools
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from typing import Concatenate, ParamSpec, Protocol, TypeVar
 
 import anyio
-import httpx
+import httpx2
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -59,7 +59,7 @@ class KeenableClient(Protocol):
 
 
 class HttpKeenableClient:
-    """The default `KeenableClient`, talking to the Keenable API over `httpx`.
+    """The default `KeenableClient`, talking to the Keenable API over `httpx2`.
 
     Keenable needs no credentials: with no API key the public endpoints are
     used, which is why this capability works out of the box. An API key raises
@@ -67,7 +67,7 @@ class HttpKeenableClient:
     """
 
     _DEFAULT_BASE_URL = 'https://api.keenable.ai'
-    # Both the httpx timeout on each connect, read, write, and pool wait, and
+    # Both the httpx2 timeout on each connect, read, write, and pool wait, and
     # the deadline for the request as a whole.
     _TIMEOUT_SECONDS = 30.0
     _MAX_RESPONSE_BYTES = 10 * 1024 * 1024
@@ -80,7 +80,7 @@ class HttpKeenableClient:
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Configure the client.
 
@@ -92,7 +92,7 @@ class HttpKeenableClient:
                 environment variable, then to the hosted API. It must be
                 `https`, or plain `http` against loopback, with no query,
                 fragment, or credentials.
-            http_client: The `httpx.AsyncClient` to send every request through,
+            http_client: The `httpx2.AsyncClient` to send every request through,
                 to reuse connections or to configure a proxy, TLS, or a retrying
                 transport. Its own timeouts apply, alongside the 30-second
                 deadline on each request. It stays open; closing it is up to
@@ -103,10 +103,10 @@ class HttpKeenableClient:
         base = (base_url if base_url is not None else os.environ.get(self._BASE_URL_ENV)) or self._DEFAULT_BASE_URL
         base = base.rstrip('/')
         source = '`base_url`' if base_url is not None else f'`{self._BASE_URL_ENV}`'
-        parsed = httpx.URL(base)
+        parsed = httpx2.URL(base)
         # The base URL is developer-controlled, but a typo should fail here
         # rather than produce a plaintext request. Credentials are rejected
-        # without echoing the URL: httpx puts the request URL in its error
+        # without echoing the URL: HTTPX puts the request URL in its error
         # messages, so they would otherwise reach logs and retry prompts.
         if parsed.userinfo:
             raise UserError(f'{source} must not contain credentials; pass the API key separately')
@@ -147,7 +147,7 @@ class HttpKeenableClient:
     ) -> object:
         """Send one request and decode its JSON body.
 
-        The httpx timeout bounds each read, so a server that keeps sending a
+        The HTTPX timeout bounds each read, so a server that keeps sending a
         little at a time could hold the request open indefinitely; the deadline
         bounds the whole exchange. `base_url` can point at any server, so the
         body is read in chunks and abandoned once it passes `_MAX_RESPONSE_BYTES`.
@@ -156,6 +156,8 @@ class HttpKeenableClient:
         # expired anyio scope, this deadline or a caller's tool timeout, cancels
         # every await inside it, which would cut a transport's async close short.
         stack = AsyncExitStack()
+        response: httpx2.Response | None = None
+        body_complete = False
         try:
             # The default client lives for one request: nothing here would close
             # a shared one, and its connections belong to the event loop that
@@ -163,10 +165,10 @@ class HttpKeenableClient:
             client = (
                 self._http_client
                 if self._http_client is not None
-                else await stack.enter_async_context(httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS))
+                else await stack.enter_async_context(httpx2.AsyncClient(timeout=self._TIMEOUT_SECONDS))
             )
             with anyio.fail_after(self._TIMEOUT_SECONDS):
-                # An injected client may follow redirects, and httpx keeps the
+                # An injected client may follow redirects, and HTTPX keeps the
                 # `X-API-Key` header on a redirect to another host, so the key
                 # would reach wherever the server points.
                 response = await stack.enter_async_context(
@@ -184,12 +186,22 @@ class HttpKeenableClient:
                 async for chunk in response.aiter_bytes():
                     content += chunk
                     if len(content) > self._MAX_RESPONSE_BYTES:
-                        raise httpx.ReadError(
+                        raise httpx2.ReadError(
                             f'response body exceeds {self._MAX_RESPONSE_BYTES} bytes', request=response.request
                         )
+                body_complete = True
         finally:
             with anyio.CancelScope(shield=True):
+                # HTTPX2 closes the response from inside its body iterator, in whichever scope
+                # cancelled that iteration, and marks it closed before awaiting. When that close
+                # was cut short, the stack's close below is a no-op, so it is finished here.
+                close_incomplete = response is not None and not body_complete and response.is_closed
                 await stack.aclose()
+                # TODO: drop this and its `suppress` once httpx2 completes an interrupted close
+                # itself: https://github.com/pydantic/httpx2/issues/1326
+                if close_incomplete and response is not None and isinstance(response.stream, httpx2.AsyncByteStream):
+                    with suppress(Exception):
+                        await response.stream.aclose()
         try:
             return json.loads(content)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -346,20 +358,20 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
             try:
                 return await fn(self, *args, **kwargs)
-            except httpx.HTTPStatusError as error:
+            except httpx2.HTTPStatusError as error:
                 if error.response.status_code in auth_statuses:
                     raise
                 response = error.response
                 raise ModelRetry(
                     f'Keenable request failed with HTTP {response.status_code} {response.reason_phrase}.'
                 ) from error
-            except httpx.HTTPError as error:
+            except httpx2.HTTPError as error:
                 raise ModelRetry(f'Keenable request failed: {error}') from error
             except TimeoutError as error:
                 raise ModelRetry('Keenable request timed out.') from error
             except _MalformedResponse as error:
                 # Only `HttpKeenableClient` raises this, so any other error,
-                # such as a custom client's bug or a key httpx cannot encode
+                # such as a custom client's bug or a key HTTPX cannot encode
                 # into a header, propagates as configuration.
                 raise ModelRetry(f'Keenable returned a malformed response: {error}') from error
 

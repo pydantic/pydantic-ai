@@ -6,7 +6,6 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRequest, ThinkingPart, UserPromptPart
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import UserError
@@ -220,9 +219,7 @@ async def test_vllm_provider_merges_leading_system_messages(allow_model_requests
     messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
     assert [message['role'] for message in messages] == ['system', 'user']
     system_content = messages[0]['content']
-    # The default profile takes no mid-conversation system messages, so the standing prompt opens by saying what
-    # `<system>` means.
-    assert system_content.startswith(f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nAnswer accurately.')
+    assert system_content.startswith('Answer accurately.')
     assert '"city"' in system_content
 
 
@@ -260,10 +257,14 @@ async def test_vllm_provider_native_output_injects_schema(allow_model_requests: 
         [
             {
                 'role': 'system',
-                'content': "\nAlways respond with a JSON object that's compatible with this schema:\n\n"
-                '{"properties": {"city": {"type": "string"}}, "required": ["city"], '
-                '"title": "CityLocation", "type": "object"}\n\n'
-                "Don't include any text or Markdown fencing before or after.\n",
+                'content': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}}, "required": ["city"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+""",
             },
             {'role': 'user', 'content': 'What is the capital of France?'},
         ]
