@@ -312,6 +312,7 @@ try:
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
         RETURNS_OUTPUT,
+        ComputerBatch,
         ComputerBlock,
         ComputerReplay,
         NativeComputer,
@@ -2445,12 +2446,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if isinstance(item, BetaWebFetchToolResultBlock) and (page := fetched_page(item))
             ),
         ]
-        native_computer = self._sent_computer(model_settings, model_request_parameters)
-        computer_blocks: list[dict[str, Any]] = []
-        computer_index = 0
-        # The other tools called between the batch's calls, which would run out of order if the batch ran as one.
-        between: list[str] = []
-        split: dict[str, list[str]] = {}
+        computer = ComputerBatch(self._sent_computer(model_settings, model_request_parameters), self.system)
         for item in response.content:
             match item:
                 case BetaTextBlock():
@@ -2501,21 +2497,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 case _:
                     assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
-                    if native_computer and native_computer.answers(item):
-                        block = {'id': item.id, 'name': item.name, 'input': item.input}
-                        if not native_computer.is_toolset:
-                            # Each call of an earlier computer use tool is a call of its own.
-                            items.append(native_computer.call_part([block], self.system))
-                            continue
-                        if not computer_blocks:
-                            computer_index = len(items)
-                        computer_blocks.append(block)
-                        if between:
-                            split[item.id] = between
-                            between = []
+                    if computer.take(item, items):
                         continue
-                    if computer_blocks:
-                        between.append(item.name)
                     items.append(
                         ToolCallPart(
                             tool_name=item.name,
@@ -2524,11 +2507,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                     )
 
-        if native_computer and computer_blocks:
-            # A response's toolset member calls are one batch, run in order until one fails, so they become one
-            # `computer` call at the first one's place. Text may sit between them; another tool call can't, since it
-            # would then run after calls Claude made after it.
-            items.insert(computer_index, native_computer.call_part(computer_blocks, self.system, split=split))
+        computer.insert(items)
 
         raw_finish_reason = response.stop_reason
         finish_reason = FINISH_REASON_MAP.get(raw_finish_reason) if raw_finish_reason else None
@@ -2858,9 +2837,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         native_computer = self._native_computer(model_request_parameters)
-        # The toolset has no name to force it by.
-        unnamed = native_computer.name if native_computer and native_computer.is_toolset else None
-
         tool_choice: BetaToolChoiceParam
         match resolved_tool_choice:
             case 'auto':
@@ -2876,13 +2852,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 supports = _support_tool_forcing(
                     self.model_name, self.profile, model_settings, model_request_parameters
                 )
-                if tool_choice_mode == 'required' and len(tool_names) == 1 and supports and unnamed not in tool_names:
-                    name = next(iter(tool_names))
-                    # An earlier computer use tool is always named `computer`.
-                    tool_choice = {
-                        'type': 'tool',
-                        'name': 'computer' if native_computer and name == native_computer.name else name,
-                    }
+                if (
+                    tool_choice_mode == 'required'
+                    and len(tool_names) == 1
+                    and supports
+                    and _can_force(tool_names, native_computer)
+                ):
+                    tool_choice = {'type': 'tool', 'name': _forced_name(next(iter(tool_names)), native_computer)}
                 else:
                     # Breaks caching, but Anthropic doesn't support limiting tools via API arg. A tool that can't be
                     # named, such as the computer toolset, or any tool where forcing isn't supported (extended
@@ -2938,16 +2914,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam] = [
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
-            if not (native_computer and t.name == native_computer.name)
+            if not _is_computer(t.name, native_computer)
         ]
-        if native_computer and native_computer.name in tool_defs:
-            if not native_computer.is_toolset and native_computer.name != 'computer' and 'computer' in tool_defs:
-                # Its calls would be told apart from the function tool's by name alone.
-                raise UserError(
-                    f"Anthropic's computer use tool is named `computer`, so the `{native_computer.name}` computer tool "
-                    'cannot be sent beside a function tool named `computer`. Rename one of them.'
-                )
-            tools.append(native_computer.tool_param())
+        tools.extend(_computer_tool_params(native_computer, tool_defs))
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -3154,14 +3123,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     request_part, request_context.tool_availability_blocks, map_context
                 )
             elif isinstance(request_part, ToolReturnPart):
-                if (call := map_context.computer_calls.get(_guard_tool_call_id(t=request_part))) is not None:
-                    request_context.user_content_params.extend(
-                        await self._map_computer_results(request_part, call, map_context)
-                    )
-                else:
-                    request_context.user_content_params.append(
-                        await self._map_tool_return_part(request_part, map_context)
-                    )
+                request_context.user_content_params.extend(await self._map_tool_result(request_part, map_context))
             elif isinstance(request_part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                 raise _unconverted_speech_part_error()
@@ -3170,6 +3132,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(request_part)
         self._append_model_request_turns(request_context, map_context.anthropic_messages)
+
+    async def _map_tool_result(
+        self, part: ToolReturnPart, map_context: _MapMessagesContext
+    ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
+        """A tool result, or the results of the computer use tool calls a `computer` call came from."""
+        if (call := map_context.computer_calls.get(_guard_tool_call_id(t=part))) is not None:
+            return await self._map_computer_results(part, call, map_context)
+        return [await self._map_tool_return_part(part, map_context)]
 
     def _map_system_prompt_part(
         self,
@@ -4143,72 +4113,66 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         rather than as an error. A failed, denied or UI-rebuilt result doesn't say which calls ran, so each call gets
         its text.
         """
-
-        def result(block: ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content):
-            return beta_tool_result_block_param.BetaToolResultBlockParam(
-                tool_use_id=block['id'],
-                type='tool_result',
-                content=list(content) or '',
-                is_error=is_error,
-                toolset_name='computer',
-            )
-
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
-            return [result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
-        # Each member may have become several actions, such as a key sequence.
-        counts = replay['computer_action_counts']
-        ends = list(itertools.accumulate(counts))
+            return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
         metadata = part.result if isinstance(part, ComputerReturnPart) else None
         # A summary, what each action returned, then the screen (or the note that replaced it in this request). Read
         # as validated, so content stored as a JSON string still reads as a list.
         typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
         content: list[Any] = list(typed) if typed is not None else part.content_items(mode='str')
-        outputs = list(content[1:-1])
-        screen = content[-1] if len(content) > 1 else None
         if metadata is None or metadata.get('changed'):
             # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: each call gets
             # the summary instead of `OK`, and the last one the rest. With no content at all, each still gets a result.
             mapped = [await self._map_tool_result_item(item, map_context) for item in content]
             return [
-                result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
+                _computer_result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
                 for index, block in enumerate(blocks)
             ]
-        performed = metadata.get('performed', ends[-1])
-        error = metadata.get('error')
-        last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
-        results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
-        for index, (block, count) in enumerate(zip(blocks, counts)):
-            start = ends[index] - count
-            if ends[index] <= performed:
-                returned = (
-                    [await self._map_tool_result_item(outputs.pop(0), map_context)]
-                    if block['name'] in RETURNS_OUTPUT and outputs
-                    else []
-                )
-                if index == last_ran and isinstance(screen, str):
-                    # The screenshot was left out of this request: the call gets the text saying why.
-                    text = ' '.join(item for item in (content[0], screen) if isinstance(item, str))
-                    results.append(result(block, False, BetaTextBlockParam(text=text, type='text'), *returned))
-                elif index == last_ran and screen is not None:
-                    ok = BetaTextBlockParam(text='OK', type='text')
-                    results.append(
-                        result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
-                    )
-                else:
-                    results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
-            elif start <= performed and error is not None:
-                failed = BetaTextBlockParam(text=f'Failed: {error}', type='text')
-                if last_ran == -1 and screen is not None and not isinstance(screen, str):
-                    # Nothing before it ran to carry the screen, and an error result can't hold an image.
-                    results.append(result(block, False, failed, await self._map_tool_result_item(screen, map_context)))
-                else:
-                    results.append(result(block, True, BetaTextBlockParam(text=error, type='text')))
-            else:
-                results.append(result(block, True, BetaTextBlockParam(text=COMPUTER_NOT_EXECUTED, type='text')))
-        return results
+        run = _ComputerRun.of(replay, metadata, content)
+        return [await self._map_member_result(run, index, map_context) for index in range(len(blocks))]
+
+    async def _map_member_result(
+        self, run: _ComputerRun, index: int, map_context: _MapMessagesContext
+    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
+        """The result of one toolset member call: it ran, it failed, or it didn't run."""
+        block = run.blocks[index]
+        if run.ran(index):
+            return await self._map_ran_member(run, index, map_context)
+        if run.error is not None and run.reached(index):
+            return await self._map_failed_member(run, block, run.error, map_context)
+        return _computer_result(block, True, BetaTextBlockParam(text=COMPUTER_NOT_EXECUTED, type='text'))
+
+    async def _map_ran_member(
+        self, run: _ComputerRun, index: int, map_context: _MapMessagesContext
+    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
+        """`OK` and what the call's action returned; the last call that ran also gets the screen."""
+        block = run.blocks[index]
+        returned = (
+            [await self._map_tool_result_item(run.outputs.pop(0), map_context)]
+            if block['name'] in RETURNS_OUTPUT and run.outputs
+            else []
+        )
+        ok = BetaTextBlockParam(text='OK', type='text')
+        if index != run.last_ran or run.screen is None:
+            return _computer_result(block, False, ok, *returned)
+        if isinstance(run.screen, str):
+            # The screenshot was left out of this request: the call gets the text saying why.
+            text = ' '.join(item for item in (run.summary, run.screen) if isinstance(item, str))
+            return _computer_result(block, False, BetaTextBlockParam(text=text, type='text'), *returned)
+        return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(run.screen, map_context))
+
+    async def _map_failed_member(
+        self, run: _ComputerRun, block: ComputerBlock, error: str, map_context: _MapMessagesContext
+    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
+        """The call whose action failed gets the error."""
+        if run.last_ran == -1 and run.screen is not None and not isinstance(run.screen, str):
+            # Nothing before it ran to carry the screen, and an error result can't hold an image.
+            failed = BetaTextBlockParam(text=f'Failed: {error}', type='text')
+            return _computer_result(block, False, failed, await self._map_tool_result_item(run.screen, map_context))
+        return _computer_result(block, True, BetaTextBlockParam(text=error, type='text'))
 
     def _map_tool_definition(
         self,
@@ -4559,3 +4523,89 @@ def _computer_tool_version_for_client(
     if model_name.startswith(_CLAUDE_5_5_MODELS) and isinstance(client, AsyncAnthropicFoundry):
         return None
     return 'computer_20251124'
+
+
+def _can_force(tool_names: set[str], native_computer: NativeComputer | None) -> bool:
+    """Whether `tool_choice` can name these tools: the computer toolset has no name to force it by."""
+    return not (native_computer and native_computer.is_toolset and native_computer.name in tool_names)
+
+
+def _is_computer(name: str, native_computer: NativeComputer | None) -> bool:
+    """Whether `name` is the `computer` tool sent as Anthropic's computer use tool."""
+    return native_computer is not None and name == native_computer.name
+
+
+def _forced_name(name: str, native_computer: NativeComputer | None) -> str:
+    """The name to force a tool by: an earlier computer use tool is always named `computer`."""
+    return 'computer' if _is_computer(name, native_computer) else name
+
+
+def _computer_tool_params(
+    native_computer: NativeComputer | None, tool_defs: Mapping[str, ToolDefinition]
+) -> list[BetaToolUnionParam]:
+    """Anthropic's computer use tool, sent in the `computer` tool's place when it's declared."""
+    if native_computer is None or native_computer.name not in tool_defs:
+        return []
+    if not native_computer.is_toolset and native_computer.name != 'computer' and 'computer' in tool_defs:
+        # Its calls would be told apart from the function tool's by name alone.
+        raise UserError(
+            f"Anthropic's computer use tool is named `computer`, so the `{native_computer.name}` computer tool "
+            'cannot be sent beside a function tool named `computer`. Rename one of them.'
+        )
+    return [native_computer.tool_param()]
+
+
+def _computer_result(
+    block: ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content
+) -> beta_tool_result_block_param.BetaToolResultBlockParam:
+    return beta_tool_result_block_param.BetaToolResultBlockParam(
+        tool_use_id=block['id'],
+        type='tool_result',
+        content=list(content) or '',
+        is_error=is_error,
+        toolset_name='computer',
+    )
+
+
+@dataclass
+class _ComputerRun:
+    """How far a `computer` call's actions got, by the toolset member calls it came from."""
+
+    blocks: list[ComputerBlock]
+    ends: list[int]
+    """The number of actions up to and including each call's: each call may have become several, such as keys."""
+    counts: list[int]
+    performed: int
+    error: str | None
+    last_ran: int
+    """The index of the last call whose actions all ran, or -1."""
+    outputs: list[Any]
+    """What each action returned, such as a zoom's image, in order."""
+    summary: Any
+    screen: Any
+    """The closing screenshot, or the note that replaced it in this request."""
+
+    @classmethod
+    def of(cls, replay: ComputerReplay, metadata: ComputerResult, content: list[Any]) -> _ComputerRun:
+        counts = replay['computer_action_counts']
+        ends = list(itertools.accumulate(counts))
+        performed = metadata.get('performed', ends[-1])
+        return cls(
+            blocks=replay['computer_blocks'],
+            ends=ends,
+            counts=counts,
+            performed=performed,
+            error=metadata.get('error'),
+            last_ran=max((index for index, end in enumerate(ends) if end <= performed), default=-1),
+            outputs=list(content[1:-1]),
+            summary=content[0] if content else None,
+            screen=content[-1] if len(content) > 1 else None,
+        )
+
+    def ran(self, index: int) -> bool:
+        """Whether all of the call's actions ran."""
+        return self.ends[index] <= self.performed
+
+    def reached(self, index: int) -> bool:
+        """Whether the call's first action was reached, so one of its actions is the one that failed."""
+        return self.ends[index] - self.counts[index] <= self.performed

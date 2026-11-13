@@ -232,25 +232,29 @@ async def _externalize(node: object, media_store: MediaStore, thresholds: _Thres
             out_list.append(await _externalize(item, media_store, thresholds))
         return out_list
     if _is_json_dict(node):
-        replaced: dict[str, object] | None = None
-        if (data := _binary_data(node)) is not None:
-            replaced = await _maybe_externalize_binary(node, data, media_store, thresholds)
-        elif (content := _text_content(node)) is not None:
-            replaced = await _maybe_externalize_text(node, content, media_store, thresholds)
-        if replaced is not None:
-            return replaced
-        out_dict: dict[str, object] = {}
-        for key, value in node.items():
-            out_dict[key] = await _externalize(value, media_store, thresholds)
-        if any(key in node for key in _LITERAL_TRIGGER_KEYS):
-            return {_LITERAL_KEY: out_dict, _MARKER_FORMAT: _LITERAL_FORMAT}
-        return out_dict
+        return await _externalize_dict(node, media_store, thresholds)
     if _is_json_scalar(node):
         return node
     raise TypeError(
         f'`externalize_media` takes a JSON tree, got {type(node).__name__}; '
         "serialize messages with `ModelMessagesTypeAdapter.dump_python(messages, mode='json')` first"
     )
+
+
+async def _externalize_dict(node: dict[str, object], media_store: MediaStore, thresholds: _Thresholds) -> object:
+    replaced: dict[str, object] | None = None
+    if (data := _binary_data(node)) is not None:
+        replaced = await _maybe_externalize_binary(node, data, media_store, thresholds)
+    elif (content := _text_content(node)) is not None:
+        replaced = await _maybe_externalize_text(node, content, media_store, thresholds)
+    if replaced is not None:
+        return replaced
+    out_dict: dict[str, object] = {}
+    for key, value in node.items():
+        out_dict[key] = await _externalize(value, media_store, thresholds)
+    if any(key in node for key in _LITERAL_TRIGGER_KEYS):
+        return {_LITERAL_KEY: out_dict, _MARKER_FORMAT: _LITERAL_FORMAT}
+    return out_dict
 
 
 async def _maybe_externalize_binary(
