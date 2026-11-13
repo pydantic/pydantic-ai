@@ -25,7 +25,7 @@ class UnpricedModelWarning(UserWarning):
 
     Only warned under `on_unpriced='zero'`, and only while a `Budget` carries a
     `usd` ceiling. A response with incomplete usage may add a known cost subtotal,
-    but the omitted usage leaves its full cost unknown. A response with no registry
+    but the unavailable usage leaves its full cost unknown. A response with no registry
     price adds nothing in dollars. Known token totals for incomplete usage are lower
     bounds.
 

@@ -3233,18 +3233,23 @@ class StreamedResponse(ABC):
         """Record the usage mapped from one stream event.
 
         Whether the response omitted usage is decided once for the whole stream by `usage`, so the
-        per-event omission marker a mapping helper adds is dropped here.
+        per-event omission marker a mapping helper adds is dropped here. An event that reported usage which could
+        not be extracted does mark the response, at most once however many events fail.
 
         Args:
             usage: The usage mapped from the event.
             reported: Whether the event carried provider usage.
             cumulative: Whether `usage` is cumulative and replaces the usage recorded so far, rather than adding to it.
         """
-        usage = copy(usage)
-        usage.unmeasured_requests = 0
+        unmeasured_requests = self._usage.unmeasured_requests
         if reported:
             self._usage_received = True
-        self._usage = usage if cumulative else self._usage + usage
+            unmeasured_requests = (
+                usage.unmeasured_requests if cumulative else unmeasured_requests or usage.unmeasured_requests
+            )
+        usage = copy(usage) if cumulative else self._usage + usage
+        usage.unmeasured_requests = unmeasured_requests
+        self._usage = usage
 
     @property
     @abstractmethod
