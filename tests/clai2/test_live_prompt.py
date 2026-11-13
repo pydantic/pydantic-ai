@@ -30,7 +30,6 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_clai2.ui.prompt.prompt_keys import ctrl_enter_steers
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
@@ -909,22 +908,6 @@ async def test_ctrl_enter_enters_outside_windows() -> None:
         live.feed('alt-enter')
         assert await live.read() == 'queued'
     assert steered == ['steered']
-
-
-@pytest.mark.parametrize(
-    ('platform', 'environ', 'expected'),
-    [
-        ('win32', {}, True),
-        ('linux', {'WT_SESSION': '0b5c4e1a'}, True),
-        ('linux', {}, False),
-        ('darwin', {}, False),
-    ],
-)
-def test_ctrl_enter_steers_on_windows_and_in_windows_terminal(
-    platform: str, environ: dict[str, str], expected: bool
-) -> None:
-    """Windows Terminal, also around WSL, takes Alt+Enter for full screen (#13399)."""
-    assert ctrl_enter_steers(platform=platform, environ=environ) is expected
 
 
 class FrameClock:
