@@ -144,7 +144,7 @@ async def watch_the_agent() -> None:
         await backend.aclose()
 ```
 
-Anyone with the link can see and use the desktop until it expires, after an hour by default or after `expires_in` seconds if you pass it. A public sandbox's preview links need no token, so its desktop is refused: make it private with `set_public(False)` first.
+Anyone with the link can see and use the desktop. The link works for an hour by default, or for `expires_in` seconds if you pass it. A browser that opened it stays signed in to the desktop for up to an hour after that, whatever `expires_in` is. A public sandbox's preview links need no token, so its desktop is refused: make it private with `set_public(False)` first.
 
 ## Reattach later
 

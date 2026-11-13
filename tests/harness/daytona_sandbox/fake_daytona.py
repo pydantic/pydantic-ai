@@ -500,6 +500,8 @@ class FakeSandbox:
         self.name: str | None = None
         self.state = SandboxState.STARTED
         self.public = False
+        # Whether the control plane has it public; `public` only learns it on `refresh_data`, as in the SDK.
+        self.server_public = False
         self.purged = False
         self.refresh_error: Exception | None = None
         # What a toolbox call to a deleted sandbox raises, when not the default 404.
@@ -559,6 +561,7 @@ class FakeSandbox:
             raise self.refresh_error
         if self.purged:
             raise DaytonaNotFoundError(f'Sandbox with ID or name {self.id} not found', status_code=404)
+        self.public = self.server_public
 
     async def delete(self, timeout: float | None = 60, wait: bool = False) -> None:
         self.state = SandboxState.DESTROYING
