@@ -200,7 +200,7 @@ async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
     assert {'name': 'computer', 'defer_loading': True}.items() <= _tools(first)[-1].items()
     assert {'type': 'computer_toolset_20260801'} in _tools(second)
     for body in bodies:
-        assert "'name': 'computer'" not in str(content_blocks(body, 'tool_addition'))
+        assert content_blocks(body, 'tool_addition') == []
 
 
 @needs_anthropic
