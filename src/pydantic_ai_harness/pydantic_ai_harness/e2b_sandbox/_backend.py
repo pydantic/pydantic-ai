@@ -132,6 +132,8 @@ _DESKTOP_TEMPLATE = 'desktop'
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
+_XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
+
 _VIEWER_PORT = 6080
 
 _START_VIEWER = (
@@ -174,15 +176,18 @@ count."""
 
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     f'if command -v startxfce4 >/dev/null && ! {_XFCE_ON_DISPLAY}; then '
-    'setsid startxfce4 >/dev/null 2>&1 9>&- & i=0; '
-    'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
-    'sleep 0.1; i=$((i+1)); done; fi'
+    f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
+    + wait_until_ready(
+        'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1', '$!', 'the XFCE desktop', _XFCE_LOG
+    )
+    + 'fi'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, and the XFCE desktop.
 
 XFCE starts unless its session runs on the display, which recovers one that died. The script then waits up to 10
-seconds for the desktop window, so the first screenshot isn't black. A template without XFCE gets a display with no
-window manager. Output goes to files, since E2B keeps a command open while a background child holds its output.
+seconds for the desktop window, so the first screenshot isn't black, and fails if XFCE exits first or the window never
+shows. A template without XFCE gets a display with no window manager. Output goes to files, since E2B keeps a command
+open while a background child holds its output.
 """
 
 

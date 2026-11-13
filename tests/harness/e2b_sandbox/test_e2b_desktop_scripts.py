@@ -23,7 +23,9 @@ _STUBS = {
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
     # `-x NAME` prints the PIDs the test listed; `-f PATTERN` matches the command lines in `starts`.
     'pgrep': '[ "$1" = -f ] && exec grep -- "$2" "$bin/starts" 2>/dev/null; cat "$bin/pgrep-$2" 2>/dev/null',
-    'startxfce4': 'touch "$bin/xfce-started"',
+    # Stays up, as XFCE's session does; `startxfce4-fails` makes it exit with an error instead.
+    'startxfce4': '[ -e "$bin/startxfce4-fails" ] && { echo no session bus; exit 17; }; '
+    'touch "$bin/xfce-started"; exec sleep 1',
     # The viewer's two programs: each logs its command line, the one novnc_proxy runs websockify with, prints its
     # ready line and stays up.
     'x11vnc': '[ "$1" = -storepasswd ] && { echo "$2" > "$3"; exit; }; '
@@ -122,3 +124,14 @@ async def test_xfce_starts_unless_its_session_runs_on_the_display(
 
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'bin' / 'xfce-started').exists() == starts
+
+
+async def test_xfce_exiting_fails_the_start_with_its_output(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    start, _ = await _scripts(fake_e2b)
+    _run('true', tmp_path)  # writes the stubs
+    (tmp_path / 'bin' / 'startxfce4-fails').touch()
+
+    result = _run(start, tmp_path, '1280x800')
+
+    assert result.returncode == 1
+    assert result.stderr == 'the XFCE desktop did not start:\nno session bus\n'
