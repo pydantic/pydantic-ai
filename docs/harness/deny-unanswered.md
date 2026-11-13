@@ -16,6 +16,25 @@ Any other deferred call stays deferred for its own handler. Without `DenyUnanswe
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/deny_unanswered/)
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+```mermaid
+flowchart TB
+    accTitle: Deny Unanswered: deferred calls nobody attended get results inside the run
+    accDescr: The model's tool calls include deferred calls. Earlier handlers, such as HandleDeferredToolCalls or an approval handler, get the first say. DenyUnanswered runs innermost on what is left: it denies held approvals with message and answers ask_user_question calls with question_message, and the run continues with those results. Any other deferred call stays deferred. SubAgents and DynamicWorkflow child runs get the parent's DenyUnanswered.
+    model(["model"])
+    earlier["earlier handlers<br/>HandleDeferredToolCalls,<br/>approval handler"]
+    deny["DenyUnanswered()<br/>innermost"]:::capability
+    other["other deferred calls<br/>stay deferred"]
+    child["SubAgents and<br/>DynamicWorkflow<br/>child runs"]
+    model -->|"deferred calls"| earlier
+    earlier -->|"what is left"| deny
+    deny -->|"ToolDenied(message),<br/>question_message"| model
+    deny -.->|"not an approval<br/>or ask_user_question"| other
+    deny -.->|"forwarded to"| child
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
+
 ## Usage
 
 ```python
