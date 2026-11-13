@@ -1592,11 +1592,8 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
             raise UserError('TextOutput must take a function taking a single `str` argument')
 
         # The property is named after the parameter's alias, if it has one, but the function takes its Python name.
-        # When `single_arg_name` is set, the property names a field of the model instead, so keep it.
-        function_schema = self._function_schema
-        if function_schema.single_arg_name is None and function_schema.single_field_name is not None:
-            argument_name = function_schema.single_field_name
-        self._str_argument_name = argument_name
+        # For a model-like single arg, the property names a field of the model, which `parameter_names` leaves out.
+        self._str_argument_name = self._function_schema.parameter_names.get(argument_name) or argument_name
 
     async def call(
         self,

@@ -71,6 +71,11 @@ class FunctionSchema:
     """
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+    parameter_names: dict[str, str] = field(default_factory=dict[str, str])
+    """Maps the JSON schema property name of each parameter, its validation alias if it has one, to its Python name.
+
+    Empty for a model-like single arg (`single_arg_name`), whose JSON schema properties are the model's fields.
+    """
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
 
@@ -241,6 +246,7 @@ def function_schema(
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
         single_field_name=single_field_name,
+        parameter_names=_parameter_names(schema_context.fields, single_arg_name),
         positional_fields=schema_context.positional_fields,
         var_positional_field=schema_context.var_positional_field,
         takes_ctx=bool(takes_ctx),
@@ -248,6 +254,23 @@ def function_schema(
         function=function,
         return_schema=return_schema,
     )
+
+
+def _parameter_names(fields: dict[str, core_schema.TypedDictField], single_arg_name: str | None) -> dict[str, str]:
+    """Map each field's JSON schema property name to its Python name, for `FunctionSchema.parameter_names`.
+
+    Pydantic names the property after the field's validation alias: the alias itself, or the first path of an
+    `AliasChoices` that is a single string.
+    """
+    if single_arg_name is not None:
+        return {}
+    parameter_names: dict[str, str] = {}
+    for name, td_field in fields.items():
+        alias = td_field.get('validation_alias', name)
+        if not isinstance(alias, str):
+            alias = next((p[0] for p in alias if isinstance(p, list) and len(p) == 1 and isinstance(p[0], str)), name)
+        parameter_names[alias] = name
+    return parameter_names
 
 
 @dataclass(kw_only=True)
