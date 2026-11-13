@@ -284,16 +284,21 @@ _START_DESKTOP = (
     # running: the pointer goes back to the middle and held buttons are let go.
     # `-nolisten local` closes Linux's abstract socket, which `--network host` would share with every host user; the
     # socket file in /tmp/.X11-unix stays for commands run in the container.
+    # The display is ours, so it gets the panel.
+    f': >{_PID_DIR}/panel; '
     f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
     f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
     + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
-    + 'setsid tint2 >/dev/null 2>&1 9>&- & fi; '
+    + 'fi; '
+    # Started apart from the X server, so a start cancelled between the two still gets its panel on the next one.
+    f'[ ! -e {_PID_DIR}/panel ] || kill -0 "$(cat {_PID_DIR}/panel)" 2>/dev/null '
+    f'|| {{ setsid tint2 >/dev/null 2>&1 9>&- & echo $! >{_PID_DIR}/panel; }}; '
     'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one runs, then a window
-manager. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then the panel of a display it
+started unless that runs, then a window manager. A second start waits for the first, then finds its X server.
 
 It fails once the X server exits, or after 10 seconds. A second `fluxbox` exits when one runs, so starting it every
 time recovers one that died. It then waits up to 10 seconds for the window manager to answer `xprop`, so the first
