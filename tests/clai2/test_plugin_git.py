@@ -122,14 +122,24 @@ class Tagged(Plugin[Options, None]):
     await harness.loader.close('exit')
 
 
+@pytest.mark.parametrize('change', ['remove', 'replace'])
 @pytest.mark.parametrize('activation', ['enable', 'git-add'])
-async def test_activation_keeps_a_plugin_removed_by_another_store(
-    tmp_path: Path, repository: Path, activation: Literal['enable', 'git-add']
+async def test_activation_keeps_a_plugin_changed_by_another_store(
+    tmp_path: Path, repository: Path, activation: Literal['enable', 'git-add'], change: Literal['remove', 'replace']
 ) -> None:
     harness = Harness(tmp_path)
+    replacement = PluginSettings(
+        id='demo_plugin', factory='other_plugin', path=str(repository / '__init__.py'), settings={'mode': 'custom'}
+    )
+    changed = (
+        'store.delete_plugin(self.host.name)'
+        if change == 'remove'
+        else f'store.save_plugin(PluginSettings.model_validate_json({replacement.model_dump_json()!r}))'
+    )
     source = f"""
 from pathlib import Path
 from pydantic import BaseModel
+from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin
 
@@ -142,11 +152,12 @@ class Tagged(Plugin[Options, None]):
         return cls(host, host.settings(Options, requires={{'mode': ['git-plugin-mode']}}))
 
     async def on_session_start(self, event):
-        SettingsStore(Path({str(harness.store.path)!r})).delete_plugin(self.host.name)
+        store = SettingsStore(Path({str(harness.store.path)!r}))
+        {changed}
 """
     (repository / '__init__.py').write_text(source)
     git(repository, 'add', '.')
-    git(repository, 'commit', '-m', 'Remove declaration through a second store during activation')
+    git(repository, 'commit', '-m', 'Change declaration through a second store during activation')
     if activation == 'enable':
         harness.store.save_plugin(
             PluginSettings(id='demo_plugin', factory='demo_plugin', path=str(repository / '__init__.py'), enabled=False)
@@ -155,7 +166,7 @@ class Tagged(Plugin[Options, None]):
     else:
         await harness.loader.command(['add', repository.as_uri()])
 
-    assert harness.store.plugins() == []
+    assert harness.store.plugins() == ([] if change == 'remove' else [replacement])
     assert harness.store.plugin_requirements('demo_plugin') is None
     await harness.loader.close('exit')
 
