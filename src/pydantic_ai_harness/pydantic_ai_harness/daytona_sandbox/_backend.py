@@ -873,7 +873,15 @@ class DaytonaSandboxBackend(
             sandbox = await self.get_sandbox()
             try:
                 async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
-                    yield
+                    try:
+                        yield
+                    except WorkspaceUnavailableError:
+                        raise
+                    except WorkspaceError as error:
+                        # The desktop's own failure, such as keys it couldn't let go of, may come from a lost sandbox.
+                        if (gone := await _probe(sandbox)) is not None:
+                            raise gone from error
+                        raise
             except daytona.DaytonaTimeoutError as error:
                 raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
             except daytona.DaytonaRateLimitError:

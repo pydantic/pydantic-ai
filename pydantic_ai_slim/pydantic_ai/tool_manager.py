@@ -335,7 +335,7 @@ class _ValidationDeferral(Exception):
 
 
 def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
-    """Make a `computer` call carrying a provider's safety checks wait for a person's approval.
+    """Make a `computer` call carrying a provider's safety checks wait for approval.
 
     Runs however the arguments were accepted (the schema, a hook's corrected arguments, or `SkipToolValidation`), so
     no route runs the call unseen. The model adapter acknowledges the checks once the call has a result.
@@ -354,8 +354,8 @@ def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> Valida
     if isinstance(validated.deferral, CallDeferred) or tool.tool_def.kind == 'external':
         # An approved call runs here, which an external or deferred call can't.
         raise UserError(
-            f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need a person'
-            ' to approve it before it runs, but it is handed to an external or deferred executor that approval'
+            f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need approval'
+            ' before it runs, but it is handed to an external or deferred executor that approval'
             ' cannot reach. Run the computer tool in this process so approval can gate it.'
         )
     if isinstance(validated.deferral, ApprovalRequired):
