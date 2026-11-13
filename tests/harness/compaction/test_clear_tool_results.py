@@ -103,7 +103,7 @@ class TestClearToolResultsTargeting:
         assert _contents(await cap.compact(messages, _ctx())) == dict.fromkeys('abcd', CLEARED)
 
     def test_negative_keep_turns(self):
-        with pytest.raises(ValueError, match='keep_turns must be non-negative'):
+        with pytest.raises(ValueError, match='`keep_turns` must be non-negative'):
             ClearToolResults(max_tokens=1, keep_turns=-1)
 
     async def test_default_keeps_three_pairs(self):

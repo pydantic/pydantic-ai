@@ -167,7 +167,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         if self.keep_pairs < 0:
             raise ValueError('keep_pairs must be non-negative.')
         if self.keep_turns is not None and self.keep_turns < 0:
-            raise ValueError('keep_turns must be non-negative.')
+            raise ValueError('`keep_turns` must be non-negative.')
         if self.min_clear_tokens is not None and self.min_clear_tokens < 0:
             raise ValueError('min_clear_tokens must be non-negative.')
 
