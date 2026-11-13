@@ -355,17 +355,16 @@ def test_infer_str_unknown(model_name: str, message: str):
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'use_with'),
+    ('model_name', 'provider_name'),
     [
-        ('elevenlabs:eleven_v3', '`Agent.realtime()`'),
-        ('sentence-transformers:all-MiniLM-L6-v2', '`Embedder`'),
-        ('voyageai:voyage-3', '`Embedder`'),
+        ('elevenlabs:eleven_realtime_v1_mini', 'elevenlabs'),
+        ('sentence-transformers:all-MiniLM-L6-v2', 'sentence-transformers'),
+        ('voyageai:voyage-3', 'voyageai'),
     ],
 )
-def test_infer_model_non_chat_provider(model_name: str, use_with: str):
+def test_infer_model_non_chat_provider(model_name: str, provider_name: str):
     """A provider with no chat models is named in the error, before its package or API key is asked for."""
-    provider_name = model_name.split(':')[0]
-    message = f'Provider {provider_name!r} has no chat models; use {model_name!r} with {use_with} instead.'
+    message = f'Unknown model: {model_name}. Provider {provider_name!r} has no chat models.'
     with pytest.raises(UserError, match=f'^{re.escape(message)}$'):
         infer_model(model_name)
 

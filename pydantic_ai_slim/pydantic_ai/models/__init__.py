@@ -3645,12 +3645,8 @@ def _decisions_model(
             assert_never(model_kind)
 
 
-_NON_CHAT_PROVIDERS = {
-    'elevenlabs': '`Agent.realtime()`',
-    'sentence-transformers': '`Embedder`',
-    'voyageai': '`Embedder`',
-}
-"""Providers that `infer_provider` knows but that serve no chat models, mapped to the API that uses them."""
+_NON_CHAT_PROVIDERS = frozenset({'elevenlabs', 'sentence-transformers', 'voyageai'})
+"""Providers that `infer_provider` knows but that serve no chat models (only realtime or embedding models)."""
 
 
 def infer_model(  # noqa: C901
@@ -3679,8 +3675,8 @@ def infer_model(  # noqa: C901
         raise UserError(message)
 
     # Checked before the provider is built, which would first ask for its package and API key.
-    if use_with := _NON_CHAT_PROVIDERS.get(provider_name):
-        raise UserError(f'Provider {provider_name!r} has no chat models; use {model!r} with {use_with} instead.')
+    if provider_name in _NON_CHAT_PROVIDERS:
+        raise UserError(f'Unknown model: {model}. Provider {provider_name!r} has no chat models.')
 
     if provider_factory is infer_provider:
         try:
