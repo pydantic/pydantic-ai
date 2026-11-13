@@ -166,8 +166,10 @@ def _check_operator_voice(messages: Sequence[ModelMessage]) -> None:
                 )
 
 
-def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority) -> None:
-    """Attribute every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] in `messages` to the capability that enqueued it, in place.
+def stamp_capability_parts(
+    messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority
+) -> list[ModelMessage]:
+    """`messages` with every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] attributed to the capability that enqueued it.
 
     A part with no `capability_id` yet gets `capability_id`, and a part whose source has more authority than the
     capability's `ceiling` gets a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] with that authority
@@ -176,13 +178,22 @@ def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str,
     Prompt parts that would speak with more authority than `ceiling` become capability parts at it: a
     `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
     authority on its way to the model.
+
+    Requests and parts are copied, never changed in place: a capability can enqueue a request it took from the run's
+    history, which must stay as it was.
     """
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            message.parts = [_within_ceiling(part, capability_id, ceiling) for part in message.parts]
-            for part in message.parts:
-                if isinstance(part, CapabilityPart):
-                    _stamp_capability_part(part, capability_id, ceiling)
+    return [
+        replace(
+            message,
+            parts=[
+                _stamped(part, capability_id, ceiling) if isinstance(part, CapabilityPart) else part
+                for part in (_within_ceiling(part, capability_id, ceiling) for part in message.parts)
+            ],
+        )
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
 
 
 def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
@@ -235,12 +246,12 @@ def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authori
             )
 
 
-def _stamp_capability_part(part: CapabilityPart, capability_id: str, ceiling: Authority) -> None:
-    """Attribute `part` to the capability `capability_id` and lower its source to `ceiling`, in place."""
-    if part.capability_id is None:
-        part.capability_id = capability_id
-    if _lower_authority(part.source.authority, ceiling) != part.source.authority:
-        part.source = CapabilitySource(capability_id, authority=ceiling)
+def _stamped(part: CapabilityPart, capability_id: str, ceiling: Authority) -> CapabilityPart:
+    """A copy of `part` attributed to the capability `capability_id`, with its source lowered to `ceiling`."""
+    source = part.source
+    if _lower_authority(source.authority, ceiling) != source.authority:
+        source = CapabilitySource(capability_id, authority=ceiling)
+    return replace(part, capability_id=part.capability_id or capability_id, source=source)
 
 
 def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None:

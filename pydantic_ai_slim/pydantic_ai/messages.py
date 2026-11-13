@@ -4921,8 +4921,8 @@ class CapabilitySource:
 
     When a capability whose [`authority`][pydantic_ai.capabilities.AbstractCapability] is below
     `'operator'` enqueues a part whose source has more authority than that, `ctx.enqueue` stores this source in its
-    place, so the history says which capability wrote the content and with how much authority. A note about content
-    with `'none'` authority names the capability as its author.
+    place, so the history says which capability wrote the content and with how much authority. A lookalike note about
+    content below `'operator'` names the capability as its author.
     """
 
     capability_id: str
@@ -4938,8 +4938,12 @@ class CapabilitySource:
 
     @property
     def _author(self) -> _ContentAuthor:
-        """Who wrote content from this source, for the lookalike note: the user's, or the capability's like a model's."""
-        return 'application' if self.authority == 'operator' else 'user' if self.authority == 'user' else 'model'
+        """Who wrote content from this source, for the lookalike note: below `'operator'`, the capability, like a model.
+
+        Never the user, even at `'user'` authority: the capability wrote the text, which the part's note says the
+        application attached on the user's behalf.
+        """
+        return 'application' if self.authority == 'operator' else 'model'
 
 
 CapabilityPartSource = Annotated[

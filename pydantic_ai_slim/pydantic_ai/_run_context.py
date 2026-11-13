@@ -1094,7 +1094,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             ceiling: _messages.Authority = 'operator' if owner is None else owner._effective_authority  # pyright: ignore[reportPrivateUsage]
             # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
             # never reach the model with more authority than the capability has.
-            stamp_capability_parts(pending.messages, capability_id, ceiling)
+            pending.messages = stamp_capability_parts(pending.messages, capability_id, ceiling)
         self.pending_messages.append(pending)
         if hand_built is not None:
             warnings.warn(
