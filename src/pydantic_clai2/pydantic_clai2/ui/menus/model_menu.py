@@ -1,5 +1,6 @@
 """The `/model add` menu: pick the model for the next prompt, or edit one model's settings."""
 
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import partial
@@ -12,12 +13,14 @@ from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.api_keys import load_keys
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, openrouter, vllm
+from pydantic_clai2.models.key_profiles import key_variables
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
-from pydantic_clai2.models.profiles import provider_of
+from pydantic_clai2.models.profiles import ALL, DEFAULT, base_model, parse_model, provider_of
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
@@ -41,11 +44,17 @@ class _EditSettings:
 class ModelSettingsSource:
     """One model's overrides, from `ModelSettingsForm`, saved in the store."""
 
-    def __init__(self, store: SettingsStore, model: str, *, settings_as: str | None = None) -> None:
-        """Edits are saved under `model`, offering and validating the controls of `settings_as` (default `model`)."""
+    def __init__(
+        self, store: SettingsStore, model: str, *, settings_as: str | None = None, offer_keys: bool = False
+    ) -> None:
+        """Edits are saved under `model`, offering and validating the controls of `settings_as` (default `model`).
+
+        `offer_keys` lists the saved `/keys` names as the API key's choices, reading the keyring each time.
+        """
         self._store = store
         self.model = model
         self._settings_as = settings_as or model
+        self._offer_keys = offer_keys
 
     @property
     def title(self) -> str:
@@ -55,7 +64,7 @@ class ModelSettingsSource:
     def rows(self) -> list[FieldRow]:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
-        options = model_options(model=self._settings_as)
+        options = self._options()
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
@@ -81,9 +90,33 @@ class ModelSettingsSource:
                     else {},
                     default=shown(model_defaults(model=self._settings_as).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
+                    note=self._environment_key() if key == 'api_key' and 'api_key' not in saved else '',
                 )
             )
         return rows
+
+    def _options(self) -> dict[str, tuple[str, ...]]:
+        """The rows to offer, with the saved `/keys` names as the API key's choices."""
+        options = model_options(model=self._settings_as)
+        if self.model != self._settings_as:  # A chain, or a plugin model shown with another's controls.
+            options.pop('base_url', None)
+            options.pop('api_key', None)
+        if parse_model(self.model).profile == ALL:  # Each pooled account keeps its own key.
+            options.pop('api_key', None)
+        if self._offer_keys and 'api_key' in options:
+            options['api_key'] = tuple(load_keys())
+        return options
+
+    def _environment_key(self) -> str:
+        """Where the key comes from without one saved: the environment variable, when it is set and used."""
+        ref = parse_model(self.model)
+        if ref.profile not in (None, DEFAULT):
+            return f'from the {ref.account} sign-in'
+        plain = base_model(self.model)
+        if ref.profile == DEFAULT and isinstance(inherited := self._store.model_settings(plain).get('api_key'), str):
+            return f'from {inherited}, saved for {plain}'
+        variable = next((name for name in key_variables(ref.provider) if os.environ.get(name)), None)
+        return f'from {variable} in the environment' if variable else ''
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
@@ -135,6 +168,8 @@ class ModelSettingsSource:
         }
         form = ModelSettingsForm.model_validate({**saved, row.key: value})
         validate_model_options(model=self._settings_as, form=form)
+        if row.key == 'api_key' and form.api_key is not None and form.api_key not in load_keys():
+            raise ValueError(f'{form.api_key} is not in /keys. Save the key there first.')
         return form
 
 
@@ -144,6 +179,8 @@ def setting_label(key: str) -> str:
         'max_tokens': 'Max Output Tokens',
         'top_p': 'Top-P (Nucleus Sampling)',
         'cache': 'Prompt Caching',
+        'base_url': 'Base URL',
+        'api_key': 'API Key',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
@@ -362,8 +399,11 @@ async def _connect(
 ) -> str | None:
     """Connect `provider` and pick one of its models; what `/model add` returns, or `None` to reopen the providers."""
     if provider == 'github-copilot':
-        await github_copilot.ensure_login(console=console)
+        signed_in = await github_copilot.ensure_login(console=console)
         models = await github_copilot_models()
+        if signed_in:
+            for model in models:
+                context.store.add_model(name=model.name)
         provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
         if await _browse(provider_menu, runners, messages):
             return '\n'.join(messages) or 'No changes.'
@@ -471,7 +511,7 @@ def model_settings_menu(store: SettingsStore, model: str, *, settings_as: str | 
     Edits save under `model`, offering and validating the controls of `settings_as` (default `model`).
     """
     return SettingsMenu(
-        source=ModelSettingsSource(store, model, settings_as=settings_as),
+        source=ModelSettingsSource(store, model, settings_as=settings_as, offer_keys=True),
         actions={'custom_params': partial(edit_custom_params, store=store, model=model)},
         searchable=False,
     )

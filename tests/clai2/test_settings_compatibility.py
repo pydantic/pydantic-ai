@@ -13,9 +13,10 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.aoe import AoePlugin
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
 from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
 from pydantic_clai2.builtin_plugins.day_ai import DayAISource
@@ -25,7 +26,7 @@ from pydantic_clai2.builtin_plugins.notion import NotionSource
 from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
 from pydantic_clai2.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.commands import Commands, config_command, plugins_command
+from pydantic_clai2.commands import Commands, config_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
@@ -348,7 +349,7 @@ async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, va
         Console(file=output), stop_loading=lambda: None, show_tool_output=reopened.load().tool_output
     )
     for event in (
-        FileChangeRequestEvent(
+        FileChangeRequestedEvent(
             path='file.txt', root_dir='/tmp', operation='write', diff='visible diff', truncated=False
         ),
         FileWrittenEvent(path='file.txt', root_dir='/tmp', content_hash='hash'),
@@ -811,7 +812,10 @@ def test_existing_observability_rows_are_coalesced(tmp_path: Path, with_legacy: 
             legacy = PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False)
             connection.execute('INSERT INTO plugins VALUES (?, ?)', (legacy.id, legacy.model_dump_json()))
     assert store.plugins() == [current]
-    plugins_command(store, [action, 'observability'])
+    if action == 'disable':
+        store.save_plugin(current.model_copy(update={'enabled': False}))
+    else:
+        store.delete_plugin('observability')
     assert store.plugins() == ([current.model_copy(update={'enabled': False})] if action == 'disable' else [])
     with closing(sqlite3.connect(store.path)) as connection:
         assert connection.execute('SELECT id FROM plugins').fetchall() == (
@@ -830,17 +834,6 @@ def test_plugin_alias_coalescing_rolls_back_on_failure(tmp_path: Path) -> None:
         store.save_plugin(plugin.model_copy(update={'enabled': False}))
     with closing(sqlite3.connect(store.path)) as connection:
         assert list(connection.iterdump()) == original
-
-
-def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None:
-    store = SettingsStore(tmp_path / 'config.db')
-    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
-    plugins_command(store, ['disable', 'logfire'])
-    assert store.plugins()[0].id == 'observability' and not store.plugins()[0].enabled
-    plugins_command(store, ['enable', 'logfire'])
-    assert store.plugins()[0].enabled
-    plugins_command(store, ['remove', 'logfire'])
-    assert store.plugins() == []
 
 
 @pytest.mark.parametrize(
@@ -875,9 +868,8 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
         LogfireMCPSettings
     )
     assert (settings.url, settings.read_only) == (url, False)
-    # `/plugins ... logfire` still means `observability`, as in older builds.
-    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
-    plugins_command(store, ['disable', 'logfire'])
+    # A `logfire` row still means `observability`, as in older builds.
+    store.save_plugin(PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False))
     assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
 
 
@@ -986,6 +978,47 @@ async def test_saved_background_compaction_loads_in_builds_with_and_without_the_
         else 'compaction: ignored saved background_compaction, background_start (needs compaction-background); '
         'using defaults.'
     )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('stored', 'supported', 'titles'),
+    [('{}', True, False), ('{"titles": true}', True, True), ('{"titles": true}', False, False)],
+    ids=['saved-before-titles', 'this-build', 'build-without-titles'],
+)
+async def test_saved_aoe_titles_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, supported: bool, titles: bool
+) -> None:
+    """An `aoe` saved before `titles` existed keeps titles off; a build lacking the feature drops the setting."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'aoe',
+                '{"id": "aoe", "factory": "pydantic_clai2.builtin_plugins.aoe", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'titles' in stored:
+        store.save_plugin(store.plugins()[0], requires={'titles': frozenset({'aoe-titles'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'aoe-titles'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'aoe']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, AoePlugin)
+    assert entry.loaded.plugin.settings.titles is titles
+    assert entry.ignored == (None if supported else 'aoe: ignored saved titles (needs aoe-titles); using defaults.')
     assert store.plugins() == saved
     await loader.close('exit')
 
