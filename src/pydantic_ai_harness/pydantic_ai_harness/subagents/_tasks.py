@@ -364,7 +364,7 @@ class DelegationTasks:
                 logging.getLogger(__name__).error(message)
 
     async def _drain(self) -> None:
-        """Cancel running workers, wait for all of them at once, then settle and save the children that never started."""
+        """Cancel running workers and wait for all of them at once, then save the unstarted and unsaved children."""
         for task_id, worker in self._workers.items():
             # A worker whose run ended is saving its record, which a cancellation would cut short.
             if self.records[task_id].status == 'running':

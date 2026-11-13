@@ -1395,6 +1395,29 @@ async def test_close_saves_a_settled_child_whose_save_was_cut_short(
     assert (json.loads(path.read_text())['status'], record.outcome) == ('finished', 'ok')
 
 
+async def test_close_timeout_with_no_stuck_child_names_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A drain that outlives its bound only while saving doesn't blame a child that released its resources."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(0.01, shield=shield)
+
+    async def blocked(path: anyio.Path, data: bytes) -> int:
+        await anyio.sleep_forever()
+        return 0  # pragma: no cover
+
+    owner = DelegationTasks(directory=tmp_path)
+    with pytest.raises(RuntimeError, match='children still running: none'):
+        async with owner.opened():
+            await delegate(owner)
+            (record,) = owner.records.values()
+            monkeypatch.setattr(anyio.Path, 'write_bytes', blocked)
+            # Cut short, so closing saves it again, and that save outlives the drain bound too.
+            with anyio.move_on_after(0.01):
+                await owner.save(record)
+            monkeypatch.setattr(anyio, 'move_on_after', short)
+
+
 async def test_close_drains_many_children_concurrently(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
