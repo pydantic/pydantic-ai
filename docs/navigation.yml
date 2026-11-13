@@ -1275,6 +1275,9 @@ navigation:
             slug: "api/pydantic-ai/images"
             aliases:
               - "api/images"
+          - page: "in_flight"
+            path: "api/in_flight.md"
+            slug: "api/pydantic-ai/in_flight"
           - page: "mcp"
             path: "api/mcp.md"
             slug: "api/pydantic-ai/mcp"

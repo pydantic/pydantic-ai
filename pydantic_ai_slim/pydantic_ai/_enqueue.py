@@ -7,7 +7,8 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
@@ -222,6 +223,7 @@ class PendingMessageQueue(list[PendingMessage]):
         self._capability_loads: list[CapabilityLoadRecord] = list(capability_loads)
         self._closed = False
         self._lock = threading.Lock()
+        self._append_listeners: list[Callable[[], object]] = []
         # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
         # the last part put next to each call's return in it, so a later delivery in the same step puts that
         # call's content after it.
@@ -238,6 +240,20 @@ class PendingMessageQueue(list[PendingMessage]):
             if self._closed:
                 raise UserError('`enqueue` is not available because the agent run has ended.')
             super().append(pending)
+            listeners = tuple(self._append_listeners)
+        for listener in listeners:
+            listener()
+
+    @contextmanager
+    def notifying(self, listener: Callable[[], object]) -> Generator[None]:
+        """Call `listener` after each message appended while the block runs, on the thread that appended it."""
+        with self._lock:
+            self._append_listeners.append(listener)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._append_listeners.remove(listener)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         with self._lock:
@@ -344,7 +360,8 @@ class EnqueueGuard(list[PendingMessage]):
     A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
     across the activity boundary (Temporal) without re-running the code, so messages enqueued
     inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
-    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason.
+    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason,
+    and `RunContext.in_flight` raises `in_flight_error`.
     """
 
     def __init__(self, unit_noun: str, container_noun: str):
@@ -354,18 +371,27 @@ class EnqueueGuard(list[PendingMessage]):
         self._container_noun = container_noun
 
     def append(self, pending: PendingMessage) -> None:
-        raise self._error('enqueue', 'the enqueued messages would be dropped', 'Enqueue messages')
+        raise self._error('`ctx.enqueue()`', 'the enqueued messages would be dropped', 'Enqueue messages')
 
     def change_error(self, method: QueueChangeMethod) -> UserError:
         """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
-        return self._error(method, 'the change to the queued message would be lost', 'Change queued messages')
-
-    def _error(self, method: str, consequence: str, advice: str) -> UserError:
-        return UserError(
-            f'`ctx.{method}()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
-            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}. "
-            f'{advice} from {self._container_noun}-level code instead.'
+        return self._error(
+            f'`ctx.{method}()`', 'the change to the queued message would be lost', 'Change queued messages'
         )
+
+    def in_flight_error(self) -> UserError:
+        """The error for `ctx.in_flight` inside the durable unit."""
+        # No advice to move it to workflow-level code, where `ctx.in_flight` isn't supported yet either.
+        return self._error('`ctx.in_flight`', 'work it started or registered would be lost')
+
+    def _error(self, usage: str, consequence: str, advice: str | None = None) -> UserError:
+        message = (
+            f'{usage} is not supported inside a durable {self._unit_noun}: the durable runtime replays '
+            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}."
+        )
+        if advice is not None:
+            message += f' {advice} from {self._container_noun}-level code instead.'
+        return UserError(message)
 
 
 def stamped_messages(

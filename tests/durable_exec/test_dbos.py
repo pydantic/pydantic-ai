@@ -4040,6 +4040,46 @@ async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) ->
     )
 
 
+async def test_dbos_rejects_in_flight_in_workflow_code_and_steps(dbos: DBOS) -> None:
+    """`ctx.in_flight` raises in a step, and in workflow code, such as a function tool, until durable runs can use it."""
+    errors: list[str] = []
+
+    def record(ctx: RunContext[object]) -> None:
+        with pytest.raises(UserError) as exc_info:
+            _ = ctx.in_flight
+        errors.append(str(exc_info.value))
+
+    def factory(ctx: RunContext[object]) -> FunctionToolset[object]:
+        # Dynamic toolset discovery runs in a step.
+        record(ctx)
+        return FunctionToolset([])
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_in_flight',
+        toolsets=[DynamicToolset(factory, id='in_flight_factory')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @agent.tool
+    def in_workflow_code(ctx: RunContext[object]) -> str:
+        record(ctx)
+        return 'checked'
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert sorted(set(errors)) == snapshot(
+        [
+            '`ctx.in_flight` is not supported in a durable run yet: when the run ends would depend on the order its in-flight work finished in, which durable execution engines do not all replay. Until it is, use `ctx.in_flight` only in runs without a durability capability.',
+            "`ctx.in_flight` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so work it started or registered would be lost.",
+        ]
+    )
+
+
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_get_tools_and_instructions_reject_enqueue_in_workflow(
     dbos: DBOS, monkeypatch: pytest.MonkeyPatch
