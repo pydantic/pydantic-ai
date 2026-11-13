@@ -323,6 +323,23 @@ def x11_display(
     return LazyDisplay(X11Computer(backend), start)
 
 
+_START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
+
+
+def desktop_display(
+    backend: SupportsCommands,
+    size: tuple[int, int] | None,
+    where: Callable[[], str],
+) -> LazyDisplay | None:
+    """A sandbox's display on a plain Xvfb at `size`, or `None` without a desktop.
+
+    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use.
+    """
+    if size is None:
+        return None
+    return x11_display(backend, size, _START_DESKTOP, where)
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 

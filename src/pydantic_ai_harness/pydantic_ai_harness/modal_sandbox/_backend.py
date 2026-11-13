@@ -45,6 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -56,6 +57,8 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness._x11 import DISPLAY, desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 # Checked without importing: importing Modal reads `~/.modal.toml`, so the import itself is
 # deferred to a worker thread on first use. A `None` entry in `sys.modules` blocks the import.
@@ -214,8 +217,13 @@ def _check_image(image: str | modal.Image | None) -> None:
             raise TypeError('image must be a registry tag or modal.Image')
 
 
+_DESKTOP_PACKAGES = ('xvfb', 'xdotool', 'scrot', 'x11-utils')
+"""Added to the default image with `desktop`, so the display starts without installing anything. `x11-utils` has
+`xwininfo`."""
+
+
 # Subclassing the structural protocols makes a signature drift fail the type check on this class.
-class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """A Modal sandbox implementing Pydantic AI's `WorkspaceBackend` protocol.
 
     Construction performs no I/O. The first operation creates or attaches to a sandbox, and the
@@ -224,6 +232,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
     Commands run in isolated process groups. Cancellation and command deadlines attempt to stop
     the foreground group without terminating the sandbox shared by other commands.
+
+    With `desktop`, the sandbox gets a display on first use. The default image has the programs it needs; another
+    image gets them installed on first use, if it can.
 
     Args:
         sandbox: A live `modal.Sandbox` you already have. Whoever created it owns terminating it.
@@ -242,6 +253,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             applied to every command, including in an attached sandbox. `None` (the default) is
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`.
     """
 
     def __init__(
@@ -257,6 +271,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'modal')
@@ -281,6 +296,15 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._idle_timeout = idle_timeout
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env) if env is not None else {}
+        self._desktop_size = desktop_size(desktop)
+        if self._desktop_size:
+            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+            self._env = {'DISPLAY': DISPLAY, **self._env}
+        self._display = desktop_display(
+            self,
+            self._desktop_size,
+            lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
+        )
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
         self._resolved_working_dir: str | None = None
@@ -354,6 +378,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     def ref(self) -> WorkspaceRef | None:
         """Identity of the sandbox, or `None` before one has been created."""
         return self._ref
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
     @asynccontextmanager
     async def _mapped_errors(
@@ -495,7 +524,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 )
                 if self._image is None:
                     # Built on create, not at import: Modal caches it per workspace after the first build.
-                    built = modal.Image.debian_slim(python_version='3.12').apt_install('git', 'ripgrep')
+                    built = modal.Image.debian_slim(python_version='3.12').apt_install(
+                        'git', 'ripgrep', *(_DESKTOP_PACKAGES if self._desktop_size else ())
+                    )
                 elif isinstance(self._image, str):
                     built = modal.Image.from_registry(self._image)  # pyright: ignore[reportUnknownMemberType]
                 else:
@@ -595,8 +626,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         return self._resolved_working_dir
 
     async def _has_setsid(self, sandbox: modal.Sandbox) -> bool:
-        # Idempotent, like `working_dir()`: concurrent first runs may each probe.
-        if self._setsid_available is None:
+        # Idempotent, like `working_dir()`: concurrent first runs may each probe. Starting the display installs
+        # `setsid` when it's missing, so a "no" is kept only without a display.
+        if self._setsid_available is None or (not self._setsid_available and self._display is not None):
             async with self._mapped_errors(sandbox, 'Could not check Modal process isolation'):
                 probe = await sandbox.exec.aio(
                     'sh',

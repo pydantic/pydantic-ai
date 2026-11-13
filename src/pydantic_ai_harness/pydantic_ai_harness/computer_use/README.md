@@ -48,6 +48,7 @@ in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 | `DockerContainer(desktop=True)` | A container on your machine |
 | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 | [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop) | An E2B cloud sandbox |
+| [`ModalSandbox(desktop=True)`](../modal_sandbox/#give-the-agent-a-desktop) | A Modal cloud sandbox |
 
 To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-workspace-a-screen).
 

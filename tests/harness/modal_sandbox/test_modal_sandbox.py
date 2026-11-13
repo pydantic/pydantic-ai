@@ -672,6 +672,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'app_name',
         'create_app_if_missing',
         'description',
+        'desktop',
         'env',
         'id',
         'idle_timeout',
