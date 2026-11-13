@@ -887,9 +887,14 @@ async def test_owner_guards_and_resume_errors() -> None:
         record.backgroundable = False
         with pytest.raises(ValueError, match='workspace'):
             owner.background(record.id)
-    invalid = DelegationTask(id='../bad', agent_name='worker', prompt='', conversation_id='root')
-    with pytest.raises(ValueError, match='identity'):
-        await owner.save(invalid)
+
+
+async def test_save_checks_the_task_identity_only_when_it_names_a_file(tmp_path: Path) -> None:
+    unsafe = DelegationTask(id='../bad', agent_name='worker', prompt='', conversation_id='root')
+    await DelegationTasks().save(unsafe)
+    with pytest.raises(ValueError, match='Invalid task identity'):
+        await DelegationTasks(directory=tmp_path).save(unsafe)
+    assert list(tmp_path.iterdir()) == []
 
 
 async def test_observer_failure_settles_and_delivers(caplog: pytest.LogCaptureFixture) -> None:
