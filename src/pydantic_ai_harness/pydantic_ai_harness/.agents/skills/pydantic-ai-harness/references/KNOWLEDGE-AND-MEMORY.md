@@ -2,14 +2,16 @@
 
 Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persistent Markdown
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
-history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
-Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). `Skills` and the optional Pixeltable integration require extras.
+history `StepPersistence` already stored, including turns compaction dropped), `WorkLog` (a log
+of every tool call with its full result, and the model's replies, that the model searches and reads
+back), `Skills` (Agent Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch
+Pydantic AI docs pages on demand). `Skills` and the optional Pixeltable integration require extras.
 
 | Need | Use |
 |---|---|
 | Facts/preferences that persist across runs or sessions | `Memory` |
 | Exact details from earlier turns or past runs of a conversation | `ConversationSearch` + `StepPersistence` |
+| Full tool results compaction cleared or `ToolOutputLimits` reduced, including calls inside Code Mode | `WorkLog` (with `ResetCompaction`, see CONTEXT-MANAGEMENT.md) |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
 
@@ -250,6 +252,45 @@ Gotchas:
   the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
   CJK or Thai text.
 
+## WorkLog
+
+Records every tool call that ran, with its full result before `ToolOutputLimits` reduces it, plus
+the model's text replies, in one log per `conversation_id`. Calls a Code Mode script makes inside
+`run_code` get their own entries, with `run_code`'s call id as `parent_tool_call_id`. Adds two
+tools, usable from Code Mode code too: `search_work_log(query=None, tool_name=None, run_id=None,
+limit=10)` (BM25 over tool name, arguments and result; newest first without a query) and
+`read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None)` (one entry in full, paged
+by line with `read_tool_result`'s caps: 1,000 lines, 50,000 characters, literal `pattern`).
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import WorkLog
+from pydantic_ai_harness.work_log import FileWorkLogStore
+
+agent = Agent('test', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
+```
+
+Key parameters: `store=InMemoryWorkLogStore()`, `record_text=True`, `record_thinking=False`,
+`tool_id='work-log'`, `id='work_log'`. Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
+conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversation),
+`WorkspaceWorkLogStore(workspace=None)` (one file per entry under
+`.pydantic-ai-harness/work-log/<log>/` in the run's workspace), or your own `WorkLogStore`
+(`append`, `read`, `locate`).
+
+Gotchas:
+- Not logged: deferred or approval-gated calls until they run, argument-validation failures, the
+  work log's own tool calls, user prompts, and files (a placeholder names the media type).
+- `ModelRetry` is logged as `retried`; other exceptions as `failed` and still raised.
+- `read_work_log` returns are exempt from `ToolOutputLimits`; `search_work_log` returns are not.
+- `seq` follows the order calls finished, so a nested Code Mode call comes before its `run_code`.
+- It adds no instructions; `ResetCompaction`'s notice points the model at the log.
+- Under durable execution each recorded entry is one `append` operation; use the file or workspace
+  store there, since an operation can run in another process.
+- `conversation_id` is trusted as given: derive it from the authenticated user in multi-tenant apps.
+- Each search reads the whole log, so it slows as the log grows; the workspace store reads one file
+  per entry, one round trip each in a remote sandbox.
+
 ## Skills
 
 Loads Agent Skills (`<library>/<skill>/SKILL.md`) as deferred capabilities: the model sees each
@@ -360,6 +401,7 @@ module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old spe
 
 - https://pydantic.dev/docs/ai/harness/memory/
 - https://pydantic.dev/docs/ai/harness/conversation-search/
+- https://pydantic.dev/docs/ai/harness/work-log/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
 - https://pydantic.dev/docs/ai/harness/step-persistence/

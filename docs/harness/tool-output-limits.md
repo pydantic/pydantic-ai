@@ -73,9 +73,11 @@ agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), ToolOu
 The capability registers a single `read_tool_result` tool so the model can page back into any
 spilled payload. Its own returns are exempt from reduction. With `FileSystem` on the agent,
 `read_file` takes its place for spills in the run's workspace, and its reads of spills are exempt
-too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability`
-and `search_tools` returns are never reduced either: core reads them back from history to know which
-[on-demand capabilities](../capabilities/on-demand.md) are loaded and which tools are revealed.
+too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). [`WorkLog`](work-log.md)'s
+`read_work_log` returns are exempt for the same reason, so a page of the log is not spilled again.
+Core's `load_capability` and `search_tools` returns are never reduced either: core reads them back
+from history to know which [on-demand capabilities](../capabilities/on-demand.md) are loaded and
+which tools are revealed.
 
 ## Bands: combine the modes
 

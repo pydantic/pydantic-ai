@@ -49,6 +49,7 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are still needed verbatim and others are dead weight |
+| `ResetCompaction` | zero-LLM | Clears the history down to the first request, the latest prompt and a short tail, with a notice pointing the model at a [`WorkLog`](work-log.md) | A long autonomous run can look up its earlier tool results instead of keeping them in context |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
 | `CompactOnRequest` | depends on strategy | Gives the model a tool to ask for a compaction before its next request | The model knows when a phase of work ends better than a size trigger does |
@@ -619,6 +620,75 @@ With a durable-execution capability attached, the judgements and the summary run
 
 The two-question split and concurrent per-step requests come from [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction) (MIT), which compacts Claude Code transcripts with TypeSafe's Jev. Its measurements also motivated showing the judge each step's content and choosing steps by rank. No code is shared.
 
+## `ResetCompaction`: clear the context, keep the work log
+
+A long autonomous run can fill its context window many times. Clearing old tool results a few at a time rewrites the cached prefix on every clear, and the model often runs the same reads again to get back what was cleared. `ResetCompaction` clears the history in one step instead, down to the task and the latest step, and leaves the model a notice saying where its earlier work is: a [`WorkLog`](work-log.md), which keeps every tool call with its full result and the model's replies, and which the model searches and reads with its own tools.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import ToolOutputLimits, WorkLog
+from pydantic_ai_harness.compaction import ResetCompaction
+
+work_log = WorkLog()
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        LocalWorkspace('.'),
+        work_log,
+        ResetCompaction(work_log, max_fraction=0.6),
+        ToolOutputLimits(),  # keeps one large result from filling the kept tail
+    ],
+)
+```
+
+Pass the `WorkLog` that is on the agent: the notice names its log. `Agent(...)` raises a `UserError` when no `WorkLog` is registered, and a run raises one at its start when the agent's `WorkLog` under that `id` is not the one `ResetCompaction` holds. A `WorkLog` passed only to `agent.run(capabilities=...)` does not satisfy the check for a `ResetCompaction` on the agent.
+
+The reset keeps, in order:
+
+1. the first user request, as it was, with its system prompt; harness data merged into it, such as an earlier notice, is left out;
+2. the notice, then the `restate` text when there is any;
+3. pinned parts the reset would otherwise drop;
+4. the records of loaded [on-demand capabilities](#on-demand-capabilities-across-compaction) and [tool search discoveries](#tool-search-discoveries-across-compaction), as the other strategies that drop history keep them; `preserve_loaded_capabilities=False` unloads them instead;
+5. the latest user prompt, when `keep_latest_user_prompt=True` (the default) and it is older than the tail;
+6. the newest `keep_messages` messages (default `2`), with each tool call kept with its return. `keep_messages=0` still keeps the newest message, the request being answered.
+
+Everything else leaves the history. The work log holds the tool calls and replies among it, but not user prompts, so user turns between the first and the latest are gone: `ResetCompaction` suits runs where the user states the task up front. An earlier notice and its `restate` text in the kept tail are removed, so each reset replaces the last notice rather than adding one.
+
+The notice is user-channel text, like a [receipt](#compaction-receipts). Its `TextContent.metadata` marks it as harness data, with `'origin': 'pydantic-ai-harness.compaction.reset_notice.v1'`, the reset's `number` and the log's handle, so a later compaction or summary doesn't take it for the user's words. The default text tells the model that its earlier context was cleared and the task continues, how many times this conversation has been cleared, the work log's handle and the tools that search and read it (under the names the model sees, so a `PrefixTools` rename applies, and usable as tools or from code), that file contents in the log may be out of date, and what the reset kept. The handle is what the [store](work-log.md#stores)'s `locate` returns: the conversation ID, a file path or a workspace directory.
+
+To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
+
+| Field | Meaning |
+| --- | --- |
+| `number` | Resets in this conversation, this one included, counting from `1` |
+| `work_log` | The log's handle, or `None` when no conversation ID is known, such as `compact_now` without `conversation_id=` |
+| `search_tool`, `read_tool` | The names the model sees for `search_work_log` and `read_work_log` |
+| `cleared_messages` | Messages this reset removed |
+| `kept_first_request` | Whether the first user request was kept |
+| `kept_messages` | Messages kept in the tail |
+| `kept_tool_calls` | Tool calls kept with their results in the tail |
+
+`default_reset_notice` renders the default text from the same facts.
+
+`restate` adds text of your own after the notice, such as the state of the task your application tracks: an async function of the `RunContext` that returns the text, or `None` or an empty string to add nothing. The text goes in a `<current_state>` tag, in a part of its own marked as harness data. It runs as the `restate` durable operation of the stable default `id='reset_compaction'`, so a replay reuses the recorded text. An exception it raises fails the request, as any hook error does; `ResetCompaction` does not catch it.
+
+Each notice records its number, and the next reset counts on from the latest notice in the history, so the count continues in a run resumed from saved history, such as a [`StepPersistence`](step-persistence.md) snapshot. The work log records the same number in each entry's `context`.
+
+**Triggers.** It takes the [triggers](#triggers) of `SlidingWindowCompaction`: `max_messages`, `max_tokens`, or `max_fraction` with `context_window` and `fallback_context_window`. Unlike `SlidingWindowCompaction`, which raises `ValueError` without one, it accepts no trigger, as `FallbackCompaction` does: it then never resets on its own and works only as a strategy, in `TieredCompaction`, `FallbackCompaction`, `CompactOnRequest` or `compact_now`, whose calls to its `compact` always reset.
+
+**Repeats.** After a reset it doesn't reset again until the model has added a response beyond what the reset kept. If the kept history alone is over the trigger, though, it resets after every new response. Set the trigger well above what `keep_messages` keeps, and add [`ToolOutputLimits`](tool-output-limits.md), which reduces a large result when the tool returns it, so one oversized result in the tail can't keep the history over the trigger.
+
+**With other capabilities.**
+
+- Don't combine it with a strategy that drops or summarizes history (`SlidingWindowCompaction`, `SummarizingCompaction`, `RelevanceCompaction`), on the agent or as a tier. The notice's request holds no user turn, so such a strategy drops or summarizes the notice. In `TieredCompaction`, put it last, after passes that blank content in place such as `ClearToolResults`, so it runs only when they didn't free enough.
+- It orders itself ahead of [`Planning`](planning.md), so after a reset Planning records the current plan again in the same request.
+- `CompactOnRequest` orders itself after it, and stands down for a request it already reset.
+- Used as a strategy (a tier, a fallback entry, `CompactOnRequest`'s strategy or `compact_now`), its `WorkLog` check doesn't run. The `WorkLog` must still be on the agent, or the log stays empty.
+- A reset moves the cached prefix like any rewrite, so [`WarnOnCacheBusts`](warn-on-cache-busts.md) can warn on the request after it.
+
+It holds a `WorkLog` instance and callables, so it can't be loaded from an [agent spec](../agent-spec.md): `get_serialization_name()` returns `None`. Build it in Python.
+
 ## `WarnNearLimits`: warn instead of rewrite
 
 `WarnNearLimits` never edits history. As the run approaches a configured limit, it adds an URGENT (then CRITICAL) warning to each request, so the model wraps up rather than having its context rewritten under it. Each warning is a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts): the model sees it for its own request only, and it stays in the message history, so earlier requests are sent unchanged and the prompt cache and the model's earlier reasoning stay valid. Warnings that older versions sent as user prompts are left out of requests when a saved history still holds them. They are recognized by metadata on the part, not by their text, so a user prompt that quotes a warning is never removed.
@@ -644,6 +714,8 @@ Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) a
 
 Clearing, deduplicating, clamping, and summarizing all rewrite message content, which invalidates the provider's prompt cache from the edit point onward -- the next request pays a cache-write. For `ClearToolResults`, use `min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache. For `ClampOversizedMessages` the cache bust is unavoidable, because the alternative is a failed request.
 
+`ResetCompaction` keeps the messages up to and including the first user request as they were, so the cached prefix stays valid through them, and rewrites what follows, which after a reset is short. Between resets the history only grows, so each request extends the previous one's prefix. Where `ClearToolResults` rewrites the prefix from the oldest result it clears on every clear, a reset rewrites it once, and the model reads back from the work log only what it still needs.
+
 ## Tracing
 
 When core instrumentation is active (the `Instrumentation` capability, `agent.instrument`, or `Agent.instrument_all()`), each strategy emits a `compact_messages` span on the run's tracer the moment it actually compacts -- that is, in `before_model_request`, once the strategy's threshold is exceeded (`ClampOversizedMessages` emits only when a part is actually clamped). `TieredCompaction` emits a single span for the whole escalation rather than one per tier, because it drives each tier's `compact` directly. An automatic summary that is discarded for not being smaller also emits one, with `compaction.skipped`. Without instrumentation the tracer is a no-op, so the span adds no overhead.
@@ -664,6 +736,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
+| `compaction.reset.number` | int | `ResetCompaction` only: the reset's number in the conversation, this one included |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
@@ -717,7 +790,7 @@ The `Planning` capability does not need pinning: when compaction removes or clea
 
 ## On-demand capabilities across compaction
 
-Pydantic AI counts an [on-demand capability](../capabilities/on-demand.md) as loaded while the record of its load is in the history after the latest compaction: the model's `load_capability` exchange, or the [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] a [load from code](../capabilities/on-demand.md#loading-from-code) leaves. A strategy that summarizes or drops that record would unload the capability: its tools would leave the request and its instructions would no longer be sent, while the summary may still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` remove history, so when they remove a capability's load they record it again, right after the summary (or ahead of the kept messages when there's no summary), as a load from code is recorded: a `CapabilityLoadDeltaPart` naming the capability, followed by the [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if the load revealed any. That's a framework record of what's loaded, not a `load_capability` call the model never made. The capability stays loaded, its tools stay in the request, and Pydantic AI states its current instructions again in the system voice. Summaries leave every load record out, the model's own exchanges included: which capabilities are loaded is carried by the records, recorded again after each compaction, never by the summary. Only capabilities the run still registers as on-demand are recorded. `compact_now`, which has no run to ask, records every load, and the next run ignores a load of a capability it doesn't register.
+Pydantic AI counts an [on-demand capability](../capabilities/on-demand.md) as loaded while the record of its load is in the history after the latest compaction: the model's `load_capability` exchange, or the [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] a [load from code](../capabilities/on-demand.md#loading-from-code) leaves. A strategy that summarizes or drops that record would unload the capability: its tools would leave the request and its instructions would no longer be sent, while the summary may still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction`, `RelevanceCompaction` and `ResetCompaction` remove history, so when they remove a capability's load they record it again, right after the summary (or ahead of the kept messages when there's no summary), as a load from code is recorded: a `CapabilityLoadDeltaPart` naming the capability, followed by the [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if the load revealed any. That's a framework record of what's loaded, not a `load_capability` call the model never made. The capability stays loaded, its tools stay in the request, and Pydantic AI states its current instructions again in the system voice. Summaries leave every load record out, the model's own exchanges included: which capabilities are loaded is carried by the records, recorded again after each compaction, never by the summary. Only capabilities the run still registers as on-demand are recorded. `compact_now`, which has no run to ask, records every load, and the next run ignores a load of a capability it doesn't register.
 
 Set `preserve_loaded_capabilities=False` on the strategy to let them unload instead. The strategy then leaves a note in the same place naming the capabilities that are no longer loaded, so the model can load the ones it still needs rather than finding out from a refused tool call. The note is user-channel content whose `TextContent.metadata` is `{'origin': 'pydantic-ai-harness.compaction.unloaded-capabilities.v1', 'capabilities': [...]}`, so a later summary treats it as data rather than as the user's words.
 
@@ -725,7 +798,7 @@ Set `preserve_loaded_capabilities=False` on the strategy to let them unload inst
 
 ## Tool search discoveries across compaction
 
-A tool found through [tool search](../tools-advanced.md#tool-search) stays discovered while the record of its discovery is in the history after the latest compaction: the model's `search_tools` exchange, the provider's native search result, or a [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn] reveal. When `SummarizingCompaction`, `SlidingWindowCompaction` or `RelevanceCompaction` removes that record, it records the discovery again as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming the tools, in the place it records capability loads. That's a framework record of what the model has been shown, not a search the model never made, so a provider's native search result is kept the same way as a local one. The tools stay in the request and the model can call them without searching again. A tool revealed by a capability load is left to that load, so `preserve_loaded_capabilities=False` unloads it along with its capability. Provider-native compaction still drops discoveries, so the model searches again.
+A tool found through [tool search](../tools-advanced.md#tool-search) stays discovered while the record of its discovery is in the history after the latest compaction: the model's `search_tools` exchange, the provider's native search result, or a [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn] reveal. When `SummarizingCompaction`, `SlidingWindowCompaction`, `RelevanceCompaction` or `ResetCompaction` removes that record, it records the discovery again as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming the tools, in the place it records capability loads. That's a framework record of what the model has been shown, not a search the model never made, so a provider's native search result is kept the same way as a local one. The tools stay in the request and the model can call them without searching again. A tool revealed by a capability load is left to that load, so `preserve_loaded_capabilities=False` unloads it along with its capability. Provider-native compaction still drops discoveries, so the model searches again.
 
 ## Keeping user messages (`keep_user_messages`)
 
@@ -771,6 +844,12 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 ::: pydantic_ai_harness.compaction.SummarizingCompaction
 
 ::: pydantic_ai_harness.compaction.RelevanceCompaction
+
+::: pydantic_ai_harness.compaction.ResetCompaction
+
+::: pydantic_ai_harness.compaction.ResetNotice
+
+::: pydantic_ai_harness.compaction.default_reset_notice
 
 ::: pydantic_ai_harness.compaction.CompactOnRequest
 
