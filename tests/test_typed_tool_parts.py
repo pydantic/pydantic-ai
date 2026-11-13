@@ -448,6 +448,7 @@ def test_a_kind_registered_twice_is_an_error() -> None:
 
 
 _T = TypeVar('_T')
+_U = TypeVar('_U')
 
 
 def test_the_parameterized_base_must_match_the_kind() -> None:
@@ -487,6 +488,14 @@ def test_the_parameterized_base_must_match_the_kind() -> None:
     class OpenCallPart(ToolCallPart[_T], Generic[_T], kind=ToolKind('test', 'open', args=LookupArgs)):
         pass
 
+    # An intermediate generic subclass's arguments are its own, not the base's content and metadata.
+    class PairReturnPart(ToolReturnPart[tuple[_T, _U]], Generic[_T, _U]):
+        pass
+
+    class IntStrReturnPart(PairReturnPart[int, str], kind=ToolKind('test', 'pair', content=tuple[int, str])):
+        pass
+
+    assert IntStrReturnPart('t', (1, 'one')).typed_content == (1, 'one')
     assert AnyCallPart('t').tool_kind == 'test.any-shape'
     assert ViaGenericCallPart('t', {'sku': 'A-1'}).typed_args == {'sku': 'A-1'}
     assert OpenCallPart('t').tool_kind == 'test.open'
