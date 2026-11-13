@@ -8,11 +8,14 @@ from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
 
+import anyio
 import httpx
 import httpx2
 import pytest
 
 from .conftest import try_import
+
+READINESS_WAIT_TIMEOUT = 10
 
 with try_import() as imports_successful:
     from tenacity import (
@@ -62,6 +65,22 @@ class _NetworkStream(httpx2.SyncByteStream, httpx2.AsyncByteStream):
 
     async def aclose(self) -> None:
         self.close()
+
+
+class _StalledStream(httpx2.AsyncByteStream):
+    """A response body whose download stalls until the reader is cancelled."""
+
+    def __init__(self):
+        self.reading = anyio.Event()
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.reading.set()
+        await anyio.sleep_forever()
+        yield b''  # pragma: no cover
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _reject(response: httpx2.Response) -> None:
@@ -226,6 +245,23 @@ class TestHTTPX2TenacityTransport:
         assert exc_info.value.response.status_code == status_code
         assert _read_content(exc_info.value.response) == content
         assert stream.iterated == iterated
+        assert stream.closed
+
+    async def test_async_transport_closes_rejected_response_when_body_read_is_cancelled(self):
+        """Cancelling the error body's read still releases the connection (https://github.com/pydantic/pydantic-ai/issues/2724)."""
+        stream = _StalledStream()
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True),
+            wrapped=httpx2.MockTransport(lambda request: httpx2.Response(503, stream=stream)),
+            validate_response=_reject,
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client, anyio.create_task_group() as tg:
+            tg.start_soon(client.get, 'https://example.com')
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await stream.reading.wait()
+            tg.cancel_scope.cancel()
+
         assert stream.closed
 
 

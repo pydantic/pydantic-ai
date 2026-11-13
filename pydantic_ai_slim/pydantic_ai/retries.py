@@ -222,7 +222,7 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
                 except Exception:
                     # Read an error status's body, so the re-raised exception carries it and the connection returns
                     # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
-                    # exception the retry predicate decides on, so it leaves the body unread, as it was before.
+                    # exception the retry predicate decides on; the response is closed with whatever was read.
                     if response.is_error:
                         with suppress(Exception):
                             response.read()
@@ -335,7 +335,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
                 except Exception:
                     # Read an error status's body, so the re-raised exception carries it and the connection returns
                     # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
-                    # exception the retry predicate decides on, so it leaves the body unread, as it was before.
+                    # exception the retry predicate decides on; the response is closed with whatever was read.
                     if response.is_error:
                         with suppress(Exception):
                             await response.aread()
