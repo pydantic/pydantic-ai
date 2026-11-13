@@ -4207,9 +4207,7 @@ def resolve_request_tools(
     `_can_withhold_tool_schemas` and `tool_addition_mode`) and the realtime session path can
     share it — `RealtimeModel` is not a `Model` subclass.
     """
-    supported_natives = _natives_with_executors(
-        params, _supported_native_tools(params, supported_types, unsupported_settings)
-    )
+    supported_natives = _supported_native_tools(params, supported_types, unsupported_settings)
 
     # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
     # the searchable deferred tools as corpus members, so a run whose deferred tools are all
@@ -4221,6 +4219,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
+    # After the drop above, so a tool kept only while that tool search is absent counts as an executor.
+    supported_natives = _natives_with_executors(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.
