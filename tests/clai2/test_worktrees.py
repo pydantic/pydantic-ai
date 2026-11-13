@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.runtime.worktrees import Worktree, open_worktree
 from tests.clai2.cli_runner import CliResult, CliRunner
 
@@ -157,7 +157,7 @@ def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path, launch
     )
     assert result.returncode == 0, result.stderr
     workspace = repository / '.worktrees/saved'
-    store = SqliteConversationStore(database=repository / 'sessions.db')
+    store = SqliteSessionStore(database=repository / 'sessions.db')
     summaries = asyncio.run(store.listing())
     assert len(summaries) == 1
     assert summaries[0].workspace == str(workspace)

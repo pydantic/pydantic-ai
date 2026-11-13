@@ -38,7 +38,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     estimate_message_tokens,
 )
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
 from pydantic_clai2.builtin_plugins.compaction import (
     CompactionPlugin,
@@ -339,7 +339,7 @@ async def test_unloading_clears_the_context_window_and_alert() -> None:
 
 @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
 async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: str) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     agent = Agent(TestModel(custom_output_text='the gist'))
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await session.prompt('first')

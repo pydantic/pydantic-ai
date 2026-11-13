@@ -18,7 +18,7 @@ from uuid import UUID, uuid5
 from anyio.to_thread import run_sync
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
 from pydantic_clai2.runtime.imported_history import Header
@@ -234,7 +234,7 @@ def merge(
 
 
 async def save_import(
-    store: SqliteConversationStore, imported: ImportedSession, *, delegations: DelegationTasks | None = None
+    store: SqliteSessionStore, imported: ImportedSession, *, delegations: DelegationTasks | None = None
 ) -> str:
     """Copy a session into the store, or refresh a copy CLAI has not continued, and return its CLAI ID.
 

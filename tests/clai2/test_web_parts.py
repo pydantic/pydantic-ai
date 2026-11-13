@@ -56,7 +56,7 @@ from pydantic_ai_harness.filesystem import (
     FileWrittenEvent,
 )
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_clai2.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER, Receive, Scope, Send
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
@@ -643,7 +643,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
     saved = None
     if resume:
         store.save_plugin(PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', enabled=True))
-        sessions = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+        sessions = SqliteSessionStore(database=store.path.with_name('sessions.db'))
         saved = await sessions.save(
             summary=ConversationSummary(workspace=str(Path.cwd().resolve()), title='Saved'), messages=[]
         )
@@ -683,7 +683,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
     other.mkdir()
     monkeypatch.chdir(launch)
     store = SettingsStore(tmp_path / 'config.db')
-    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+    saved = await SqliteSessionStore(database=store.path.with_name('sessions.db')).save(
         summary=ConversationSummary(workspace=str(other.resolve()), title='Elsewhere'), messages=[]
     )
     output = _Output()
@@ -715,7 +715,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
 
 async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+    saved = await SqliteSessionStore(database=store.path.with_name('sessions.db')).save(
         summary=ConversationSummary(workspace=str(tmp_path / 'gone'), title='Gone'), messages=[]
     )
     with pytest.raises(ValueError, match=re.escape(f'does not exist. Session {saved.id} was saved there;')):

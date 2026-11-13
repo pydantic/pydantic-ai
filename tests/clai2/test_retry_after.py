@@ -25,7 +25,7 @@ from pydantic_ai.models import Model, override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.headless import run_headless
 from pydantic_clai2.config import Settings
@@ -488,7 +488,7 @@ async def test_long_retry_is_visible_and_history_retained(
         assert 'Retry after about 2h 55m' in output
         assert 'CLAI skipped a wait over 60s' in output
         assert '/model' in output
-        summaries = await SqliteConversationStore(database=tmp_path / 'sessions.db').listing()
+        summaries = await SqliteSessionStore(database=tmp_path / 'sessions.db').listing()
         assert len(summaries) == 1 and summaries[0].outcome == 'failed'
     assert sdk_sleeps == []
 
