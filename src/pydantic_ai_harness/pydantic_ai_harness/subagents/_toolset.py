@@ -1400,10 +1400,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         The shared ones, the parent run's `DenyUnanswered`, task control's, then `serving_model` and the extras.
         """
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
         capabilities: list[AgentCapability[AgentDepsT]] = [
             *self._shared_capabilities,
-            # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
-            *([deny] if (deny := find_deny_unanswered(ctx)) is not None else []),
+            *([deny] if deny is not None else []),
         ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
