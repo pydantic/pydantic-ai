@@ -211,12 +211,25 @@ Every boxd machine has a desktop, and the agent drives it through boxd's compute
 
 The screen is held at 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent can type any text, including accented letters and emoji.
 
-To watch the agent, or take over, open the desktop in the boxd console. Create the backend before the run, as in [Prepare a machine before the run](#prepare-a-machine-before-the-run), and get the link from it:
+To watch the agent, or take over, open the desktop in the boxd console. Build the backend yourself and get the link from it before the run:
 
-```python {test="skip" lint="skip"}
-backend = BoxdSandboxBackend(desktop=True)
-print(await backend.live_view_url())  # creates the machine and starts its desktop
-result = await agent.run('Start xterm, run `uname -a` in it, and tell me what it printed.', workspace=backend)
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent('{{ anthropic:large }}', capabilities=[BoxdSandbox(desktop=True), Coder(), ComputerUse()])
+
+
+async def watch_the_agent() -> None:
+    backend = BoxdSandboxBackend(desktop=True)
+    try:
+        print(await backend.live_view_url())  # creates the machine and starts its desktop
+        result = await agent.run('Start xterm, run `uname -a` in it, and tell me what it printed.', workspace=backend)
+        print(result.output)
+    finally:
+        await backend.aclose()
 ```
 
 The link carries no secret: it opens for people signed in to boxd in the machine's organization. While the agent works, the console shows the screen scaled to fit your window, so your window size doesn't move what the agent clicks.

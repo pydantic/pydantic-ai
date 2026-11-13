@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -228,19 +229,11 @@ async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeB
     assert [client.closed for client in host.clients] == [True]
 
 
-def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+def test_agent_spec_schema_publishes_every_field_but_the_client() -> None:
+    """`from_spec` lists its fields by hand, so a new field must be added there too."""
     definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
-    assert sorted(definitions['spec_params_BoxdSandbox']['properties']) == [
-        'auto_suspend_timeout',
-        'defer_loading',
-        'description',
-        'env',
-        'id',
-        'org',
-        'snapshot',
-        'vcpu',
-        'working_dir',
-    ]
+    published = set(definitions['spec_params_BoxdSandbox']['properties'])
+    assert published == {field.name for field in dataclasses.fields(BoxdSandbox)} - {'client'}
 
 
 @pytest.mark.parametrize('size', [{'snapshot': 'base'}, {'vcpu': 2}])
@@ -252,6 +245,7 @@ def test_from_spec_forwards_the_spec_fields(size: dict[str, Any]) -> None:
         'auto_suspend_timeout': 30,
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
+        'desktop': (1280, 800),
         **size,
     }
     assert BoxdSandbox[None].from_spec(**spec_fields) == BoxdSandbox[None](**spec_fields)
