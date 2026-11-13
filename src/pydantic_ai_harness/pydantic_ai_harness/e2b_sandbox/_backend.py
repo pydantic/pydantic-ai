@@ -852,8 +852,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             await stopper.wait()
         except Exception:
             # A failed control-plane stop must not mask the original failure; the command may
-            # still be running, and the sandbox ref stays available for explicit cleanup.
-            logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
+            # still be running, and the sandbox ref stays available for explicit cleanup. A sandbox
+            # that isn't running, such as a paused one, runs no command, and its error says so.
+            if await _is_running(sandbox):
+                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
+            else:
+                logger.debug('Could not stop E2B command in sandbox %s: it is not running', sandbox.sandbox_id)
 
 
 class _OutputCounter:

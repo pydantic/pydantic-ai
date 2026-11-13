@@ -18,7 +18,7 @@ from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.computer_use import Display
 from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
-from ..display_contract import check_display_contract
+from ..display_contract_live import check_display_contract
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
