@@ -134,6 +134,16 @@ def _gave_up(status_code: int, *, content: bytes | None = None) -> Handler:
     return handler
 
 
+_GOOGLE_RETRY_INFO: dict[str, object] = {
+    'error': {
+        'code': 429,
+        'message': 'Resource has been exhausted',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+    }
+}
+
+
 def _raise(kind: Literal['connect', 'timeout']) -> Handler:
     def handler(request: Any) -> Any:
         if isinstance(request, httpx.Request):
@@ -296,17 +306,22 @@ CASES = [
         # Gemini reports the wait in the body's `google.rpc.RetryInfo`, and an embeddings request is no exception.
         id='google-retry-info',
         model=_google,
-        handler=_json(
-            429,
-            {
-                'error': {
-                    'code': 429,
-                    'message': 'Resource has been exhausted',
-                    'status': 'RESOURCE_EXHAUSTED',
-                    'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
-                }
-            },
-        ),
+        handler=_json(429, _GOOGLE_RETRY_INFO),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 14.0},
+    ),
+    Case(
+        id='google-transport-gave-up',
+        model=_google,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        # The status a retrying transport gave up on still carries Gemini's body, and so its `RetryInfo` wait.
+        id='google-transport-gave-up-retry-info',
+        model=_google,
+        handler=_gave_up(429, content=json.dumps(_GOOGLE_RETRY_INFO).encode()),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'retry_after': 14.0},
     ),

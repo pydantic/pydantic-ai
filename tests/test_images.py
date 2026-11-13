@@ -34,8 +34,10 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelRateLimitError,
+    ModelTimeoutError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -2031,6 +2033,66 @@ async def test_google_image_generation_status_error(
     assert exc_info.value.status_code == status_code
     assert exc_info.value.body == {'error': error}
     assert exc_info.value.retry_after == expected_retry_after
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_gave_up_status_error():
+    """A status a retrying transport gave up on surfaces as a categorized `ModelHTTPError` with Gemini's wait.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    error: dict[str, object] = {
+        'code': 429,
+        'message': 'Resource has been exhausted',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+    }
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        response = httpx2.Response(429, json={'error': error}, request=request)
+        raise httpx2.HTTPStatusError('Client error 429', request=request, response=response)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert isinstance(exc_info.value, ModelRateLimitError)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.retry_after == 14.0
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    ('transport_error', 'expected', 'phase'),
+    [
+        pytest.param(httpx2.ConnectError, ModelConnectionError, 'connect', id='connect'),
+        pytest.param(httpx2.ReadTimeout, ModelTimeoutError, 'read', id='timeout'),
+    ],
+)
+async def test_google_image_generation_transport_error(
+    transport_error: type[httpx2.TransportError], expected: type[ModelConnectionError], phase: str
+):
+    """`google.genai` doesn't wrap connection errors and timeouts, so they surface as their pydantic-ai categories.
+
+    Not a VCR test: the transport raises before any response exists, so there is no response to record.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        raise transport_error('failed', request=request)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        with pytest.raises(ModelConnectionError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert type(exc_info.value) is expected
+    assert exc_info.value.phase == phase
+    assert isinstance(exc_info.value.__cause__, transport_error)
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
