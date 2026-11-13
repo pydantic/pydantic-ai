@@ -219,10 +219,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return self.native.id
         if url is None:
             return None
-        host = urlparse(url).hostname
-        # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead,
-        # as `MCPToolset` does for its own hostname-derived id.
-        return host.replace(':', '-') if host else None
+        return _utils.host_derived_id(url)
 
     @cached_property
     def _resolved_id(self) -> str:
