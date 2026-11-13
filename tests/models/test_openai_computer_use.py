@@ -705,6 +705,16 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
     assert request['tools'][0]['type'] == 'function'
 
 
+def test_an_azure_client_keeps_the_function_tool() -> None:
+    """Azure sends `pending_safety_checks: null`, which the native mapping can't read, so an Azure client opts out."""
+    from openai import AsyncAzureOpenAI
+
+    client = AsyncAzureOpenAI(api_key='test', azure_endpoint='https://example.openai.azure.com', api_version='v1')
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    native_tools = model.profile.get('supported_native_tools')
+    assert native_tools is not None and ComputerTool not in native_tools
+
+
 async def test_computer_calls_from_another_provider_replay_as_function_calls(allow_model_requests: None) -> None:
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
