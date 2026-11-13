@@ -105,6 +105,15 @@ pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 pydantic-ai-harness = { workspace = true }
 pydantic-clai2 = { workspace = true }
+# PyPI's Linux `torch` wheels are CUDA builds that pull in ~2.3 GB of NVIDIA wheels; nothing here
+# needs a GPU (the `sentence-transformers` tests run a tiny model on CPU), so lock the CPU build on
+# Linux. Only affects this repo's lock and dev installs: `tool.uv.sources` isn't published metadata.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.uv.workspace]
 members = [
