@@ -103,8 +103,8 @@ async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> N
 
 
 async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that boxd presses every key name `PressKeys` can carry, as the
-    keysym the driver sends for it, alone and held with a modifier."""
+    """Validates the fake-encoded assumption that boxd presses the key names listed, as the keysym the driver
+    sends for each, alone and held with a modifier."""
     names = [
         *('enter', 'escape', 'tab', 'backspace', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown'),
         *('up', 'down', 'left', 'right', 'space', 'printscreen', 'pause', 'menu', 'capslock', 'numlock'),

@@ -447,7 +447,7 @@ class _FakeComputerTransport:
         assert which is not None
         action = getattr(request, which)
         if which not in ('screenshot', 'cursor_position'):
-            desktop.calls.append(f'{which} {self._describe(which, action)}'.rstrip())
+            desktop.calls.append(f'{which} {self._apply_and_describe(which, action)}'.rstrip())
             if desktop.calls[-1] == desktop.hang_on:
                 await anyio.sleep_forever()
             if desktop.errors and (error := desktop.errors.pop(0)) is not None:
@@ -468,7 +468,7 @@ class _FakeComputerTransport:
             screenshot=shot,
         )
 
-    def _describe(self, which: str, action: _Action) -> str:
+    def _apply_and_describe(self, which: str, action: _Action) -> str:
         desktop = self._owner.desktop
         if which == 'set_screen_size':
             desktop.size = (action.width, action.height)
@@ -483,7 +483,7 @@ class _FakeComputerTransport:
         if which == 'drag':
             if not 2 <= len(action.path) <= 100:
                 raise _invalid('a drag path has 2 to 100 points')
-            return f'{len(action.path)} points from {_point(action.path[0])} modifiers={action.modifiers!r}'
+            return f'{" ".join(_point(point) for point in action.path)} modifiers={action.modifiers!r}'
         if which == 'scroll':
             if max(abs(action.delta_x), abs(action.delta_y)) > 100:
                 raise _invalid('scroll at most 100 wheel clicks each way')
