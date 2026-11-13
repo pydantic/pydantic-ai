@@ -1,10 +1,11 @@
 """Tests for the shared _spec.py module."""
 
 from dataclasses import dataclass
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 import pytest
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, GetPydanticSchema, JsonValue
+from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
@@ -250,6 +251,41 @@ class ModelParam(AbstractCapability[None]):
         return cls(limits=Limits.model_validate(limits))
 
 
+@dataclass
+class AnyParam(AbstractCapability[None]):
+    value: Any = None
+
+    @classmethod
+    def from_spec(cls, value: Any = None) -> Self:
+        return cls(value=value)
+
+
+ExternalRef = Annotated[
+    dict[str, int],
+    GetPydanticSchema(
+        get_pydantic_json_schema=lambda core_schema, handler: {'$ref': 'https://example.com/schema.json'}
+    ),
+]
+# A union that names itself through another alias: its JSON schema is a `$ref` cycle. Pyright rejects the
+# self-reference, but Pydantic generates a schema for it.
+IntOrStr = TypeAliasType('IntOrStr', 'int | StrOrInt')  # pyright: ignore[reportGeneralTypeIssues, reportUnknownVariableType]
+StrOrInt = TypeAliasType('StrOrInt', 'str | IntOrStr')
+
+
+@dataclass
+class ExternalRefParam(AbstractCapability[None]):
+    @classmethod
+    def from_spec(cls, value: ExternalRef | None = None) -> Self:
+        return cls()
+
+
+@dataclass
+class RefCycleParam(AbstractCapability[None]):
+    @classmethod
+    def from_spec(cls, value: IntOrStr | None = None) -> Self:  # pyright: ignore[reportInvalidTypeForm, reportUnknownParameterType]
+        return cls()
+
+
 class TestBuildSchemaTypes:
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
@@ -339,6 +375,34 @@ class TestBuildSchemaTypes:
         assert list(validator.iter_errors(short_form))
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('arguments', 'valid', 'value'),
+        [
+            pytest.param(5, True, 5, id='short-form-scalar'),
+            pytest.param({'value': {'a': 1}}, True, {'a': 1}, id='keyword-form-object'),
+            pytest.param({'a': 1}, False, None, id='short-form-object'),
+        ],
+    )
+    def test_any_param_capability_schema(self, arguments: JsonValue, valid: bool, value: JsonValue):
+        """A sole `Any`-typed parameter, whose schema has no `type`, takes a string-keyed object in the keyword form only."""
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{'AnyParam': arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([AnyParam])
+        assert (list(validator_for(schema)(schema).iter_errors(spec)) == []) is valid
+        if valid:
+            capabilities = Agent.from_spec(spec, custom_capability_types=[AnyParam]).root_capability.capabilities
+            assert [c.value for c in capabilities if isinstance(c, AnyParam)] == [value]
+
+    @pytest.mark.parametrize('capability', [ExternalRefParam, RefCycleParam])
+    def test_unresolved_ref_param_capability_schema(self, capability: type[AbstractCapability[None]]):
+        """A sole parameter whose schema has a `$ref` outside `$defs`, or a `$ref` cycle, keeps its short form."""
+        name = capability.get_serialization_name()
+        schema = AgentSpec.model_json_schema_with_capabilities([capability])
+        assert [key for key in schema['$defs'] if key.endswith(f'_{name}')] == [f'short_spec_{name}']
+        spec = {'model': 'test', 'capabilities': [name]}
+        capabilities = Agent.from_spec(spec, custom_capability_types=[capability]).root_capability.capabilities
+        assert [type(c) for c in capabilities if isinstance(c, capability)] == [capability]
+
     def test_unrepresentable_param_capability_schema(self):
         """A sole parameter with no JSON schema drops the capability's short form instead of raising."""
 

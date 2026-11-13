@@ -387,16 +387,22 @@ def _object_rejecting_type(target: Callable[..., object], name: str, type_hints:
     return None
 
 
-def _json_schema_accepts_object(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> bool:
+def _json_schema_accepts_object(
+    schema: Mapping[str, Any], defs: Mapping[str, Any], followed_refs: frozenset[str] = frozenset()
+) -> bool:
     """Whether `schema`, a JSON schema Pydantic generated with `defs` as its `$defs`, can accept a JSON object.
 
     A schema without a `type`, such as the one for `Any`, counts as accepting one. A wrong yes only adds the keyword
-    form and rejects objects the type already rejects.
+    form and rejects objects the type already rejects. A `$ref` outside `defs`, such as an external one from a custom
+    JSON schema, or one already followed in a cycle, counts as not accepting one, which leaves the short form as is.
     """
     if (ref := schema.get('$ref')) is not None:
-        return _json_schema_accepts_object(defs[ref.removeprefix('#/$defs/')], defs)
+        key = ref.removeprefix('#/$defs/')
+        if key not in defs or key in followed_refs:
+            return False
+        return _json_schema_accepts_object(defs[key], defs, followed_refs | {key})
     if (members := schema.get('anyOf', schema.get('oneOf'))) is not None:
-        return any(_json_schema_accepts_object(member, defs) for member in members)
+        return any(_json_schema_accepts_object(member, defs, followed_refs) for member in members)
     return schema.get('type', 'object') == 'object'
 
 
