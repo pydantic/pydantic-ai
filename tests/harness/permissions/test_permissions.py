@@ -225,7 +225,7 @@ class TestPermissions:
         assert await ask_permissions(requests, _Person()) is None
         assert permission_requests(requests) == []
 
-    async def test_request_input_leaves_other_approvals_pending(self, tmp_path: Path) -> None:
+    async def test_approval_ask_leaves_other_approvals_pending(self, tmp_path: Path) -> None:
         """`approval_ask` answers an empty result rather than `None`, so the handler does not wait on its token."""
         person = _Person()
         agent = _agent(tmp_path, _calls(('other', {})), 'read-only', person)
