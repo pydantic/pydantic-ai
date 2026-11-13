@@ -33,10 +33,11 @@ from pydantic_ai import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import NativeTool, ProcessHistory
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.native_tools import MCPServerTool
 
 from ...conftest import RequestCapture, try_import
 from ..conftest import AnthropicModelFactory
@@ -384,6 +385,23 @@ async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
         await agent.run('Again', message_history=first.all_messages(), model_settings=skills('xlsx'))
 
     assert api.bodies[1]['thread'] == {'type': 'create'}
+
+
+async def test_mcp_authorization_token_is_not_fixed_for_the_thread(allow_model_requests: None):
+    """A new MCP authorization token continues the thread; a new server URL creates one."""
+    api = _Api()
+
+    def agent(url: str, token: str) -> Agent[None, str]:
+        server = MCPServerTool(id='clock', url=url, authorization_token=token)
+        return Agent(model, capabilities=[NativeTool(server)], model_settings=_SETTINGS)
+
+    async with _model(api) as model:
+        first = await agent('https://example.com/mcp', 'token-1').run('Hi')
+        second = await agent('https://example.com/mcp', 'token-2').run('Again', message_history=first.all_messages())
+        await agent('https://example.org/mcp', 'token-2').run('More', message_history=second.all_messages())
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create']
+    assert [body['mcp_servers'][0]['authorization_token'] for body in api.bodies] == ['token-1', 'token-2', 'token-2']
 
 
 async def test_thinking_in_extra_body_is_fixed_for_the_thread(allow_model_requests: None):
