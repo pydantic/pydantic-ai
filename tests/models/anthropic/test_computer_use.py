@@ -1155,22 +1155,26 @@ async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests:
 
 
 @pytest.mark.parametrize(
-    'model_name, blocks',
+    'model_name, build',
     [
         (
             'claude-sonnet-4-6',
-            [BetaToolUseBlock(id='toolu_long_1', type='tool_use', name='computer', input={'action': 'screenshot'})],
+            lambda: [
+                BetaToolUseBlock(id='toolu_long_1', type='tool_use', name='computer', input={'action': 'screenshot'})
+            ],
         ),
         (
             'claude-sonnet-5-5',
-            [_tool_use('toolu_long_1', 'screenshot', {}), _tool_use('toolu_long_2', 'screenshot', {})],
+            lambda: [_tool_use('toolu_long_1', 'screenshot', {}), _tool_use('toolu_long_2', 'screenshot', {})],
         ),
     ],
     ids=['computer-tool', 'toolset'],
 )
 async def test_a_replayed_call_and_its_results_pair_up_when_ids_are_fitted(
-    allow_model_requests: None, model_name: str, blocks: list[BetaToolUseBlock]
+    allow_model_requests: None, model_name: str, build: Callable[[], list[BetaToolUseBlock]]
 ) -> None:
+    # Built in the test, so collecting the file needs no `anthropic` install.
+    blocks = build()
     client = MockAnthropic.create_mock([_turn(*blocks), _turn(BetaTextBlock(text='done', type='text'))])
     model = AnthropicModel(
         model_name, provider=AnthropicProvider(anthropic_client=client), profile={'tool_call_id_length': 9}
