@@ -1,3 +1,10 @@
+"""Tests for `ConversationStore` and the conversations runs hand it, including those of failed runs.
+
+These are unit-style tests rather than VCR tests: what's under test is how Pydantic AI records, saves and loads
+a conversation, and what a failed or cancelled run's error carries, not how a provider responds, so `TestModel`
+and `FunctionModel` drive the runs.
+"""
+
 from __future__ import annotations
 
 import asyncio
