@@ -24,7 +24,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import CapabilityStorage, ToolOutputLimits
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:large }}',
     capabilities=[
         CapabilityStorage(LocalWorkspaceBackend('/var/lib/myapp/agent-files')),
         ToolOutputLimits(),
@@ -64,7 +64,7 @@ from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import CapabilityStorage, ToolOutputLimits
 
-agent = Agent('anthropic:claude-fable-5', capabilities=[ToolOutputLimits()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ToolOutputLimits()])
 
 
 async def answer(tenant_id: str, prompt: str) -> str:
