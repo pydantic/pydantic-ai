@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
 
 import anyio
 import pytest
@@ -417,7 +416,7 @@ async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitte
 
 async def test_a_failing_cancel_callback_doesnt_keep_other_work_running():
     """The run still cancels and waits for all its work when a registered work's `cancel` callback raises, then raises its error."""
-    handles: dict[str, InFlightWork[Any]] = {}
+    handles: dict[str, InFlightWork[None] | InFlightWork[bool]] = {}
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
