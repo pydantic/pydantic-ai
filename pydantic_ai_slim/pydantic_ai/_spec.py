@@ -363,7 +363,7 @@ def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping
 
 
 def _object_rejecting_type(target: Callable[..., object], name: str, type_hints: Mapping[str, Any]) -> object | None:
-    """The type of `target`'s sole spec parameter with string-keyed objects rejected, if its JSON schema accepts an object.
+    """The type of `target`'s sole spec parameter with string-keyed objects rejected, if its schema accepts an object.
 
     The loader reads a string-keyed dict in the short form as keyword arguments, so such a parameter takes those in the
     keyword form only. A YAML mapping with a non-string key stays a positional value. A target accepting `**kwargs`
