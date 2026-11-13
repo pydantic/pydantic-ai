@@ -244,7 +244,7 @@ async def main():
     print(result.output)
 ```
 
-A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Google Chrome. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent also gets the sandbox's shell and files, so `Coder` and `ComputerUse` can share it.
+A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Google Chrome. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. Add `Coder` to give the agent this sandbox's shell and files too.
 
 A custom `template` needs Xvfb, `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop.
 

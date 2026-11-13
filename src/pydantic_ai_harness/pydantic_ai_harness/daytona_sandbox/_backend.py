@@ -75,7 +75,6 @@ _OUTPUT_LIMIT_MESSAGE = (
     'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead'
 )
 _REQUEST_TIMEOUT = 30
-
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.
@@ -208,15 +207,9 @@ async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
         return None
     if _in_deleted_state(sandbox):
         return WorkspaceUnavailableError(_unavailable_message(sandbox.id))
-    state = sandbox.state
-    if state is not None and state in (
-        daytona.SandboxState.STOPPED,
-        daytona.SandboxState.ARCHIVED,
-        daytona.SandboxState.PAUSED,
-    ):
-        # Stopped by a call or by Daytona's auto-stop when idle: Daytona doesn't say which.
+    if sandbox.state in (daytona.SandboxState.STOPPED, daytona.SandboxState.ARCHIVED, daytona.SandboxState.PAUSED):
         return WorkspaceUnavailableError(
-            f'The Daytona sandbox {sandbox.id!r} is {state.value}; a later run that attaches to it '
+            f'The Daytona sandbox {sandbox.id!r} was stopped while idle; a later run that attaches to it '
             "starts it again. Pass `workspace='new'` to start a fresh sandbox."
         )
     return None
@@ -428,7 +421,7 @@ class DaytonaSandboxBackend(
     A command's complete output is returned once it exits. A shell string runs under `/bin/sh -c`;
     a timeout or cancellation stops the command.
 
-    A deleted sandbox, a stopped one (attaching again starts it), rejected
+    A deleted sandbox, one Daytona stopped while idle (attaching again starts it), rejected
     credentials, and an unknown snapshot raise `WorkspaceUnavailableError`. Path failures raise the
     built-in errors, such as `FileNotFoundError`.
 

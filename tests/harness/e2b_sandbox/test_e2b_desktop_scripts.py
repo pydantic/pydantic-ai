@@ -56,7 +56,7 @@ def _run(script: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess
             (bin_dir / name).chmod(0o755)
     for old, new in [('/tmp/', f'{tmp_path}/'), ('/proc/', f'{tmp_path}/proc/')]:
         script = script.replace(old, new)
-    env = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'LC_ALL': 'C'}  # `C`, so `tr` takes `/dev/urandom`'s bytes
+    env = {'PATH': f'{bin_dir}:/usr/bin:/bin'}
     return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
 
 

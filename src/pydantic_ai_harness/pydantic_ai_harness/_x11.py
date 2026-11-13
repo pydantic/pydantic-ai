@@ -246,8 +246,8 @@ def _move(x: int | None, y: int | None) -> list[str]:
 _ENV = {'DISPLAY': DISPLAY}
 
 
-_X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
-_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
+_X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 
 def start_x_server(log: str, *, then: str = '') -> str:

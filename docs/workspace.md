@@ -233,9 +233,8 @@ working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
 raise `ModelRetry` so the model can try again; uncaught, it ends the run, except on Temporal, where it
-follows the activity retry policy (see [Durable execution](#durable-execution)). An environment the backend can't
-reach, such as a sandbox deleted or paused during a command, raises `WorkspaceUnavailableError` and ends the run,
-since retrying the call can't succeed.
+follows the activity retry policy (see [Durable execution](#durable-execution)). An environment that is gone,
+such as a sandbox deleted during a command, raises `WorkspaceUnavailableError` and ends the run.
 A command killed by a signal while its environment stays live returns its exit code instead.
 
 ## Read-only access
