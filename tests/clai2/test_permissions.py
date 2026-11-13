@@ -150,7 +150,8 @@ async def test_only_a_session_no_one_can_be_asked_in_denies_other_approvals(tmp_
     assert await shell.run() == 'exit'
     assert ran == [] and asked == []
     assert (f'Tool said: {DEFAULT_MESSAGE}' in output.getvalue()) is not attended
-    assert all(not isinstance(capability, DenyUnanswered) for capability in shell.run_plugins()) is attended
+    denied = any(isinstance(capability, DenyUnanswered) for capability in shell.run_plugins())
+    assert denied is not attended
 
 
 async def test_permissions_command_shows_and_sets_the_mode(tmp_path: Path) -> None:
