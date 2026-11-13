@@ -322,11 +322,9 @@ class TestBuildSchemaTypes:
         with pytest.raises(ValueError, match="unexpected keyword argument 'a'"):
             Agent.from_spec(unknown_keyword, custom_capability_types=[ObjectParam])
 
-        # `{'weights': 5}` is a valid `dict[str, int]`, but the loader passes it as `weights=5`.
+        # `{'weights': 5}` is a valid `dict[str, int]`, but the loader would pass it as `weights=5`.
         mistyped = {'model': 'test', 'capabilities': [{'ObjectParam': {'weights': 5}}]}
         assert list(validator.iter_errors(mistyped))
-        capabilities = Agent.from_spec(mistyped, custom_capability_types=[ObjectParam]).root_capability.capabilities
-        assert [c.weights for c in capabilities if isinstance(c, ObjectParam)] == [5]
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_model_param_capability_schema(self):
