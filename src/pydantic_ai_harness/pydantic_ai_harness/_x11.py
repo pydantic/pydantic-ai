@@ -247,23 +247,48 @@ _ENV = {'DISPLAY': DISPLAY}
 
 
 _X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
-_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
+_X_SOCKET_DIR = '/tmp/.X11-unix'
+_X_SOCKET = f'{_X_SOCKET_DIR}/X{DISPLAY[1:]}'
+
+_PROGRAMS = ('Xvfb', 'xdotool', 'xwininfo', 'scrot', 'setsid')
+_PACKAGES = 'xvfb xdotool x11-utils scrot util-linux'
+"""The Debian and Ubuntu packages that have `_PROGRAMS`."""
+
+_START_TIMEOUT = 600
+"""Seconds a start script gets, which covers installing `_PACKAGES`."""
 
 
 def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It fails once the X server exits, or after 10 seconds, printing the end of `log`. `then` runs once a new X server
-    answers, such as to start a panel.
+    It first installs any of `_PROGRAMS` that's missing with `apt-get`, as root or through `sudo -n`, even when an X
+    server already answers. It fails once the X server exits, or after 10 seconds, printing the end of `log`. `then`
+    runs once a new X server answers, such as to start a panel.
 
-    It takes `START_LOCK`, so a second start waits and finds the first one's X server. The lock is held until the
-    script exits, so the rest of the script runs under it too; anything started in the background must close it with
-    `9>&-`.
+    It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
+    until the script exits, so the rest of the script runs under it too; anything started in the background must close
+    it with `9>&-`.
     """
     return (
-        f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-        # A stale lock, such as one left by `docker stop`, stops Xvfb starting once its PID belongs to another process.
-        # A running X server's lock stays, whichever server it is, such as `Xvnc`.
+        f'{START_LOCK}missing=; for p in {" ".join(_PROGRAMS)}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
+        # `elevate` prefixes a command that needs root: empty as root, `sudo -n` with passwordless sudo, and
+        # `none` when neither works.
+        'if [ "$(id -u)" = 0 ]; then elevate=; elif sudo -n true >/dev/null 2>&1; then elevate="sudo -n"; '
+        'else elevate=none; fi; '
+        'if [ -n "$missing" ]; then '
+        'if ! command -v apt-get >/dev/null 2>&1; then '
+        """echo "missing$missing, and there's no apt-get to install them with" >&2; exit 1; fi; """
+        'if [ "$elevate" = none ]; then '
+        """echo "missing$missing, and there's no root or passwordless sudo to install them with" >&2; exit 1; fi; """
+        '{ $elevate apt-get update -qq && $elevate env DEBIAN_FRONTEND=noninteractive '
+        f'apt-get install -y -qq --no-install-recommends {_PACKAGES}; }} >{log} 2>&1 '
+        f'|| {{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; fi; '
+        'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+        # Without root, a directory the user makes themselves works, so the mkdir runs unprefixed.
+        f'if [ ! -d {_X_SOCKET_DIR} ]; then [ "$elevate" = none ] && elevate=; '
+        f'$elevate mkdir -p {_X_SOCKET_DIR} && $elevate chmod 1777 {_X_SOCKET_DIR}; fi; '
+        # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
+        # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
         # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
@@ -288,7 +313,7 @@ def x11_display(
     async def start() -> None:
         width, height = size
         # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
-        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=30)
+        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
