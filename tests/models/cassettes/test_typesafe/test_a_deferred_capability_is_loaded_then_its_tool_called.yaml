@@ -50,7 +50,7 @@ interactions:
       transfer-encoding:
       - chunked
       x-typesafe-request-id:
-      - req_01a1c7dd881e7953b69364bb1566c1ca
+      - req_01a1d28d1cc573baabcc6c03df2fd25e
     body:
       type: json
       content:
@@ -58,7 +58,7 @@ interactions:
         answers:
           Resolution.resolved:
             type: noul
-            noul: 0.06
+            noul: 0.07
           route:
             type: choice
             choice: refunds
@@ -70,7 +70,7 @@ interactions:
         usage:
           input_tokens: 466
           output_tokens: 59
-  recorded_at: 2026-11-10T23:49:06.823947+00:00
+  recorded_at: 2026-11-13T01:37:05.795056+00:00
 - request:
     method: POST
     uri: https://api.typesafe.ai/v1/systemone
@@ -82,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1229"
+      - "1239"
       content-type:
       - application/json
       host:
@@ -102,9 +102,9 @@ interactions:
               content: "{\"message\":\"Capability 'refunds' loaded. Its instructions, if any, follow.\"}"
           - system: "The following tool(s) are now available: `refund_status`"
           - system: |-
-              <context id="capability:refunds">
+              <pyai:context id="capability:refunds">
               Confirm the order ID before issuing a refund.
-              </context>
+              </pyai:context>
         model: jev-latest
         questions:
           Resolution.resolved:
@@ -135,7 +135,7 @@ interactions:
       transfer-encoding:
       - chunked
       x-typesafe-request-id:
-      - req_01a1c7dd88bf7c279f1ae3563bf12989
+      - req_01a1d28d1d327c30aa819fb278989209
     body:
       type: json
       content:
@@ -153,9 +153,9 @@ interactions:
               shipping: 0.0
               refund_status: 1.0
         usage:
-          input_tokens: 610
+          input_tokens: 619
           output_tokens: 59
-  recorded_at: 2026-11-10T23:49:06.941290+00:00
+  recorded_at: 2026-11-13T01:37:05.899190+00:00
 - request:
     method: POST
     uri: https://api.typesafe.ai/v1/systemone
@@ -167,7 +167,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1297"
+      - "1307"
       content-type:
       - application/json
       host:
@@ -187,9 +187,9 @@ interactions:
               content: "{\"message\":\"Capability 'refunds' loaded. Its instructions, if any, follow.\"}"
           - system: "The following tool(s) are now available: `refund_status`"
           - system: |-
-              <context id="capability:refunds">
+              <pyai:context id="capability:refunds">
               Confirm the order ID before issuing a refund.
-              </context>
+              </pyai:context>
           - tool_call:
               name: refund_status
               args: {}
@@ -225,7 +225,7 @@ interactions:
       transfer-encoding:
       - chunked
       x-typesafe-request-id:
-      - req_01a1c7dd892c753e9527fb201fcf7106
+      - req_01a1d28d1da076d1951e07b59c5eaa32
     body:
       type: json
       content:
@@ -233,7 +233,7 @@ interactions:
         answers:
           Resolution.resolved:
             type: noul
-            noul: 0.81
+            noul: 0.82
           route:
             type: choice
             choice: Resolution
@@ -242,6 +242,6 @@ interactions:
               Resolution: 0.99
               shipping: 0.01
         usage:
-          input_tokens: 657
+          input_tokens: 666
           output_tokens: 50
-  recorded_at: 2026-11-10T23:49:07.062235+00:00
+  recorded_at: 2026-11-13T01:37:06.024785+00:00
