@@ -68,7 +68,10 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
-from pydantic_ai.direct import model_request as direct_model_request
+from pydantic_ai.direct import (
+    model_request as direct_model_request,
+    model_request_stream as direct_model_request_stream,
+)
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -359,17 +362,25 @@ def test_openai_citations_kept_with_logprobs():
     assert part.provider_details.keys() == {'citations', 'logprobs'}
 
 
-async def test_openai_responses_unsupported_output_item_warns(allow_model_requests: None, openai_api_key: str):
-    """A non-streamed `computer_call` warns like the streamed one instead of being dropped silently."""
+@pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
+async def test_openai_responses_unsupported_output_item_warns(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """A `computer_call` warns the same way with and without streaming, instead of being dropped silently."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_native_tools=[ComputerToolParam(type='computer')])
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Take a screenshot of the screen.')]
 
     with pytest.warns(
         UserWarning, match=r'Handling of this item type is not yet implemented.*ResponseComputerToolCall'
     ):
-        response = await direct_model_request(
-            model, [ModelRequest.user_text_prompt('Take a screenshot of the screen.')], model_settings=settings
-        )
+        if stream:
+            async with direct_model_request_stream(model, messages, model_settings=settings) as streamed:
+                async for _ in streamed:
+                    pass
+            response = streamed.get()
+        else:
+            response = await direct_model_request(model, messages, model_settings=settings)
 
     assert response.parts == []
 

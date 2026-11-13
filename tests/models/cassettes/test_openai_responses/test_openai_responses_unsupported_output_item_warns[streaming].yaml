@@ -1,0 +1,73 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "233"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Take a screenshot of the screen.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: computer
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "536"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_078885c6d8c28c3b006af6e33b737087d2be6bdc556e3e1987","object":"response","created_at":1794564923,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+        
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_078885c6d8c28c3b006af6e33b737087d2be6bdc556e3e1987","object":"response","created_at":1794564923,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+        
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"cu_078885c6d8c28c3b006af6e33c9d0487d2bf992f20e58d7e6a","type":"computer_call","status":"in_progress","call_id":"call_Go6dFXcLeSKqQak4BcNH0feD"},"output_index":0,"sequence_number":2}
+        
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"cu_078885c6d8c28c3b006af6e33c9d0487d2bf992f20e58d7e6a","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_Go6dFXcLeSKqQak4BcNH0feD"},"output_index":0,"sequence_number":3}
+        
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_078885c6d8c28c3b006af6e33b737087d2be6bdc556e3e1987","object":"response","created_at":1794564923,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1794564924,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"cu_078885c6d8c28c3b006af6e33c9d0487d2bf992f20e58d7e6a","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_Go6dFXcLeSKqQak4BcNH0feD"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":824,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":19,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":843},"user":null,"metadata":{}},"sequence_number":4}
+        
+  recorded_at: 2026-11-13T10:15:25.528456+00:00
