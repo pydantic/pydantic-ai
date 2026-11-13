@@ -235,11 +235,18 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
     ]
 
 
+@pytest.mark.parametrize(
+    ('action', 'held'),
+    [
+        pytest.param(MoveMouse(x=1, y=1, modifiers=('ctrl',)), 'ctrl', id='key'),
+        pytest.param(Drag(path=(Point(x=1, y=1), Point(x=2, y=2))), 'the left mouse button', id='drag-button'),
+    ],
+)
 @pytest.mark.parametrize('sandbox_deleted', [False, True], ids=['release-failed', 'sandbox-deleted'])
-async def test_a_failed_release_after_a_failed_action_says_the_key_may_still_be_held(
-    fake_daytona: FakeDaytona, sandbox_deleted: bool
+async def test_a_failed_release_after_a_failed_action_says_what_may_still_be_held(
+    fake_daytona: FakeDaytona, no_pauses: None, action: DisplayAction, held: str, sandbox_deleted: bool
 ) -> None:
-    """The model must not type on with ctrl held; a lost sandbox ends the run instead."""
+    """The model must not go on with a key or button held; a lost sandbox ends the run instead."""
     backend, sandbox = await _started(fake_daytona)
 
     async def failing(*args: object, **kwargs: object) -> None:
@@ -252,10 +259,12 @@ async def test_a_failed_release_after_a_failed_action_says_the_key_may_still_be_
     expected = (
         pytest.raises(WorkspaceUnavailableError, match='no longer exists')
         if sandbox_deleted
-        else pytest.raises(WorkspaceError, match='Releasing ctrl failed too, so it may still be held')
+        else pytest.raises(
+            WorkspaceError, match=f'^unexpected EOF; releasing {held} failed too, so it may still be held$'
+        )
     )
     with expected:
-        await screen(backend).act(MoveMouse(x=1, y=1, modifiers=('ctrl',)))
+        await screen(backend).act(action)
 
 
 async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona, no_pauses: None) -> None:

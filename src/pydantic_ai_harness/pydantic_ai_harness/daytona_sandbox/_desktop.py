@@ -128,6 +128,23 @@ async def _send_input(request: Callable[[], Awaitable[object]]) -> object:
     return await run_to_completion(request)
 
 
+async def _let_go(error: BaseException, held: list[str], release: Callable[[str], Awaitable[object]]) -> None:
+    """After `error`, let go of each of `held`, last first; a failure that leaves any held says which.
+
+    A cancel or an earlier deadline doesn't stop the releases, and still propagates after them.
+    """
+    with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
+        for name in reversed(list(held)):
+            with suppress(Exception):
+                await _send_input(partial(release, name))
+                held.remove(name)
+    if held and isinstance(error, Exception):
+        raise WorkspaceError(
+            f'{error}; releasing {" and ".join(held)} failed too, so {"it" if len(held) == 1 else "they"} '
+            'may still be held'
+        ) from error
+
+
 def _keys(keys: Sequence[str]) -> list[str]:
     """Daytona's names for the keys, in order, with `shift` before a shifted symbol."""
     names: list[str] = []
@@ -216,16 +233,7 @@ class DaytonaDesktop:
                 await _send_input(partial(keyboard.up, pressed[-1], request_timeout=_REQUEST_TIMEOUT))
                 pressed.pop()  # only once it's up, so a failed release is retried below
         except BaseException as error:
-            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
-                for key in reversed(list(pressed)):
-                    with suppress(Exception):
-                        await _send_input(partial(keyboard.up, key, request_timeout=_REQUEST_TIMEOUT))
-                        pressed.remove(key)
-            if pressed and isinstance(error, Exception):
-                raise WorkspaceError(
-                    f"Daytona's desktop failed: {error}. Releasing {' and '.join(pressed)} failed too, "
-                    f'so {"it" if len(pressed) == 1 else "they"} may still be held.'
-                ) from error
+            await _let_go(error, pressed, partial(keyboard.up, request_timeout=_REQUEST_TIMEOUT))
             raise
 
     async def _scroll(self, x: int, y: int, direction: str, amount: int, modifiers: list[str]) -> None:
@@ -300,9 +308,8 @@ class DaytonaDesktop:
                 await _send_input(partial(mouse.move, point.x, point.y, request_timeout=_REQUEST_TIMEOUT))
             await anyio.sleep(DRAG_PRESS_PAUSE)
             await _send_input(partial(mouse.up, end.x, end.y, request_timeout=_REQUEST_TIMEOUT))
-        except BaseException:
-            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                await _send_input(partial(mouse.up, request_timeout=_REQUEST_TIMEOUT))
+        except BaseException as error:
+            await _let_go(error, ['the left mouse button'], lambda _: mouse.up(request_timeout=_REQUEST_TIMEOUT))
             raise
 
     async def _press(self, names: list[str], repeat: int) -> None:
