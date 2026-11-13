@@ -48,6 +48,7 @@ from pydantic_ai_harness import (
     ManagedPrompt,
     Ordinal,
     OutputGuardrail,
+    Peers,
     PostHog,
     Pylon,
     RelevanceCompaction,
@@ -71,6 +72,7 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -726,7 +728,34 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
+_PEER_NOTE = 'The deploy finished.'
+
+
+def _peer_message(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A peer message that arrives between the runs enters the second run's history once, as peer data."""
+    network = InMemoryPeerNetwork()
+    inbox = LocalPeerInbox(path=tmp_path / 'inbox.json')
+    view = network.join(handle='self', inbox=inbox)
+    sender = network.join(handle='ops')
+
+    async def send() -> None:
+        (recipient,) = await sender.peers()
+        await sender.send(recipient.id, _PEER_NOTE, key='ops:1')
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [
+            part for message in result.history for part in getattr(message, 'parts', ()) if _PEER_NOTE in str(part)
+        ]
+        assert len(parts) == 1, f'expected the peer message in history once, found {len(parts)}'
+        assert read_peer_message(parts[0]) is not None, f'expected a peer message, found {parts[0]!r}'
+
+    return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
+
+
 CONVERSATIONS = {
+    'Peers': _peer_message,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
