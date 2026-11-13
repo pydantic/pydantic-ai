@@ -194,7 +194,9 @@ async def _focused_typing_window(backend: WorkspaceBackend) -> Display:
         shell=True,
         env={'DISPLAY': ':1'},
     )
-    await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'})
+    await backend.run(
+        ['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'}, timeout=30
+    )
     await display.act(Click(x=300, y=180))
     return display
 
