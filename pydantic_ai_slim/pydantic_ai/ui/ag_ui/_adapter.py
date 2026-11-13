@@ -39,6 +39,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -642,6 +643,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             if target is not None:
                 set_ui_message_id(target, msg.id)
 
+        for message in builder.messages:
+            if isinstance(message, ModelResponse):
+                message.parts = _native_returns_after_calls(message.parts)
+
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
         return narrow_message_parts(builder.messages)
@@ -1049,6 +1054,32 @@ def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> 
                 retry=retry,
             )
         )
+
+
+def _native_returns_after_calls(parts: Sequence[ModelResponsePart]) -> Sequence[ModelResponsePart]:
+    """`parts` with each `NativeToolReturnPart` moved to directly after its `NativeToolCallPart`.
+
+    An `AssistantMessage` lists all of a response's tool calls before the `ToolMessage`s that answer
+    them, so a native return otherwise loads after any function call that followed its native call.
+    Anthropic rejects a response where a server tool result comes after a `tool_use`.
+    """
+    call_ids = {part.tool_call_id for part in parts if isinstance(part, NativeToolCallPart)}
+    returns = {
+        part.tool_call_id: part
+        for part in parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_call_id in call_ids
+    }
+    if not returns:
+        return parts
+    moved = {id(part) for part in returns.values()}
+    ordered: list[ModelResponsePart] = []
+    for part in parts:
+        if id(part) in moved:
+            continue
+        ordered.append(part)
+        if isinstance(part, NativeToolCallPart) and (native_return := returns.pop(part.tool_call_id, None)) is not None:
+            ordered.append(native_return)
+    return ordered
 
 
 def _tool_return_content_from_parts(parts: list[UserContent]) -> ToolReturnContent:

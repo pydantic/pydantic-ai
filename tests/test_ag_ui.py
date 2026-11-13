@@ -3862,6 +3862,34 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_builtin_tool_return_before_function_call() -> None:
+    """A native tool return reloads directly after its call, not after a function call that followed it.
+
+    Anthropic rejects a response where a server tool result comes after a `tool_use`
+    (https://github.com/pydantic/pydantic-ai/issues/12151).
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find my earlier chats')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='tool_search', tool_call_id='srv_1', args='{"query":"chats"}', provider_name='anthropic'
+                ),
+                NativeToolReturnPart(
+                    tool_name='tool_search', tool_call_id='srv_1', content='search_chats', provider_name='anthropic'
+                ),
+                ToolCallPart(tool_name='search_chats', tool_call_id='call_1', args='{"query":"OTB"}'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='search_chats', tool_call_id='call_1', content='OTB plan')]),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+    _sync_load_bookkeeping(original, reloaded)
+
+    assert reloaded == original
+
+
 def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
     original: list[ModelMessage] = [
         ModelResponse(
