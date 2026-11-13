@@ -84,7 +84,13 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
+from .._utils import (
+    client_error_text,
+    get_ui_message_id,
+    load_provider_details,
+    set_ui_message_id,
+    without_internal_text_metadata,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -477,7 +483,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         id=provider_meta.get('id'),
                         signature=None if part.state == 'streaming' else provider_meta.get('signature'),
                         provider_name=provider_meta.get('provider_name'),
-                        provider_details=provider_meta.get('provider_details'),
+                        provider_details=load_provider_details(provider_meta.get('provider_details')),
                     )
                 )
                 restore_canonical_system(
@@ -503,7 +509,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         content=file,
                         id=provider_meta.get('id'),
                         provider_name=provider_meta.get('provider_name'),
-                        provider_details=provider_meta.get('provider_details'),
+                        provider_details=load_provider_details(provider_meta.get('provider_details')),
                     )
                 )
                 restore_canonical_system(
@@ -595,7 +601,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 args=args,
                 id=provider_meta.get('id'),
                 provider_name=provider_name,
-                provider_details=provider_meta.get('provider_details'),
+                provider_details=load_provider_details(provider_meta.get('provider_details')),
                 tool_kind=tool_kind,
             )
         )
@@ -661,7 +667,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         # So we extract and return them to the respective parts
         provider_meta = load_provider_metadata(part.call_provider_metadata)
         provider_name = provider_meta.get('provider_name')
-        provider_details = provider_meta.get('provider_details')
+        provider_details = load_provider_details(provider_meta.get('provider_details'))
         tool_kind = _claimed_tool_kind(provider_meta)
         call_meta = return_meta = {}
         has_tool_output = isinstance(
@@ -691,7 +697,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 args=args,
                 id=call_meta.get('id') or provider_meta.get('id'),
                 provider_name=call_provider_name,
-                provider_details=call_meta.get('provider_details') or provider_details,
+                provider_details=load_provider_details(call_meta.get('provider_details')) or provider_details,
                 tool_kind=_claimed_tool_kind(call_meta) or tool_kind,
             )
         )
@@ -720,7 +726,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     tool_call_id=part.tool_call_id,
                     content=output,
                     provider_name=return_meta.get('provider_name') or provider_name,
-                    provider_details=return_meta.get('provider_details') or provider_details,
+                    provider_details=load_provider_details(return_meta.get('provider_details')) or provider_details,
                     outcome=outcome,
                     # Kept on every outcome: a return that isn't a success is never
                     # promoted to its typed subclass, so the kind can't pass for success.

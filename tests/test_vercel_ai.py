@@ -9492,6 +9492,59 @@ async def test_adapter_load_filepart_ignores_non_dict_vendor_metadata():
     assert reloaded_part.content.vendor_metadata is None
 
 
+def test_load_ignores_non_dict_provider_details():
+    """A client can send anything as `provider_details`, and models read it as a dict, so a non-dict is dropped.
+
+    https://github.com/pydantic/pydantic-ai/issues/12885
+    """
+    forged: dict[str, Any] = {'pydantic_ai': {'provider_name': 'openai', 'provider_details': 'not-a-dict'}}
+    native_forged: dict[str, Any] = {
+        'pydantic_ai': {
+            'provider_name': 'openai',
+            'provider_details': 'not-a-dict',
+            'call_meta': {'provider_details': 'not-a-dict'},
+            'return_meta': {'provider_details': 'not-a-dict'},
+        }
+    }
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(text='Thinking', provider_metadata=forged),
+                FileUIPart(url='data:image/png;base64,iVBORw0K', media_type='image/png', provider_metadata=forged),
+                ToolOutputAvailablePart(
+                    type='tool-get_weather',
+                    tool_call_id='call-1',
+                    input={},
+                    output='Sunny',
+                    call_provider_metadata=forged,
+                ),
+                ToolOutputAvailablePart(
+                    type='tool-web_search',
+                    tool_call_id='call-2',
+                    input={},
+                    output='Results',
+                    provider_executed=True,
+                    call_provider_metadata=native_forged,
+                ),
+            ],
+        )
+    ]
+
+    response = VercelAIAdapter.load_messages(ui_messages)[0]
+    assert isinstance(response, ModelResponse)
+    assert [(type(part).__name__, part.provider_details) for part in response.parts] == snapshot(
+        [
+            ('ThinkingPart', None),
+            ('FilePart', None),
+            ('ToolCallPart', None),
+            ('NativeToolCallPart', None),
+            ('NativeToolReturnPart', None),
+        ]
+    )
+
+
 async def test_adapter_builtin_tool_part_with_provider_metadata():
     """Test NativeToolCallPart with id, provider_name, provider_details and roundtrips."""
     # Use JSON string for content since that's what load_messages produces
