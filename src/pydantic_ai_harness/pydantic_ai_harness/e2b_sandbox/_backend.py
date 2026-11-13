@@ -549,7 +549,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             # directory is what follows a marker printed just before `pwd -P`.
             marker = f'pydantic-e2b-pwd-{uuid.uuid4().hex}\n'
             result = await self._probe(
-                ['sh', '-c', 'printf %s "$1"; exec pwd -P', 'sh', marker], 'Could not determine the working directory'
+                ['sh', '-c', 'printf %s "$1"; pwd -P', 'sh', marker], 'Could not determine the working directory'
             )
             _, found, after = result.stdout.rpartition(marker)
             printed = after.removesuffix('\n') if found else ''

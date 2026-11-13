@@ -702,13 +702,16 @@ class TestWorkingDir:
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # E2B's `bash -l` sources the template's profile before every command; the host fake's
-        # `bash -c` sources `BASH_ENV` the same way.
+        # `bash -c` sources `BASH_ENV` the same way. A profile that `cd`s moves where commands
+        # start, so the probe reports that directory, not the one before the profile ran.
+        start = tmp_path / 'start'
+        start.mkdir()
         profile = tmp_path / 'profile'
-        profile.write_text('echo "Welcome to my template"\n')
+        profile.write_text(f'cd {shlex.quote(str(start))}\necho "Welcome to my template"\n')
         monkeypatch.setenv('BASH_ENV', str(profile))
         fake_e2b.host_root = tmp_path.resolve()
         backend = await started()
-        assert await backend.working_dir() == str(tmp_path.resolve())
+        assert await backend.working_dir() == str(start.resolve())
 
     async def test_the_probe_carries_a_deadline(self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
         # The probe is a command like any other, so it is bounded and killed rather than left
