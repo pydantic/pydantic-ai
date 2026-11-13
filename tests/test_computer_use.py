@@ -30,9 +30,10 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
@@ -174,8 +175,22 @@ def test_computer_tool_refuses_a_display_size_that_is_not_positive(size: tuple[i
         ComputerTool(display_size=size)
 
 
-async def test_a_computer_call_with_safety_checks_waits_for_approval_whichever_tool_runs_it() -> None:
+@pytest.mark.parametrize('hook_asks', [pytest.param(False, id='alone'), pytest.param(True, id='a-hook-asks-too')])
+async def test_a_computer_call_with_safety_checks_waits_for_approval_whichever_tool_runs_it(hook_asks: bool) -> None:
     from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool
+    from pydantic_ai.capabilities import Hooks
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    # A hook asking for approval as well leads to the same single approval.
+    hooks = Hooks[Any]()
+
+    @hooks.on.after_tool_validate
+    async def ask(
+        ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return args
 
     ran: list[object] = []
 
@@ -203,6 +218,7 @@ async def test_a_computer_call_with_safety_checks_waits_for_approval_whichever_t
     agent = Agent(
         FunctionModel(respond),
         tools=[Tool(computer, tool_kind=COMPUTER_KIND)],
+        capabilities=[hooks] if hook_asks else [],
         output_type=[str, DeferredToolRequests],
     )
     paused = await agent.run('Click.')
@@ -328,7 +344,7 @@ GRID_SENTENCE = (
 )
 
 
-def _grid_agent(model: FunctionModel | FallbackModel) -> Agent[None, str]:
+def _grid_agent(model: Model) -> Agent[None, str]:
     def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
         """Act on the screen."""
         return ['Done.', SCREEN]
@@ -397,6 +413,17 @@ async def test_a_model_not_known_to_point_on_a_grid_is_left_alone(grids: list[in
     assert descriptions == ['Act on the screen.'] * 2
     [call] = _computer_calls(messages)
     assert call.provider_details is None
+
+
+async def test_a_wrapped_fallback_of_grid_models_is_told_its_grid() -> None:
+    # A wrapper around a `FallbackModel` has no profile of its own, so the grid comes from the models it wraps.
+    descriptions: list[str | None] = []
+    respond, _ = _click_then_stop(descriptions)
+    model = WrapperModel(FallbackModel(FunctionModel(respond, profile=GRID_PROFILE)))
+    messages = (await _grid_agent(model).run('Click.')).all_messages()
+    assert descriptions == [f'Act on the screen. {GRID_SENTENCE}'] * 2
+    [call] = _computer_calls(messages)
+    assert call.coordinate_grid == 1000
 
 
 def _limited(max_side: int | None, max_pixels: int | None) -> ModelProfile:
