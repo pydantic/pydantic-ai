@@ -210,7 +210,7 @@ async def main():
     print(result.output)
 ```
 
-Every boxd machine has a desktop, and the agent drives it through boxd's computer API, so nothing is installed first. It starts on the first action, in a few seconds, with no window manager, so apps the agent starts from the shell open at the top left without title bars. Commands get `DISPLAY` set for it, and boxd's default image has `xterm`. The desktop starts empty, with no taskbar or launcher: run `agent-browser open <url>` to open a browser on it, or `boxd-desktop-launch '<command>'` for any other app.
+Every boxd machine has a desktop, and the agent drives it through boxd's computer API, so nothing is installed first. The desktop needs boxd's default machine image at a recent version, so a fork or snapshot of an older image won't have it; use a fresh machine. It starts on the first action, in a few seconds, with no window manager, so apps the agent starts from the shell open at the top left without title bars. Commands get `DISPLAY` set for it, and boxd's default image has `xterm`. The desktop starts empty, with no taskbar or launcher: run `agent-browser open <url>` to open a browser on it, or `boxd-desktop-launch '<command>'` for any other app.
 
 The screen is held at 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent can type any text, including accented letters and emoji.
 
