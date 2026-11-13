@@ -343,6 +343,15 @@ async def test_signature_only_parts_are_skipped(stream: bool) -> None:
     )
 
 
+async def test_streamed_function_response_parts_are_skipped() -> None:
+    """Unit test: streaming skips a function response part, as before, rather than raising the unsupported-part error."""
+    response_parts, _ = await _stream_response_parts(
+        [[{'function_response': {'name': 'f', 'response': {}}}, {'text': 'answer'}]]
+    )
+
+    assert response_parts == snapshot([TextPart(content='answer')])
+
+
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
 async def test_signed_unsupported_parts_keep_the_unsupported_error(stream: bool) -> None:
     """Unit test: the unsupported signed part is manufactured to pin the parser's defensive guard."""
