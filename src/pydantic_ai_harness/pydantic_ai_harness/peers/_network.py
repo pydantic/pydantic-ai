@@ -47,7 +47,11 @@ class _Peer(PeerNetwork):
 
 
 class InMemoryPeerNetwork:
-    """Join several agents in one process. The network does not run turns or own their lifetime."""
+    """Join several agents in one process. The network does not run turns or own their lifetime.
+
+    Members stay joined, and their handles taken, for the network's lifetime. To retire a session, set its
+    inbox's `accepting` to `False`, or create a new network.
+    """
 
     def __init__(self) -> None:
         self._members: dict[str, _Peer] = {}
