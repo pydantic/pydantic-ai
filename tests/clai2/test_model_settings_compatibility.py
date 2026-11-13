@@ -33,15 +33,15 @@ def test_a_reader_without_base_url_keeps_it_saved_and_ignores_it(tmp_path: Path)
     # A build from before `base_url` reads only its own fields, so it sends to the provider's default endpoint.
     context, _ = make_context(tmp_path)
     model = 'openai:gpt-4o'
-    context.store.save_model_settings(model, {'base_url': 'https://gateway.example/v1'})
-    legacy = {key: value for key, value in context.store.model_settings(model).items() if key != 'base_url'}
+    context.store.save_model_settings(model, {'base_url': 'https://gateway.example/v1', 'api_key': 'TEAM_KEY'})
+    legacy = {k: v for k, v in context.store.model_settings(model).items() if k not in ('base_url', 'api_key')}
     assert model_settings_from_json(legacy).model_dump(exclude_none=True) == {}
     source = ModelSettingsSource(context.store, model)
     row = FieldMenu(source).row_for('temperature')
     assert row is not None
     source.apply(row, '0.5')
     source.reset(row)
-    assert context.store.model_settings(model) == {'base_url': 'https://gateway.example/v1'}
+    assert context.store.model_settings(model) == {'base_url': 'https://gateway.example/v1', 'api_key': 'TEAM_KEY'}
 
 
 def test_reads_keep_known_overrides_and_ignore_future_fields(tmp_path: Path) -> None:
