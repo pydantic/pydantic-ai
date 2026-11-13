@@ -10,11 +10,11 @@ Pydantic AI is open source, with [commercial enterprise support from Pydantic](e
 
 Start from how a run begins and who is waiting for it:
 
-- **A person is waiting in your web app.** Run the agent inside a route of your application, [stream it to the frontend](#frontend) with a UI adapter, and store each run's [`Conversation`](#state) in your database; the [chat app example](examples/chat-app.md) keeps a chat's messages in SQLite. Install `pydantic-ai`; there is nothing else to run.
+- **A person is waiting in your web app.** Run the agent inside a route of your application, [stream it to the frontend](#frontend) with a UI adapter, and store each run's [`Conversation`][pydantic_ai.conversation.Conversation] [in your database](#state); the [chat app example](examples/chat-app.md) keeps a chat's messages in SQLite. Install `pydantic-ai`; there is nothing else to run.
 - **Nobody is waiting.** A queue, an event or a schedule starts the run, as a job in your task queue or a step in your pipeline, and it usually returns [structured output](output.md) for your code to store. See [how to deploy it](#deploy).
-- **A person is waiting in a terminal.** The run lives as long as the session, so there is nothing to host. Start from [`Agent.to_cli()`][pydantic_ai.agent.AbstractAgent.to_cli] (see the [CLI](cli.md)), or from [`Coder`](harness/coder.md) (Harness) if you are building a coding agent; to keep a conversation after the session ends, run your own loop around `agent.run()` and [store its `Conversation`](#state).
+- **A person is waiting in a terminal.** The run lives as long as the session, so there is nothing to host. Start from [`Agent.to_cli()`][pydantic_ai.agent.AbstractAgent.to_cli] (see the [CLI](cli.md)), or from [`Coder`](harness/coder.md) (Harness) if you are building a coding agent; to keep a conversation after the session ends, run your own loop around `agent.run()` and store its [`Conversation`][pydantic_ai.conversation.Conversation] (see [conversation state](#state)).
 
-Then decide what a crash costs. A run in flight [dies with the process](#crash), and for most agents starting it again is fine. When a run is long, has side effects you can't repeat, or has to [wait days for an approval](#approval), put it on a [durable execution](durable_execution/overview.md) engine, as the [end-to-end service](#end-to-end) below does with DBOS (`pydantic-ai[dbos]`). [`StepPersistence`](#checkpointer) (Harness) sits between the two: it lets you continue from the last tool-call snapshot without running an engine.
+Then decide what a crash costs. A run in flight [dies with the process](#crash), and for most agents starting it again is fine. When a run is long, has side effects you can't repeat, or is a workflow that itself waits days for an [approval](#approval), put it on a [durable execution](durable_execution/overview.md) engine, as the [end-to-end service](#end-to-end) below does with DBOS (`pydantic-ai[dbos]`). [`StepPersistence`](#checkpointer) (Harness) sits between the two: it lets you continue from the last tool-call snapshot without running an engine.
 
 The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full.
 
@@ -30,7 +30,7 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 | [How do I test and evaluate changes?](#quality) | Unit tests with `TestModel`, then evals on datasets and live traffic | `pydantic-ai` (includes `pydantic-evals`) |
 | [How do I limit what the agent can touch?](#safety) | Per-caller tools, approval, and a sandbox for model-written code | `pydantic-ai`, and `pydantic-ai-harness` for sandboxes |
 | [How do I serve it to a frontend?](#frontend) | [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) streams from any ASGI app | `pydantic-ai` |
-| [How do I deploy it?](#deploy) | As your own Python process: a web app, a worker or a function | Your infrastructure |
+| [How do I deploy it?](#deploy) | As your own Python process: a web app, a worker, a pipeline step or a function | Your infrastructure |
 
 For systems already running Pydantic AI in production, with their code or case studies, see [Built with Pydantic AI](built-with.md).
 
