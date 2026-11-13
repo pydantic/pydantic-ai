@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    Citation,
     ModelResponsePart,
     ModelResponseStreamEvent,
     NativeToolCallPart,
@@ -34,6 +35,7 @@ from pydantic_ai.messages import (
     ToolPartKind,
 )
 
+from ._special_tokens import StreamRestorer
 from ._utils import generate_tool_call_id as _generate_tool_call_id
 
 if TYPE_CHECKING:
@@ -67,6 +69,9 @@ class ModelResponsePartsManager:
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
     than only after a post-stream pass.
     """
+
+    special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
+    """Removes the joiner from the special tokens in the response, for a model whose requests have them."""
 
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
@@ -133,7 +138,14 @@ class ModelResponsePartsManager:
         for part_index in tuple(self._string_buffers):
             if not isinstance(self._parts[part_index], ToolCallPartDelta):
                 self._materialize_and_cache_part(part_index)
-        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        restorer = self.special_token_restorer
+        if restorer is None:
+            return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        return [
+            restorer.restore_part_so_far(index, p)
+            for index, p in enumerate(self._parts)
+            if not isinstance(p, ToolCallPartDelta)
+        ]
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.
@@ -157,6 +169,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
+        citations: list[Citation] | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
     ) -> Iterator[ModelResponseStreamEvent]:
@@ -174,6 +187,7 @@ class ModelResponsePartsManager:
             id: An optional id for the text part.
             provider_name: An optional provider name for the text part.
             provider_details: An optional dictionary of provider-specific details for the text part.
+            citations: Citations to attach to the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
@@ -223,7 +237,13 @@ class ModelResponsePartsManager:
                 return
 
             # There is no existing text part that should be updated, so create a new one
-            part = TextPart(content=content, id=id, provider_name=provider_name, provider_details=provider_details)
+            part = TextPart(
+                content=content,
+                id=id,
+                provider_name=provider_name,
+                provider_details=provider_details,
+                citations=citations,
+            )
             new_part_index = self._append_part(part, vendor_part_id)
             yield PartStartEvent(index=new_part_index, part=part)
         else:
@@ -234,14 +254,10 @@ class ModelResponsePartsManager:
                 content_delta=content,
                 provider_name=self._resolve_provider_name(existing_text_part, provider_name),
                 provider_details=provider_details,
-            )
-            apply_metadata = (
-                part_delta.provider_name is not None
-                or part_delta.provider_details is not None
-                or existing_text_part.provider_details == {}
+                citations_delta=citations,
             )
             updated_part = self._apply_metadata_or_copy_provider_details(
-                existing_text_part, part_delta, apply_metadata=apply_metadata
+                existing_text_part, part_delta, apply_metadata=_text_delta_needs_apply(existing_text_part, part_delta)
             )
             if content:
                 self._buffer_string_delta(part_index, existing_text_part.content, content)
@@ -373,6 +389,9 @@ class ModelResponsePartsManager:
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
         if any. Otherwise, a new part (or delta) may be created.
 
+        A streamed response's `_get_event_iterator` can use `handle_tool_call_delta_events` instead, which yields
+        the event, so there is no `None` to check.
+
         Args:
             vendor_part_id: The ID the vendor uses for this tool call.
                 If None, the latest matching tool call may be updated.
@@ -464,6 +483,50 @@ class ModelResponsePartsManager:
                     if updated_part.tool_call_id and not delta.tool_call_id:
                         delta = replace(delta, tool_call_id=updated_part.tool_call_id)
                     return PartDeltaEvent(index=part_index, delta=delta)
+
+    def handle_tool_call_delta_events(
+        self,
+        *,
+        vendor_part_id: Hashable | None,
+        tool_name: str | None = None,
+        args: str | dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
+        provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle or update a tool call like `handle_tool_call_delta`, yielding its event instead of returning it.
+
+        A streamed response forwards these events the way it forwards those of `handle_text_delta` and
+        `handle_thinking_delta`, with no `None` check.
+
+        Args:
+            vendor_part_id: The ID the vendor uses for this tool call.
+                If None, the latest matching tool call may be updated.
+            tool_name: The name of the tool. If None, the manager does not enforce
+                a name match when `vendor_part_id` is None.
+            args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
+            tool_call_id: An optional string representing an identifier for this tool call.
+            provider_name: An optional provider name for the tool call part.
+            provider_details: An optional dictionary of provider-specific details for the tool call part.
+
+        Yields:
+            A `PartStartEvent` if a new ToolCallPart or NativeToolCallPart was created, or a `PartDeltaEvent` if an
+            existing part was updated. Yields nothing while the part is still incomplete.
+
+        Raises:
+            UnexpectedModelBehavior: If attempting to apply a tool call delta to a part that is not
+                a ToolCallPart, NativeToolCallPart, or ToolCallPartDelta.
+        """
+        event = self.handle_tool_call_delta(
+            vendor_part_id=vendor_part_id,
+            tool_name=tool_name,
+            args=args,
+            tool_call_id=tool_call_id,
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+        if event is not None:
+            yield event
 
     def handle_tool_call_part(
         self,
@@ -782,9 +845,35 @@ class ModelResponsePartsManager:
     def apply_event(self, event: ModelResponseStreamEvent) -> None:
         """Apply a replayed stream event to the managed parts, so `get_parts()` reflects it."""
         if isinstance(event, PartStartEvent):
-            self.handle_part(vendor_part_id=event.index, part=event.part)
+            # A shallow copy, so assigning to the event part's fields doesn't change the managed part.
+            self.handle_part(vendor_part_id=event.index, part=replace(event.part))
         elif isinstance(event, PartDeltaEvent):
+            part_index = self._vendor_id_to_part_index.get(event.index)
+            part = self._parts[part_index] if part_index is not None else None
+            delta = event.delta
+            if part_index is not None and type(part) is TextPart and type(delta) is TextPartDelta:
+                # Keep replay snapshots independent while buffering their text.
+                updated_part = self._apply_metadata_or_copy_provider_details(
+                    part, delta, apply_metadata=_text_delta_needs_apply(part, delta)
+                )
+                self._buffer_string_delta(part_index, part.content, delta.content_delta)
+                self._parts[part_index] = updated_part
+                return
+
             part = self.get_part_by_vendor_id(event.index)
             assert part is not None
             assert not isinstance(part, ToolCallPartDelta)
             self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
+
+
+def _text_delta_needs_apply(part: TextPart, delta: TextPartDelta) -> bool:
+    """Whether `delta` must be applied to `part`, rather than only buffering its content.
+
+    That's when the delta carries metadata, or when `part.provider_details` is `{}`, which applying turns into `None`.
+    """
+    return (
+        delta.provider_name is not None
+        or delta.provider_details is not None
+        or delta.citations_delta is not None
+        or part.provider_details == {}
+    )

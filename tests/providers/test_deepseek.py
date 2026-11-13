@@ -54,7 +54,15 @@ def test_deep_seek_model_profile():
 # 'deepseek-v4-turbo' stands in for an unreleased SKU: the fact is set for every DeepSeek model, so a
 # new alias cannot silently miss the grouping fix.
 @pytest.mark.parametrize(
-    'model_name', ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-turbo']
+    'model_name',
+    [
+        'deepseek-chat',
+        'deepseek-flash',
+        'deepseek-reasoner',
+        'deepseek-v4-flash',
+        'deepseek-v4-pro',
+        'deepseek-v4-turbo',
+    ],
 )
 def test_deep_seek_responses_function_call_grouping_profile(model_name: str) -> None:
     model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
@@ -70,7 +78,7 @@ def test_openai_responses_function_call_grouping_profile_defaults_on() -> None:
     assert default_model.profile.get('openai_responses_supports_interleaved_function_calls', True) is True
 
 
-@pytest.mark.parametrize('model_name', ['deepseek-v4-flash', 'deepseek-v4-pro'])
+@pytest.mark.parametrize('model_name', ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro'])
 def test_deep_seek_v4_model_profile(model_name: str):
     provider = DeepSeekProvider(api_key='api-key')
     profile = provider.model_profile(model_name)
@@ -79,22 +87,25 @@ def test_deep_seek_v4_model_profile(model_name: str):
     assert profile.get('supports_thinking', False) is True
     assert profile.get('thinking_always_enabled', False) is False
     # V4 can turn thinking off, so forcing is restricted per request rather than outright.
-    assert profile.get('openai_supports_tool_choice_required', True) is True
-    assert profile.get('openai_supports_forced_tool_choice_with_thinking', True) is False
-    assert profile.get('openai_reasoning_enabled_by_default', False) is True
+    assert profile.get('supports_forced_tool_choice', True) is True
+    assert profile.get('supports_forced_tool_choice_with_thinking', True) is False
+    assert profile.get('thinking_enabled_by_default', False) is True
     assert profile.get('openai_responses_supports_json_schema_output', False) is True
+    assert profile.get('openai_chat_supports_max_reasoning_effort', False) is True
 
 
-def test_deep_seek_chat_model_profile():
+@pytest.mark.parametrize('model_name', ['deepseek-chat', 'unknown-model', 'deepseek-flash-custom'])
+def test_deep_seek_non_thinking_model_profile(model_name: str):
     provider = DeepSeekProvider(api_key='api-key')
-    profile = provider.model_profile('deepseek-chat')
+    profile = provider.model_profile(model_name)
     assert profile is not None
     assert isinstance(profile, dict)
     assert profile.get('supports_thinking', False) is False
     # `deepseek-chat` is pinned to non-thinking mode, so forcing is never restricted.
-    assert profile.get('openai_supports_tool_choice_required', True) is True
-    assert profile.get('openai_supports_forced_tool_choice_with_thinking', True) is True
-    assert profile.get('openai_reasoning_enabled_by_default', False) is False
+    assert profile.get('supports_forced_tool_choice', True) is True
+    assert profile.get('supports_forced_tool_choice_with_thinking', True) is True
+    assert profile.get('thinking_enabled_by_default', False) is False
+    assert profile.get('openai_chat_supports_max_reasoning_effort', False) is False
 
 
 def test_deep_seek_r1_model_profile():
@@ -115,8 +126,8 @@ def test_deep_seek_reasoner_model_profile():
     assert profile.get('supports_thinking', False) is True
     assert profile.get('thinking_always_enabled', False) is True
     # `deepseek-reasoner` cannot turn thinking off, so its restriction stays unconditional.
-    assert profile.get('openai_supports_tool_choice_required', True) is False
-    assert profile.get('openai_reasoning_enabled_by_default', False) is True
+    assert profile.get('supports_forced_tool_choice', True) is False
+    assert profile.get('thinking_enabled_by_default', False) is True
 
 
 def test_deep_seek_v4_future_sku_inherits_tool_choice_restriction():
@@ -125,5 +136,5 @@ def test_deep_seek_v4_future_sku_inherits_tool_choice_restriction():
     profile = provider.model_profile('deepseek-v4-turbo')
     assert profile is not None
     assert isinstance(profile, dict)
-    assert profile.get('openai_supports_forced_tool_choice_with_thinking', True) is False
-    assert profile.get('openai_reasoning_enabled_by_default', False) is True
+    assert profile.get('supports_forced_tool_choice_with_thinking', True) is False
+    assert profile.get('thinking_enabled_by_default', False) is True

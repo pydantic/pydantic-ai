@@ -45,7 +45,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
-    pytest.mark.anyio,
 ]
 
 IMAGE = BinaryImage(data=b'\x89PNG' + b'kiwi' * 32, media_type='image/png')
@@ -580,7 +579,7 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
     assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'tools', 'kind'}
-    assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata'}
+    assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata', '_kinds'}
 
 
 def test_message_history_round_trip_preserves_binary_content() -> None:

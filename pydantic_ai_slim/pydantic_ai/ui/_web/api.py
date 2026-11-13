@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.ui._adapter import validation_error_response
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -134,48 +135,8 @@ def create_api_app(
     Returns:
         A Starlette application with the API endpoints.
     """
-    # Build model ID → original reference mapping and ModelInfo list for frontend
-    model_id_to_ref: dict[str, Model | str] = {}
-    model_infos: list[ModelInfo] = []
-
-    # Filter out tools that are already configured on the agent (they're always included)
-    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
-    ui_native_tools = [t for t in (native_tools or []) if t.unique_id not in agent_tool_ids]
-
-    # Build combined models: agent's model first (if exists), then provided models
-    all_models: list[tuple[str | None, Model | str]] = []
-    if agent.model is not None:
-        all_models.append((None, agent.model))
-    items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
-    all_models.extend(items)
-
-    seen_model_ids: set[str] = set()
-    for label, model_ref in all_models:
-        try:
-            model = infer_model(model_ref)
-        except UserError:
-            # A capability resolver may intentionally use an ID that built-in inference does
-            # not understand. Resolution needs run dependencies, so leave custom references
-            # untouched here and let Agent resolve them when the request is dispatched.
-            if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
-                model = None
-            else:
-                raise
-        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
-        if model_id in seen_model_ids:
-            continue
-        seen_model_ids.add(model_id)
-        display_name = label or (model.label if model is not None else model_id)
-        if model is None:
-            supported_tool_ids = []
-        else:
-            model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
-
-        model_id_to_ref[model_id] = model_ref
-        model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
-
+    ui_native_tools = _ui_native_tools(agent, native_tools)
+    model_id_to_ref, model_infos = _model_options(agent, models, ui_native_tools)
     model_ids = set(model_id_to_ref.keys())
     allowed_tool_ids = {tool.unique_id for tool in ui_native_tools}
 
@@ -216,10 +177,13 @@ def create_api_app(
                 status_code=415,
             )
 
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
-            request, agent=agent, sdk_version=sdk_version
-        )
-        extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        try:
+            adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+                request, agent=agent, sdk_version=sdk_version
+            )
+            extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        except ValidationError as e:
+            return validation_error_response(e)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)
@@ -246,3 +210,67 @@ def create_api_app(
         Route('/health', health, methods=['GET']),
     ]
     return Starlette(routes=routes)
+
+
+def _ui_native_tools(
+    agent: Agent[AgentDepsT, OutputDataT], native_tools: Sequence[AbstractNativeTool] | None
+) -> list[AbstractNativeTool]:
+    """The native tools the UI offers as options."""
+    # Filter out tools that are already configured on the agent (they're always included)
+    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
+    return [t for t in (native_tools or []) if t.unique_id not in agent_tool_ids]
+
+
+def _model_options(
+    agent: Agent[AgentDepsT, OutputDataT], models: ModelsParam, ui_native_tools: Sequence[AbstractNativeTool]
+) -> tuple[dict[str, Model | str], list[ModelInfo]]:
+    """The model ID → original reference mapping `/chat` selects from, and the `ModelInfo` list for the frontend."""
+    model_id_to_ref: dict[str, Model | str] = {}
+    model_infos: list[ModelInfo] = []
+
+    # Build combined models: agent's model first (if exists), then provided models
+    all_models: list[tuple[str | None, Model | str]] = []
+    if agent.model is not None:
+        all_models.append((None, agent.model))
+    items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
+    all_models.extend(items)
+
+    seen_model_ids: set[str] = set()
+    for label, model_ref in all_models:
+        model = _infer_listed_model(agent, model_ref)
+        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
+        model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
+        if model_id in seen_model_ids:
+            continue
+        seen_model_ids.add(model_id)
+        model_info = _model_info(model_id, label, model, ui_native_tools)
+
+        model_id_to_ref[model_id] = model_ref
+        model_infos.append(model_info)
+    return model_id_to_ref, model_infos
+
+
+def _model_info(
+    model_id: str, label: str | None, model: Model | None, ui_native_tools: Sequence[AbstractNativeTool]
+) -> ModelInfo:
+    """The frontend's `ModelInfo` for a listed model, with the UI's native tools it supports."""
+    display_name = label or (model.label if model is not None else model_id)
+    if model is None:
+        supported_tool_ids: list[str] = []
+    else:
+        model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
+    return ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids)
+
+
+def _infer_listed_model(agent: Agent[AgentDepsT, OutputDataT], model_ref: Model | str) -> Model | None:
+    """The model a listed reference names, or `None` for one only the agent's capabilities can resolve."""
+    try:
+        return infer_model(model_ref)
+    except UserError:
+        # A capability resolver may intentionally use an ID that built-in inference does
+        # not understand. Resolution needs run dependencies, so leave custom references
+        # untouched here and let Agent resolve them when the request is dispatched.
+        if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
+            return None
+        raise

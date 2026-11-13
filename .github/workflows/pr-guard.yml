@@ -1,3 +1,4 @@
+# description: Closes non-maintainer pull requests to the default branch that duplicate an open pull request or do not link an assigned open issue.
 name: PR Guard
 
 on:
@@ -61,15 +62,36 @@ jobs:
             exit 0
           fi
 
+          # Prints a login's role on this repo, and fails when the API can't say (rate limit,
+          # outage). `gh api` writes an HTTP error's JSON body to stdout, so the previous
+          # `$(gh api ... || echo "unknown")` captured that body as the "role": on #9370 a
+          # rate-limited lookup returned the error text, every bypass below missed, and a
+          # maintainer's PR was closed for not linking an issue.
+          repo_role() {
+            local role
+            role=$(gh api "repos/${REPO}/collaborators/$1/permission" --jq '.role_name' 2>/dev/null) || return 1
+            echo "$role"
+          }
+
+          # Closing a PR is a judgement about who opened or reopened it, so it needs an
+          # answer the API actually gave. Without one, stop without acting: the PR stays
+          # open, this job fails visibly, and re-running it (or the next event) checks again.
+          cannot_verify() {
+            echo "::error::$1 (GitHub API error or rate limit); leaving PR #${PR_NUMBER} untouched. Re-run this job to check it."
+            exit 1
+          }
+
           # Author repo-role bypass. The webhook's `author_association` is unreliable — it
           # can report CONTRIBUTOR for a genuine org member/collaborator (observed on #6359:
           # `dsfaccini`, a public org member with `maintain` role, came through as
           # CONTRIBUTOR, so the bypass above missed and the PR was wrongly closed). Confirm
           # the author's actual role on THIS repo via the API — the same `role_name` signal
           # the trusted-actor bypass below uses for the sender — and skip for triage-or-higher.
-          # Fails open toward *checking* (an unreadable/unknown role continues the checks), so
-          # an external contributor can never gain a bypass this way.
-          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          # A role below triage continues the checks and an unreadable one stops the run
+          # without acting, so an external contributor can never gain a bypass this way.
+          if ! AUTHOR_ROLE=$(repo_role "$PR_AUTHOR"); then
+            cannot_verify "Could not read ${PR_AUTHOR}'s role on this repo"
+          fi
           case "$AUTHOR_ROLE" in
             triage | write | maintain | admin)
               echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; skipping checks."
@@ -102,7 +124,7 @@ jobs:
           # sender is always the author) still gets checked, so the issue-link
           # policy can't be bypassed this way.
           if [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
-            SENDER_ROLE=$(gh api "repos/${REPO}/collaborators/${GITHUB_EVENT_SENDER_LOGIN}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            SENDER_ROLE=$(repo_role "$GITHUB_EVENT_SENDER_LOGIN") || SENDER_ROLE="unknown"
             case "$SENDER_ROLE" in
               read | none)
                 echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
@@ -126,12 +148,17 @@ jobs:
           # durable record — look for a `reopened` event whose actor has
           # triage-or-higher access on *this* repo (the same `role_name` signal the
           # bypasses above use; a collaborator on the contributor's fork can reopen
-          # too, and must not count). Fails open toward *checking*: an unreadable
-          # timeline or role continues the checks, so no unlinked PR is kept open by
-          # a transient API error.
-          REOPEN_ACTORS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline" --paginate --jq '.[] | select(.event == "reopened") | .actor.login' 2>/dev/null | sort -u || true)
+          # too, and must not count). An unreadable timeline or role stops the run
+          # without acting (see `cannot_verify`): closing on a guess would undo a
+          # reopen the API failed to report.
+          if ! REOPEN_TIMELINE=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline" --paginate --jq '.[] | select(.event == "reopened") | .actor.login' 2>/dev/null); then
+            cannot_verify "Could not read the timeline of PR #${PR_NUMBER}"
+          fi
+          REOPEN_ACTORS=$(sort -u <<< "$REOPEN_TIMELINE")
           for REOPEN_ACTOR in $REOPEN_ACTORS; do
-            REOPEN_ROLE=$(gh api "repos/${REPO}/collaborators/${REOPEN_ACTOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            if ! REOPEN_ROLE=$(repo_role "$REOPEN_ACTOR"); then
+              cannot_verify "Could not read ${REOPEN_ACTOR}'s role on this repo"
+            fi
             case "$REOPEN_ROLE" in
               triage | write | maintain | admin)
                 echo "PR was previously reopened by ${REOPEN_ACTOR} (role: ${REOPEN_ROLE}); a trusted collaborator deliberately kept this PR open, skipping checks."
@@ -143,14 +170,27 @@ jobs:
             esac
           done
 
-          # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
-          # never auto-closed for duplication; instead a pydanty PR supersedes a
-          # competing PR opened within WINDOW_SECONDS before it (see the loop below).
-          PYDANTY_LOGIN="pydanty[bot]"
+          # Pydantic's own GitHub Apps that open PRs:
+          #   - pydanty[bot]: the autonomous agent that opens PRs from issues.
+          #   - montybot-pydantic[bot]: the team's agent, opening PRs a maintainer asked for.
+          # A GitHub App's `role_name` on the repo is always empty, so the role bypasses
+          # above never match them (#13240, montybot's, was closed as a duplicate that way).
+          # Their PRs are never auto-closed for duplication; instead a team app's PR
+          # supersedes a competing PR opened within WINDOW_SECONDS before it (see the loop
+          # below). Exact logins, not a `*[bot]` glob, so a bot installed later doesn't
+          # inherit this.
+          TEAM_APP_LOGINS=("pydanty[bot]" "montybot-pydantic[bot]")
+          is_team_app() {
+            local login
+            for login in "${TEAM_APP_LOGINS[@]}"; do
+              [ "$1" = "$login" ] && return 0
+            done
+            return 1
+          }
           WINDOW_SECONDS=600
-          IS_PYDANTY_PR="false"
-          if [ "$PR_AUTHOR" = "$PYDANTY_LOGIN" ]; then
-            IS_PYDANTY_PR="true"
+          IS_TEAM_APP_PR="false"
+          if is_team_app "$PR_AUTHOR"; then
+            IS_TEAM_APP_PR="true"
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
 
@@ -201,13 +241,48 @@ jobs:
             echo "Closing PR #${PR_NUMBER} — no linked issue."
             COMMENT=$(printf '%s\n\n%s\n\n%s\n\n%s' \
               "Thanks for the contribution! To make sure changes are discussed before code is written, we ask that every PR references an existing issue with a closing keyword (e.g. \`Fixes #1234\`) in its description, so this PR has been closed automatically." \
-              "If there's no issue for this yet, please open one first (e.g. a bug report with a reproducible example), wait for a maintainer to confirm it, then update this PR's description to reference it and reopen the PR." \
+              "If there's no issue for this yet, please open one (e.g. a bug report with a reproducible example) and wait for a maintainer to respond. Opening an issue isn't enough on its own: a PR that links it is closed the same way until a maintainer has commented on the issue, labeled it or assigned it to you. Then reference the issue in this PR's description and reopen the PR." \
               "Documentation-only fixes are exempt and don't need an issue." \
               "Feel free to ping our team if you think this was closed in error.")
             # Comment before closing so the PR can never end up closed without an
             # explanation; if commenting fails, set -e stops us and the PR stays open.
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
             gh pr close "$PR_NUMBER" --repo "$REPO"
+          }
+
+          # Succeeds when a maintainer has engaged on issue $1: commented on it, labeled it
+          # or assigned it. The issue's author may open a PR for it without being assigned
+          # only then; otherwise filing an issue is a way past the assignment rule that needs
+          # nobody's sign-off (#12483 linked #12482, which its author filed one second
+          # earlier, right after this guard closed their previous PR). Engagement needs
+          # write-or-higher access on this repo. Triage, which the bypasses above trust,
+          # doesn't count: labeling issues is that role's routine work, not a maintainer's
+          # sign-off. Bots never count either: pydanty triages every new issue, commenting,
+          # labeling and assigning a maintainer, before any maintainer has read it. Bots are
+          # skipped before the role lookup, which 404s for them. An unreadable timeline or
+          # role stops the run without acting (see `cannot_verify`).
+          maintainer_engaged() {
+            local timeline actor role
+            if ! timeline=$(gh api "repos/${REPO}/issues/$1/timeline" --paginate --jq '.[] | select(.event == "commented" or .event == "labeled" or .event == "assigned") | .actor.login' 2>/dev/null); then
+              cannot_verify "Could not read the timeline of issue #$1"
+            fi
+            for actor in $(sort -u <<< "$timeline"); do
+              case "$actor" in
+                *"[bot]" | github-actions)
+                  continue
+                  ;;
+              esac
+              if ! role=$(repo_role "$actor"); then
+                cannot_verify "Could not read ${actor}'s role on this repo"
+              fi
+              case "$role" in
+                write | maintain | admin)
+                  echo "${actor} (role: ${role}) has engaged on issue #$1."
+                  return 0
+                  ;;
+              esac
+            done
+            return 1
           }
 
           # Ask GitHub which issues this PR would close, rather than parsing the
@@ -236,14 +311,17 @@ jobs:
 
           ISSUE_NUMBERS=$(fetch_linked_issues)
 
-          if [ -z "$ISSUE_NUMBERS" ]; then
-            # GitHub resolves closing references asynchronously, so a query right
-            # after a PR is opened or edited can transiently come back empty.
-            # Closing is destructive — wait and confirm before acting on it.
-            echo "No linked issues found; re-checking in 30s in case GitHub hasn't resolved references yet."
-            sleep 30
+          # GitHub resolves closing references asynchronously, so a query right
+          # after a PR is opened, edited or marked ready can come back empty. A
+          # single 30s re-check was not enough: #9449, #9450, #9451, #9453 and
+          # #9899 all had `Closes #N` in the body and were closed anyway.
+          # Closing is destructive, so keep polling for a minute before acting on it.
+          for ATTEMPT in 1 2 3 4 5 6; do
+            [ -n "$ISSUE_NUMBERS" ] && break
+            echo "No linked issues found; re-checking in 10s (attempt ${ATTEMPT}/6) in case GitHub hasn't resolved references yet."
+            sleep 10
             ISSUE_NUMBERS=$(fetch_linked_issues)
-          fi
+          done
 
           if [ -z "$ISSUE_NUMBERS" ]; then
             echo "No linked issues found in PR body."
@@ -284,8 +362,9 @@ jobs:
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
             # Contributors should discuss and be assigned an issue before opening
-            # a PR. Issue and bot authors are exempt from this requirement.
-            if [ "$PR_AUTHOR" != "$ISSUE_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
+            # a PR. Bot authors are exempt, and so is the issue's author once a
+            # maintainer has engaged on it.
+            if [[ "$PR_AUTHOR" != *"[bot]" ]]; then
               classify_changed_files
               case "$DOCS_ONLY_STATUS" in
                 unknown)
@@ -296,11 +375,21 @@ jobs:
                   ;;
                 not_docs)
                   ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
-                  if ! echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                  if echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                    echo "Issue #${ISSUE_NUM} is assigned to ${PR_AUTHOR}."
+                  elif [ "$PR_AUTHOR" = "$ISSUE_AUTHOR" ] && maintainer_engaged "$ISSUE_NUM"; then
+                    echo "${PR_AUTHOR} opened issue #${ISSUE_NUM} and a maintainer has engaged on it; not requiring assignment."
+                  else
                     echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
-                    COMMENT=$(printf '%s\n\n%s' \
-                      "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
-                      "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                    if [ "$PR_AUTHOR" = "$ISSUE_AUTHOR" ]; then
+                      COMMENT=$(printf '%s\n\n%s' \
+                        "Thanks for the contribution! Before a PR for an issue you opened can stay open, a maintainer needs to have commented on the issue, labeled it or assigned it, so changes are discussed before code is written." \
+                        "No maintainer has done so on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) yet, so this PR has been closed automatically. Once one has, reopen this PR.")
+                    else
+                      COMMENT=$(printf '%s\n\n%s' \
+                        "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
+                        "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                    fi
                     gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
                     gh pr close "$PR_NUMBER" --repo "$REPO"
                     exit 0
@@ -314,13 +403,13 @@ jobs:
             # would close this issue instead of regex-matching PR bodies, so all
             # closing syntaxes (and manually linked PRs) are recognized. Bot
             # logins get their "[bot]" suffix restored to match the REST-style
-            # logins used elsewhere (PYDANTY_LOGIN, ISSUE_AUTHOR).
+            # logins used elsewhere (TEAM_APP_LOGINS, ISSUE_AUTHOR).
             # Only PRs created before this one can block it: two PRs racing each
             # other's guard runs would otherwise both see the other as open and
-            # both get closed, and a newer PR (e.g. pydanty's, deliberately left
+            # both get closed, and a newer PR (e.g. a team app's, deliberately left
             # alongside an older human PR) must not close the older one when an
-            # edit re-triggers the guard. The pydanty supersede logic below is
-            # unaffected: it only ever targets PRs opened before pydanty's.
+            # edit re-triggers the guard. The team-app supersede logic below is
+            # unaffected: it only ever targets PRs opened before the app's.
             echo "Checking for existing PRs targeting issue #${ISSUE_NUM}..."
 
             BLOCKING_PRS=""
@@ -362,12 +451,12 @@ jobs:
                 continue
               fi
 
-              # pydanty's own PR is never closed here. Instead it supersedes a
+              # A team app's own PR is never closed here. Instead it supersedes a
               # competing PR that opened within WINDOW_SECONDS before it, unless
               # that PR belongs to the issue author (who keeps priority).
-              if [ "$IS_PYDANTY_PR" = "true" ]; then
-                if [ "$EXISTING_PR_AUTHOR" = "$PYDANTY_LOGIN" ]; then
-                  echo "PR #${EXISTING_PR_NUM} is also pydanty's; leaving it."
+              if [ "$IS_TEAM_APP_PR" = "true" ]; then
+                if is_team_app "$EXISTING_PR_AUTHOR"; then
+                  echo "PR #${EXISTING_PR_NUM} is also a team app's (${EXISTING_PR_AUTHOR}); leaving it."
                   continue
                 fi
                 if [ "$EXISTING_PR_AUTHOR" = "$ISSUE_AUTHOR" ]; then
@@ -377,14 +466,14 @@ jobs:
                 EXISTING_EPOCH=$(date -u -d "$(echo "$PR_JSON" | jq -r '.created_at')" +%s)
                 DELTA=$(( PR_CREATED_EPOCH - EXISTING_EPOCH ))
                 if [ "$DELTA" -ge 0 ] && [ "$DELTA" -le "$WINDOW_SECONDS" ]; then
-                  echo "pydanty PR #${PR_NUMBER} opened ${DELTA}s after PR #${EXISTING_PR_NUM} (<= ${WINDOW_SECONDS}s); superseding it."
+                  echo "${PR_AUTHOR} PR #${PR_NUMBER} opened ${DELTA}s after PR #${EXISTING_PR_NUM} (<= ${WINDOW_SECONDS}s); superseding it."
                   SUPERSEDE_COMMENT=$(printf '%s\n\n%s' \
-                    "An automated pull request from @${PYDANTY_LOGIN} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
+                    "An automated pull request from @${PR_AUTHOR} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
                     "Thanks for contributing — if you'd like to keep working on this, please comment on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) and a maintainer can help coordinate.")
                   gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT"
                   gh pr close "$EXISTING_PR_NUM" --repo "$REPO"
                 else
-                  echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before pydanty's; leaving both open for a maintainer."
+                  echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before ${PR_AUTHOR}'s; leaving both open for a maintainer."
                 fi
                 continue
               fi
@@ -397,7 +486,7 @@ jobs:
               fi
             done <<< "$MATCHING_PRS"
 
-            if [ "$IS_PYDANTY_PR" != "true" ] && [ -n "$BLOCKING_PRS" ]; then
+            if [ "$IS_TEAM_APP_PR" != "true" ] && [ -n "$BLOCKING_PRS" ]; then
               echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} already has active PRs: ${BLOCKING_PRS}"
 
               COMMENT=$(printf '%s\n\n%s\n\n%s' \
@@ -423,8 +512,8 @@ jobs:
             exit 0
           fi
 
-          # If we found closed issues but no open ones, close the PR (pydanty PRs are exempt).
-          if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
+          # If we found closed issues but no open ones, close the PR (team app PRs are exempt).
+          if [ "$IS_TEAM_APP_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
             echo "All referenced issues are closed. Closing PR."
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first."
             gh pr close "$PR_NUMBER" --repo "$REPO"

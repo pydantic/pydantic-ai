@@ -1,0 +1,1903 @@
+version: 1
+interactions:
+  - request:
+      method: GET
+      uri: https://api.githubcopilot.com/models
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br, zstd
+        connection:
+          - keep-alive
+        copilot-integration-id:
+          - vscode-chat
+        editor-plugin-version:
+          - copilot-chat/0.26.7
+        editor-version:
+          - vscode/1.95.0
+        host:
+          - api.githubcopilot.com
+        openai-intent:
+          - conversation-panel
+        user-agent:
+          - AsyncOpenAI/Python 3.19.0
+        x-github-api-version:
+          - 2025-04-01
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - MacOS
+        x-stainless-package-version:
+          - 3.19.0
+        x-stainless-raw-response:
+          - 'true'
+        x-stainless-read-timeout:
+          - '20'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.14.6
+      body:
+        type: none
+    response:
+      status: 200
+      headers:
+        cache-control:
+          - private, max-age=21600
+        content-security-policy:
+          - default-src 'none'; sandbox
+        content-type:
+          - application/json
+        date:
+          - Wed, 23 Sep 2026 10:14:24 GMT
+        strict-transport-security:
+          - max-age=31536000
+        transfer-encoding:
+          - chunked
+        x-copilot-api-exp-assignment-context:
+          - >-
+            5133j383:1109202;permission_prompt_control:1332567;ccr_pr_nudge_adoption:1319471;3aced641:1389836;
+        x-copilot-service-request-id:
+          - 95b37521-1608-4f86-81e3-346096f3d60b
+        x-github-backend:
+          - Kubernetes
+        x-github-edge-region:
+          - iad
+        x-github-request-id:
+          - EF01:1CFE35:1BFCA2B:20BC92A:6AB3A680
+      body:
+        type: json
+        content:
+          data:
+            - capabilities:
+                family: claude-fable-5.1
+                limits:
+                  max_context_window_tokens: 264000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-fable-5.1
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: Claude Fable 5.1
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Fable 5.1 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Fable
+                  5.1](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-fable-5.1
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+              warning_text:
+                data_retention: >-
+                  When Claude Fable 5.1 is used, Anthropic retains data, including prompts and
+                  outputs, by default to operate safety classifiers that detect harmful use. Certain
+                  eligible Copilot Business and Copilot Enterprise customers may be approved for
+                  Zero Data Retention access. To learn whether your organization qualifies, contact
+                  your GitHub account team. GitHub Support cannot determine eligibility or enable
+                  access.
+            - capabilities:
+                family: claude-fable-5
+                limits:
+                  max_context_window_tokens: 264000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-fable-5
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: Claude Fable 5
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Fable 5 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Fable 5](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-fable-5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+              warning_text:
+                data_retention: >-
+                  When Claude Fable 5 is used, Anthropic retains data, including prompts and
+                  outputs, by default to operate safety classifiers that detect harmful use. Certain
+                  eligible Copilot Business and Copilot Enterprise customers may be approved for Zero
+                  Data Retention access. To learn whether your organization qualifies, contact
+                  your GitHub account team. GitHub Support cannot determine eligibility or enable
+                  access.
+            - capabilities:
+                family: claude-opus-4.7
+                limits:
+                  max_context_window_tokens: 264000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-opus-4.7
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: Claude Opus 4.7
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Opus 4.7 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Opus
+                  4.7](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-opus-4.7
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: claude-opus-4.8
+                limits:
+                  max_context_window_tokens: 264000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-opus-4.8
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: Claude Opus 4.8
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Opus 4.8 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Opus
+                  4.8](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-opus-4.8
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: claude-opus-5.5
+                limits:
+                  max_context_window_tokens: 328000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-opus-5.5
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: Claude Opus 5.5
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Opus 5.5 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Opus
+                  5.5](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-opus-5.5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: claude-opus-5
+                limits:
+                  max_context_window_tokens: 264000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-opus-5
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: Claude Opus 5
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Opus 5 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Opus 5](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-opus-5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: claude-sonnet-5
+                limits:
+                  max_context_window_tokens: 264000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 5
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  adaptive_thinking: true
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-sonnet-5
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Claude Sonnet 5
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude model from Anthropic. [Learn more about how
+                  GitHub Copilot serves Claude](https://gh.io/copilot-claude-opus).
+              preview: false
+              supported_endpoints:
+                - /v1/messages
+                - /chat/completions
+              vendor: Anthropic
+              version: claude-sonnet-5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gemini-3.5-flash
+                limits:
+                  max_context_window_tokens: 264000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 10
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/heic
+                      - image/heif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  max_thinking_budget: 24000
+                  min_thinking_budget: 256
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - minimal
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gemini-3.5-flash
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: Gemini 3.5 Flash
+              object: model
+              policy:
+                state: enabled
+                terms: 'Enable access to the latest Gemini 3.5 Flash model from Google. [Learn more about how GitHub Copilot serves Gemini 3.5 Flash](https://docs.github.com/en/copilot/reference/ai-models/model-hosting#google-models).'
+              preview: false
+              supported_endpoints:
+                - /chat/completions
+              vendor: Google
+              version: gemini-3.5-flash
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gemini-3.6-flash
+                limits:
+                  max_context_window_tokens: 264000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 10
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/heic
+                      - image/heif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 256
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - minimal
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gemini-3.6-flash
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Gemini 3.6 Flash
+              object: model
+              policy:
+                state: enabled
+                terms: 'Enable access to the latest Gemini 3.6 Flash model from Google. [Learn more about how GitHub Copilot serves Gemini 3.6 Flash](https://docs.github.com/en/copilot/reference/ai-models/model-hosting#google-models).'
+              preview: false
+              supported_endpoints:
+                - /chat/completions
+              vendor: Google
+              version: gemini-3.6-flash
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gemini-3.7-flash
+                limits:
+                  max_context_window_tokens: 264000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 10
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/heic
+                      - image/heif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gemini-3.7-flash
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Gemini 3.7 Flash
+              object: model
+              policy:
+                state: enabled
+                terms: 'Enable access to the latest Gemini 3.7 Flash model from Google. [Learn more about how GitHub Copilot serves Gemini 3.7 Flash](https://docs.github.com/en/copilot/reference/ai-models/model-hosting#google-models).'
+              preview: false
+              supported_endpoints:
+                - /chat/completions
+              vendor: Google
+              version: gemini-3.7-flash
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gemini-3.8-flash
+                limits:
+                  max_context_window_tokens: 265536
+                  max_output_tokens: 65536
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 10
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/heic
+                      - image/heif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gemini-3.8-flash
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Gemini 3.8 Flash
+              object: model
+              policy:
+                state: enabled
+                terms: 'Enable access to the latest Gemini 3.8 Flash model from Google. [Learn more about how GitHub Copilot serves Gemini 3.8 Flash](https://docs.github.com/en/copilot/reference/ai-models/model-hosting#google-models).'
+              preview: false
+              supported_endpoints:
+                - /chat/completions
+              vendor: Google
+              version: gemini-3.8-flash
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.3-codex
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.3-codex
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: GPT-5.3-Codex
+              object: model
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.3-codex
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.4-mini
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.4-mini
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: GPT-5.4 mini
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5.4 mini model from OpenAI. [Learn more about
+                  how GitHub Copilot serves GPT-5.4 mini](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.4-mini
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.4
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.4
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: GPT-5.4
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5.4 model from OpenAI. [Learn more about how
+                  GitHub Copilot serves GPT-5.4](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - /chat/completions
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.4
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.5
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.5
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: GPT-5.5
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5.5 model from OpenAI. [Learn more about how
+                  GitHub Copilot serves GPT-5.5](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.6-luna
+                limits:
+                  max_context_window_tokens: 328000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.6-luna
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: GPT-5.6 Luna
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5.6 Luna model from OpenAI. [Learn more about
+                  how GitHub Copilot serves GPT-5.6 Luna](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.6-luna
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.6-sol
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.6-sol
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: GPT-5.6 Sol
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5.6 Sol model from OpenAI. [Learn more about
+                  how GitHub Copilot serves GPT-5.6 Sol](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.6-sol
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5.6-terra
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5.6-terra
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: GPT-5.6 Terra
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5.6 Terra model from OpenAI. [Learn more about
+                  how GitHub Copilot serves GPT-5.6 Terra](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-5.6-terra
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-6-astra
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-6-astra
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: GPT-6 Astra
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-6 Astra model from OpenAI. [Learn more about
+                  how GitHub Copilot serves GPT-6 Astra](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-6-astra
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-6-luna
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-6-luna
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: GPT-6 Luna
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-6 Luna model from OpenAI. [Learn more about how
+                  GitHub Copilot serves GPT-6 Luna](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-6-luna
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-6-sol
+                limits:
+                  max_context_window_tokens: 400000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 272000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - none
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                    - max
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-6-sol
+              model_picker_category: powerful
+              model_picker_enabled: true
+              name: GPT-6 Sol
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-6 Sol model from OpenAI. [Learn more about how
+                  GitHub Copilot serves GPT-6 Sol](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /responses
+                - ws:/responses
+              vendor: OpenAI
+              version: gpt-6-sol
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: grok-4.5
+                limits:
+                  max_context_window_tokens: 328000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: grok-4.5
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Grok 4.5
+              object: model
+              preview: false
+              supported_endpoints:
+                - /responses
+              vendor: xAI
+              version: grok-4.5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: grok-4.6
+                limits:
+                  max_context_window_tokens: 328000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: grok-4.6
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Grok 4.6
+              object: model
+              preview: false
+              supported_endpoints:
+                - /responses
+              vendor: xAI
+              version: grok-4.6
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: grok-4.7
+                limits:
+                  max_context_window_tokens: 328000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 200000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                    - xhigh
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: grok-4.7
+              model_picker_category: versatile
+              model_picker_enabled: true
+              name: Grok 4.7
+              object: model
+              preview: false
+              supported_endpoints:
+                - /responses
+              vendor: xAI
+              version: grok-4.7
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: oswe-vscode-modelD
+                limits:
+                  max_context_window_tokens: 256000
+                  max_output_tokens: 128000
+                  max_prompt_tokens: 128000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: mai-code-1.1-flash
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: MAI-Code-1.1-Flash
+              object: model
+              policy:
+                state: enabled
+                terms: ''
+              preview: false
+              supported_endpoints:
+                - /responses
+              vendor: Microsoft
+              version: mai-code-1.1-flash
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: trajectory-compaction
+                limits:
+                  max_context_window_tokens: 262144
+                  max_output_tokens: 16384
+                  max_prompt_tokens: 245760
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: o200k_base
+                type: chat
+              id: trajectory-compaction
+              model_picker_enabled: false
+              name: Trajectory Compaction
+              object: model
+              preview: true
+              supported_endpoints:
+                - /chat/completions
+              vendor: Fireworks
+              version: trajectory-compaction
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-5-mini
+                limits:
+                  max_context_window_tokens: 264000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 128000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  reasoning_effort:
+                    - low
+                    - medium
+                    - high
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-5-mini
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: GPT-5 mini
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest GPT-5 mini model from OpenAI. [Learn more about how
+                  GitHub Copilot serves GPT-5 mini](https://gh.io/copilot-openai).
+              preview: false
+              supported_endpoints:
+                - /chat/completions
+                - /responses
+                - ws:/responses
+              vendor: Azure OpenAI
+              version: gpt-5-mini
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o-mini
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 12288
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4o-mini-2024-07-18
+              model_picker_enabled: false
+              name: GPT-4o mini
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-mini-2024-07-18
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 16384
+                  max_prompt_tokens: 64000
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4o-2024-11-20
+              model_picker_enabled: false
+              name: GPT-4o
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-2024-11-20
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 16384
+                  max_prompt_tokens: 64000
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4o-2024-08-06
+              model_picker_enabled: false
+              name: GPT-4o
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-2024-08-06
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: text-embedding-3-small
+                limits:
+                  max_inputs: 512
+                object: model_capabilities
+                supports:
+                  dimensions: true
+                tokenizer: cl100k_base
+                type: embeddings
+              id: text-embedding-3-small
+              model_picker_enabled: false
+              name: Embedding V3 small
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: text-embedding-3-small
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: text-embedding-3-small
+                object: model_capabilities
+                supports:
+                  dimensions: true
+                tokenizer: cl100k_base
+                type: embeddings
+              id: text-embedding-3-small-inference
+              model_picker_enabled: false
+              name: Embedding V3 small (Inference)
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: text-embedding-3-small
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: claude-haiku-4.5
+                limits:
+                  max_context_window_tokens: 200000
+                  max_non_streaming_output_tokens: 16000
+                  max_output_tokens: 64000
+                  max_prompt_tokens: 136000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 5
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  max_thinking_budget: 32000
+                  min_thinking_budget: 1024
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: claude-haiku-4.5
+              model_picker_category: lightweight
+              model_picker_enabled: true
+              name: Claude Haiku 4.5
+              object: model
+              policy:
+                state: enabled
+                terms: >-
+                  Enable access to the latest Claude Haiku 4.5 model from Anthropic. [Learn more
+                  about how GitHub Copilot serves Claude Haiku
+                  4.5](https://gh.io/copilot-anthropic).
+              preview: false
+              supported_endpoints:
+                - /chat/completions
+                - /v1/messages
+              vendor: Anthropic
+              version: claude-haiku-4.5
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4.1
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 16384
+                  max_prompt_tokens: 128000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4.1-2025-04-14
+              model_picker_enabled: false
+              name: GPT-4.1
+              object: model
+              policy:
+                state: enabled
+                terms: 'Enable access to the latest GPT-4.1 model from OpenAI. [Learn more about how GitHub Copilot serves GPT-4.1](https://docs.github.com/en/copilot/using-github-copilot/ai-models/choosing-the-right-ai-model-for-your-task#gpt-41).'
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4.1-2025-04-14
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4.1
+                object: model_capabilities
+                supports:
+                  streaming: true
+                tokenizer: o200k_base
+                type: completion
+              id: gpt-41-copilot
+              model_picker_category: versatile
+              model_picker_enabled: false
+              name: GPT-4.1 Copilot
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-41-copilot
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-3.5-turbo
+                limits:
+                  max_context_window_tokens: 16384
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 12288
+                object: model_capabilities
+                supports:
+                  streaming: true
+                  tool_calls: true
+                tokenizer: cl100k_base
+                type: chat
+              id: gpt-3.5-turbo-0613
+              model_picker_enabled: false
+              name: GPT 3.5 Turbo
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-3.5-turbo-0613
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4
+                limits:
+                  max_context_window_tokens: 32768
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 32768
+                object: model_capabilities
+                supports:
+                  streaming: true
+                  tool_calls: true
+                tokenizer: cl100k_base
+                type: chat
+              id: gpt-4
+              model_picker_enabled: false
+              name: GPT 4
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4-0613
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4
+                limits:
+                  max_context_window_tokens: 32768
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 32768
+                object: model_capabilities
+                supports:
+                  streaming: true
+                  tool_calls: true
+                tokenizer: cl100k_base
+                type: chat
+              id: gpt-4-0613
+              model_picker_enabled: false
+              name: GPT 4
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4-0613
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4-turbo
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 64000
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: cl100k_base
+                type: chat
+              id: gpt-4-0125-preview
+              model_picker_enabled: false
+              name: GPT 4 Turbo
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4-0125-preview
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 64000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4o-2024-05-13
+              model_picker_enabled: false
+              name: GPT-4o
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-2024-05-13
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 64000
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4-o-preview
+              model_picker_enabled: false
+              name: GPT-4o
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-2024-05-13
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4.1
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 16384
+                  max_prompt_tokens: 128000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                      - application/pdf
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  structured_outputs: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4.1
+              model_picker_category: versatile
+              model_picker_enabled: false
+              name: GPT-4.1
+              object: model
+              policy:
+                state: enabled
+                terms: 'Enable access to the latest GPT-4.1 model from OpenAI. [Learn more about how GitHub Copilot serves GPT-4.1](https://docs.github.com/en/copilot/using-github-copilot/ai-models/choosing-the-right-ai-model-for-your-task#gpt-41).'
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4.1-2025-04-14
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-3.5-turbo
+                limits:
+                  max_context_window_tokens: 16384
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 12288
+                object: model_capabilities
+                supports:
+                  streaming: true
+                  tool_calls: true
+                tokenizer: cl100k_base
+                type: chat
+              id: gpt-3.5-turbo
+              model_picker_enabled: false
+              name: GPT 3.5 Turbo
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-3.5-turbo-0613
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o-mini
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 12288
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4o-mini
+              model_picker_enabled: false
+              name: GPT-4o mini
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-mini-2024-07-18
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: gpt-4o
+                limits:
+                  max_context_window_tokens: 128000
+                  max_output_tokens: 4096
+                  max_prompt_tokens: 64000
+                  vision:
+                    max_prompt_image_size: 3145728
+                    max_prompt_images: 1
+                    supported_media_types:
+                      - image/jpeg
+                      - image/png
+                      - image/webp
+                      - image/gif
+                object: model_capabilities
+                supports:
+                  parallel_tool_calls: true
+                  streaming: true
+                  tool_calls: true
+                  vision: true
+                tokenizer: o200k_base
+                type: chat
+              id: gpt-4o
+              model_picker_enabled: false
+              name: GPT-4o
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: gpt-4o-2024-11-20
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+            - capabilities:
+                family: text-embedding-ada-002
+                limits:
+                  max_inputs: 512
+                object: model_capabilities
+                supports: {}
+                tokenizer: cl100k_base
+                type: embeddings
+              id: text-embedding-ada-002
+              model_picker_enabled: false
+              name: Embedding V2 Ada
+              object: model
+              preview: false
+              vendor: Azure OpenAI
+              version: text-embedding-3-small
+              warning_message: >-
+                Your billing plan has changed to usage-based billing and model multipliers no
+                longer apply. Please update your client to the latest version to see the new
+                billing information.
+          object: list
+    recorded_at: 2026-09-23T10:14:24.656293+00:00

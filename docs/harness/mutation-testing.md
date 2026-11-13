@@ -1,0 +1,61 @@
+# Mutation Testing
+
+Mutation testing complements the 100% branch-coverage requirement: coverage
+proves every line and branch runs, mutation testing proves the assertions
+actually pin the behavior down.
+
+Covers `pydantic_ai_harness/filesystem/_toolset.py` and
+`pydantic_ai_harness/shell/_toolset.py`.
+
+Run with [mutmut](https://mutmut.readthedocs.io/) v3 via `scripts/run-mutmut.sh`,
+which installs mutmut ephemerally with `uv run --with` -- no dev dependency
+required.
+
+```bash
+scripts/run-mutmut.sh run --max-children 1
+scripts/run-mutmut.sh results
+scripts/run-mutmut.sh show <mutant-name>
+```
+
+```mermaid
+flowchart TB
+    accTitle: Mutation testing: check that the tests pin the behavior down
+    accDescr: For filesystem/_toolset.py and shell/_toolset.py, mutmut makes each mutant with one small change, such as a flipped condition, and runs the test suite against the mutated code. A mutant is killed if a test failed and survived if no test failed. Triage each survivor: it is a missing test, so write one that kills it, or an equivalent mutant no test could tell from the original.
+    code["filesystem/_toolset.py<br/>shell/_toolset.py"]
+    subgraph mutmut["mutmut, per mutant"]
+        mutant["mutant<br/>one small change, such<br/>as a flipped condition"]
+        tests["test suite<br/>runs against<br/>the mutated code"]
+    end
+    killed["killed"]
+    survived["survived<br/>triage each one"]
+    missing["missing test<br/>write one that kills it"]
+    equivalent["equivalent mutant<br/>no test could tell it<br/>from the original"]
+    code --> mutant
+    mutant --> tests
+    tests -->|"a test failed"| killed
+    tests -->|"no test failed"| survived
+    survived --> missing
+    survived --> equivalent
+```
+
+## Interpreting survivors
+
+A surviving mutant is either a missing test or an equivalent mutant -- a change
+that produces behavior no test could distinguish from the original. Triage each
+survivor; the recurring equivalent-mutant categories in this codebase are:
+
+- **Trampoline default params** -- mutmut v3 wraps functions, and the wrapper
+  keeps the original defaults, so a mutated default is never observed.
+- **Omitted `name=` in `add_function()`** -- pydantic-ai falls back to
+  `method.__name__`, which equals the explicit name being mutated away.
+- **`'utf-8'` encoding mutations** -- Python's codec lookup is case-insensitive
+  and UTF-8 is the default text encoding, so case/omission changes are no-ops.
+- **`errors='replace'` mutations** -- exercised only by invalid bytes; valid
+  UTF-8 test data never invokes the error handler.
+- **Unreachable `except` blocks** (marked `pragma: no cover`) -- paths that
+  can't be triggered in the test environment.
+- **`CancelScope(shield=True)` flips** -- require an outer cancellation during
+  the near-instant cleanup window.
+
+Anything outside these categories should be treated as a real gap and killed
+with a new test.

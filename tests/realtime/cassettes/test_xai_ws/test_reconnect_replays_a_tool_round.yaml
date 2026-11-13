@@ -1,0 +1,1326 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: 77751b1d-ae33-4974-81e8-a7bc653caef5
+    session:
+      id: 9643cdf3bc9046348e438843e4f294ab
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-think-fast-2.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence. Always use get_weather for weather
+        questions.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: ee907ff0-6989-4f52-b4dd-9a897a736660
+    conversation:
+      id: 2459cb40-79d9-4e7b-8d5f-98840ed93ab6
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.001
+  data:
+    type: ping
+    event_id: d9504b6a-59eb-459e-a293-ad39b5227096
+    timestamp: 1790725880607
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.495
+  data:
+    session:
+      instructions: Answer in one short sentence. Always use get_weather for weather
+        questions.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      model: grok-voice-think-fast-2.0
+      tools:
+      - type: function
+        function:
+          name: get_weather
+          description: Look up the weather for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 64f7bbf4-09a8-4fc0-b48c-8e33c5f7430a
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.496
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris?
+- kind: message
+  direction: sent
+  at: 0.496
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.563
+  data:
+    type: conversation.item.added
+    event_id: 584f23b3-92a1-435a-bfb9-19421e848711
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris?
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.563
+  data:
+    type: response.created
+    event_id: d904ba0f-cae9-42a2-a70e-a0dff3924798
+    response:
+      id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.905
+  data:
+    type: response.output_item.added
+    event_id: 757a48fb-b14b-4d2c-ac8a-bd82c411f621
+    item:
+      id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.905
+  data:
+    type: conversation.item.added
+    event_id: ab7ae8c9-2bc9-48d4-ae67-9402922a3e95
+    item:
+      id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.906
+  data:
+    type: response.content_part.added
+    event_id: 0f05bde2-82da-417f-98de-2eb66e5c6e8e
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 1.331
+  data:
+    type: response.output_audio.delta
+    event_id: d13e9048-1c58-4b9e-9f13-6cf78acc84dc
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: CQAOABEAEAAKAAUAAwADAAYADgAUABYAFAASABAADQAK
+    content_index: 0
+    output_index: 0
+    rid: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    latency: '0.74'
+    audio_duration_ms: 245
+    ts: 1790725881913
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.332
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: I'll check the weather for you.
+    content_index: 0
+    output_index: 0
+    rid: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.49
+  data:
+    type: response.output_audio.delta
+    event_id: 37401103-8856-4186-adf9-665b38cb2cf7
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: 1f/s/wsACgAQABQACQAMAP//2/+//7D/of+A/2v/af9a
+    content_index: 0
+    output_index: 0
+    rid: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    audio_duration_ms: 642
+    ts: 1790725882070
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.512
+  data:
+    type: response.output_audio.delta
+    event_id: 74f6a307-0506-4b40-b1e1-219acbe87c2b
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: EAD1//r/NQAQACcA4v8fAAMAQf9sAJAAL/9BAJn/vf/V
+    content_index: 0
+    output_index: 0
+    rid: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    audio_duration_ms: 306
+    ts: 1790725882122
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.514
+  data:
+    type: response.output_audio.delta
+    event_id: 53f9e95a-62de-44f4-9d87-45888771abd7
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: xf/V/5f/oP+h/5v/cv+t/7X/6v8yAL//EAA1ADsAWQAG
+    content_index: 0
+    output_index: 0
+    rid: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    audio_duration_ms: 275
+    ts: 1790725882127
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.835
+  data:
+    type: response.output_audio.delta
+    event_id: af4dc2c5-2318-42cc-bf64-9c78ff1224e8
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: jQCJAIMAfQB5AHEAZwBaAFAASwBAADYALwAuACoAKwAu
+    content_index: 0
+    output_index: 0
+    rid: 8e77005c-39b4-4214-8841-f9286bd0a39a
+    audio_duration_ms: 122
+    ts: 1790725882447
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.output_audio_transcript.done
+    event_id: abab3f42-2d35-4573-bf5b-34179ae97525
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    transcript: I'll check the weather for you.
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.content_part.done
+    event_id: 94cc38c5-abe8-4bf7-84b6-f1beb130a79a
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.output_audio.done
+    event_id: 91fb7fa1-f722-45d5-b76c-aae0d8b1319c
+    item_id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.output_item.done
+    event_id: c9bf0752-2415-4267-99f7-d9f9c87bc635
+    item:
+      id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.output_item.added
+    event_id: cc8fc588-b49e-40a8-99fa-f0c6f4753321
+    item:
+      id: d38042e4-1b6f-4f9a-a7dc-a45336d42345
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: conversation.item.added
+    event_id: e96fc406-7397-4561-9c56-533e85df87df
+    item:
+      id: d38042e4-1b6f-4f9a-a7dc-a45336d42345
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.function_call_arguments.delta
+    event_id: ce2883bf-3351-48f5-8e66-e7dc5776b808
+    item_id: d38042e4-1b6f-4f9a-a7dc-a45336d42345
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    delta: '{"city":"Paris"}'
+    call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.836
+  data:
+    type: response.function_call_arguments.done
+    event_id: 7c4be328-0223-4017-a0f5-d6a416fa0715
+    item_id: d38042e4-1b6f-4f9a-a7dc-a45336d42345
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    output_index: 0
+    call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+    name: get_weather
+    arguments: '{"city":"Paris"}'
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.837
+  data:
+    type: response.output_item.done
+    event_id: 4173ac82-e443-4ddc-85b5-05ea0e593037
+    item:
+      id: d38042e4-1b6f-4f9a-a7dc-a45336d42345
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+      name: get_weather
+      arguments: '{"city":"Paris"}'
+      replayed: false
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.837
+  data:
+    type: response.done
+    event_id: aef7f964-7adf-401d-b171-70fca4091fd0
+    response:
+      id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+      object: realtime.response
+      output:
+      - id: f44deaf2-8554-4de9-bbfe-e8b5a9b5d236
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I'll check the weather for you.
+        replayed: false
+      - id: d38042e4-1b6f-4f9a-a7dc-a45336d42345
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+        name: get_weather
+        arguments: '{"city":"Paris"}'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    response_id: 81d98785-b297-4ea3-a5bf-7bc5c29055d5
+    usage:
+      input_tokens: 7
+      input_token_details:
+        text_tokens: 7
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 87
+      output_token_details:
+        text_tokens: 7
+        audio_tokens: 80
+        grok_tokens: 0
+      total_tokens: 94
+      output_audio_seconds: 1.5899999999999999
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.847
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+      output: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: sent
+  at: 1.847
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 1.907
+  data:
+    type: conversation.item.added
+    event_id: 5f7e1789-373c-42e5-b7fc-f3a14d1b9496
+    item:
+      id: b5864dde-ed42-49e0-98e1-46300d3a5be1
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-29e01a9a-5839-4918-8bdf-86aa5658e867-0
+      output: It is foggy and 12 degrees in Paris.
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.911
+  data:
+    type: response.created
+    event_id: e0e098fc-7fe6-4688-bd2e-c88126481acf
+    response:
+      id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.227
+  data:
+    type: response.output_item.added
+    event_id: 06f237e5-c218-43ab-9055-3c0baa7073d1
+    item:
+      id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.227
+  data:
+    type: conversation.item.added
+    event_id: 592d6bf8-03c7-4750-8c20-1b5131bc1b2e
+    item:
+      id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: b5864dde-ed42-49e0-98e1-46300d3a5be1
+- kind: message
+  direction: received
+  at: 2.227
+  data:
+    type: response.content_part.added
+    event_id: 5d6e6e8d-0c19-406a-8de2-15f1a745fe65
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 2.561
+  data:
+    type: response.output_audio.delta
+    event_id: 92a79eb6-16e4-4840-b34d-58088dd8408f
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: DAATABgAGAAUABAAEAARABQAGwAgACEAHgAaABUAEQAO
+    content_index: 0
+    output_index: 0
+    rid: 089c38b9-d2dc-4e06-aa08-71a7a4c26281
+    latency: '0.62'
+    audio_duration_ms: 245
+    ts: 1790725883143
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.562
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 089c38b9-d2dc-4e06-aa08-71a7a4c26281
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: It is foggy and 12 degrees in
+    content_index: 0
+    output_index: 0
+    rid: 089c38b9-d2dc-4e06-aa08-71a7a4c26281
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.739
+  data:
+    type: response.output_audio.delta
+    event_id: 49c06512-f3a3-4be1-b183-2de9d8a4cebb
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: TP9j/1cD2v0IAAz9nAcb+GsE4v0H/0IDc/s5BGv8cgKN
+    content_index: 0
+    output_index: 0
+    rid: 089c38b9-d2dc-4e06-aa08-71a7a4c26281
+    audio_duration_ms: 642
+    ts: 1790725883321
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.792
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: e6fd029e-4b7a-4bb1-b9d3-46cb1176947a
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: ' Paris.'
+    content_index: 0
+    output_index: 0
+    rid: e6fd029e-4b7a-4bb1-b9d3-46cb1176947a
+    start_time: 0.92
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.857
+  data:
+    type: response.output_audio.delta
+    event_id: d3065ec9-f0aa-4965-b7ea-cb14df268557
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: ngCeAJkAkQCFAHcAawBeAFAAQwA2ACYAFgAEAPj/7f/j
+    content_index: 0
+    output_index: 0
+    rid: 089c38b9-d2dc-4e06-aa08-71a7a4c26281
+    audio_duration_ms: 153
+    ts: 1790725883472
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.226
+  data:
+    type: response.output_audio.delta
+    event_id: 5abf4534-8774-4848-8e9a-32d65b898506
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: yv+c/3L/UP8u/xr/Cv/r/tb+xv69/qv+if55/nz+iv6D
+    content_index: 0
+    output_index: 0
+    rid: e6fd029e-4b7a-4bb1-b9d3-46cb1176947a
+    audio_duration_ms: 1254
+    ts: 1790725883799
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.229
+  data:
+    type: response.output_audio.delta
+    event_id: 54cb5adb-6ee0-425e-8823-12aaa32bd8a5
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: d/8PAWUAdP3UA5r9dQBnAMUA2f3NASoC9PiBB1P/J/rD
+    content_index: 0
+    output_index: 0
+    rid: e6fd029e-4b7a-4bb1-b9d3-46cb1176947a
+    audio_duration_ms: 336
+    ts: 1790725883808
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.229
+  data:
+    type: response.output_audio.delta
+    event_id: c09bbad3-e8c7-4cde-987d-1cfea81cd229
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    delta: 9//2//X/9P/y/+//7v/q/+v/7f/r/+n/6P/o/+f/5//q
+    content_index: 0
+    output_index: 0
+    rid: e6fd029e-4b7a-4bb1-b9d3-46cb1176947a
+    audio_duration_ms: 80
+    ts: 1790725883809
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.229
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 3db173af-a596-4920-ae67-29f106d2d2d6
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    transcript: It is foggy and 12 degrees in Paris.
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.23
+  data:
+    type: response.content_part.done
+    event_id: 9e1ed4e1-e239-40b8-ac05-2420885b15f1
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.23
+  data:
+    type: response.output_audio.done
+    event_id: ac5ef23b-d67a-47ce-a6e3-da0a858a3939
+    item_id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.23
+  data:
+    type: response.output_item.done
+    event_id: d58397d3-e15a-49ec-90b7-b28ddd4373b9
+    item:
+      id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.23
+  data:
+    type: response.done
+    event_id: f4f34e60-613a-4f18-b6f7-e432bce6c67f
+    response:
+      id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+      object: realtime.response
+      output:
+      - id: 61f1204f-b80f-4cae-9c74-ad2444bb0ac9
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: It is foggy and 12 degrees in Paris.
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    response_id: ccf94291-f4f5-4a48-a5b6-9fe708577aa7
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 147
+      output_token_details:
+        text_tokens: 11
+        audio_tokens: 136
+        grok_tokens: 0
+      total_tokens: 147
+      output_audio_seconds: 2.71
+      billable_audio_seconds: 3
+    previous_item_id: null
+- kind: close
+  code: 1011
+  reason: test reconnect
+  ok: false
+  at: 5.291
+- kind: message
+  direction: received
+  at: 5.547
+  data:
+    type: session.created
+    event_id: 65232e46-2c56-46f6-b547-8b9eb9e14866
+    session:
+      id: d4ae8410913d41a6b105c4092610526e
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-think-fast-2.0
+- kind: message
+  direction: sent
+  at: 5.547
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence. Always use get_weather for weather
+        questions.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  at: 5.547
+  data:
+    type: conversation.created
+    event_id: b6471263-50c3-4d42-84cf-da137f5fd6f5
+    conversation:
+      id: 58484456-dd3f-4250-ac1d-05c1dab28976
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.547
+  data:
+    type: ping
+    event_id: d587c921-88c2-4677-8f41-87eb713e748b
+    timestamp: 1790725886154
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.684
+  data:
+    session:
+      instructions: Answer in one short sentence. Always use get_weather for weather
+        questions.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      model: grok-voice-think-fast-2.0
+      tools:
+      - type: function
+        function:
+          name: get_weather
+          description: Look up the weather for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 2a359fda-f763-436e-9ea7-729dceecf1df
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 5.684
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris?
+- kind: message
+  direction: sent
+  at: 5.684
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: I'll check the weather for you.
+- kind: message
+  direction: sent
+  at: 5.684
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call
+      name: get_weather
+      call_id: 2996ce21aab246f81e17fda7363f964d
+      arguments: '{"city":"Paris"}'
+- kind: message
+  direction: sent
+  at: 5.684
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: 2996ce21aab246f81e17fda7363f964d
+      output: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: sent
+  at: 5.684
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: sent
+  at: 5.684
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: How many degrees did the weather tool report? Answer with just the number.
+- kind: message
+  direction: sent
+  at: 5.685
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 5.745
+  data:
+    type: conversation.item.added
+    event_id: e721ed47-b805-46b6-a6f1-a0483bdbe6de
+    item:
+      id: 9ad2d179-dc31-434c-9f8a-559c82a4066f
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris?
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.746
+  data:
+    type: conversation.item.added
+    event_id: 25c9f3bd-3d5c-4fe3-8c3e-93ccec629f29
+    item:
+      id: 73961712-f38f-4e10-997d-fefae0dc903c
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: I'll check the weather for you.
+      replayed: false
+    previous_item_id: 9ad2d179-dc31-434c-9f8a-559c82a4066f
+- kind: message
+  direction: received
+  at: 5.746
+  data:
+    type: conversation.item.added
+    event_id: dd3e34be-a54b-487a-b9a5-1f190d246fda
+    item:
+      id: 35137fa6-140f-4d0d-86e6-84ae2c9ed8eb
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: tool
+      call_id: 2996ce21aab246f81e17fda7363f964d
+      name: get_weather
+      arguments: ''
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.746
+  data:
+    type: conversation.item.added
+    event_id: 6d15e753-3095-4a4c-8bb9-0478edc0974f
+    item:
+      id: 5428dbd5-08f0-4e4f-b7f1-7e17d11e75e4
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: 2996ce21aab246f81e17fda7363f964d
+      output: It is foggy and 12 degrees in Paris.
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.746
+  data:
+    type: conversation.item.added
+    event_id: 7ef0c1b9-b81c-4add-970e-34d00955edb6
+    item:
+      id: 98bc4e21-de61-4924-8a59-db0ccc1c92ce
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It is foggy and 12 degrees in Paris.
+      replayed: false
+    previous_item_id: 5428dbd5-08f0-4e4f-b7f1-7e17d11e75e4
+- kind: message
+  direction: received
+  at: 5.75
+  data:
+    type: conversation.item.added
+    event_id: 21f90565-89e6-498c-ae6c-9ba1d8d27fac
+    item:
+      id: pydantic_ai_item_2
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: How many degrees did the weather tool report? Answer with just the number.
+      replayed: false
+    previous_item_id: 98bc4e21-de61-4924-8a59-db0ccc1c92ce
+- kind: message
+  direction: received
+  at: 5.75
+  data:
+    type: response.created
+    event_id: cb116c3e-c6b0-4dab-9570-7d78e1739b9d
+    response:
+      id: e643284c-de17-4182-8150-cbfd48b21220
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.944
+  data:
+    type: response.output_item.added
+    event_id: ffe62531-b5e1-48d9-8ea7-585db6004ddd
+    item:
+      id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.944
+  data:
+    type: conversation.item.added
+    event_id: 1b859088-bac4-48c1-a877-c62e3dda3f4e
+    item:
+      id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_2
+- kind: message
+  direction: received
+  at: 5.944
+  data:
+    type: response.content_part.added
+    event_id: 15d47542-fb19-4302-805a-d9f65db430fa
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 6.245
+  data:
+    type: response.output_audio.delta
+    event_id: b0452a71-63bf-487a-b23c-8aad12751408
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    delta: DgATABUAFAANAAcABAAEAAcADwAWABkAGAAXABYAEwAS
+    content_index: 0
+    output_index: 0
+    rid: b56bff54-4811-4b4c-8e3b-213ccc39cc2e
+    latency: '0.46'
+    audio_duration_ms: 245
+    ts: 1790725886826
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.246
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: b56bff54-4811-4b4c-8e3b-213ccc39cc2e
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    delta: '12'
+    content_index: 0
+    output_index: 0
+    rid: b56bff54-4811-4b4c-8e3b-213ccc39cc2e
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.264
+  data:
+    type: response.output_audio.delta
+    event_id: 7c9f666a-d68d-4c16-95d0-ea6dae4b8718
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    delta: LPoO+af3fvYa9vn1F/XC86zznfUi+Zb8YP9jAswFtgjm
+    content_index: 0
+    output_index: 0
+    rid: b56bff54-4811-4b4c-8e3b-213ccc39cc2e
+    audio_duration_ms: 306
+    ts: 1790725886876
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.295
+  data:
+    type: response.output_audio.delta
+    event_id: d5f0adc6-ebee-40dd-bc92-b1d079169d4e
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    delta: 3f+4/kf/zv/z/lz/6//x/4QAVgDGAKcACQFhAIv/OwCg
+    content_index: 0
+    output_index: 0
+    rid: b56bff54-4811-4b4c-8e3b-213ccc39cc2e
+    audio_duration_ms: 153
+    ts: 1790725886884
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.296
+  data:
+    type: response.output_audio.delta
+    event_id: 47cd7b3e-ea56-41c4-acf3-7dafbaabe08c
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    delta: FgAZABwAHQAfACMAIgAmACoAKQAuADMANAA3ADgANgA1
+    content_index: 0
+    output_index: 0
+    rid: b56bff54-4811-4b4c-8e3b-213ccc39cc2e
+    audio_duration_ms: 87
+    ts: 1790725886886
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.296
+  data:
+    type: response.output_audio_transcript.done
+    event_id: e2f423e1-f547-4933-aae2-96f2c1fa9db3
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    transcript: '12'
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.296
+  data:
+    type: response.content_part.done
+    event_id: 07dfdb95-d10f-4dba-acf5-fab7f8a405b3
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.296
+  data:
+    type: response.output_audio.done
+    event_id: d4f1a0b9-6580-4b68-b0d7-ccd2f08e86c6
+    item_id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.296
+  data:
+    type: response.output_item.done
+    event_id: dfd5d535-bfee-4886-8b3b-bfb373d9b54a
+    item:
+      id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.296
+  data:
+    type: response.done
+    event_id: f369f85f-d7fc-4aae-8aed-81fdfc250839
+    response:
+      id: e643284c-de17-4182-8150-cbfd48b21220
+      object: realtime.response
+      output:
+      - id: e4eddfcb-1be6-4d25-a6af-6829030b6dde
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: '12'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    response_id: e643284c-de17-4182-8150-cbfd48b21220
+    usage:
+      input_tokens: 15
+      input_token_details:
+        text_tokens: 15
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 42
+      output_token_details:
+        text_tokens: 2
+        audio_tokens: 40
+        grok_tokens: 0
+      total_tokens: 57
+      output_audio_seconds: 0.79
+      billable_audio_seconds: 1
+    previous_item_id: null

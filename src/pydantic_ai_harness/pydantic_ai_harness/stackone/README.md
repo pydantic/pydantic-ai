@@ -1,0 +1,233 @@
+# StackOne
+
+Use `StackOne` when an agent needs to work with one of a user's linked business applications, such as BambooHR,
+Salesforce, or Zendesk. Each instance is scoped to one linked account, which is one authenticated connection between
+[StackOne](https://www.stackone.com) and a provider.
+
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/stackone/)
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
+```mermaid
+flowchart TB
+    accTitle: StackOne: run actions in a user's linked business apps
+    accDescr: Inside your agent, the model searches and then executes through the StackOne capability, whose two tools end in _search_actions and _execute_action. The capability calls StackOne MCP at api.stackone.com/mcp with an API key and x-account-id. StackOne MCP sends the action to the linked account, such as BambooHR or Salesforce, and gets the result.
+    subgraph agent["Your agent"]
+        model(["model"])
+        stackone["StackOne()<br/>..._search_actions,<br/>..._execute_action"]:::capability
+    end
+    mcp["StackOne MCP<br/>api.stackone.com/mcp"]:::external
+    account["linked account<br/>such as BambooHR<br/>or Salesforce"]:::external
+    model <-->|"search, then execute"| stackone
+    stackone <-->|"API key, x-account-id"| mcp
+    mcp <-->|"action, result"| account
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
+## Before you start
+
+Follow the [StackOne docs](https://docs.stackone.com) to:
+
+1. Configure a connector and link an account. For your first test, enable only the read actions you need.
+2. Copy the linked account ID from the StackOne dashboard.
+3. Create a StackOne API key that can execute actions.
+
+You also need an API key for the model your agent uses.
+
+## Installation
+
+uv:
+
+```bash
+uv add "pydantic-ai-harness[stackone]" "pydantic-ai-slim[openai,spec]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[stackone]" "pydantic-ai-slim[openai,spec]"
+```
+
+The `openai` and `spec` extras support the model and agent-spec examples below. Install the provider extra for a
+different model provider instead.
+
+Set the credentials in the shell where you will run the example:
+
+```bash
+export STACKONE_API_KEY='your-stackone-api-key'
+export STACKONE_ACCOUNT_ID='your-linked-account-id'
+export OPENAI_API_KEY='your-openai-api-key'
+```
+
+`StackOne` reads `STACKONE_API_KEY` automatically. The example reads `STACKONE_ACCOUNT_ID` explicitly so the account
+ID is not hard-coded. You can pass `api_key=` directly instead, but keep secrets out of source control.
+
+## Run your first agent
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import StackOne
+
+agent = Agent(
+    'openai:gpt-5',
+    capabilities=[
+        StackOne(account_id=os.environ['STACKONE_ACCOUNT_ID']),
+    ],
+)
+result = agent.run_sync('List the first 5 employees')
+print(result.output)
+```
+
+By default, the model receives two tools. It searches for an action that matches the request, then executes the
+returned action ID. The final output depends on the linked provider and its data.
+
+## Control available actions
+
+StackOne controls which actions are enabled for the linked account. Treat that configuration as the primary access
+control.
+
+Use `actions` when you also want to limit which tools the model sees. Patterns use Python
+[`fnmatch`](https://docs.python.org/3/library/fnmatch.html) syntax, where `*` is a wildcard. They ignore case and match
+the full `{connector}_{action}_{entity}` tool name:
+
+```python
+from pydantic_ai_harness import StackOne
+
+StackOne(account_id='your-linked-account-id', actions=['*_list_*'])            # All matching list tools
+StackOne(account_id='your-linked-account-id', actions=['workday_get_worker'])  # One exact tool
+```
+
+Passing `actions` selects `individual` mode automatically. Explicitly combining `actions` with
+`tool_mode='search_execute'` raises an error because that mode registers only the search and execute tools.
+
+## Choose a tool mode
+
+| Mode | What the model receives | Use it when |
+|---|---|---|
+| `search_execute` | Two tools: search for an action, then execute it by ID | The account has many enabled actions. This is the default when `actions` is omitted. |
+| `individual` | One tool and schema per enabled action | You need to select exact actions or add per-tool behavior. Passing `actions` selects this mode. |
+
+In `search_execute` mode, action IDs are returned by the search tool at runtime and should not be guessed. In
+`individual` mode, all selected tool schemas are sent to the model, so filter large action sets with `actions`.
+
+To keep StackOne tools out of the model context until they are needed, pass `defer_loading=True`. The capability needs
+an `id` to be loaded on demand, and derives one from the linked account -- `StackOne(account_id='45320')` is
+`stackone-45320` -- so one agent can reach several accounts without naming each one:
+
+```python
+from pydantic_ai_harness import StackOne
+
+StackOne(account_id='your-linked-account-id', defer_loading=True)
+```
+
+Two capabilities on the *same* account share that id and are rejected at agent construction: one linked account is
+one connection. Pass an explicit `id=` if you need to override the derived one.
+
+### Two accounts on one agent
+
+Distinct ids keep the two capabilities apart, but they do not rename their tools. StackOne's server
+names the tools after the connector and action (`bamboohr_list_employees`), so two accounts on the
+same provider list the same names and the run fails on the tool name rather than the id:
+
+```
+UserError: StackOneToolset 'stackone-crm-account' defines a tool whose name conflicts with
+existing tool from StackOneToolset: 'bamboohr_list_employees'
+```
+
+Namespace them with [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/):
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import PrefixTools
+
+from pydantic_ai_harness import StackOne
+
+agent = Agent(
+    'openai:gpt-5',
+    capabilities=[
+        PrefixTools(StackOne(account_id='hr-account'), prefix='hr'),
+        PrefixTools(StackOne(account_id='crm-account'), prefix='crm'),
+    ],
+)
+```
+
+The model sees `hr_bamboohr_list_employees` and `crm_bamboohr_list_employees`, and each routes to
+its own linked account. Two accounts on *different* providers list different tool names already, so
+they need no prefix.
+
+### Bound large tool results
+
+Provider actions can return large exports. Combine StackOne with the
+[Tool Output Limits](../tool_output_limits/README.md) capability to reduce oversized tool returns agent-wide:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import StackOne, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
+
+agent = Agent(
+    'openai:gpt-5',
+    capabilities=[
+        StackOne(account_id='your-linked-account-id'),
+        ToolOutputLimits(store=LocalFileStore()),
+    ],
+)
+```
+
+### Require approval
+
+Approval is not enabled automatically. For operations that need human confirmation, use the public
+`StackOneToolset` with Pydantic AI's
+[tool approval](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/#requiring-tool-approval):
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.stackone import StackOneToolset
+
+stackone_tools = StackOneToolset(
+    account_id=os.environ['STACKONE_ACCOUNT_ID'],
+    actions=['workday_create_worker'],
+).approval_required()
+
+agent = Agent('openai:gpt-5', toolsets=[stackone_tools])
+```
+
+Handle the resulting deferred approval requests as described in the linked guide.
+
+## Define the agent in YAML or JSON
+
+The capability also works with Pydantic AI's
+[agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) format for YAML or JSON. Keep the API key in
+`STACKONE_API_KEY` rather than storing it in the file:
+
+```yaml
+# agent.yaml
+model: openai:gpt-5
+capabilities:
+  - StackOne:
+      account_id: 'your-linked-account-id'
+      actions: ['*_list_*']
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import StackOne
+
+agent = Agent.from_file('agent.yaml', custom_capability_types=[StackOne])
+```
+
+## Connection customization
+
+Use the lower-level `StackOneToolset` directly when you need
+[`Agent(toolsets=[...])`](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) or other toolset wrappers.
+
+Custom `base_url` and URL-valued `client` values must use HTTPS. The toolset adds auth headers and appends the
+`tool-mode` query parameter for URL values when it is absent. It raises an error when the URL's `tool-mode` conflicts
+with the configured mode because rewriting would invalidate signed URLs. When using `search_execute` with a signed
+URL, include `tool-mode=search_execute` before signing. Prebuilt clients are used as-is; configure their HTTPS
+transport, auth, account selection, and tool mode yourself.

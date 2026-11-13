@@ -11,10 +11,16 @@ re-exported from `pydantic_graph` directly.
 from __future__ import annotations as _annotations
 
 import inspect
-import sys
-from collections import Counter, defaultdict
+import itertools
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
-from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import dataclass, field, replace
 from types import NoneType
 from typing import (
@@ -22,7 +28,9 @@ from typing import (
     Any,
     Generic,
     Literal,
+    Never,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     get_origin,
@@ -33,7 +41,7 @@ from typing import (
 from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, AbstractSpan, Unset, get_traceparent, infer_obj_name, logfire_span
@@ -68,12 +76,6 @@ from pydantic_graph.paths import (
 )
 from pydantic_graph.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
 from pydantic_graph.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
-
 
 # -- TypeVars ----------------------------------------------------------------
 
@@ -439,6 +441,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         OutputT: The type of the output data
     """
 
+    _run_context: AbstractAsyncContextManager[None]
+
     def __init__(
         self,
         graph: Graph[StateT, DepsT, InputT, OutputT],
@@ -475,14 +479,17 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._next: EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask] | None = None
         """The next item to be processed."""
 
-        self._next_task_id = 0
-        self._next_node_run_id = 0
+        task_ids = itertools.count()
+        node_run_ids = itertools.count()
+        # Not bound methods: `_GraphIterator` keeps these, and a reference back to this run would form a cycle.
+        self._get_next_task_id: Callable[[], TaskID] = lambda: TaskID(f'task:{next(task_ids)}')
+        self._get_next_node_run_id: Callable[[], NodeRunID] = lambda: NodeRunID(f'task:{next(node_run_ids)}')
         initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, self._get_next_node_run_id(), 0),)
         self._first_task = GraphTask(
             node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack, task_id=self._get_next_task_id()
         )
         self._iterator_task_group = create_task_group()
-        self._iterator_instance = _GraphIterator[StateT, DepsT, OutputT](
+        self._iterator_instance: _GraphIterator[StateT, DepsT, OutputT] | None = _GraphIterator(
             self.graph,
             self.state,
             self.deps,
@@ -493,25 +500,32 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._iterator = self._iterator_instance.iter_graph(self._first_task)
 
         self.__traceparent = traceparent
-        self._async_exit_stack = AsyncExitStack()
 
     async def __aenter__(self):
-        self._async_exit_stack.enter_context(_unwrap_exception_groups())
-        await self._async_exit_stack.enter_async_context(self._iterator_task_group)
-        await self._async_exit_stack.enter_async_context(self._iterator_context())
+        self._run_context = self._iterator_context()
+        await self._run_context.__aenter__()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
-        await self._async_exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        try:
+            await self._run_context.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            # The run can outlive execution for result inspection; the iterator owns temporary task/reducer state.
+            # Detach it after teardown, including errors and cancellation.
+            self._iterator_instance = None
 
     @asynccontextmanager
-    async def _iterator_context(self):
-        try:
-            yield
-        finally:
-            self._iterator_instance.iter_stream_sender.close()
-            self._iterator_instance.iter_stream_receiver.close()
-            await self._iterator.aclose()
+    async def _iterator_context(self) -> AsyncGenerator[None]:
+        assert self._iterator_instance is not None
+        # Nested contexts avoid AsyncExitStack's error frames retaining the exception group they raise on Python 3.11.
+        with _unwrap_exception_groups():
+            async with self._iterator_task_group:
+                try:
+                    yield
+                finally:
+                    self._iterator_instance.iter_stream_sender.close()
+                    self._iterator_instance.iter_stream_receiver.close()
+                    await self._iterator.aclose()
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -551,15 +565,19 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             Exception: If a node raised an error and the caller has not recovered via
                 `override_next()`.
         """
-        if self._next is None:
-            self._next = await anext(self._iterator)
-        else:
-            self._next = await self._iterator.asend(self._next)
-        if isinstance(self._next, ErrorMarker):
-            # A node raised an error. Store it so the caller can recover via
-            # override_next() before the next __anext__ call re-raises.
-            raise self._next.error
-        return self._next
+        try:
+            if self._next is None:
+                self._next = await anext(self._iterator)
+            else:
+                self._next = await self._iterator.asend(self._next)
+            if isinstance(self._next, ErrorMarker):
+                # A node raised an error. Store it so the caller can recover via
+                # override_next() before the next __anext__ call re-raises.
+                raise self._next.error
+            return self._next
+        finally:
+            # ErrorMarker keeps the exception, whose finished traceback frames must not point back to this run.
+            del self
 
     async def next(
         self, value: EndMarker[OutputT] | Sequence[GraphTaskRequest] | None = None
@@ -575,13 +593,17 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         Returns:
             The next execution result: either an EndMarker, or sequence of GraphTasks
         """
-        if self._next is None:
-            # Prevent `TypeError: can't send non-None value to a just-started async generator`
-            # if `next` is called before the `first_node` has run.
-            await anext(self)
-        if value is not None:
-            self._set_next(value)
-        return await anext(self)
+        try:
+            if self._next is None:
+                # Prevent `TypeError: can't send non-None value to a just-started async generator`
+                # if `next` is called before the `first_node` has run.
+                await anext(self)
+            if value is not None:
+                self._set_next(value)
+            return await anext(self)
+        finally:
+            # ErrorMarker caches the traceback; completed frames must not retain this run.
+            del self
 
     def override_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
         """Override the next pending step, allowing the graph to continue after an `End` or error.
@@ -623,16 +645,6 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             return self._next.value
         return None
 
-    def _get_next_task_id(self) -> TaskID:
-        next_id = TaskID(f'task:{self._next_task_id}')
-        self._next_task_id += 1
-        return next_id
-
-    def _get_next_node_run_id(self) -> NodeRunID:
-        next_id = NodeRunID(f'task:{self._next_node_run_id}')
-        self._next_node_run_id += 1
-        return next_id
-
 
 @dataclass
 class _GraphTaskAsyncIterable:
@@ -668,7 +680,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_tasks = {}
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
-        self._next_node_run_id = 1
 
     async def iter_graph(  # noqa: C901
         self, first_task: GraphTask
@@ -768,6 +779,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             # intermediate join J1 that shares the same parent fork run, we must finalize J1 first
                             # because it might produce items that feed into J2.
                             for (join_id, fork_run_id), join_state in list(self.active_reducers.items()):
+                                # An earlier join in this pass may have dispatched tasks that feed this join.
+                                if not self._is_fork_run_completed(self.active_tasks.values(), join_id, fork_run_id):
+                                    continue
+
                                 # Check if this join has any intermediate joins that are also active reducers
                                 should_skip = False
                                 intermediate_joins = self.graph.intermediate_join_nodes.get(join_id, set())
@@ -827,9 +842,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     self.active_tasks[new_task.task_id] = new_task
                                 new_task_ids = {t.task_id for t in maybe_overridden_result}
                                 for t in new_tasks:
-                                    # Same note as above about how this is theoretically reachable but we should
-                                    # just get coverage by unifying the code paths
-                                    if t.task_id not in new_task_ids:  # pragma: no cover
+                                    if t.task_id not in new_task_ids:
                                         await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
             except GeneratorExit:
@@ -882,6 +895,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # `BrokenResourceError`); both are benign here — the result/error
                 # is no longer needed because the run is being torn down.
                 pass
+            except Exception as exc:
+                # Streaming errors must reach the caller through ErrorMarker too.
+                # Cancellation still propagates because it is not an Exception.
+                try:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
+                except (BrokenResourceError, ClosedResourceError):
+                    pass
 
     async def _run_task(
         self,
@@ -935,7 +955,15 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 if branch_source in {Any, object}:
                     inputs_match = True
                 elif get_origin(branch_source) is Literal:
-                    inputs_match = inputs in get_args(branch_source)
+                    literal_values = get_args(branch_source)
+                    if isinstance(inputs, int):
+                        # `True == 1`, but `Literal[True]` and `Literal[1]` are distinct choices: match bools only to bools.
+                        literal_values = tuple(
+                            v
+                            for v in literal_values
+                            if not isinstance(v, int) or isinstance(v, bool) == isinstance(inputs, bool)
+                        )
+                    inputs_match = inputs in literal_values
                 else:
                     try:
                         inputs_match = isinstance(inputs, branch_source)
@@ -1116,9 +1144,7 @@ def _is_any_async_iterable(x: Any) -> TypeGuard[AsyncIterable[Any]]:
 
 @contextmanager
 def _unwrap_exception_groups():
-    # I need to use a helper function for this because I can't figure out a way to get pyright
-    # to type-check the ExceptionGroup catching in both 3.13 and 3.10 without emitting type errors in one;
-    # if I try to ignore them in one, I get unnecessary-type-ignore errors in the other
+    # Pyright must see the ungrouped exception, while runtime catches an exception group.
     if TYPE_CHECKING:
         yield
     else:
@@ -1126,10 +1152,19 @@ def _unwrap_exception_groups():
             yield
         except BaseExceptionGroup as e:
             exception = e.exceptions[0]
+            # On Python 3.12 this finished generator's frame keeps contextlib's `__exit__` frame, which holds the group:
+            # the group's traceback would close a cycle back to this frame and retain the run until cyclic GC.
+            e.__traceback__ = None
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire
                 exception.__cause__ = None
-            raise exception
+            context = exception.__context__
+            try:
+                raise exception
+            finally:
+                # Preserve the leaf's chain rather than a synthetic group -> leaf -> group cycle.
+                exception.__context__ = context
+                del exception
 
 
 # === GraphBuilder ===
@@ -1865,7 +1900,8 @@ def _flatten_paths(
     new_nodes = nodes.copy()
     new_edges: dict[NodeID, list[Path]] = defaultdict(list)
 
-    paths_to_handle: list[tuple[NodeID, Path]] = []
+    # A FIFO queue keeps each source's edges, and so a broadcast fork's branches, in the order they were added.
+    paths_to_handle: deque[tuple[NodeID, Path]] = deque()
 
     def _split_at_first_fork(path: Path) -> tuple[Path, list[tuple[NodeID, Path]]]:
         for i, item in enumerate(path.items):
@@ -1893,7 +1929,7 @@ def _flatten_paths(
             paths_to_handle.append((source_id, path))
 
     while paths_to_handle:
-        source_id, path = paths_to_handle.pop()
+        source_id, path = paths_to_handle.popleft()
         upstream, downstreams = _split_at_first_fork(path)
         new_edges[source_id].append(upstream)
         paths_to_handle.extend(downstreams)

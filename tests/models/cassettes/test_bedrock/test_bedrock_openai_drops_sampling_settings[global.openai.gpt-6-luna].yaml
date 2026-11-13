@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 2+2? Answer with the number only."}]}], "system":
+      [], "inferenceConfig": {"maxTokens": 64}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2YwNDZiZWItYjU0NS00YWZlLWFkZDMtM2ZlZWJiNGQ3NWVj
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '152'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/global.openai.gpt-6-luna/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1628'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 625
+      output:
+        message:
+          content:
+          - reasoningContent:
+              redactedContent: cnNuX3JydTZCUUhnVWMvVldTNXZSSUFsSHdJRmVIZGd3dlBkYngyVGNhRmxueU4vck00RUZuQlJGbTVxeUdUVXI2OVVyOFdsQUY4QUFRQVZZWGR6TFdOeWVYQjBieTF3ZFdKc2FXTXRhMlY1QUVSQk1sSlZXbHBNTUVsbVMyZFZSVVpNVkhGT2NtVXdjelF6Y1dsR1dIcFRjblUyZGxsRmF6azRRbWRyVTJaWUwzZzJNbTg0UlVsMWMwWnVOREo2YW1kMU9GRTlQUUFCQUJGaGQzTXRhMjF6TFdocFpYSmhjbU5vZVFBS1ltVnliUzF6ZEc5eVpRQmN4c2pmSkNLMU5xd01XNURwU2dEcU4xcXJYcU03RHlBYU5YVU4zUVR5ZXhQUU8wUGVwUjhqUlEzelZZUWxQYTVoWjRWREVBZzJ2OGMzOHVjcTNXaFpOcjlzaXcxS0ZDMXlhSkxKbHJjdGZJbVJEUjI0c1pjV243dDE4S0FDQUFBUUFEUEZqQmo4WmxIYmlPSHI2TUpHWjQzcEk4UjVJSlkzei9HYTU5OC83ODRhVUFSNEY4NzdMejNNdlRIcm9OYitBUC8vLy84QUFBQUJBQUFBQUFBQUFBQUFBQUFCQUFBQTJvZTgvSDdmdVdiZFhiV0x6WG1RREh3WUFPSFBrSTdDYXVOM2cyYndWTFBxazZUOTl6WkhKYm9Na1pteXZwQVcyRlloWUdDK1ZUMU9XblQ1WFZmY3NhL3pFai9kQ2wveWRnYTcyb0ptZ2N0RU10Q2c3RzNrNGlLbGQzM1h0VmtnbUE0ZTdDOVNGVE1Va1BCaiswN2FDUVp0UGFLbEYxVW9OdEVyRmtULzJZU2szN3U1T1grZ25vajdZV0w5MkZ0RnFraFdETjFFbXlYbklNWENZbVU2Wml3MHVsT09QN0hZK0l1Vlk1SEM4WWVwMEo3R2JkbktwVkM4b0o3UzFJU2JLUHNHd2l1REU2eUNVSWJFZGhScEFVOGs2NzJEd1N1UGt4L2JBSWRTYXFSdlh3aGlGZGVXVVNBZGl3Qm5NR1VDTVFDTFN5ejN1bk9TelJLSjl5a3pSclJTOWxmU0xWMGpuNnpicVNPQW9KNUlsYVZQRGJ2bVF2MGkxMmhyc3Y3OFVGOENNQXBvcUpSNEdYRWJTVFJFemZ0aTUwa3JKUVJvMHVMakRTWFIyaGFwMnlqTTQ5RTljOXpDbmcwZTBkQ09yQ2ltVXc9PQ==
+          - text: '4'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 19
+        outputTokens: 17
+        serverToolUsage: {}
+        totalTokens: 36
+    status:
+      code: 200
+      message: OK
+version: 1

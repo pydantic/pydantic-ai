@@ -41,7 +41,6 @@ def test_leak_non_sampled_span_into_ambient_context():
     assert not trace.get_current_span().get_span_context().trace_flags.sampled
 
 
-@pytest.mark.anyio
 async def test_spans_recorded_despite_leak_in_previous_test(capfire: CaptureLogfire):
     """The previous test's leaked non-sampled span must not make this test's spans invisible."""
     assert capfire

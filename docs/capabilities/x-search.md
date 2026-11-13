@@ -1,3 +1,7 @@
+---
+description: "Let a Pydantic AI agent search X (Twitter) posts with the XSearch capability, natively on xAI models or delegated to an xAI subagent from other models."
+---
+
 # X Search
 
 The [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](overview.md) gives your agent search over X (Twitter) posts. It's a [provider-adaptive tool](overview.md#provider-adaptive-tools) backed by [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] on the native side — see [X Search Tool](../native-tools.md#x-search-tool) for configuration options.
@@ -9,8 +13,8 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[XSearch(fallback_subagent_model='xai:grok-4.3')],
+    '{{ anthropic:medium }}',
+    capabilities=[XSearch(fallback_subagent_model='{{ xai:medium }}')],
 )
 ```
 
