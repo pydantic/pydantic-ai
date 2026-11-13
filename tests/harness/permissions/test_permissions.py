@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, RequestInput
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -84,7 +84,7 @@ def _agent(
     mode: PermissionMode | Callable[[RunContext[None]], PermissionMode],
     person: _Person | None = None,
 ) -> Agent[None, str | DeferredToolRequests]:
-    handler = [] if person is None else [RequestInput[None](approval_ask(person))]
+    handler = [] if person is None else [HandleDeferredToolCalls[None](approval_ask(person))]
     return Agent[None, 'str | DeferredToolRequests'](
         model,
         deps_type=type(None),
@@ -226,7 +226,7 @@ class TestPermissions:
         assert permission_requests(requests) == []
 
     async def test_request_input_leaves_other_approvals_pending(self, tmp_path: Path) -> None:
-        """`approval_ask` answers an empty result rather than `None`, so `RequestInput` does not wait on its token."""
+        """`approval_ask` answers an empty result rather than `None`, so the handler does not wait on its token."""
         person = _Person()
         agent = _agent(tmp_path, _calls(('other', {})), 'read-only', person)
         other = Tool(lambda: 'never runs', name='other', requires_approval=True)

@@ -2,9 +2,9 @@
 
 A held call is put to the user as an `ask_user` question with three choices, so the terminal picker and
 the browser's question card both answer it; a typed answer denies the call with that reason. Whichever
-plugin answers questions binds `approval_handler` with its answerer, a core `RequestInput` asking it through
-harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is denied by
-`DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused
+plugin answers questions binds `approval_handler` with its answerer, a core `HandleDeferredToolCalls` whose
+handler is harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is
+denied by `DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused
 outside `full` by `KeepDelegatesChecked`.
 """
 
@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls, RequestInput
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import (
@@ -120,7 +120,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         """After every handler that may ask the user."""
-        return CapabilityOrdering(position='innermost', wrapped_by=[HandleDeferredToolCalls, RequestInput])
+        return CapabilityOrdering(position='innermost', wrapped_by=[HandleDeferredToolCalls])
 
     async def handle_deferred_tool_calls(
         self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
@@ -135,9 +135,9 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
         )
 
 
-def approval_handler(approve: Approver) -> RequestInput[AgentDepsT]:
+def approval_handler(approve: Approver) -> HandleDeferredToolCalls[AgentDepsT]:
     """Answer the calls `Permissions` holds with `approve`, leaving other deferred calls to later handlers."""
-    return RequestInput[AgentDepsT](approval_ask(approve))
+    return HandleDeferredToolCalls[AgentDepsT](approval_ask(approve))
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
