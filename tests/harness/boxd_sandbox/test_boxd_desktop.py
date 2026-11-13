@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import anyio
 import pytest
+from boxd import NotFoundError
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import (
@@ -161,7 +162,21 @@ async def test_a_failed_long_drag_releases_the_button(host: FakeBoxd) -> None:
     assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 1', 'mouse_up pointer left']
 
 
-async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held(host: FakeBoxd) -> None:
+@pytest.mark.parametrize(
+    ('machine_deleted', 'error', 'message'),
+    [
+        (
+            False,
+            WorkspaceError,
+            r'move refused\. Releasing the left mouse button failed too, so it may still be held\.',
+        ),
+        # A machine deleted mid-drag ends the run rather than leaving the model to retry.
+        (True, WorkspaceUnavailableError, 'no longer exists'),
+    ],
+)
+async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held(
+    host: FakeBoxd, machine_deleted: bool, error: type[WorkspaceError], message: str
+) -> None:
     backend = await _started(host)
     # The press goes through; the first move fails, and so does the release after it.
     host.desktop.errors = [
@@ -169,10 +184,11 @@ async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held
         APIStatusError('move refused', code='invalid_argument', grpc_code=3),
         APIStatusError('release connection lost', code='unavailable', grpc_code=14),
     ]
+    if machine_deleted:
+        # The lookup after the failure finds the machine gone.
+        host.get_errors.append(NotFoundError('VM is destroyed', code='not_found', grpc_code=5))
 
-    with pytest.raises(
-        WorkspaceError, match=r'move refused\. Releasing the left mouse button failed too, so it may still be held\.'
-    ):
+    with pytest.raises(error, match=message):
         await screen(backend).act(Drag(path=_path(101)))
 
     assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 1', 'mouse_up pointer left']

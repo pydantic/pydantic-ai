@@ -486,7 +486,15 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         async with self._operation():
             client, machine_id = await self._acquire()
             async with _mapped_errors('The boxd desktop failed', client=client, machine_id=machine_id):
-                yield
+                try:
+                    yield
+                except WorkspaceUnavailableError:
+                    raise
+                except WorkspaceError as error:
+                    # The desktop's own failure, such as a button it couldn't let go of, may come from a lost machine.
+                    if (gone := await _probe(client, machine_id)) is not None:
+                        raise gone from error
+                    raise
 
     def _attached_computer(self) -> tuple[AsyncComputer, str]:
         # The display calls it inside `_display_scope`, which has acquired the machine.
