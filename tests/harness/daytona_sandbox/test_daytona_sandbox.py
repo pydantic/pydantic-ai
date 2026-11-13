@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 from pathlib import Path
 from typing import Any
@@ -336,18 +337,11 @@ async def test_coder_works_in_the_sandbox(fake_daytona: FakeDaytona, tmp_path: P
     assert (tmp_path / 'hello.py').read_text() == "print('hi from the sandbox')\n"
 
 
-def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+def test_agent_spec_schema_publishes_every_field_but_the_client() -> None:
+    """`from_spec` lists its fields by hand, so a new field must be added there too."""
     definitions = AgentSpec.model_json_schema_with_capabilities([DaytonaSandbox])['$defs']
-    assert sorted(definitions['spec_params_DaytonaSandbox']['properties']) == [
-        'allow_internet_access',
-        'auto_stop_interval',
-        'defer_loading',
-        'description',
-        'env',
-        'id',
-        'snapshot',
-        'working_dir',
-    ]
+    published = set(definitions['spec_params_DaytonaSandbox']['properties'])
+    assert published == {field.name for field in dataclasses.fields(DaytonaSandbox)} - {'client'}
 
 
 def test_from_spec_forwards_the_spec_fields() -> None:
@@ -359,5 +353,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'snapshot': 'base',
         'auto_stop_interval': 30,
         'allow_internet_access': False,
+        'desktop': (1280, 800),
     }
     assert DaytonaSandbox[None].from_spec(**spec_fields) == DaytonaSandbox[None](**spec_fields)

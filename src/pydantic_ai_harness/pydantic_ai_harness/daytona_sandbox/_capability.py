@@ -80,7 +80,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
     for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox; an attached one keeps
-    its own."""
+    its own. A public sandbox's desktop is refused, since its preview links need no token."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
@@ -100,6 +100,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> DaytonaSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -116,6 +117,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=allow_internet_access,
             working_dir=working_dir,
             env=env,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
