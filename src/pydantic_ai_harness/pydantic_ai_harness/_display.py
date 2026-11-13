@@ -14,19 +14,14 @@ from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, Worksp
 from ._png import PNG_SIGNATURE
 from .computer_use import DisplayAction, UnsupportedActionError
 
-__all__ = ('DisplayDriver', 'LazyDisplay')
-
 T = TypeVar('T')
-
-DEFAULT_DESKTOP_SIZE = (1280, 800)
-"""The display size `desktop=True` starts."""
 
 
 def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
     """The display size `desktop=` asks for, or `None` for no display."""
     if isinstance(desktop, tuple) and min(desktop) < 1:
         raise ValueError(f'`desktop` must be a positive width and height, got {desktop}.')
-    return DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+    return (1280, 800) if desktop is True else desktop or None
 
 
 def png_from_base64(encoded: str | None, source: str) -> bytes:
