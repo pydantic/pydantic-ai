@@ -47,17 +47,16 @@ from pydantic_ai.tools import ToolDefinition
 from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, FakeComputer
 from ..conftest import try_import
 from ..workspace_fakes import InMemoryProvider
-from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message, with_history_digests
 
 with try_import() as imports_successful:
     from openai.types import responses as resp
     from openai.types.responses.response import Conversation
 
-    from pydantic_ai.models.openai import (
-        OpenAIResponsesModel,
-        OpenAIResponsesModelSettings,
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai._computer import (
         _map_computer_action,  # pyright: ignore[reportPrivateUsage]
-        _map_computer_call,  # pyright: ignore[reportPrivateUsage]
+        map_computer_call as _map_computer_call,
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -143,7 +142,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
         note = second['input'][second['input'].index(output) + 1]
         assert note == {
             'role': 'user',
-            'content': '<tool_result tool_name="computer" tool_call_id="call_1">Not on this page.</tool_result>',
+            'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">Not on this page.</pyai:tool_result>',
         }
         assert computer.actions == []
 
@@ -317,7 +316,7 @@ async def test_a_held_call_made_as_a_function_call_gets_a_function_call_output(a
     ]
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     await model.request(
-        history,
+        with_history_digests(history),
         OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
         ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
     )
@@ -524,7 +523,7 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     assert output['output']['detail'] == 'original'
     after = request['input'][request['input'].index(output) + 1 :]
     # The note is the tool's result, framed as one on the user channel.
-    framed = f'<tool_result tool_name="computer" tool_call_id="call_1">{note}</tool_result>'
+    framed = f'<pyai:tool_result tool_name="computer" tool_call_id="call_1">{note}</pyai:tool_result>'
     others = [item for item in content[:-1] if isinstance(item, BinaryImage)] if isinstance(content, list) else []
     expected: str | list[dict[str, Any]] = framed
     if others:
@@ -607,8 +606,8 @@ async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_r
     note = second['input'][second['input'].index(output) + 1]
     assert note == {
         'role': 'user',
-        'content': '<tool_result tool_name="computer" tool_call_id="call_1">'
-        'Taking the screenshot failed: scrot: not found</tool_result>',
+        'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">'
+        'Taking the screenshot failed: scrot: not found</pyai:tool_result>',
     }
 
 
@@ -854,7 +853,7 @@ async def test_a_pixel_scroll_that_ran_says_how_it_ran_as_wheel_clicks(
     (request,) = get_mock_responses_kwargs(client)
     assert request['input'][-1] == {
         'role': 'user',
-        'content': f'<tool_result tool_name="computer" tool_call_id="call_1">{summary}{notes}</tool_result>',
+        'content': f'<pyai:tool_result tool_name="computer" tool_call_id="call_1">{summary}{notes}</pyai:tool_result>',
     }
 
 
@@ -899,7 +898,9 @@ async def test_a_pixel_scroll_note_is_read_as_it_was_kept_on_the_call(
     # A call that ran in full needs no text beside its screenshot, unless a note says how it ran.
     texts = [item['content'] for item in request['input'] if item.get('role') == 'user'][1:]
     assert texts == (
-        [f'<tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action.{notes}</tool_result>'] if notes else []
+        [f'<pyai:tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action.{notes}</pyai:tool_result>']
+        if notes
+        else []
     )
 
 
@@ -951,7 +952,7 @@ async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments_
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     await model.request(
-        history,
+        with_history_digests(history),
         OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
         ModelRequestParameters(
             function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True

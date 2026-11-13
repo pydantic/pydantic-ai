@@ -12,8 +12,8 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from pydantic_ai.workspaces import FileEntry, Workspace
-from pydantic_ai_harness._workspace import workspace_path
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness._workspace import stat_or_none, workspace_path
 from pydantic_ai_harness.artifact_scanning import ArtifactScanResult
 
 # Imported with the module rather than on first parse: a durable engine such as Temporal parses skills in
@@ -274,15 +274,8 @@ def _normalize_name(name: str) -> str:
     return unicodedata.normalize('NFKC', name)
 
 
-async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
-    try:
-        return await workspace.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-
-
 async def _is_file(workspace: Workspace, path: str) -> bool:
-    entry = await _stat(workspace, path)
+    entry = await stat_or_none(workspace, path)
     return entry is not None and not entry.is_dir
 
 
@@ -311,7 +304,7 @@ async def _libraries(
         if library in seen:
             continue
         seen.add(library)
-        entry = await _stat(workspace, library)
+        entry = await stat_or_none(workspace, library)
         if entry is None:
             if missing_directories == 'skip':
                 continue
@@ -319,18 +312,26 @@ async def _libraries(
         if entry.is_dir and not await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
             libraries.append(library)
             continue
-        # The model's tools can create either mid-session, so with 'skip' they must not fail every later run.
-        if missing_directories == 'skip':
-            reason: SkipReason = 'skill_package' if entry.is_dir else 'not_a_directory'
-            problem = 'it is a skill package, not a library' if entry.is_dir else 'it is not a directory'
-            skipped.append(SkippedSkill(path=library, reason=reason, message=f'Skipping {library}: {problem}.'))
-        elif entry.is_dir:
-            raise ValueError(
-                f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
-            )
-        else:
-            raise ValueError(f'Skill library path is not a directory: {configured}')
+        skipped.append(
+            _skip_non_library(configured, library, is_dir=entry.is_dir, missing_directories=missing_directories)
+        )
     return libraries, skipped
+
+
+def _skip_non_library(
+    configured: str | Path, library: str, *, is_dir: bool, missing_directories: MissingDirectories
+) -> SkippedSkill:
+    """The entry for `library`, a skill package or a file; raises unless `missing_directories` is `'skip'`."""
+    # The model's tools can create either mid-session, so with 'skip' they must not fail every later run.
+    if missing_directories == 'skip':
+        reason: SkipReason = 'skill_package' if is_dir else 'not_a_directory'
+        problem = 'it is a skill package, not a library' if is_dir else 'it is not a directory'
+        return SkippedSkill(path=library, reason=reason, message=f'Skipping {library}: {problem}.')
+    if is_dir:
+        raise ValueError(
+            f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
+        )
+    raise ValueError(f'Skill library path is not a directory: {configured}')
 
 
 async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]) -> bool:
@@ -434,11 +435,7 @@ async def load_skill_libraries(
         if name not in selected_names:
             continue
         try:
-            try:
-                text = await workspace.read_text(skill_file)
-            except UnicodeDecodeError as error:
-                raise ValueError(f'{skill_file} is not valid UTF-8: {error}') from error
-            skill = parse_skill(text, skill_file)
+            skill = await _read_skill(workspace, skill_file)
         except ValueError as error:
             # A model-editable skill should not make unrelated valid skills unusable.
             skipped.append(SkippedSkill(path=skill_file, reason='invalid', message=f'Skipping {skill_file}: {error}'))
@@ -448,6 +445,14 @@ async def load_skill_libraries(
         elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
             skipped.append(skip_duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
     return list(by_name.values()), skipped
+
+
+async def _read_skill(workspace: Workspace, skill_file: str) -> SkillDefinition:
+    try:
+        text = await workspace.read_text(skill_file)
+    except UnicodeDecodeError as error:
+        raise ValueError(f'{skill_file} is not valid UTF-8: {error}') from error
+    return parse_skill(text, skill_file)
 
 
 def _validate_selection(

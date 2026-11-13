@@ -67,6 +67,27 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
 
 @needs_openai
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
+async def test_gpt_drives_the_screen_after_loading_a_deferred_computer(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    capabilities = [provider.capability(), ComputerUse(defer_loading=True)]
+    await Agent(_gpt(openai_api_key, request_capture), capabilities=capabilities).run(TASK)
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
+    first, second, *_ = bodies = request_capture.bodies('/responses')
+    # Before loading, the model has only `load_capability`; after it, the native computer tool. The API refuses a
+    # function named `computer`, in `tools` or in an `additional_tools` item.
+    assert {'type': 'computer'} not in cast(list[Any], first['tools'])
+    assert {'type': 'computer'} in cast(list[Any], second['tools'])
+    for body in bodies:
+        declared = [*cast(list[dict[str, Any]], body['tools'])]
+        declared += [tool for item in _items(body, 'additional_tools') for tool in item['tools']]
+        assert not any(tool.get('name') == 'computer' for tool in declared)
+
+
+@pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='the second request is from an agent without the computer tool')
 async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
@@ -151,6 +172,25 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     assert [
         [cast(dict[str, Any], block)['type'] for block in cast(list[Any], result['content'])] for result in results
     ] == snapshot([['text'], ['text'], ['text', 'image']])
+
+
+@needs_anthropic
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='loading the capability swaps the deferred `computer` tool for the toolset')
+async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _claude('claude-sonnet-5-5', anthropic_api_key, request_capture)
+    await Agent(model, capabilities=[provider.capability(), ComputerUse(defer_loading=True)]).run(TASK)
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
+    first, second, *_ = bodies = request_capture.bodies('/v1/messages')
+    # Before loading, `computer` is a deferred function; after it, Claude's toolset, which history can't reference.
+    assert {'name': 'computer', 'defer_loading': True}.items() <= _tools(first)[-1].items()
+    assert {'type': 'computer_toolset_20260801'} in _tools(second)
+    for body in bodies:
+        assert "'name': 'computer'" not in str(content_blocks(body, 'tool_addition'))
 
 
 @needs_anthropic

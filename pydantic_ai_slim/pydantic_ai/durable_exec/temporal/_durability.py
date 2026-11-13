@@ -13,15 +13,17 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
+from pydantic_ai._durable_replay import replay_scope
 from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    capability_selects_child_workflow,
     conversation_id_from_run_id,
+    toolset_selects_child_workflow,
 )
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
@@ -31,7 +33,13 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase
 from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelQuotaExceededError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    UserError,
+)
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
@@ -78,6 +86,18 @@ from ._transports import (
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
 """`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
 
+_DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
+    ModelRequestRejectedError,
+    ModelQuotaExceededError,
+    ModelRequestTimeout,
+)
+"""The model errors another attempt of the same request can't fix, which Temporal doesn't retry by default.
+
+A rejected request (including a rejected API key, an unknown model and an overflowing context window) is rejected
+again, an exhausted quota stays exhausted until it resets, and a request that ran out of its deadline has no time
+left for another attempt.
+"""
+
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
 
@@ -122,6 +142,11 @@ It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including th
 arguments the workflow's run method needs to resume. Returning without calling it defers the
 continuation to the next model request.
 """
+
+
+def _replaying_history() -> bool:
+    """Workflow code running while Temporal replays history already ran, and recorded its telemetry, before."""
+    return workflow.in_workflow() and workflow.unsafe.is_replaying_history_events()
 
 
 @dataclass(init=False, kw_only=True)
@@ -171,7 +196,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         continue_as_new: ContinueAsNewHandler[AgentDepsT] | None = None,
-        non_retryable_model_errors: Sequence[type[ModelAPIError]] = (),
+        non_retryable_model_errors: Sequence[type[ModelAPIError]] = _DEFAULT_NON_RETRYABLE_MODEL_ERRORS,
     ):
         """Create a TemporalDurability capability.
 
@@ -227,12 +252,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 is true. It receives the run's `RunContext` and calls `workflow.continue_as_new()`
                 with the arguments the workflow needs to resume, or returns without calling it to
                 defer to the next model request. `None` disables continuation.
-            non_retryable_model_errors: Model error classes, such as
-                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or
-                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
-                activity without Temporal retrying it, whatever its retry policy says. An error matches when
-                it's an instance of a listed class, so a category also covers its subclasses. The workflow
-                still receives the error as its own class.
+            non_retryable_model_errors: Model error classes that fail a model activity without Temporal
+                retrying it, whatever its retry policy says. An error matches when it's an instance of a listed
+                class, so a category also covers its subclasses. The workflow still receives the error as its
+                own class. Defaults to the errors another attempt can't fix:
+                [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (which covers
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]),
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
+                [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. A list you pass replaces
+                the default, and `()` lets the retry policy retry every model error.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -343,7 +373,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
-        if isinstance(capability, SetToolMetadata) and is_child_workflow_metadata(capability.metadata.get('temporal')):
+        if capability_selects_child_workflow(capability, 'temporal'):
             self._child_workflow_metadata_capability = True
 
     def _selects_child_workflow(self, toolset_id: str) -> bool:
@@ -355,7 +385,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return True
         toolset = self._toolsets_by_id[toolset_id].wrapped
         assert isinstance(toolset, FunctionToolset)
-        return any(is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in toolset.tools.values())
+        return toolset_selects_child_workflow(toolset, 'temporal')
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
@@ -544,12 +574,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows."""
+        """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
         if not self.in_durable_context:
             return await handler()
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            return await handler()
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+            return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""
