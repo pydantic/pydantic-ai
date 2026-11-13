@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ToolReturn, UserContent
