@@ -291,6 +291,31 @@ async def test_the_browser_removing_the_prompt_the_terminal_edits_keeps_the_edit
         shell.bind(None)
 
 
+async def test_the_terminal_hands_a_prompt_it_edits_back_to_the_inbox(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    async with editor() as (live, _, _):
+        live.queue_changed = shell.live_session.changed
+        shell.bind(live)
+        live.buffer.replace('queued')
+        live.feed('enter')
+        live.feed('up')
+        live.buffer.insert('2')
+        # The terminal stops showing the session mid-edit: the prompt stays queued, unchanged, as Esc leaves it.
+        shell.bind(None)
+    assert [entry.text for entry in shell.live_session.queue] == ['queued']
+
+
 def test_a_live_session_without_a_prompt_queues_nothing() -> None:
     """A `LiveRuntime` built without the session's prompt, as `PluginLoader` builds one in tests, holds no input."""
     host = PluginHost[None](name='', console=Console(file=StringIO()), settings={})

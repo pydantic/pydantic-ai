@@ -390,9 +390,8 @@ class LivePrompt:
         A prompt being edited keeps its place with the edit, unless the edit is a command or shell line, and the
         draft set aside to edit it comes last.
         """
-        draft = self.buffer.text
+        draft = self._typed_draft()
         if (editing := self._editing) is not None:
-            draft = self._shelved_draft
             self._end_edit(editing)
         moved = [entry for entry in self.queued_prompts() if input_kind(entry.text) == 'prompt']
         # A bare `!` is a prompt alone, but would send the lines after it to the shell: it stays queued.
@@ -408,6 +407,14 @@ class LivePrompt:
         self.refresh_completions()
         if moved:
             self.notice = 'Queued messages moved to the input. Press Enter to send them.'
+
+    def _typed_draft(self) -> str:
+        """The draft the user typed, not a queued prompt being edited or a history entry or search match shown."""
+        if self._editing is not None:
+            return self._shelved_draft
+        if self.buffer.search is not None:
+            return self.buffer.search_original
+        return self.buffer.saved_draft if self.buffer.history_index is not None else self.buffer.text
 
     def _end_edit(self, editing: QueuedPrompt) -> None:
         """Return the prompt being edited to the queue with the edit in the draft, or remove it if that is empty."""

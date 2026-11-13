@@ -944,3 +944,36 @@ async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() ->
             live.feed('enter')
             assert live.queued_messages == ('a', 'b2')
             live.feed('ctrl-c')
+
+
+@pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
+@pytest.mark.parametrize('shown', ['history', 'search'])
+async def test_interrupt_keeps_the_draft_not_the_history_entry_shown(key: str, shown: str) -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['old']
+        async with running(live):
+            queue(live, 'a')
+            live.buffer.replace('draft')
+            if shown == 'history':
+                # Past the queued prompt to the history entry before it.
+                live.feed('up')
+                live.feed('up')
+            else:
+                for key_ in ('ctrl-r', 'o', 'l'):
+                    live.feed(key_)
+            assert live.buffer.text == 'old'
+            live.feed(key)
+        assert (live.buffer.text, live.queued_messages) == ('a\ndraft', ())
+
+
+async def test_removing_the_front_prompt_returns_the_one_edited_after_it_to_the_front() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b', 'c')
+            live.feed('up')
+            live.feed('up')
+            # As the web UI removes the first queued prompt while the terminal edits the second.
+            live.discard(live.queued_prompts()[0])
+            live.feed('escape')
+            assert live.queued_messages == ('b', 'c')
+            live.feed('ctrl-c')
