@@ -5029,7 +5029,8 @@ class ModelResponse:
     and [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with
     [`anthropic_thread`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thread],
     so a later request continues from this response only while it and the messages before it are unchanged.
-    With `anthropic_thread`, it also covers the response's `provider_response_id`, which a continue request names.
+    With `anthropic_thread`, it also covers the response's `provider_response_id`, which a continue request names,
+    and its `'thread_fingerprint'`.
     The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
     the model, so they're left out, and changing them doesn't count as a change. A request's `instructions`
     are left out too: the server doesn't keep them with a response, so each request sends its own.

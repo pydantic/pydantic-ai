@@ -133,7 +133,7 @@ Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](do
 
 The application must bind conversations, response identifiers, memory namespaces, deferred results, Code Mode REPL state, and workspace reattachment to the authorized user. An identifier supplied by a client is not proof of ownership.
 
-Anthropic message threads (`anthropic_thread`) continue from the response ID in the message history. With `history_digest_key` set, that response's `history_digest` is an HMAC covering its ID, so a client can't continue another conversation's thread. Without the key, a client can compute the digest itself, so the application must not enable threads for client-held history.
+Anthropic message threads (`anthropic_thread`) continue from the response ID in the message history. With `history_digest_key` set, that response's `history_digest` is an HMAC covering its ID and thread fingerprint, so a client can't continue another conversation's thread, or its own under other instructions or tools. Without the key, a client can compute the digest itself, so the application must not enable threads for client-held history.
 
 A `Conversation` also carries the running usage that usage limits count from, its `conversation_id`, and pending deferred tool requests; whoever supplies it controls those values. UI adapters map a client-supplied ID (AG-UI's thread ID, Vercel AI's chat ID) onto `conversation_id`. Conversation-scoped search and stores keyed on that value trust it, so pass an authenticated one. Code Mode does not authenticate a saved REPL; load only state the application wrote to storage others cannot modify.
 

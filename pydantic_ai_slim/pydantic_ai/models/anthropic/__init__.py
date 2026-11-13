@@ -708,8 +708,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     field starts a new thread. So does a response from another model, a refusal, or an expired thread, which
     Anthropic reports when the continue request fails, and the full conversation is then sent again. The
     response also records its [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering
-    its ID, its parts and the history it was created from, so a history processor that trims or redacts either
-    starts a new thread instead of continuing from the unchanged copy Anthropic holds. A request
+    its ID, its fingerprint, its parts and the history it was created from, so a history processor that trims or
+    redacts either starts a new thread instead of continuing from the unchanged copy Anthropic holds. A request
     using something threads don't support, like context management, is sent without a thread, with a warning. Its
     response records `'thread_unsupported': True` beside its `'thread_fingerprint'`, so later requests with the same
     fixed fields are sent without one straight away.
@@ -717,7 +717,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     The response ID comes from the message history, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass
     a `history_digest_key` to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], so the client can't
-    swap in another conversation's response ID to continue that thread, or leave this off; see
+    swap in another conversation's response ID, or another configuration's fingerprint, to continue a thread, or
+    leave this off; see
     [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
     Threads aren't eligible for Zero Data Retention. Defaults to `False`.
@@ -1103,8 +1104,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             history_digest_key: A secret to key each thread response's
                 [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] and `'thread_fingerprint'`
                 with (an HMAC-SHA256), so stored history can't be used to test guesses at content redacted from
-                it later, and a client sending the history can't swap in another conversation's response ID to
-                continue that thread. Every model continuing the same conversations needs the same key; a response
+                it later, and a client sending the history can't swap in another conversation's response ID, or
+                another configuration's fingerprint, to continue a thread. Every model continuing the same conversations needs the same key; a response
                 recorded with another key, or none, starts a new thread rather than being continued.
         """
         self._model_name = model_name
