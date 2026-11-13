@@ -1,7 +1,7 @@
 """A [boxd](https://boxd.sh) machine behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK behavior verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster. Re-check these before
-changing acquisition, command, file, or error handling:
+SDK behavior verified 2026-10-28 against boxd 0.2.20, and again 2026-11-13 against boxd 0.3.2, on boxd's
+production cluster. Re-check these before changing acquisition, command, file, or error handling:
 
 - `machines.create` returns once the machine is scheduled. A name is unique in its org: creating a second
   machine under it raises `ConflictError`, and `machines.get` finds a machine by id or name.
@@ -64,7 +64,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import LazyDisplay, desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -74,11 +74,12 @@ from pydantic_ai_harness._workspace_provider import (
     run_to_completion,
     running_on_asyncio,
 )
-from pydantic_ai_harness._x11 import DISPLAY, desktop_display
+from pydantic_ai_harness.boxd_sandbox._desktop import DISPLAY, BoxdDesktop
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd, FsEntry, Machine
+    from boxd.resources.computer import AsyncComputer
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
@@ -281,7 +282,9 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
     try:
         if org is None:
             return await client.machines.get(name)
-        return next((m for m in await client.machines.list(org=org) if m.name == name), None)
+        # boxd 0.3 returns a `list` subclass that doesn't carry its item type; copied, it gets one.
+        machines: list[Machine] = list(await client.machines.list(org=org))
+        return next((m for m in machines if m.name == name), None)
     except boxd.BoxdError:
         return None
 
@@ -402,9 +405,9 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
-        desktop: Give the machine a display for
-            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
-            `(width, height)`. The first start installs the programs it needs.
+        desktop: Give the agent the machine's desktop for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse], held at 1280x800 with `True`,
+            or at its `(width, height)`. `live_view_url()` opens it in the boxd console.
     """
 
     def __init__(
@@ -437,10 +440,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         if self._desktop_size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **self._env}
-        self._display = desktop_display(
-            self,
-            self._desktop_size,
-            lambda: f'boxd machine {self._ref.id if self._ref else "(not created)"}',
+        self._display = (
+            None
+            if self._desktop_size is None
+            else LazyDisplay(BoxdDesktop(self._attached_computer), self._start_display, scope=self._display_scope)
         )
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
@@ -471,6 +474,39 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
     def display(self) -> Display | None:
         """The machine's desktop, when created with `desktop=True`."""
         return self._display
+
+    @asynccontextmanager
+    async def _display_scope(self) -> AsyncGenerator[None]:
+        async with self._operation():
+            client, machine_id = await self._acquire()
+            async with _mapped_errors('The boxd desktop failed', client=client, machine_id=machine_id):
+                yield
+
+    def _attached_computer(self) -> tuple[AsyncComputer, str]:
+        # The display calls it inside `_display_scope`, which has acquired the machine.
+        assert self._client is not None and self._ref is not None
+        return self._client.machines.computer, self._ref.id
+
+    async def _start_display(self) -> None:
+        """Start the desktop unless it runs, and hold it at the size asked for."""
+        computer, machine_id = self._attached_computer()
+        assert self._desktop_size is not None
+        # Held, so someone watching in the console sees the screen scaled instead of resizing it under the agent.
+        await computer.set_screen_size(machine_id, *self._desktop_size)
+
+    async def live_view_url(self) -> str:
+        """A link to watch and use the desktop in the boxd console.
+
+        The link carries no secret: opening it needs a browser signed in to boxd as a member of the machine's
+        organization.
+        """
+        if self._display is None:
+            raise UserError('This boxd workspace has no display: create it with `desktop=True`.')
+        await self._display.start()
+        machine = await self.get_sandbox()
+        if not machine.access.desktop_url:
+            raise WorkspaceError(f'boxd did not return a desktop link for machine {machine.id}.')
+        return machine.access.desktop_url
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
@@ -649,8 +685,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         client, self._client = self._client, None
         self._ready = False
         self._resolved_working_dir = None
-        # A later connection may find the machine rebooted with a newer agent.
+        # A later connection may find the machine rebooted with a newer agent, and its desktop at another size.
         self._agent_outdated = False
+        if self._display is not None:
+            self._display.reset()
         return client
 
     @asynccontextmanager

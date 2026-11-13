@@ -21,12 +21,11 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
-import shlex
 import shutil
 import signal
 import stat
 import subprocess
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,14 +42,18 @@ from boxd import (
     ConflictError,
     ExecResult,
     Machine,
+    MachineAccess,
     MachineNetworking,
     NotFoundError,
 )
 from boxd._generated import api_pb2
 from boxd.errors import REASON_TRAILER, from_grpc_error
 from boxd.models import OrgRef
+from boxd.resources.computer import AsyncComputer
 from boxd.resources.fs import AsyncFs
 from boxd.resources.machines import AsyncMachines
+
+from ..display_fakes import FAKE_SCREENSHOT
 
 # Output a command writes after it exits is read for this long, then dropped.
 _DRAIN_GRACE = 0.05
@@ -105,6 +108,8 @@ class FakeMachine:
     processes: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
     starts: int = 0
     org: str | None = None
+    # Whether boxd's reply carries the console link to the desktop, as it does when the client knows the console.
+    desktop_link: bool = True
     # A copy's source machine: its id, and its status when it was forked.
     forked_from: tuple[str, str] | None = None
 
@@ -115,12 +120,10 @@ class FakeMachine:
             status=status or self.status,
             networking=MachineNetworking(networks=self.networks, isolated=self.isolated),
             org=None if self.org is None else OrgRef(id=f'org-{self.org}', name=self.org),
+            access=MachineAccess.model_construct(
+                desktop_url=f'https://app.boxd.example/desktop/{self.name}' if self.desktop_link else ''
+            ),
         )
-
-
-def _argv(line: str) -> list[str]:
-    """The argv a backend command line runs: what follows its `exec`."""
-    return shlex.split(line.partition('exec ')[2].removesuffix(' </dev/null'))
 
 
 class _FakeExecCall:
@@ -144,14 +147,10 @@ class _FakeExecCall:
         machine = owner.find(init.vm_id)
         owner.check_runnable(machine)
         owner.lines.append(init.command)
-        command = init.command
-        if owner.answer is not None and (reply := owner.answer(_argv(command))) is not None:
-            # Answered without running it.
-            command = 'printf %s {}; printf %s {} >&2; exit {}'.format(*map(shlex.quote, map(str, reply)))
         process = self._process = await asyncio.create_subprocess_exec(
             '/bin/sh',
             '-c',
-            command,
+            init.command,
             cwd=owner.host_root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -203,7 +202,9 @@ class _FakeTransport:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
 
-    async def bidi(self, method: str, requests: AsyncIterator[Any]) -> _FakeExecCall:
+    async def bidi(
+        self, method: str, requests: AsyncIterator[Any], *, region: str | None = None, machine: str | None = None
+    ) -> _FakeExecCall:
         assert method == 'Exec'
         self._owner.check_call()
         return _FakeExecCall(self._owner, requests)
@@ -285,7 +286,7 @@ class _FakeFsTransport:
                 _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, 'the boxd agent is too old', 'agent_outdated')
             )
 
-    async def call(self, method: str, request: Any) -> Any:
+    async def call(self, method: str, request: Any, *, region: str | None = None) -> Any:
         if method == 'FsWrite':
             return await self._write(request)
         self._check(method, request.vm_id)
@@ -310,7 +311,7 @@ class _FakeFsTransport:
         except OSError as error:
             raise _fs_failure(error, path) from None
 
-    async def server_stream(self, method: str, request: Any) -> AsyncIterator[Any]:
+    async def server_stream(self, method: str, request: Any, *, region: str | None = None) -> AsyncIterator[Any]:
         self._check(method, request.vm_id)
         path = os.fsdecode(request.path)
         try:
@@ -357,11 +358,104 @@ class _FakeFsTransport:
             raise _fs_failure(error, path) from None
 
 
+@dataclass
+class FakeDesktop:
+    """A machine's desktop as boxd's computer API shows it, recording each action as one line."""
+
+    size: tuple[int, int] = (1280, 800)
+    cursor: tuple[int, int] = (7, 8)
+    png: bytes = FAKE_SCREENSHOT
+    calls: list[str] = field(default_factory=list[str])
+    # A call recorded as this line waits until cancelled, as one boxd has not answered yet.
+    hang_on: str | None = None
+    # Raised by the next action calls, in order; `None` lets that call through.
+    errors: list[BaseException | None] = field(default_factory=list[BaseException | None])
+
+
+def _invalid(message: str) -> APIStatusError:
+    return APIStatusError(message, code='invalid_argument', grpc_code=3)
+
+
+def _point(point: Any) -> str:
+    return f'{point.x} {point.y}'
+
+
+def _at(action: Any) -> str:
+    return _point(action.at) if action.HasField('at') else 'pointer'
+
+
+class _FakeComputerTransport:
+    """boxd's `ComputerAction` gRPC call, with the limits boxd's server enforces, under the SDK's own `AsyncComputer`."""
+
+    def __init__(self, owner: FakeBoxd) -> None:
+        self._owner = owner
+
+    async def call(self, method: str, request: Any, *, region: str | None = None, **options: object) -> Any:
+        assert method == 'ComputerAction'
+        owner = self._owner
+        owner.check_call()
+        owner.check_runnable(owner.find(request.vm_id))
+        desktop = owner.desktop
+        which = request.WhichOneof('action')
+        action = getattr(request, which)
+        if which not in ('screenshot', 'cursor_position'):
+            desktop.calls.append(f'{which} {self._describe(which, action)}'.rstrip())
+            if desktop.calls[-1] == desktop.hang_on:
+                await anyio.sleep_forever()
+            if desktop.errors and (error := desktop.errors.pop(0)) is not None:
+                raise error
+        shot = None
+        if request.return_screenshot:
+            if which == 'screenshot' and request.screenshot_options.HasField('region'):
+                area = request.screenshot_options.region
+                desktop.calls.append(f'zoom {area.x} {area.y} {area.width} {area.height}')
+            shot = _pb.ComputerImage(data=desktop.png, mime_type='image/png', width=1, height=1)
+        width, height = desktop.size
+        x, y = desktop.cursor
+        return _pb.ComputerActionResponse(
+            screen_width=width,
+            screen_height=height,
+            screen_held=True,
+            cursor=_pb.ComputerPoint(x=x, y=y),
+            screenshot=shot,
+        )
+
+    def _describe(self, which: str, action: Any) -> str:
+        desktop = self._owner.desktop
+        if which == 'set_screen_size':
+            desktop.size = (action.width, action.height)
+            return f'{action.width}x{action.height}'
+        if which == 'mouse_move':
+            desktop.cursor = (action.to.x, action.to.y)
+            return _point(action.to)
+        if which == 'click':
+            return f'{_at(action)} {action.button} count={action.count} modifiers={action.modifiers!r}'
+        if which in ('mouse_down', 'mouse_up'):
+            return f'{_at(action)} {action.button}'
+        if which == 'drag':
+            if not 2 <= len(action.path) <= 100:
+                raise _invalid('a drag path has 2 to 100 points')
+            return f'{len(action.path)} points from {_point(action.path[0])} modifiers={action.modifiers!r}'
+        if which == 'scroll':
+            if max(abs(action.delta_x), abs(action.delta_y)) > 100:
+                raise _invalid('scroll at most 100 wheel clicks each way')
+            return f'{_at(action)} dx={action.delta_x} dy={action.delta_y} modifiers={action.modifiers!r}'
+        if which == 'type':
+            if len(action.text) > 10_000:
+                raise _invalid('type at most 10000 characters per call')
+            return f'{len(action.text)} {action.text[:20]!r}'
+        assert which == 'key'
+        if action.repeat > 100:
+            raise _invalid('repeat at most 100 times')
+        return f'{action.keys!r} repeat={action.repeat} hold_ms={action.hold_ms}'
+
+
 class FakeMachines:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
         self._transport = _FakeTransport(owner)
         self.fs = AsyncFs(_FakeFsTransport(owner))
+        self.computer = AsyncComputer(_FakeComputerTransport(owner))
 
     async def create(
         self,
@@ -522,9 +616,7 @@ class FakeBoxd:
         self.create_names: list[str | None] = []
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
-        # Answers a command (the argv after the backend's `exec`) instead of running it,
-        # unless it returns `None`.
-        self.answer: Callable[[list[str]], tuple[str, str, int] | None] | None = None
+        self.desktop = FakeDesktop()
         # The `Fs*` calls made, in order; with `agent_outdated`, each is refused as a machine's old agent refuses it.
         self.fs_calls: list[str] = []
         self.agent_outdated = False

@@ -31,6 +31,7 @@ import boxd
 import pytest
 from pytest_examples import CodeExample
 
+from pydantic_ai.computer_use import Click, Drag, Point, PressKeys, Scroll, TypeText
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.coder import Coder
@@ -69,7 +70,7 @@ async def client() -> AsyncIterator[boxd.AsyncBoxd]:
 
 @asynccontextmanager
 async def _owned(
-    client: boxd.AsyncBoxd, working_dir: str | None = None, *, desktop: bool = False
+    client: boxd.AsyncBoxd, working_dir: str | None = None, *, desktop: bool | tuple[int, int] = False
 ) -> AsyncGenerator[BoxdSandboxBackend]:
     """Create a machine and delete it on the way out, even when the test deleted it already."""
     backend = BoxdSandboxBackend(
@@ -90,13 +91,49 @@ async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str)
 
 
 async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> None:
-    """The fakes keep the X server's state between commands: a plain Xvfb resets each time its last client exits, so
-    without `-noreset` the pointer went back to the middle after every action."""
+    """Validates the fake-encoded assumptions that the first computer call starts the machine's desktop, that it
+    stays at the size it was held at, and that a screenshot, a zoom and the pointer's position come back as the
+    display contract expects. `live_view_url` is the console's view of that same machine."""
+    async with _owned(client, desktop=(1440, 900)) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        assert await display.display_size() == (1440, 900)
+        await check_display_contract(display)
+        machine = await backend.get_sandbox()
+        assert (await backend.live_view_url()).endswith(f'/desktop/{machine.name}')
+
+
+# Starts a terminal on the desktop that saves what is typed into it, as an agent would start a program.
+_TERMINAL = "setsid xterm -e sh -c 'cat > typed.txt' </dev/null >/dev/null 2>&1 &"
+
+
+async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_any_text(
+    client: boxd.AsyncBoxd,
+) -> None:
+    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, that typing reaches
+    the focused window as Unicode with a newline as Enter, and that actions past boxd's per-call limits
+    (characters typed, wheel clicks, key repeats, drag points) are split so boxd takes each part."""
     async with _owned(client, desktop=True) as backend:
         display = backend.display
         assert display is not None
         await display.screenshot()
-        await check_display_contract(display)
+        await backend.run(['sh', '-c', _TERMINAL], timeout=60)
+        with anyio.fail_after(30):
+            while (await backend.run(['sh', '-c', 'xdotool search --class xterm'], timeout=30)).exit_code:
+                await anyio.sleep(0.5)
+
+        await display.act(Click(x=50, y=50))
+        await display.act(TypeText(text='héllo 😀\n' + 'x' * 2_500 + '\n'))
+        await display.act(PressKeys(keys=('ctrl+d',)))
+        await display.act(Scroll(x=50, y=50, direction='down', amount=150))
+        await display.act(PressKeys(keys=('shift',), repeat=150))
+        await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
+
+        with anyio.fail_after(30):
+            while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 2:
+                await anyio.sleep(0.5)
+        assert typed.stdout == 'héllo 😀\n' + 'x' * 2_500 + '\n'
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:

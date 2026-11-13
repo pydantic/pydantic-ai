@@ -175,7 +175,8 @@ largest size that fits. A 1280x800 screen fits every model.
 ## Watching a run
 
 A cloud desktop's `live_view_url()` gives a link to watch the run live, or take over; see
-[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) and [E2B](e2b-sandbox.md#give-the-agent-a-desktop).
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop), [E2B](e2b-sandbox.md#give-the-agent-a-desktop) and
+[boxd](boxd-sandbox.md#give-the-agent-a-desktop).
 
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](../agent.md#streaming-all-events) can save or show them as the run goes.

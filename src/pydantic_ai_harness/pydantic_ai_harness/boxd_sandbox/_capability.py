@@ -84,8 +84,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     layered on top. Nothing is read from the host."""
 
     desktop: bool | tuple[int, int] = False
-    """Give the machine a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-    `True` for 1280x800, or its `(width, height)`."""
+    """Give the agent the machine's desktop, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+    `True` holds it at 1280x800, or pass its `(width, height)`."""
 
     def __post_init__(self) -> None:
         if self.defer_loading:
