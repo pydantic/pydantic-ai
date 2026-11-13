@@ -9,7 +9,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     TieredCompaction,
 )
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 
 Binds = type[object] | tuple[type[object], ...]
 """The capability class, or any of several, a plugin must bind to include another; an `isinstance` target."""
@@ -29,7 +29,7 @@ before the chain, so `coder` and `compaction` run together.
 INCLUDED: Mapping[str, Mapping[str, Binds]] = {
     'pydantic_clai2.builtin_plugins.coder': {
         'pydantic_clai2.builtin_plugins.compaction': HISTORY_COMPACTION,
-        'pydantic_ai_harness.subagents:SubAgents': SubAgents,
+        'pydantic_ai_harness.sub_agents:SubAgents': SubAgents,
     },
     # `web` answers questions in the browser and the terminal at once while its `ask_user` setting is on.
     'pydantic_clai2.builtin_plugins.web': {'pydantic_clai2.builtin_plugins.ask_user_menu': AskUser},

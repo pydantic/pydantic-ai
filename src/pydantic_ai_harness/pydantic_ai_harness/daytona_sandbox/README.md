@@ -6,7 +6,24 @@ Run your agent's commands and file edits in an isolated [Daytona](https://www.da
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DaytonaSandbox's get_workspace hook gives the run a Daytona cloud sandbox as ctx.workspace, so each command and file operation goes over the Daytona API, authenticated with DAYTONA_API_KEY, and runs in the sandbox as the daytona user; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. Left idle, Daytona stops the sandbox after 15 minutes and archives it after 7 days stopped; a later run starts it again.](https://pydantic.dev/docs/ai/img/harness/daytona-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: Daytona Sandbox: your agent's commands run in a Daytona cloud sandbox
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. DaytonaSandbox's get_workspace hands the run a Daytona cloud sandbox as ctx.workspace over the Daytona API with DAYTONA_API_KEY. It stops when idle, destroy(ref) deletes it, and later runs reattach with the WorkspaceRef in the message history or result.workspace.ref, starting it if stopped.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        daytona["DaytonaSandbox()<br/>get_workspace hands<br/>the run the sandbox"]:::capability
+    end
+    sandbox["Daytona cloud sandbox<br/>stops when idle,<br/>deleted by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| daytona
+    ref -.->|"a later run reattaches,<br/>starting it if stopped"| daytona
+    daytona <-->|"Daytona API,<br/>DAYTONA_API_KEY"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install
 
@@ -61,12 +78,12 @@ The follow-up run finds the sandbox in the message history and works in it, so t
 
 ## Choose the tools
 
-For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/) instead of `Coder`, or write your own tool that runs in the sandbox:
+For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../file_system/) instead of `Coder`, or write your own tool that runs in the sandbox:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Shell(), FileSystem()])

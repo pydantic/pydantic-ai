@@ -294,7 +294,7 @@ these categories, whichever provider it came from:
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
 | [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
-| [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400 or 422, so sending it again unchanged won't succeed. |
+| [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400, 413 or 422, so sending it again unchanged won't succeed. |
 | [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. A subclass of `ModelRequestRejectedError`. |
 | [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] | The provider rejected the credentials, or doesn't allow them to make the request, e.g. an HTTP 401 or 403. A subclass of `ModelRequestRejectedError`. |
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
@@ -302,10 +302,11 @@ these categories, whichever provider it came from:
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
 provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
 its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
-overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
-`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
-`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
-the provider sends them as a 400, as Anthropic and the Gemini API do.
+overloaded. Anthropic's tier spend cap is a 429 too, but its `enforced_spend_limit_reached` error code makes it a
+`ModelQuotaExceededError`. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says
+why: a `ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API
+sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit, or disabled billing are a
+`ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message

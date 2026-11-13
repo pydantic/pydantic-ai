@@ -37,9 +37,9 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     DelegationStartedEvent,
     DelegationTask,
@@ -51,6 +51,7 @@ from pydantic_ai_harness.subagents import (
 )
 from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
@@ -72,7 +73,7 @@ def specialists() -> dict[str, SubAgent[object]]:
                 name=name,
                 description=description,
                 instructions=f'{description} Return evidence with paths and line numbers. Do not modify files.',
-                capabilities=[FileSystem(read_only=True)],
+                capabilities=[FileSystem(read_only=True), NON_STRICT_SCHEMAS],
             ),
             read_only=True,
         )
@@ -225,7 +226,11 @@ class TaskRouter:
                     self._users -= 1
                     last = not self._users
                     if last:
-                        await self._stack.aclose()
+                        try:
+                            await self._stack.aclose()
+                        except RuntimeError:
+                            # The owner's drain timeout: a task that ignores cancellation must not crash CLAI.
+                            logging.getLogger(__name__).exception('Delegated tasks did not close cleanly')
                 if not last:
                     for record in [record for record in self.owner.records.values() if view.runs(record)]:
                         await self.owner.cancel(record.id, user=False)

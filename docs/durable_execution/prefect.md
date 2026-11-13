@@ -167,8 +167,8 @@ Custom [`@durable_operation`][pydantic_ai.capabilities.durable_operation] calls 
 [`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
 keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
 when runs arrive in a different order on a flow retry. Repeated identical calls within one run
-keep separate recorded results. Automatically derived run IDs still depend on
-arrival order, so pass explicit IDs for branches that can reorder.
+keep separate recorded results. For run identity behavior, see
+[Run and Conversation IDs](#run-and-conversation-ids).
 
 The operation's arguments are part of the cache key too. An operation whose arguments are measured
 in flow code, such as a duration, a timestamp, or a random value, gets different arguments on a
@@ -194,8 +194,8 @@ you deploy the change.
 
 Workspace task cache keys include the run's [`run_id`][pydantic_ai.tools.RunContext.run_id] and a
 per-run call sequence. With distinct, stable explicit `run_id=` values, concurrent runs keep their
-own environments even when their arrival order changes on flow retry. Automatically derived run
-IDs still depend on arrival order, so pass explicit IDs for concurrent branches that can reorder.
+own environments even when their arrival order changes on flow retry. For run identity behavior, see
+[Run and Conversation IDs](#run-and-conversation-ids).
 
 !!! warning "Upgrading workspace task cache keys"
 
@@ -381,7 +381,55 @@ This prevents requests from being retried multiple times at different layers. Th
 
 Prefect doesn't wait the delay a model error asks for in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a provider's `Retry-After` header, for example), unlike [Temporal](temporal.md#activity-retries) and [DBOS](dbos.md#step-retries). A task's retry delay comes from its `retry_delay_seconds`, and Prefect has no way to set it for one failure, nor a durable timer to wait it with: a task waiting to retry sleeps in the flow's process. So a model request task is retried after `retry_delay_seconds` whatever the provider asked for. Size `retry_delay_seconds` for your provider's rate limits, or give the model request task no retries and let a [fallback model](../capabilities/model-fallback.md) take over.
 
-If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a flow, the defaults are derived from the flow run rather than generated at random, so a flow retry gives each agent run the same IDs as the attempt before it.
+## Run and Conversation IDs
+
+In a Prefect flow, `PrefectDurability` assigns each logical run without an explicit
+[`run_id`][pydantic_ai.tools.RunContext.run_id] a cached, opaque UUIDv4. If no conversation ID is
+supplied or inherited from message history, it derives one from that run ID. The cached result must
+remain available across retries and workers; losing or refreshing it creates a new ID and can
+re-execute tasks keyed by the run ID. Generating a default ID adds one cached Prefect task per run;
+explicit run IDs bypass it.
+
+The default-ID task uses the enclosing flow's result storage, or Prefect's configured default
+storage. For workers on different machines, configure shared storage on the flow with
+`@flow(result_storage='s3-bucket/my-storage')`, or set `PREFECT_RESULTS_DEFAULT_STORAGE_BLOCK` in
+every worker environment. A shared mounted directory configured through
+`PREFECT_RESULTS_LOCAL_STORAGE_PATH` also works. See Prefect's
+[result storage configuration](https://docs.prefect.io/v3/advanced/results#result-storage).
+The model and tool `TaskConfig.result_storage` overrides configure those tasks only; they do not
+configure the default-ID task.
+
+Run identity uses only these [projected inputs](#caching-and-idempotency):
+
+- The [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] name (`name=`), which
+  defaults to the agent name.
+- The prompt and message history.
+- The incoming history's ordered `(run_id, conversation_id)` pairs and any supplied conversation ID.
+- The dependencies and effective static agent, spec and run metadata.
+
+Keep incoming IDs stable across retries. Calls with identical projected inputs get distinct IDs by
+call order, so reordering them across a retry can associate results with different calls.
+Non-serializable dependency and metadata values, and values returned by metadata callbacks, are
+excluded.
+
+Other run arguments, including `model=`, `instructions=`, `output_type=`, `model_settings=` and
+`toolsets=`, do not distinguish default IDs. Pass distinct, retry-stable `run_id=` values for calls
+that can reorder and differ only in excluded arguments or values, such as calls sending the same
+prompt to different models.
+
+!!! warning "Default ID format migration"
+
+    Cached random UUIDs replace the earlier `<flow run id>:<arrival counter>` defaults for every run
+    using `PrefectDurability`, including sequential runs. The default `conversation_id` derived from
+    each run ID changes with it. Treat these defaults as opaque identifiers; pass `run_id=` and
+    `conversation_id=` explicitly if your application requires a particular format or existing
+    externally stored IDs.
+
+    If stored records or durable capability/workspace tasks must retain their current IDs, let
+    in-flight flows finish before upgrading. Retrying across the upgrade recomputes defaults and
+    can re-execute tasks keyed by those IDs. Model and tool caches keep their existing input
+    projection. Explicit IDs, conversation IDs inherited from message history, and execution
+    outside a flow keep their existing behavior.
 
 ## Caching and Idempotency
 
