@@ -4211,7 +4211,10 @@ class TestHookSemanticValue:
         [city_alias, city_validation_alias, city_alias_choices, city_alias_default, city_alias_with_ctx],
     )
     async def test_function_aliased_arg(self, output_function: Callable[..., str]):
-        """A single aliased arg is advertised under its alias, and hooks see its value."""
+        """A single aliased arg is advertised under its alias, and hooks see its value.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool = info.output_tools[0]
@@ -4240,7 +4243,10 @@ class TestHookSemanticValue:
     async def test_function_aliased_arg_output_modes(
         self, output_type: OutputSpec[str], response: TextPart | ToolCallPart
     ):
-        """A single aliased arg works in every output mode, including a union of output functions."""
+        """A single aliased arg works in every output mode, including a union of output functions.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[response])
@@ -4250,7 +4256,10 @@ class TestHookSemanticValue:
         assert log == [('after_validate', 'Paris'), ('before_process', 'Paris')]
 
     async def test_function_aliased_arg_stream(self):
-        """A single aliased arg works when the output tool call is streamed."""
+        """A single aliased arg works when the output tool call is streamed.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
 
         async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"cityName": "Paris"}')}
@@ -4260,7 +4269,10 @@ class TestHookSemanticValue:
             assert await result.get_output() == 'city=Paris'
 
     async def test_function_aliased_basemodel_arg(self):
-        """An aliased `BaseModel` arg is wrapped under its alias, and hooks see the model instance."""
+        """An aliased `BaseModel` arg is wrapped under its alias, and hooks see the model instance.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
 
         def double(data: Annotated[MyOutput, Field(alias='payload')]) -> int:
             return data.value * 2
@@ -4287,6 +4299,7 @@ class TestHookSemanticValue:
         """Args the JSON schema leaves out (`**kwargs`, `SkipJsonSchema`) keep the validated args whole.
 
         Hooks see the dict, and every value the model sends reaches the function.
+        Not a VCR test: which arguments the JSON schema leaves out is in-memory framework behavior.
         """
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

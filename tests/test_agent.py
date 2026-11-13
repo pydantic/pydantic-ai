@@ -2269,7 +2269,10 @@ def text_with_var_kwargs(text: str, **kwargs: int) -> str:
 
 @pytest.mark.parametrize('output_function', [text_alias, text_with_hidden_arg, text_with_var_kwargs])
 def test_output_type_text_output_function_str_arg(output_function: Callable[..., str]):
-    """`TextOutput` calls the function with the text under the str arg's Python name, not its alias."""
+    """`TextOutput` calls the function with the text under the str arg's Python name, not its alias.
+
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
 
     def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])
