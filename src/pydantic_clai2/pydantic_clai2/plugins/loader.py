@@ -331,10 +331,6 @@ class SessionPlugins(Generic[DepsT]):
         self._entries = refreshed
         return list(refreshed.values())
 
-    def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
-        """The stored declaration as it is now, without refreshing `entries()` mid-load."""
-        return self._process.stored(entry.name) or entry.declaration
-
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
 
@@ -836,7 +832,8 @@ class SessionPlugins(Generic[DepsT]):
         loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
-            self._process.store.save_plugin(self._saved(entry), requires=host.requirements)
+            # The pre-load declaration: the refreshed entry may describe a replacement saved during the load.
+            self._process.store.update_plugin_requirements(entry.declaration, requires=host.requirements)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now, in every live session, and remember it as disabled."""

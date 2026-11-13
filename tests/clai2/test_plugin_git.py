@@ -13,6 +13,7 @@ from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import Literal
 
 import anyio
 import pytest
@@ -108,16 +109,65 @@ class Tagged(Plugin[Options, None]):
     def save_configured(
         plugin: PluginSettings, *, requires: Requirements | None = None, overwrite: bool = True
     ) -> None:
+        assert not overwrite
         save(plugin, requires=requires, overwrite=overwrite)
-        if not overwrite:
-            # Another session may configure the declaration before activation learns its requirements.
-            save(plugin.model_copy(update={'settings': {'mode': 'custom'}}))
+        # Another session may configure the declaration before activation learns its requirements.
+        save(plugin.model_copy(update={'settings': {'mode': 'custom'}}))
 
     monkeypatch.setattr(harness.store, 'save_plugin', save_configured)
     await harness.loader.command(['add', repository.as_uri()])
     assert requests == [('add', 'demo_plugin')]
     assert harness.store.plugin_requirements('demo_plugin') == {'mode': ['git-plugin-mode']}
     assert harness.store.plugins()[0].settings == {'mode': 'custom'}
+    await harness.loader.close('exit')
+
+
+@pytest.mark.parametrize('change', ['remove', 'replace'])
+@pytest.mark.parametrize('activation', ['enable', 'git-add'])
+async def test_activation_keeps_a_plugin_changed_by_another_store(
+    tmp_path: Path, repository: Path, activation: Literal['enable', 'git-add'], change: Literal['remove', 'replace']
+) -> None:
+    harness = Harness(tmp_path)
+    replacement = PluginSettings(
+        id='demo_plugin', factory='other_plugin', path=str(repository / '__init__.py'), settings={'mode': 'custom'}
+    )
+    changed = (
+        'store.delete_plugin(self.host.name)'
+        if change == 'remove'
+        else f'store.save_plugin(PluginSettings.model_validate_json({replacement.model_dump_json()!r}))'
+    )
+    source = f"""
+from pathlib import Path
+from pydantic import BaseModel
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import Plugin
+
+class Options(BaseModel):
+    mode: str = 'plain'
+
+class Tagged(Plugin[Options, None]):
+    @classmethod
+    def from_host(cls, host):
+        return cls(host, host.settings(Options, requires={{'mode': ['git-plugin-mode']}}))
+
+    async def on_session_start(self, event):
+        store = SettingsStore(Path({str(harness.store.path)!r}))
+        {changed}
+"""
+    (repository / '__init__.py').write_text(source)
+    git(repository, 'add', '.')
+    git(repository, 'commit', '-m', 'Change declaration through a second store during activation')
+    if activation == 'enable':
+        harness.store.save_plugin(
+            PluginSettings(id='demo_plugin', factory='demo_plugin', path=str(repository / '__init__.py'), enabled=False)
+        )
+        await harness.loader.enable('demo_plugin')
+    else:
+        await harness.loader.command(['add', repository.as_uri()])
+
+    assert harness.store.plugins() == ([] if change == 'remove' else [replacement])
+    assert harness.store.plugin_requirements('demo_plugin') is None
     await harness.loader.close('exit')
 
 
