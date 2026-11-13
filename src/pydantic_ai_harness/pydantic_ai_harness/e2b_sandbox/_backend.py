@@ -241,10 +241,12 @@ def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
     )
 
 
-async def _stopped_message(sandbox_id: str) -> str:
+async def _stopped_message(sandbox: e2b.AsyncSandbox) -> str:
     """Say why a sandbox E2B still answers for no longer runs, asking E2B whether it is paused or gone."""
+    sandbox_id = sandbox.sandbox_id
     try:
-        state = (await e2b.AsyncSandbox.get_info(sandbox_id)).state
+        # The instance's lookup, so it uses the configured `client`'s account rather than the environment's.
+        state = (await sandbox.get_info()).state
     except e2b.SandboxNotFoundException:
         return (
             f'The E2B sandbox {sandbox_id!r} no longer exists: it was killed. '
@@ -507,7 +509,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(await _stopped_message(sandbox.sandbox_id))
+                return WorkspaceUnavailableError(await _stopped_message(sandbox))
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
