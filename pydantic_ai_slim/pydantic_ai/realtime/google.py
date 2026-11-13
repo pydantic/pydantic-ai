@@ -2227,8 +2227,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # text alongside the spoken answer, and it must not leak into the transcript. A
                 # model-turn text part is the model's plain text output (`response_modality='text'`),
                 # distinct from the spoken-audio transcription in `output_transcription`, which
-                # `_map_server_content` maps, so it
-                # becomes a `TextPart` rather than a `SpeechPart`.
+                # `_map_server_content` maps, so it becomes a `TextPart` rather than a `SpeechPart`.
                 events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
         return events, native_tool_parts
 
