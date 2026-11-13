@@ -4170,6 +4170,12 @@ class FilePart:
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __post_init__(self) -> None:
+        # Validation narrows `content` through its annotation; this also narrows a part built directly in code,
+        # such as a custom model returning `FilePart(BinaryContent(image))`.
+        if isinstance(self.content, BinaryContent) and not isinstance(self.content, BinaryImage):
+            self.content = BinaryContent.narrow_type(self.content)
+
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
         return bool(self.content.data)

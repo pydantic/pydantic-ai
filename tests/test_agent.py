@@ -14951,6 +14951,24 @@ def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
 # region Image output validators
 
 
+async def test_image_output_from_plain_binary_content():
+    """A custom model returning image `BinaryContent` (not `BinaryImage`) in a `FilePart` produces image output.
+
+    Unit test rather than VCR: built-in providers build `BinaryImage` themselves, so only a custom model produces this.
+    """
+
+    def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[FilePart(content=BinaryContent(data=b'image', media_type='image/png'))])
+
+    agent = Agent(
+        FunctionModel(return_image, profile=ModelProfile(supports_image_output=True)), output_type=BinaryImage
+    )
+
+    result = await agent.run('Give me an image')
+    assert result.output == BinaryImage(data=b'image', media_type='image/png')
+    assert result.response.images == [result.output]
+
+
 async def test_image_output_validators_run():
     """Test that output validators are called and can modify image output."""
 
