@@ -3979,6 +3979,129 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
       ]
     },
+    "CapabilityPart": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.capability_id": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.kind": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.metadata": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.part_kind": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.record_id": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.rendering": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.scope": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.source": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilityPart.timestamp": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_strip_cache_excluded_fields"
+      ]
+    },
+    "CapabilitySource": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+      ]
+    },
     "CustomEvent": {
       "engines": [
         "durable_exec",

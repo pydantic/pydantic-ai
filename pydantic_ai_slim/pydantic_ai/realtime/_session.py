@@ -23,7 +23,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
-from .._capability_parts import render_capability_parts
+from .._capability_parts import render_capability_parts_for_live_channel
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
@@ -546,7 +546,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     texts: list[str] = []
     system_prompts: list[str] = []
     from_user = False
-    for message in render_capability_parts(list(pending.messages)):
+    for message in render_capability_parts_for_live_channel(list(pending.messages)):
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:

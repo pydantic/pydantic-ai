@@ -1,4 +1,5 @@
 import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
+from pydantic_ai.messages import CapabilityPart, CapabilitySource
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -173,6 +175,32 @@ def _replace_run_context(
 _CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
 """Framework dataclass fields excluded from cache key computation as they vary per-run."""
 
+_CAPABILITY_PART_EXCLUDED_FIELDS = frozenset({'timestamp', 'record_id'})
+"""A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s per-record fields, which never reach the model.
+
+Excluded on every kind, which is usually defined outside `pydantic_ai`; the kind's own fields stay in the key.
+"""
+
+_SYNTHETIC_CAPABILITY_ID = re.compile(r'<[a-z0-9_]+:[0-9a-f]{6}>')
+"""The key a run gives a capability with no `id`, which differs every run (`_synthetic_capability_id`)."""
+
+
+def _normalized_field_value(obj: object, name: str, value: Any, *, is_framework: bool) -> Any:
+    """`value` with an id the framework generates per run replaced by a fixed stand-in."""
+    if not isinstance(value, str):
+        return value
+    if is_framework and name == 'tool_call_id' and value.startswith(TOOL_CALL_ID_PREFIX):
+        return '<framework-generated>'
+    if (
+        name == 'capability_id'
+        and isinstance(obj, CapabilityPart | CapabilitySource)
+        and _SYNTHETIC_CAPABILITY_ID.fullmatch(value)
+    ):
+        # Stamped on a capability part, or its source, by a capability with no `id`: it never reaches the model, and
+        # only tells that run's capabilities apart.
+        return '<unnamed-capability>'
+    return value
+
 
 def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
@@ -187,17 +215,12 @@ def _strip_cache_excluded_fields(
         result: dict[str, Any] = {}
         module = type(obj).__module__
         is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
-        excluded_fields = _CACHE_EXCLUDED_FIELDS if is_framework else ()
+        excluded_fields: frozenset[str] = _CACHE_EXCLUDED_FIELDS if is_framework else frozenset()
+        if isinstance(obj, CapabilityPart):
+            excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
         for f in fields(obj):
             if f.name not in excluded_fields:
-                value = getattr(obj, f.name)
-                if (
-                    is_framework
-                    and f.name == 'tool_call_id'
-                    and isinstance(value, str)
-                    and value.startswith(TOOL_CALL_ID_PREFIX)
-                ):
-                    value = '<framework-generated>'
+                value = _normalized_field_value(obj, f.name, getattr(obj, f.name), is_framework=is_framework)
                 result[f.name] = _strip_cache_excluded_fields(value)
         return _project_dict(result, lambda item: item)
     elif _is_dict(obj):

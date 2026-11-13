@@ -11,7 +11,7 @@ from typing import Literal, assert_never, overload
 
 import anyio
 
-from .._capability_parts import render_capability_parts
+from .._capability_parts import render_capability_parts_for_live_channel
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
@@ -126,7 +126,7 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
-    messages = render_capability_parts(list(messages))
+    messages = render_capability_parts_for_live_channel(list(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
     return _wrap_non_leading_system_prompts(
         messages, standing_prompt_count=standing_prompt_count, sealed=False, keep_request_scoped=False
