@@ -62,7 +62,7 @@ selected realtime model profile supports it. Grounding sources are rendered as c
 
 `CAMERA_DRAW=true` registers the regular `redraw_diagram` function tool. The realtime model passes a
 detailed text description to a separate [`Agent`][pydantic_ai.Agent], which returns a self-contained
-HTML diagram. The drawing model defaults to `google:gemini-3.5-flash` — a fast small model, since
+HTML diagram. The drawing model defaults to `google:gemini-4-hydrogen` — a fast small model, since
 the user is waiting on a live call, that reuses the `GOOGLE_API_KEY` the default realtime model
 already needs; set `CAMERA_DRAW_MODEL` to any `provider:model` your credentials cover. Drawing and
 search can coexist when the selected realtime model supports both.

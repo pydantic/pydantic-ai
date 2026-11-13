@@ -267,7 +267,7 @@ from google.genai.types import ThinkingLevel
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-model = GoogleModel('gemini-3.5-flash')
+model = GoogleModel('gemini-4-hydrogen')
 settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': ThinkingLevel.MEDIUM})
 agent = Agent(model, model_settings=settings)
 ...
