@@ -54,7 +54,7 @@ The executor decides when to consult. Ask it explicitly in the user prompt or th
 
 Set `output_type` to the output specification you would pass to a Pydantic AI `Agent`, such as a Pydantic model, a scalar type, or `NativeOutput(...)`. It defaults to `str`. The advisor model must support the selected output mode.
 
-Provider-native advisor tools do not accept an output schema. A non-default `output_type` therefore selects local execution in `auto` mode; combining it with `mode='native'` raises `ValueError`.
+Provider-native advisor tools do not accept an output schema. A non-default `output_type` therefore consults locally; combining it with `local=False` raises `ValueError`.
 
 ```python
 from pydantic import BaseModel
@@ -82,7 +82,7 @@ The executor receives the validated object as the tool result. Once `max_uses` i
 - **Native:** when the executor and advisor are both on a compatible Anthropic provider, or both use OpenRouter, Pydantic AI's provider-native `AdvisorTool` runs the consultation.
 - **Local fallback:** every other pairing gets an `advisor` function tool. Calling it runs a separate Pydantic AI agent with the configured advisor model.
 
-In the default `auto` mode, native selection is conservative. The capability only reuses an explicit provider-qualified model name when the executor and advisor share a provider, so it does not guess how an Anthropic model ID maps to an OpenRouter catalog slug. For example:
+By default, native selection is conservative. The capability only reuses an explicit provider-qualified model name when the executor and advisor share a provider, so it does not guess how an Anthropic model ID maps to an OpenRouter catalog slug. For example:
 
 ```python
 from pydantic_ai_harness import Advisor
@@ -94,25 +94,33 @@ anthropic_advisor = Advisor('anthropic:claude-opus-4-8')
 openrouter_advisor = Advisor('openrouter:anthropic/claude-opus-4.8')
 ```
 
-In `auto` mode, a `Model` instance runs locally and keeps its own provider, client, credentials, base URL, and instrumentation. A model name is resolved only when a consultation runs locally, so a native consultation uses the executor provider's configuration. Native use also requires the executor model's profile to support the advisor tool; otherwise `auto` falls back to local.
+By default, a `Model` instance runs locally and keeps its own provider, client, credentials, base URL, and instrumentation. A model name is resolved only when a consultation runs locally, so a native consultation uses the executor provider's configuration. Native use also requires the executor model's profile to support the advisor tool; otherwise the capability falls back to local.
 
 ## Options
 
 | Option | Default | Behavior |
 |---|---:|---|
 | `model` | required | Advisor model name or `Model` instance. |
-| `mode` | `'auto'` | Execution policy: `'auto'`, `'native'`, or `'local'`. |
+| `native` | `True` | The provider-native advisor. `False` disables it; an `AdvisorTool` instance or a function returning one replaces the one built from these options, which then don't apply to it. |
+| `local` | `True` | The local fallback. `True` builds the `advisor` tool; `False` disables it; a `Tool` or function replaces it and, like the built tool, is left out of requests where the native advisor applies. A replacement keeps its own tool name. It can't be combined with `output_type`, `forward_history=True`, or, on OpenRouter, `max_uses`, which only the built tool applies; otherwise `max_uses`, `max_tokens` and `caching` still shape the native advisor. |
 | `output_type` | `str` | Local advisor output specification. Non-default values require local execution. |
 | `max_uses` | `None` | Maximum consultations in one executor model request. Must be at least `1`. |
 | `max_tokens` | `None` | Maximum output tokens for each consultation. Must be at least `1024`. |
-| `caching` | `None` | Anthropic-native prompt-cache TTL: `'5m'` or `'1h'`. OpenRouter and the local fallback have no equivalent control. |
+| `caching` | `None` | Native-only prompt-cache TTL: `'5m'` or `'1h'`. Supported by Anthropic; OpenRouter and the local fallback have no equivalent control. |
 | `forward_history` | `False` | Forward completed executor message history to local consultations. |
+| `id` | `'advisor'` | Capability and toolset ID. Advisors that share it merge into one. |
+| `defer_loading` | `False` | Make `Advisor` an on-demand capability: its tools stay hidden until the model loads it by `id`. |
+| `description` | `None` | Catalog entry the model reads to decide whether to load an on-demand `Advisor`. |
 
-Use `mode='native'` when the consultation must stay inside the executor provider, or `mode='local'` when the configured advisor provider must receive a separate request. Native mode requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. A provider subclass that only changes its `name`, such as an `AnthropicProvider` subclass named `claude-code`, counts as the provider it extends. It does not fall back when the executor lacks support.
+Pass `local=False` when the consultation must stay inside the executor provider, or `native=False` when the configured advisor provider must receive a separate request, the same switches as the other native-or-local capabilities. With the built native advisor, `local=False` requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider; a `native=` replacement carries its own model. A provider subclass that only changes its `name`, such as an `AnthropicProvider` subclass named `claude-code`, counts as the provider it extends. It does not fall back when the executor lacks support.
+
+<!-- TODO(harness 1.0, #12997): remove this `mode` note, and the `mode='auto'` comparison in the merging paragraph. -->
+
+The earlier `mode` option still works until pydantic-ai-harness 1.0, with a `HarnessDeprecationWarning`: `mode='native'` is `local=False`, `mode='local'` is `native=False`, and `mode='auto'` is the default.
 
 `max_uses` has the same per-request scope as Anthropic's native tool and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
 
-OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit. In `auto` mode, setting `max_uses` with an OpenRouter advisor therefore selects the local fallback. With `mode='native'`, it raises `ValueError`.
+OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit. By default, setting `max_uses` with an OpenRouter advisor therefore selects the local fallback. With `local=False` and the built native advisor, it raises `ValueError`.
 
 `forward_history` does not affect native-versus-local selection. The current response, including partial text and unresolved tool calls, is not forwarded, so the consultation prompt still needs to contain the complete current question.
 
@@ -136,19 +144,19 @@ Local consultations go to the advisor model's provider. With `forward_history=Tr
 
 Local advisor requests share the parent run's `RunUsage` and `UsageLimits`, so their requests and tokens count toward the agent tree's normal limits. A local advisor run is also filed under the parent run's `conversation_id`, so its requests and spans group with the conversation it advises. Native providers report advisor usage according to their own protocol. Anthropic records advisor-specific values in `RequestUsage.details`, while OpenRouter exposes aggregate server-tool counts in response provider details.
 
-Invalid option combinations fail when `Advisor` is constructed. Executor and provider compatibility is validated when a run prepares its model request. Anthropic reports native advisor errors as tool results so the executor can continue. If a local advisor produces invalid model behavior, the executor receives a normal tool retry, matching Pydantic AI's other subagent-backed tools. Local model resolution, authentication, provider, request, and usage-limit errors otherwise propagate and can stop the run. When a local call exceeds `max_uses`, the tool returns a bounded message telling the executor to continue without more advice.
+Invalid option combinations fail when `Advisor` is constructed, or when merging two advisors produces one. Executor and provider compatibility is validated when a run prepares its model request. Anthropic reports native advisor errors as tool results so the executor can continue. If a local advisor produces invalid model behavior, the executor receives a normal tool retry, matching Pydantic AI's other subagent-backed tools. Local model resolution, authentication, provider, request, and usage-limit errors otherwise propagate and can stop the run. When a local call exceeds `max_uses`, the tool returns a bounded message telling the executor to continue without more advice.
 
 `Advisor` emits no spans of its own. With Pydantic AI instrumentation enabled globally, for example through `logfire.instrument_pydantic_ai()`, a local consultation appears as an agent run named `advisor`; per-agent `instrument=` on the executor does not reach that run. A native consultation is part of the executor's model request.
 
 ## Composition
 
-The advisor tool is always visible and is not deferred through Tool Search. It reserves the tool name and toolset ID `advisor`. An agent has one advisor, so two `Advisor` capabilities merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. If the merge gives an OpenRouter `Advisor` in `mode='native'` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
+The advisor tool is visible from the start unless `defer_loading=True` makes `Advisor` an on-demand capability. Keep its `id` stable once deployed: loading and history replay key on it. The built tool is named `advisor`, a `local=` replacement keeps its own name, and the toolset ID defaults to `advisor`. Two `Advisor` capabilities with the same `id` merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. `native` and `local` both default to `True`, so a later `Advisor` left at its defaults restores the built native advisor and local tool, replacing an earlier `False` or replacement, as the earlier default `mode='auto'` did. If the merge gives an OpenRouter `Advisor` with `local=False` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `UserWarning`.
 
 During streaming, the executor stream pauses while an advisor consultation runs and resumes when the completed advice is available. The local fallback does not splice the advisor model's token deltas into the executor stream.
 
 Native advice is compatible with durable execution because it remains part of the executor model request. Local execution cannot yet preserve the same semantics across every durable backend. Temporal and Prefect can checkpoint the returned advice, but changes to the activity-local or task-local `RunUsage` do not merge back into the outer run. DBOS checkpoints each local consultation, so workflow replay reuses the recorded advice.
 
-Under Temporal and Prefect, use `mode='native'` with a supported provider. Local execution there, including an `auto` fallback, is unsupported. `Advisor` cannot detect durable runs, because Pydantic AI does not yet expose a public durable-context contract, so it does not reject local execution in them.
+Under Temporal and Prefect, pass `local=False` with a supported provider. Local execution there, including the default fallback, is unsupported. `Advisor` cannot detect durable runs, because Pydantic AI does not yet expose a public durable-context contract, so it does not reject local execution in them.
 
 ## Pydantic AI references
 

@@ -342,7 +342,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
     'advisor': _agent(
         'advisor_agent',
         Advisor[None](
-            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), mode='local'
+            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), native=False
         ),
         ('advisor', {'prompt': 'q'}),
     ),
@@ -672,7 +672,7 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
         pytest.param(lambda: KeenableSearch[None](client=_KeenableClient()), id='keenable_search'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),
         pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
-        pytest.param(lambda: Advisor[None]('test', mode='local'), id='advisor'),
+        pytest.param(lambda: Advisor[None]('test', native=False), id='advisor'),
         pytest.param(lambda: SmartSearch[None]('test'), id='smart_search'),
         pytest.param(
             lambda: ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all'),
