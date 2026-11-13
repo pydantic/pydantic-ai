@@ -355,9 +355,8 @@ Web search, Code interpreter, Image generation, and File search are natively sup
 
 Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability, which adds a
 [`ComputerTool`](../native-tools.md#computer-tool). GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer
-tool through `OpenAIResponsesModel` on OpenAI, Azure OpenAI and Bedrock Mantle. Other models, and any model with
-`ComputerUse(native=False)`, get a function tool. On Azure, set `openai_supports_computer_tool` in the [profile](compatible-apis.md#model-profile) of
-a deployment whose name differs from its model's.
+tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle. Other models, and any model with
+`ComputerUse(native=False)`, get a function tool.
 
 #### Referencing earlier responses
 
