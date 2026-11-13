@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons, status and refusals, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, logprobs and compaction items."""
 
 from __future__ import annotations as _annotations
 
