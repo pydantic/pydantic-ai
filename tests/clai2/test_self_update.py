@@ -505,8 +505,8 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
     held = self_update.hold_environment(environment)
     assert held is not None, 'this process holds its own file, which never refuses its own update'
     running = environment / self_update.RUNNING
-    (running / '1.lock').mkdir()  # Unreadable as a file, like one removed as its process exited.
-    (running / '4242.lock').write_text('')  # Left by a process that crashed: nobody holds it.
+    (running / '1.lock').mkdir()  # Unreadable as a file, like one another check removed meanwhile.
+    (running / '4242-0a1b2c3d.lock').write_text('')  # Left by a process that crashed: nobody holds it.
 
     def updates() -> tuple[Updates, list[Sequence[str]]]:
         updates, ran = _updates(['main'], uv=str(uv))
@@ -514,7 +514,7 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
         updates.locate = AsyncMock(return_value=None)
         return updates, ran
 
-    with (running / '4343.lock').open('wb') as sibling, (running / '4545.lock').open('wb') as other:
+    with (running / '4343-1.lock').open('wb') as sibling, (running / '4545-2.lock').open('wb') as other:
         fcntl.flock(sibling, fcntl.LOCK_EX)
         fcntl.flock(other, fcntl.LOCK_EX)
         refused, ran = updates()
@@ -524,10 +524,12 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
         )
         assert ran == [], 'nothing is installed under a running sibling'
         assert (refused.failed, refused.restart_required) == (True, False)
+        assert not (running / '4242-0a1b2c3d.lock').exists(), 'the check removes files nobody holds'
     # Once the siblings have exited, the kernel has released their locks and the install goes ahead.
     updated, ran = updates()
     assert await updated.command([]) == 'Updated CLAI to 9e08a34ee (main). Exiting; start clai2 again to use it.'
     assert len(ran) == 1
+    assert sorted(path.name for path in running.iterdir()) == ['1.lock', Path(held.name).with_suffix('.lock').name]
     held.close()
     # uv cannot say where its tools live: nothing to check.
     uv.write_text('#!/bin/sh\nexit 2\n')
@@ -539,6 +541,19 @@ def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path)
     (tmp_path / 'uv-receipt.toml').write_text('')
     (tmp_path / self_update.RUNNING).write_text('')
     assert self_update.hold_environment(tmp_path) is None, 'its folder cannot be made'
+
+
+def test_hold_environment_without_a_lock_leaves_nothing_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where the file system cannot lock, such as some network mounts, CLAI still starts."""
+    import fcntl
+
+    def no_lock(file: object, operation: int) -> None:
+        raise OSError('no locks available')
+
+    monkeypatch.setattr(fcntl, 'flock', no_lock)
+    (tmp_path / 'uv-receipt.toml').write_text('')
+    assert self_update.hold_environment(tmp_path) is None
+    assert list((tmp_path / self_update.RUNNING).iterdir()) == []
 
 
 def test_find_uv_skips_relative_path_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

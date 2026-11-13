@@ -6,15 +6,16 @@ and core sdists from the same commit, whose exact dev pins are not on PyPI. Rele
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
 source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation,
 serving its web UI again on the same port with the same token when one ran.
-The install replaces the environment's files, so it is refused while another `clai2` process runs from it.
+The install replaces the environment's files, so it is refused while another `clai2` process runs from it; one
+started while uv installs is not covered.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 CLAI exits.
 """
 
-import atexit
 import base64
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -282,46 +283,55 @@ async def tool_executable(uv: str) -> str | None:
 
 
 RUNNING = 'clai2-running'
-"""The folder in a `uv tool` environment where each `clai2` running from it locks a file named for its PID."""
+"""The folder in a `uv tool` environment where each `clai2` running from it locks a `PID-TOKEN.lock` file."""
 
 
 def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
     """Mark this process as running from the `uv tool` environment at `prefix` while the returned file stays open.
 
-    `None` outside a `uv tool` environment, on Windows (whose install waits for CLAI to exit), or when the folder is
-    not writable. The kernel releases the lock however the process ends, so a file left behind counts for nothing.
+    `None` outside a `uv tool` environment, on Windows (whose install waits for CLAI to exit), or where the lock
+    cannot be taken. The kernel releases the lock however the process ends; `running_elsewhere` then removes the file.
     """
     if sys.platform == 'win32' or not (prefix / 'uv-receipt.toml').is_file():
         return None
     import fcntl
 
-    path = prefix / RUNNING / f'{os.getpid()}.lock'
+    # The token keeps processes with one PID in different PID namespaces apart.
+    pending = prefix / RUNNING / f'{os.getpid()}-{secrets.token_hex(4)}.pending'
     try:
-        path.parent.mkdir(exist_ok=True)
-        file = path.open('wb')
+        pending.parent.mkdir(exist_ok=True)
+        file = pending.open('wb')
     except OSError:
         return None
-    fcntl.flock(file, fcntl.LOCK_EX)  # Blocking: another `/update` may hold it for a moment while it checks.
-    atexit.register(path.unlink, missing_ok=True)
+    try:
+        fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Named `.lock` only once locked, so `running_elsewhere` never takes it for one left behind.
+        pending.rename(pending.with_suffix('.lock'))
+    except OSError:
+        file.close()
+        pending.unlink(missing_ok=True)
+        return None
     return file
 
 
 def running_elsewhere(environment: Path) -> list[str]:
-    """The PIDs of the other `clai2` processes running from `environment`: those whose file is locked."""
+    """The PIDs of the other `clai2` processes running from `environment`; removes the files of ones that exited."""
     if sys.platform == 'win32':  # pragma: no cover -- `fcntl` is POSIX only, and Windows installs after CLAI exits.
         return []
     import fcntl
 
     pids: list[str] = []
     for path in (environment / RUNNING).glob('*.lock'):
-        if path.stem == str(os.getpid()):
+        pid = path.stem.partition('-')[0]
+        if pid == str(os.getpid()):
             continue
         try:
             with path.open('rb') as file:
-                fcntl.flock(file, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                path.unlink()
         except BlockingIOError:
-            pids.append(path.stem)
-        except OSError:  # Removed as its process exited.
+            pids.append(pid)
+        except OSError:  # Removed meanwhile by another check.
             continue
     return sorted(pids)
 
@@ -422,7 +432,7 @@ class Updates:
     relaunch: str | None = None
     """The new `clai2` to start once the shell has exited, when the install found one."""
     failed: bool = False
-    """Set when an update was found but not installed: uv failed, or is not on `PATH`."""
+    """Set when an update was found but not installed: uv failed, is not on `PATH`, or other `clai2`s run from it."""
     web: WebHandoff | None = None
     """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
@@ -432,7 +442,7 @@ class Updates:
 
     async def _in_use(self, uv: str | None, update: Update) -> str | None:
         """Why `update` cannot replace the install now: other `clai2` processes run from it and would break."""
-        if uv is None or not (others := await self.others(uv)):
+        if uv is None or self.windows or not (others := await self.others(uv)):
             return None
         self.failed = True
         return (

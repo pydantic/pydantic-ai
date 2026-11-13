@@ -271,7 +271,8 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
 async def _update(channel: 'UpdateChannel') -> int:
     """`clai2 --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
 
-    No shell runs, so nothing restarts: the next `clai2` is the new build. Exits 1 when uv failed or is missing.
+    No shell runs, so nothing restarts: the next `clai2` is the new build. Exits 1 when uv failed or is missing,
+    or other `clai2` processes run from the install.
     On Windows, installing requires this process to exit first; refuse rather than report success before uv runs.
     """
     import httpx
