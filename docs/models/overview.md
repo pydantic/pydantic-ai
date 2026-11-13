@@ -30,6 +30,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
 | [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
 | [GitHub Copilot](github-copilot.md) | Subscription access | `github-copilot:` |
+| [Google / Gemini API decisions](google.md#decisions-api) | [Decision model](decision.md) | `google-decisions:` |
 | [Groq](groq.md) | Inference platform | `groq:` |
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
@@ -301,10 +302,11 @@ these categories, whichever provider it came from:
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
 provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
 its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
-overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
-`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
-`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
-the provider sends them as a 400, as Anthropic and the Gemini API do.
+overloaded. Anthropic's tier spend cap is a 429 too, but its `enforced_spend_limit_reached` error code makes it a
+`ModelQuotaExceededError`. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says
+why: a `ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API
+sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit, or disabled billing are a
+`ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -639,7 +641,7 @@ The rejected responses' usage also counts when the request ends another way: a l
     Under [durable execution](../durable_execution/overview.md), a `FallbackModel` runs inside the durable model operation, and the error that ends its request reaches the workflow without its attempts, so the usage of the responses it rejected is only recorded when another model answers. [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) makes each attempt a durable operation of its own and records the attempts on the workflow side, so it doesn't have this limitation.
 
 ```python {title="fallback_model_attempts.py"}
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, OutputTokenLimitExceeded, TextPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
@@ -660,14 +662,10 @@ def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     )
 
 
-def was_truncated(response: ModelResponse) -> bool:
-    return response.finish_reason == 'length'
-
-
 fallback_model = FallbackModel(
     FunctionModel(truncated, model_name='primary'),
     FunctionModel(complete, model_name='backup'),
-    fallback_on=was_truncated,
+    fallback_on=OutputTokenLimitExceeded,
 )
 agent = Agent(fallback_model)
 result = agent.run_sync('What is the capital of France?')
@@ -741,23 +739,24 @@ print(result.output)
 !!! note
     The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
     output. A `'length'` finish reason on an empty or thinking-only response raises
-    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
+    [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] (typically the model hit
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
     regardless of finish reason: a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `UnexpectedModelBehavior`). The exception is [`NativeOutput`][pydantic_ai.output.NativeOutput] or
-    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text cut off at `'length'` into JSON that doesn't parse,
-    which raises `UnexpectedModelBehavior` right away.
+    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`). The exception is
+    [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
+    text cut off at `'length'` into JSON that doesn't parse, which raises `OutputTokenLimitExceeded` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned
     successfully, so an exception-based `fallback_on` can't catch them: not the default
     `fallback_on=(ModelAPIError,)`, which wouldn't match anyway, as `ContentFilterError` inherits from
-    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The exception is
-    `ContentFilterError` itself: naming it in `fallback_on` rejects any response with a `'content_filter'`
-    finish reason, empty or not, so the next model is tried instead, as
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The exceptions are
+    `ContentFilterError` and `OutputTokenLimitExceeded` themselves: naming `ContentFilterError` in `fallback_on`
+    rejects any response with a `'content_filter'` finish reason, and naming `OutputTokenLimitExceeded` any
+    response with a `'length'` finish reason, empty or not, so the next model is tried instead, as
     [`ModelFallback`](../capabilities/model-fallback.md#when-to-fall-back) does by default. To fall back on another bad finish reason instead,
     use a response handler (see the [example above](#finish-reason-example)) that inspects
     [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
@@ -767,7 +766,8 @@ print(result.output)
     carry partial or refusal text, add the
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
     [Falling back when a model refuses](../capabilities/model-fallback.md#refusals) puts this together
-    for safety refusals.
+    for safety refusals, and [Falling back when the output is cut off](../capabilities/model-fallback.md#token-limit)
+    for the token limit.
 
 #### Native Tool Failure Example
 

@@ -62,6 +62,7 @@ from pydantic_ai._utils import (
     now_utc,
 )
 from pydantic_ai._uuid import uuid7
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -1515,6 +1516,16 @@ async def _resolve_native_tool_factory(
     return tool
 
 
+async def _deferred_capability_catalog(run_context: RunContext[DepsT]) -> list[models.DeferredCapabilityEntry]:
+    """The step's deferred capability catalog, from the loader that renders it into the instructions.
+
+    Called after the instructions are rendered, which is when the loader resolves the catalog for the step, so both
+    read the same resolution.
+    """
+    loader = next((cap for cap in run_context.capabilities.values() if isinstance(cap, DeferredCapabilityLoader)), None)
+    return [] if loader is None else await loader.catalog(run_context)
+
+
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
@@ -1589,6 +1600,7 @@ async def _prepare_request_parameters(
         _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
         _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
+        deferred_capabilities=await _deferred_capability_catalog(run_context),
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -3908,7 +3920,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
                 if self.model_response.finish_reason == 'length':
-                    raise exceptions.UnexpectedModelBehavior(
+                    raise exceptions.OutputTokenLimitExceeded(
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
@@ -4404,7 +4416,7 @@ def _raise_if_cut_off_output(
         and _output.is_incomplete_json(error.__cause__)
     ):
         # Chained to the `ValidationError`, as in `run_stream()`.
-        raise exceptions.UnexpectedModelBehavior(_output.truncated_output_message(max_tokens)) from error.__cause__
+        raise exceptions.OutputTokenLimitExceeded(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

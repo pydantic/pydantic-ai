@@ -42,6 +42,7 @@ def test_model_request_parameters_are_serializable():
             'revealed_tool_names': set(),
             'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -162,6 +163,7 @@ def test_model_request_parameters_are_serializable():
             'revealed_tool_names': set(),
             'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
