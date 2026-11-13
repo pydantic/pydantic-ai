@@ -2168,7 +2168,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         try:
             format = file.format
-        except (KeyError, ValueError):
+        except ValueError:
             format = file.media_type.split('/', 1)[1]
 
         if isinstance(file, ImageUrl):

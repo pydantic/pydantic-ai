@@ -1466,6 +1466,28 @@ async def test_stream_structured_dict_list_form_items(allow_model_requests: None
         assert await result.get_output() == snapshot({'pair': ['a', 1]})
 
 
+async def test_stream_structured_dict_type_list(allow_model_requests: None):
+    """Streamed text output whose schema gives `type` as a list of types matches a value of any listed type.
+
+    The check runs on text the model streams instead of calling the output tool, which a recording can't reliably
+    trigger.
+    """
+    schema = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': ['string', 'null']},
+            'tags': {'type': 'array', 'items': {'type': ['string', 'integer']}},
+        },
+        'required': ['name', 'tags'],
+    }
+    mock_client = MockMistralAI.create_stream_mock([text_chunk('{"name": null, "tags": ["a", 1]}'), chunk([])])
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=StructuredDict(schema, name='Tagged'))
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == snapshot({'name': None, 'tags': ['a', 1]})
+
+
 async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
     class MyTypedBaseModel(BaseModel):
         first: str = ''  # Note: Default, set value.
@@ -2816,6 +2838,18 @@ def test_generate_user_output_format_multiple(mistral_api_key: str):
             {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
             {'values': [1, 2, 3]},
             True,
+        ),
+        (
+            'Type list accepts any listed type',
+            {'required': ['value'], 'properties': {'value': {'type': ['string', 'null']}}},
+            {'value': None},
+            True,
+        ),
+        (
+            'Type list rejects unlisted type',
+            {'required': ['value'], 'properties': {'value': {'type': ['string', 'null']}}},
+            {'value': 1},
+            False,
         ),
     ],
 )

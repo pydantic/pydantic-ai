@@ -144,6 +144,17 @@ if TYPE_CHECKING:
     from ._responses_model import OpenAIResponsesModel
 
 
+def chat_audio_format(item: BinaryContent | AudioUrl) -> Literal['wav', 'mp3']:
+    """The `input_audio` format for `item`, which Chat Completions only accepts as WAV or MP3."""
+    try:
+        audio_format = item.format
+    except ValueError:
+        audio_format = None
+    if audio_format not in ('wav', 'mp3'):
+        raise UserError(f'OpenAI Chat Completions only supports WAV and MP3 audio input, got {item.media_type!r}.')
+    return audio_format
+
+
 def preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
     """Load deferred OpenAI SDK modules before request handling.
 
@@ -1401,11 +1412,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 image_url['detail'] = metadata.get('detail', 'auto')
             return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
         elif item.is_audio:
-            assert item.format in ('wav', 'mp3')
+            audio_format = chat_audio_format(item)
             if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri':
-                audio = InputAudio(data=item.data_uri, format=item.format)
+                audio = InputAudio(data=item.data_uri, format=audio_format)
             else:
-                audio = InputAudio(data=item.base64, format=item.format)
+                audio = InputAudio(data=item.base64, format=audio_format)
             return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
         elif item.is_document:
             if not profile.get('openai_chat_supports_document_input', True):
@@ -1425,13 +1436,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
         """Map an AudioUrl to a chat completion audio content part."""
         profile = self.profile
+        # Checked before downloading: the format comes from `item.media_type`, not the response.
+        audio_format = chat_audio_format(item)
         data_format = 'base64_uri' if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
-        assert downloaded_item['data_type'] in (
-            'wav',
-            'mp3',
-        ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+        audio = InputAudio(data=downloaded_item['data'], format=audio_format)
         return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
 
     async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
