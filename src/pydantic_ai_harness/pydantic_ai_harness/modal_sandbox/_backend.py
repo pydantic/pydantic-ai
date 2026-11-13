@@ -691,8 +691,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             async def collect() -> None:
                 try:
                     # Without a timeout, nothing else bounds reading after the command exits.
-                    drain_grace = _OUTPUT_DRAIN_GRACE if timeout is None else None
-                    results.append(await _collect_output(process, snapshots, exit_event, drain_grace))
+                    results.append(await _collect_output(process, snapshots, exit_event, bound_drain=timeout is None))
                 except Exception as error:
                     errors.append(error)
                     exit_event.set()
@@ -788,11 +787,12 @@ async def _collect_output(
     process: modal.container_process.ContainerProcess[bytes],
     snapshots: list[str],
     exit_event: anyio.Event,
-    drain_grace: float | None,
+    *,
+    bound_drain: bool,
 ) -> tuple[str, str, int, float]:
     """Drain both streams and wait as one owned operation.
 
-    With a `drain_grace`, stop reading that many seconds after the process exits and return what was read.
+    With `bound_drain`, stop reading `_OUTPUT_DRAIN_GRACE` seconds after the process exits and return what was read.
     """
     pieces: tuple[list[str], list[str]] = ([], [])
     received = 0
@@ -848,9 +848,9 @@ async def _collect_output(
                 read_error = error
                 group.cancel_scope.cancel()
             else:
-                if drain_grace is not None:
+                if bound_drain:
                     # A background child can hold the streams open past the exit; read on briefly.
-                    group.cancel_scope.deadline = anyio.current_time() + drain_grace
+                    group.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
 
         group.start_soon(collect, process.stdout, 0)
         group.start_soon(collect, process.stderr, 1)
