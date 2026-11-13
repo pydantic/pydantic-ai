@@ -1070,15 +1070,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # is the application's, as `emit` treats their events.
         if owner is not None and owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
             capability_id = None
+        # Read before stamping, which converts what a capability below operator authority built by hand.
+        hand_built = None if capability_id is None else hand_built_capability_speech(pending.messages)
         if capability_id is not None:
             ceiling: _messages.Authority = 'operator' if owner is None else owner._effective_authority  # pyright: ignore[reportPrivateUsage]
             # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
             # never reach the model with more authority than the capability has.
             stamp_capability_parts(pending.messages, capability_id, ceiling)
         self.pending_messages.append(pending)
-        if capability_id is not None and (reason := hand_built_capability_speech(pending.messages)):
+        if hand_built is not None:
             warnings.warn(
-                f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
+                f'Capability {capability_id!r} enqueued {hand_built}. Define a `CapabilityPart` subclass for what it '
                 'says, so the framework renders it in the right voice and your code can find it again by type: '
                 'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
                 UserWarning,
