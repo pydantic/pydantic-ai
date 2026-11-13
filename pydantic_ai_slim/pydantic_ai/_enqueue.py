@@ -184,38 +184,46 @@ def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str,
                     _stamp_capability_part(part, capability_id, ceiling)
 
 
-_FRAMEWORK_STATE_PARTS = (
-    InstructionDeltaPart,
-    InstructionBaselinePart,
-    ToolAvailabilityDeltaPart,
-    CapabilityLoadDeltaPart,
-    ModelSettingsDeltaPart,
-)
-"""The framework's records of the run's own state, which the model reads in the application's voice."""
-
-
 def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
-    """`part` as a capability part at `ceiling` if it's a prompt part that would speak with more authority."""
-    if ceiling != 'operator' and isinstance(part, _FRAMEWORK_STATE_PARTS):
-        raise UserError(
-            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue '
-            f"`{type(part).__name__}`, which the model reads in the application's voice."
-        )
+    """`part` as a capability below operator authority may send it, or `UserError` if it can't send it at all.
+
+    An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice:
+    a capability part is lowered when it's stamped, a system prompt becomes an instruction at `ceiling`, user text at
+    `'none'` becomes data, `'no_output'` retry feedback becomes user text, and a plain tool return is tool output
+    whatever its sender. Anything else is refused, such as the framework's records of the run's own state, which the
+    model reads in the application's voice, a summary standing in for earlier history, a typed tool return the
+    framework acts on, and speech below `'user'`.
+    """
+    if ceiling == 'operator':
+        return part
     source = CapabilitySource(capability_id, authority=ceiling)
-    if ceiling != 'operator' and isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+    if isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
         # `'no_output'` feedback is the one retry the model reads in the application's voice: below it, it's user text.
         part = _client_safe_retry_feedback(part)
-    if isinstance(part, SystemPromptPart) and ceiling != 'operator':
-        return _CapabilityInstructionPart(
-            content=OperatorText(part.content),
-            source=source,
-            scope=part.scope,
-            metadata=part.metadata,
-            timestamp=part.timestamp,
-        )
-    if isinstance(part, UserPromptPart) and ceiling == 'none':
-        return _CapabilityContentPart(content=part.content, source=source, timestamp=part.timestamp)
-    return part
+    match part:
+        case CapabilityPart() | RetryFeedbackPart() | RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            return part
+        case SystemPromptPart():
+            return _CapabilityInstructionPart(
+                content=OperatorText(part.content),
+                source=source,
+                scope=part.scope,
+                metadata=part.metadata,
+                timestamp=part.timestamp,
+            )
+        case UserPromptPart():
+            if ceiling == 'none':
+                return _CapabilityContentPart(content=part.content, source=source, timestamp=part.timestamp)
+            return part
+        case SpeechPart() if ceiling == 'user':
+            return part
+        case ToolReturnPart() if type(part) is ToolReturnPart:
+            return part
+        case _:
+            raise UserError(
+                f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue '
+                f'`{type(part).__name__}`, which only a capability with operator authority can send.'
+            )
 
 
 def _stamp_capability_part(part: CapabilityPart, capability_id: str, ceiling: Authority) -> None:

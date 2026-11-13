@@ -1012,7 +1012,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         the capability's [`authority`][pydantic_ai.capabilities.AbstractCapability] ceiling: a part whose source has more
         is stored with the capability as its source, a `SystemPromptPart` below `'operator'` becomes an instruction part
         lowered to the ceiling, and user content or a `UserPromptPart` at `'none'` becomes data framed as the
-        capability's.
+        capability's. Below `'operator'`, a request part with no such treatment, such as a framework state record, a
+        `CompactionPart` or a typed tool return, raises `UserError`, as does a `SpeechPart` at `'none'`.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
