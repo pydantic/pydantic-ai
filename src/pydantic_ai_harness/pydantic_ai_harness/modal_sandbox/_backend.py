@@ -101,7 +101,7 @@ _PARTIAL_OUTPUT_LIMIT = 65_536
 # Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
 # process's memory, so reading stops once combined stdout and stderr pass this.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
-# Like the local backend: seconds output is still read after the command exits, since a
+# Like the local backend: seconds that output is still read after the command exits, since a
 # background child can hold the output streams open.
 _OUTPUT_DRAIN_GRACE = 2.0
 logger = logging.getLogger(__name__)
