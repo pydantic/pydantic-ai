@@ -1008,3 +1008,11 @@ agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 The toolset emits Pydantic AI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.
+
+### VideoGen
+
+[`pydantic-ai-videogen`](https://pypi.org/project/pydantic-ai-videogen/) provides [VideoGen](https://videogen.io/videogen-mcp) API tools for generating videos and media, editing projects, and exporting MP4 files. Its `create_videogen_tools` factory returns native Pydantic AI [`Tool`][pydantic_ai.tools.Tool] objects that can be passed to an agent or wrapped in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset].
+
+Install `pydantic-ai-videogen` and set `VIDEOGEN_API_KEY` in your environment. Use the `include` argument to expose selected tools, such as the `get_me` account read and `list_files` file read. Generation and editing use VideoGen account credits, so applications should obtain user approval before invoking those tools.
+
+See the [package documentation](https://github.com/video-gen/video-workflow-recipes/tree/main/integrations/pydantic-ai-videogen) for setup and usage. The integration is maintained by VideoGen.
