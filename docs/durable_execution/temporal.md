@@ -1062,7 +1062,9 @@ Carrying usage back across durable boundaries is discussed in
 [pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886), and what nested runs inherit
 from their parent in [pydantic-ai#13135](https://github.com/pydantic/pydantic-ai/issues/13135).
 
-An exception raised by the tool body fails the child workflow. The child is retried according to its
+Control-flow exceptions the tool body raises, like [`ModelRetry`][pydantic_ai.exceptions.ModelRetry],
+[`ToolFailed`][pydantic_ai.exceptions.ToolFailed] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
+cross back to the parent as the tool's result. Any other exception fails the child workflow. The child is retried according to its
 `retry_policy`, except on errors a retry can't fix, such as a
 [`UserError`][pydantic_ai.exceptions.UserError], which an activity doesn't retry either. The parent's
 tool call then raises Temporal's `ChildWorkflowError`, not the `ActivityError` a failed activity raises,
@@ -1190,7 +1192,7 @@ When using Temporal, it's recommended to not use [transport retries](../retries.
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
 
-An exception a tool raises reaches workflow code as Temporal's `ActivityError`, or as a `ChildWorkflowError` for a tool that runs as a [child workflow](#child-workflows), with the original exception's class name in `cause.type`.
+An exception a tool raises, other than a control-flow exception like `ModelRetry` or `ToolFailed`, reaches workflow code as Temporal's `ActivityError`, or as a `ChildWorkflowError` for a tool that runs as a [child workflow](#child-workflows), with the original exception's class name in `cause.type`.
 
 A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
 
