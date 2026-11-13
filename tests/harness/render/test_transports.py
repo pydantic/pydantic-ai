@@ -158,21 +158,17 @@ async def test_function_arguments_are_revalidated_after_the_json_boundary() -> N
     assert 'typed-arguments__function_toolset__<agent>.call_tool' in context.task_names
 
 
-class AliasedPlace(BaseModel):
-    city: str = Field(alias='cityName')
-
-
 def aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     del info
     if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
         return ModelResponse(parts=[TextPart('aliased arguments arrived')])
-    args = {'guestName': 'Ada', 'place': {'cityName': 'Paris'}}
+    args = {'guestName': 'Ada', 'nights': 2}
     return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
 
 
 async def test_aliased_function_arguments_are_revalidated_after_the_json_boundary() -> None:
-    """Render's JSON codec ships validated arguments by Python name, nested models included."""
-    seen: list[tuple[str, AliasedPlace]] = []
+    """Render's JSON codec ships validated arguments by Python name, while the tool's schema reads `guestName`."""
+    seen: list[tuple[str, int]] = []
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
         FunctionModel(aliased_argument_model),
@@ -182,8 +178,8 @@ async def test_aliased_function_arguments_are_revalidated_after_the_json_boundar
     )
 
     @agent.tool_plain
-    async def book(guest: Annotated[str, Field(alias='guestName')], place: AliasedPlace) -> str:
-        seen.append((guest, place))
+    async def book(guest: Annotated[str, Field(alias='guestName')], nights: int) -> str:
+        seen.append((guest, nights))
         return 'ok'
 
     async def run_agent_impl(ctx: TaskContext) -> str:
@@ -196,7 +192,7 @@ async def test_aliased_function_arguments_are_revalidated_after_the_json_boundar
     assert inspect.isawaitable(pending)
 
     assert await pending == 'aliased arguments arrived'
-    assert seen == [('Ada', AliasedPlace(cityName='Paris'))]
+    assert seen == [('Ada', 2)]
     assert 'aliased-arguments__function_toolset__<agent>.call_tool' in context.task_names
 
 

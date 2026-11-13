@@ -73,6 +73,8 @@ class FunctionSchema:
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
+    revalidator: SchemaValidator | None = None
+    """`validator` reading the top-level arguments by Python name only, set when one of them has an alias."""
 
     def revalidate(self, args_dict: dict[str, Any], *, context: Any = None) -> dict[str, Any]:
         """Validate arguments that `validator` already produced, after they crossed a boundary as JSON.
@@ -81,16 +83,19 @@ class FunctionSchema:
         unwrapped input when the model also has a field called `name` that accepts a dict. Here the
         envelope's content is validated as the model's input, which is what the first validation produced.
 
-        The arguments are keyed by Python name, and so are nested values an engine serializes by name, while
-        `validator` reads aliases. When that reading fails, they're validated again by name.
+        Otherwise they're keyed by Python name, while `validator` reads a parameter's alias. When that reading
+        fails, `revalidator` reads them by name.
         """
-        value = args_dict if self.single_arg_name is None else _Revalidated(args_dict[self.single_arg_name])
+        if self.single_arg_name is not None:
+            return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
         try:
-            return self.validator.validate_python(value, context=context)
+            return self.validator.validate_python(args_dict, context=context)
         except ValidationError:
-            # Not `by_name=True` up front: where an alias is missing but another field ships under its
-            # Python name, reading by name would change arguments the alias reading gets right.
-            return self.validator.validate_python(value, context=context, by_name=True)
+            # Not the `revalidator` up front: where a parameter's alias is another parameter's name, reading
+            # by name would change arguments the alias reading accepts.
+            if self.revalidator is None:
+                raise
+            return self.revalidator.validate_python(args_dict, context=context)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -204,6 +209,7 @@ def function_schema(
     # PluggableSchemaValidator is api compatible with SchemaValidator
     schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = schema_generator().generate(schema)
+    revalidator = _by_name_revalidator(schema, function, core_config, config_wrapper.plugin_settings)
 
     if single_arg_keys is not None:
         # For a single model-like arg the tool's JSON schema *is* the model's, so its property names
@@ -254,7 +260,50 @@ def function_schema(
         is_async=is_async_callable(function),
         function=function,
         return_schema=return_schema,
+        revalidator=revalidator,
     )
+
+
+def _by_name_revalidator(
+    schema: core_schema.CoreSchema,
+    function: Callable[..., Any],
+    core_config: core_schema.CoreConfig,
+    plugin_settings: dict[str, object] | None,
+) -> SchemaValidator | None:
+    """Build `FunctionSchema.revalidator` from the validated arguments' `schema`."""
+    by_name_schema = _read_arguments_by_name(schema)
+    if by_name_schema is None:
+        return None
+    validator = create_schema_validator(
+        by_name_schema,
+        function,
+        function.__module__,
+        function.__qualname__,
+        'validate_call',
+        core_config,
+        plugin_settings,
+    )
+    # PluggableSchemaValidator is api compatible with SchemaValidator
+    return cast(SchemaValidator, validator)
+
+
+def _read_arguments_by_name(schema: core_schema.CoreSchema) -> core_schema.CoreSchema | None:
+    """`schema` reading its top-level arguments by Python name only, or `None` when none of them has an alias.
+
+    Only the arguments' own config changes: nested models, dataclasses and `TypedDict`s keep theirs, which read aliases.
+    """
+    if schema['type'] == 'definitions':
+        by_name_arguments = _read_arguments_by_name(schema['schema'])
+        if by_name_arguments is None:
+            return None
+        by_name_definitions = schema.copy()
+        by_name_definitions['schema'] = by_name_arguments
+        return by_name_definitions
+    if schema['type'] != 'typed-dict' or not any('validation_alias' in f for f in schema['fields'].values()):
+        return None
+    by_name_arguments = schema.copy()
+    by_name_arguments['config'] = {**schema.get('config', {}), 'validate_by_alias': False, 'validate_by_name': True}
+    return by_name_arguments
 
 
 @dataclass(kw_only=True)

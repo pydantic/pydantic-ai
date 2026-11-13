@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
 import pytest
-from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
@@ -199,6 +199,14 @@ class Revision(BaseModel):
     number: int = Field(alias='draft')
 
 
+class Card(BaseModel):
+    id: str = Field(alias='cardId')
+
+
+class Bank(BaseModel):
+    id: str = Field(alias='bankId')
+
+
 def alias(city: Annotated[str, Field(alias='cityName')]) -> None:
     pass
 
@@ -239,6 +247,14 @@ def excluded_field(revision: Revision, guests: int) -> None:
     pass
 
 
+def alias_excluded_field(revision: Revision, guests: Annotated[int, Field(alias='guestCount')]) -> None:
+    pass
+
+
+def alias_union(payment: Card | Bank, guests: Annotated[int, Field(alias='guestCount')]) -> None:
+    pass
+
+
 @dataclass(frozen=True)
 class RevalidationCase:
     id: str
@@ -247,7 +263,12 @@ class RevalidationCase:
     wire: Literal['by_name', 'by_alias']
     """How the engine writes nested models: Render and Azure Durable Task by Python name, Temporal by alias."""
     shipped: dict[str, Any]
+    rejected: str | None = None
+    """Why revalidation rejects the shipped arguments: a nested value arrives keyed by Python name, read only by alias."""
 
+
+NESTED_BY_NAME = 'nested models shipped by Python name: https://github.com/pydantic/pydantic-ai/issues/13431'
+NO_ALIASES = 'TypedDict and dataclass values carry no aliases: https://github.com/pydantic/pydantic-ai/issues/13440'
 
 REVALIDATION_CASES = [
     RevalidationCase('alias', alias, {'cityName': 'Paris'}, 'by_name', {'city': 'Paris'}),
@@ -263,14 +284,23 @@ REVALIDATION_CASES = [
         {'venue': {'roomName': 'A1'}, 'guests': 2},
         'by_alias',
         {'venue': {'room': 'A1'}, 'guests': 2},
+        rejected=NO_ALIASES,
     ),
-    RevalidationCase('single-typed-dict', single_typed_dict, {'roomName': 'A1'}, 'by_alias', {'venue': {'room': 'A1'}}),
+    RevalidationCase(
+        'single-typed-dict',
+        single_typed_dict,
+        {'roomName': 'A1'},
+        'by_alias',
+        {'venue': {'room': 'A1'}},
+        rejected=NO_ALIASES,
+    ),
     RevalidationCase(
         'stdlib-dataclass',
         stdlib_dataclass,
         {'seat': {'rowNumber': 3}, 'guests': 2},
         'by_alias',
         {'seat': {'row': 3}, 'guests': 2},
+        rejected=NO_ALIASES,
     ),
     RevalidationCase(
         'model-by-name',
@@ -278,6 +308,7 @@ REVALIDATION_CASES = [
         {'place': {'cityName': 'Paris'}, 'guests': 2},
         'by_name',
         {'place': {'city': 'Paris'}, 'guests': 2},
+        rejected=NESTED_BY_NAME,
     ),
     RevalidationCase(
         'model-by-alias',
@@ -293,17 +324,41 @@ REVALIDATION_CASES = [
         'by_alias',
         {'revision': {'draft': 7}, 'guests': 2},
     ),
+    RevalidationCase(
+        'alias-excluded-field',
+        alias_excluded_field,
+        {'revision': {'draft': 7}, 'guestCount': 2},
+        'by_alias',
+        {'revision': {'draft': 7}, 'guests': 2},
+    ),
+    RevalidationCase(
+        'alias-union-by-alias',
+        alias_union,
+        {'payment': {'bankId': 'B1'}, 'guestCount': 2},
+        'by_alias',
+        {'payment': {'bankId': 'B1'}, 'guests': 2},
+    ),
+    RevalidationCase(
+        'alias-union-by-name',
+        alias_union,
+        {'payment': {'bankId': 'B1'}, 'guestCount': 2},
+        'by_name',
+        {'payment': {'id': 'B1'}, 'guests': 2},
+        rejected=NESTED_BY_NAME,
+    ),
 ]
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REVALIDATION_CASES])
 async def test_revalidate_function_call_reads_aliased_arguments_as_they_were_validated(case: RevalidationCase):
-    """Arguments keyed by Python name come back as they were validated, even where the model's schema reads an alias.
+    """Arguments keyed by Python name come back as they were validated, even where a parameter's schema reads an alias.
 
     Validated arguments are keyed by Python name. Each engine ships them as its serializer writes them, and
-    the model-facing validator reads aliases only. Arguments it already reads correctly, like a nested model
-    shipped by alias, keep that reading: for `excluded-field`, reading by name would give `Revision.draft`
-    the value of `number`, which ships under the key `draft`. Not a VCR test: no model request is involved.
+    the model-facing validator reads aliases only. When that reading fails, only the parameters are read by
+    Python name: nested values keep reading aliases, so they come back as the tool's hooks saw them. Read by
+    name, `Revision.draft` in `alias-excluded-field` would get the value of `number`, which ships under the key
+    `draft`, and the payment in `alias-union-by-name` would become a `Card`. Not a VCR test: no model request
+    is involved.
     """
     toolset = FunctionToolset[None]([case.function])
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
@@ -315,10 +370,12 @@ async def test_revalidate_function_call_reads_aliased_arguments_as_they_were_val
     else:
         assert to_jsonable_python(validated, by_alias=True) == case.shipped
 
-    params = await revalidate_function_call(
-        toolset, ToolsetCallToolParams(name, tool_args=case.shipped, ctx=ctx, tool=tool), engine_spec=SPEC
-    )
-    assert params.tool_args == validated
+    params = ToolsetCallToolParams(name, tool_args=case.shipped, ctx=ctx, tool=tool)
+    if case.rejected is None:
+        assert (await revalidate_function_call(toolset, params, engine_spec=SPEC)).tool_args == validated
+    else:
+        with pytest.raises(ValidationError, match='Field required'):
+            await revalidate_function_call(toolset, params, engine_spec=SPEC)
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():
