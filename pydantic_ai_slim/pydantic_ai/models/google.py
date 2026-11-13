@@ -1735,7 +1735,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield event
             for event in self._map_trailing_grounding():
                 yield event
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
 
     def _map_chunk(self, chunk: GenerateContentResponse) -> Iterator[ModelResponseStreamEvent]:
