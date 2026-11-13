@@ -131,6 +131,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                 and (self._computer_blocks or native_computer.answers(self._current_block))
             ):
                 # The stream stopped early: a call after the ones that arrived may be missing, and they run as one.
+                # OpenAI doesn't raise here: its computer calls each arrive whole, while these toolset calls are a batch.
                 raise UnexpectedModelBehavior(
                     'The response ended before Claude finished its computer use calls, so none of them ran.'
                 )

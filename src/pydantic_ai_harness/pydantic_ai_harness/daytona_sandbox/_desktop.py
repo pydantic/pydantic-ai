@@ -9,7 +9,8 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 - `mouse.scroll`'s amount is wheel clicks; `left` and `right` send X buttons 6 and 7.
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
-- `keyboard.type` types Unicode up to U+FFFF, newlines as Enter, and drops emoji and anything beyond.
+- `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
+  emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
   scroll lock and media keys.
 - Its numpad names are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
@@ -182,41 +183,37 @@ class DaytonaDesktop:
     """
 
     def __init__(self, computer_use: Callable[[], AsyncComputerUse]):
-        self._attached = computer_use
-
-    @property
-    def _computer_use(self) -> AsyncComputerUse:
-        return self._attached()
+        self._computer_use = computer_use
 
     async def _check_running(self) -> None:
         """Refuse an action on a desktop that stopped, before sending it any input.
 
         The sandbox may stop and start between calls, and input sent before its desktop starts again breaks it.
         """
-        status = await self._computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
+        status = await self._computer_use().get_status(request_timeout=_REQUEST_TIMEOUT)
         if status.status != 'active':
             raise WorkspaceError(f"Daytona's desktop is not running: its status is {status.status!r}.")
 
     async def display_size(self) -> tuple[int, int]:
-        displays = (await self._computer_use.display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
+        displays = (await self._computer_use().display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
         display = next((display for display in displays if display.is_active), None)
         if display is None or not display.width or not display.height:
             raise WorkspaceError(f'Daytona reported no display size: {displays!r}')
         return display.width, display.height
 
     async def screenshot(self) -> bytes:
-        response = await self._computer_use.screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
+        response = await self._computer_use().screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def zoom(self, region: Region) -> bytes:
         area = ScreenshotRegion(
             x=region.left, y=region.top, width=region.right - region.left, height=region.bottom - region.top
         )
-        response = await self._computer_use.screenshot.take_region(area, request_timeout=_REQUEST_TIMEOUT)
+        response = await self._computer_use().screenshot.take_region(area, request_timeout=_REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def cursor_position(self) -> Point:
-        position = await self._computer_use.mouse.get_position(request_timeout=_REQUEST_TIMEOUT)
+        position = await self._computer_use().mouse.get_position(request_timeout=_REQUEST_TIMEOUT)
         if position.x is None or position.y is None:
             raise WorkspaceError(f'Daytona reported no pointer position: {position!r}')
         return Point(x=position.x, y=position.y)
@@ -234,7 +231,7 @@ class DaytonaDesktop:
 
         A failure that leaves keys down says which, so the model doesn't type on with them held.
         """
-        keyboard = self._computer_use.keyboard
+        keyboard = self._computer_use().keyboard
         pressed: list[str] = []
         try:
             for key in keys:
@@ -253,7 +250,7 @@ class DaytonaDesktop:
         for start in range(0, amount, _SCROLLED_PER_REQUEST):
             clicks = min(_SCROLLED_PER_REQUEST, amount - start)
             scroll = partial(
-                self._computer_use.mouse.scroll,
+                self._computer_use().mouse.scroll,
                 x,
                 y,
                 direction,
@@ -268,8 +265,8 @@ class DaytonaDesktop:
     async def _type(self, text: str) -> None:
         """Type `text`, `_TYPED_PER_REQUEST` characters at a time, pressing Tab for each tab, which `type` refuses."""
         if any(ord(character) > 0xFFFF for character in text):
-            raise UnsupportedActionError("Daytona's desktop cannot type emoji or other characters beyond U+FFFF.")
-        keyboard = self._computer_use.keyboard
+            raise UnsupportedActionError("Daytona's desktop cannot type characters beyond U+FFFF, such as most emoji.")
+        keyboard = self._computer_use().keyboard
         for index, segment in enumerate(text.split('\t')):
             if index:
                 await _send_input(partial(keyboard.press, 'tab', request_timeout=_REQUEST_TIMEOUT))
@@ -279,7 +276,7 @@ class DaytonaDesktop:
 
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()
-        mouse = self._computer_use.mouse
+        mouse = self._computer_use().mouse
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 button, held = _button(button), _keys(modifiers)
@@ -311,7 +308,7 @@ class DaytonaDesktop:
                 raise UnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")
 
     async def _drag(self, path: Sequence[Point]) -> None:
-        mouse, start, end = self._computer_use.mouse, path[0], path[-1]
+        mouse, start, end = self._computer_use().mouse, path[0], path[-1]
         try:
             await _send_input(partial(mouse.down, start.x, start.y, request_timeout=_REQUEST_TIMEOUT))
             await anyio.sleep(DRAG_PRESS_PAUSE)
@@ -329,7 +326,7 @@ class DaytonaDesktop:
         others = [name for name in names if name not in modifiers]
         for _ in range(repeat):
             if len(others) == 1:
-                keyboard = self._computer_use.keyboard
+                keyboard = self._computer_use().keyboard
                 await _send_input(partial(keyboard.press, others[0], modifiers, request_timeout=_REQUEST_TIMEOUT))
             else:  # only modifiers, or several other keys: `press` takes one
                 async with self._holding(names):

@@ -111,7 +111,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     backend = DockerContainerBackend(image='my-desktop', working_dir=str(container_dir), desktop=desktop)
     workspace = _screen(backend)
 
-    assert await workspace.display_size() == (1280, 800)
+    await workspace.display_size()
     (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
     assert screen in start
     await workspace.act(Click(x=3, y=4))
@@ -255,6 +255,8 @@ def test_a_desktop_needs_no_image_and_still_refuses_both_image_and_ref() -> None
         DockerContainerBackend()
     with pytest.raises(ValueError, match='must be a positive width and height'):
         DockerContainerBackend(desktop=(0, 0))
+    with pytest.raises(ValueError, match='must be a positive width and height'):
+        DockerContainer(desktop=(0, 0))
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:

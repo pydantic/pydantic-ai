@@ -743,14 +743,22 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
     assert request['tools'][0]['type'] == 'function'
 
 
-def test_an_azure_client_keeps_the_function_tool() -> None:
-    """Azure sends `pending_safety_checks: null`, which the native mapping can't read, so an Azure client opts out."""
+def test_an_azure_client_keeps_the_function_tool_and_the_gateway_gets_the_native_one() -> None:
+    """Azure sends `pending_safety_checks: null`, which the native mapping can't read, so an Azure client opts out.
+
+    The gateway shares Azure's other opt-outs but not this one.
+    """
     from openai import AsyncAzureOpenAI
 
+    from pydantic_ai.providers.gateway import gateway_provider
+
     client = AsyncAzureOpenAI(api_key='test', azure_endpoint='https://example.openai.azure.com', api_version='v1')
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    native_tools = model.profile.get('supported_native_tools')
-    assert native_tools is not None and ComputerTool not in native_tools
+    azure = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    gateway = OpenAIResponsesModel(
+        'gpt-5.5', provider=gateway_provider('openai', api_key='gw-key', base_url='https://gateway.example.com')
+    )
+    assert ComputerTool not in (azure.profile.get('supported_native_tools') or ())
+    assert ComputerTool in (gateway.profile.get('supported_native_tools') or ())
 
 
 async def test_computer_calls_from_another_provider_replay_as_function_calls(allow_model_requests: None) -> None:

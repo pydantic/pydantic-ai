@@ -73,6 +73,11 @@ def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message
         DaytonaSandbox(**settings)
 
 
+def test_invalid_desktop_size_fails_at_construction() -> None:
+    with pytest.raises(ValueError, match='`desktop` must be a positive width and height'):
+        DaytonaSandbox(desktop=(0, 800))
+
+
 @pytest.mark.parametrize('env', [{'PORT': 3000}, {1: 'one'}, {'TOKEN': None}])
 def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
     with pytest.raises(TypeError, match='env keys and values must be strings'):
