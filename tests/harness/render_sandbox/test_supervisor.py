@@ -14,6 +14,8 @@ from pathlib import Path
 import anyio
 import pytest
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -33,9 +35,6 @@ pytestmark = [
     pytest.mark.skipif(sys.platform == 'win32', reason='supervisor requires POSIX process groups'),
     pytest.mark.subprocess(reason='Verify real supervisor signal ownership and process-group cleanup'),
 ]
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait for something the test caused, so it only ever catches a hang, never a slow runner."""
 
 
 @pytest.fixture(autouse=True)

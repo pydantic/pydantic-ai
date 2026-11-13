@@ -50,6 +50,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts
@@ -65,9 +66,6 @@ if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
     from .mcp_server import mcp as test_mcp_server
 
 T = TypeVar('T')
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds the waits on the in-process MCP server and its handshake, so it only ever catches a hang, never a slow runner."""
 
 
 def build_run_context(deps: T, run_step: int = 0, max_retries: int = 0) -> RunContext[T]:

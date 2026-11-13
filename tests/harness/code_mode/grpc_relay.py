@@ -23,11 +23,10 @@ from grpclib.protocol import H2Protocol
 from grpclib.server import Server, Stream
 from pydantic_monty._binary import find_monty_binary  # the lookup `AsyncMonty()` uses for local workers
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 SESSION_METHOD = '/monty.v1.MontySession/Session'
 _LENGTH_PREFIX = struct.Struct('<I')
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait for something the test caused, so it only ever catches a hang, never a slow runner."""
 
 
 class _RawCodec(CodecBase):

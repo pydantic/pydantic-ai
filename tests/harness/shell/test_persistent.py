@@ -33,13 +33,11 @@ from pydantic_ai_harness.shell import (
     Shell,
 )
 from pydantic_ai_harness.shell._jobs import Job
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool, call_tools
 
 pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait for something the test caused, so it only ever catches a hang, never a slow runner."""
 
 
 async def receive_exactly(stream: SocketStream, size: int) -> bytes:

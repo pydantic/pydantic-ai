@@ -49,11 +49,9 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait for something the test caused, so it only ever catches a hang, never a slow runner."""
 
 
 def _env_toolset(

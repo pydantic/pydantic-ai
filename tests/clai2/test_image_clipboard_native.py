@@ -12,9 +12,7 @@ from PIL import Image
 from pydantic_clai2.ui.prompt import text_clipboard
 from pydantic_clai2.ui.prompt.image_input import clipboard_images, read_image
 from pydantic_clai2.ui.prompt.text_clipboard import copy_command, run_copy
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait only to catch a hang: far longer than any stall of a loaded runner, so it never decides a test."""
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 @pytest.mark.skipif(os.environ.get('CLAI_TEST_CLIPBOARD') != '1', reason='requires an isolated desktop clipboard')

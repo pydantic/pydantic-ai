@@ -34,10 +34,8 @@ from pydantic_clai2.ui.prompt.image_input import (
     read_image,
     read_images,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import IsStr, no_leaked_tasks
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait only to catch a hang: far longer than any stall of a loaded runner, so it never decides a test."""
 
 
 @pytest.fixture

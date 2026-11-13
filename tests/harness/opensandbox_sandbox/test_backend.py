@@ -33,15 +33,13 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ...conftest import no_leaked_tasks
 from . import fake_opensandbox
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
 
 _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
-
-READINESS_WAIT_TIMEOUT = 300
-"""Longer than any stall seen on a CI runner, so that only a hang waits this long."""
 
 
 def _create(server: FakeOpenSandbox, working_dir: str, **kwargs: Any) -> OpenSandboxBackend:

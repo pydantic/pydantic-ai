@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 from .conftest import renderless_environment
 
 
@@ -41,9 +43,6 @@ class LocalTaskRun(BaseModel):
     root_task_run_id: str = Field(alias='rootTaskRunId')
     results: list[object] | None = None
 
-
-READINESS_WAIT_TIMEOUT = 300
-"""Bounds a wait for a run the test started, so it only ever catches a hang, never a slow runner."""
 
 _JSON_VALUE = TypeAdapter(object)
 _LOCAL_TASKS = TypeAdapter(list[LocalTask])
