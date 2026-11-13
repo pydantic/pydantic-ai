@@ -4,7 +4,23 @@ Give an agent a tool that locates and returns Pydantic AI documentation on deman
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
-![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](https://pydantic.dev/docs/ai/img/harness/pydantic-ai-docs.svg)
+```mermaid
+flowchart TB
+    accTitle: Pydantic AI Docs: read the current docs page on demand
+    accDescr: The model calls read_pyai_docs(topic) on the PydanticAIDocs capability and gets the full page, with model aliases replaced. The capability first reads the workspace checkout at local_docs_path, when the page exists there, and otherwise the pydantic-ai main branch on GitHub. If neither has the page, the capability returns an error naming the path and URL it tried.
+    model(["model"])
+    docs["PydanticAIDocs()<br/>read_pyai_docs(topic)<br/>replaces model aliases"]:::capability
+    checkout["workspace<br/>checkout at<br/>local_docs_path"]
+    github["pydantic-ai main<br/>branch on GitHub"]:::external
+    error["error naming<br/>the path and URL<br/>it tried"]:::blocked
+    model <-->|"topic, full page"| docs
+    docs -->|"first, when<br/>the page exists"| checkout
+    docs -->|"otherwise"| github
+    docs -.-x|"neither has the page"| error
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -17,8 +33,7 @@ the agent rarely needs in full and pins a snapshot that drifts from `main`.
 `PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and
 returns it in full, with its model aliases resolved -- nothing is bundled into context up front.
 Each call resolves the topic from a configured local checkout first, then falls back to fetching
-the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout
-(the remote fallback needs network access).
+the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
 
 Topics: `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`.
 
@@ -38,7 +53,7 @@ result = agent.run_sync('Read the toolsets docs, then explain how to build a Fun
 print(result.output)
 ```
 
-A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, every call goes to the remote source and no workspace is needed.
+A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, no workspace is needed.
 
 ## Resolution order
 
@@ -63,7 +78,7 @@ always reads `main`, so it is the fresh fallback.
 
 `local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable.
 `~` is not expanded -- use an absolute workspace path or a path relative to its working
-directory. With neither path set, every call goes straight to the remote source.
+directory.
 
 ## Configuration
 

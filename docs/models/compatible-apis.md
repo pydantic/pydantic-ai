@@ -387,13 +387,30 @@ agent = Agent(model)
 
 The name is recorded as the [`provider_name`][pydantic_ai.messages.ModelResponse.provider_name] of every response and in OpenTelemetry attributes, and it decides which data from earlier responses is sent back to the service: response and item IDs only go back to a provider with the same name, and encrypted reasoning only to one with the same [canonical system](../message-history.md#sending-history-to-another-provider), which defaults to the name. So choose a name that stays the same for the service.
 
-Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways use, gets that vendor's model profile, and any other name the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile).
+Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways and Hugging Face repo ids use, gets the profile of the model family that vendor or organization makes, whatever its case, so `Qwen/Qwen3.8-27B` and `qwen/qwen3.8-27b` get the same profile and `openai/gpt-oss-120b` gets the gpt-oss one. Any other name gets the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile).
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
+
+## Response data Pydantic AI doesn't map
+
+OpenAI-compatible APIs often return more than the Chat Completions API defines: vendor fields on the response, choice or message, or a message's `content` as a list of parts rather than a string. Mistral models on the Albert API, for example, return `[{"type": "text", "text": "..."}, {"type": "reference", "reference_ids": [1]}]` when an answer carries references. `OpenAIChatModel` joins the text parts into the response's text and ignores the rest.
+
+To keep that data, set [`openai_include_unmapped_response_data`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_include_unmapped_response_data]. It's stored, exactly as received, in [`provider_details['unmapped']`][pydantic_ai.messages.ModelResponse.provider_details], keyed by where it came from:
+
+```python {test="skip"}
+{
+    'response': {...},  # vendor fields on the completion
+    'choice': {...},  # vendor fields on the choice
+    'message': {...},  # vendor fields on the message
+    'content_parts': [{'type': 'reference', 'reference_ids': [1]}],
+}
+```
+
+A streamed response collects it per chunk, as `{'chunks': [...]}` with `delta` in place of `message`, once the stream ends. Fields Pydantic AI already maps, like `reasoning_content`, aren't repeated. The data is for reading only: it's kept with the message history but never sent back to a provider.
 
 ## Model profile
 

@@ -6,6 +6,7 @@ import asyncio
 import gc
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,8 @@ import pytest
 from e2b.exceptions import AuthenticationException, SandboxException
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -23,6 +26,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceBackend,
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
@@ -73,11 +77,80 @@ async def test_destroy_is_idempotent_and_maps_rejected_credentials(fake_e2b: Fak
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await provider.destroy(ref)
     assert str(exc.value) == (
-        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
     )
     fake_e2b.kill_error = AuthenticationException('API key is required, please visit the API Keys tab')
     with pytest.raises(WorkspaceUnavailableError, match=r'^No E2B API key found\. Set E2B_API_KEY'):
         await provider.destroy(ref)
+
+
+async def test_client_reaches_create_attach_and_destroy(fake_e2b: FakeE2B) -> None:
+    capability = E2BSandbox(client=fake_e2b.client('a'))
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    new = capability.get_workspace(ctx, ref=None)
+    assert isinstance(new, E2BSandboxBackend)
+    await new.get_sandbox()
+
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    for backend in (capability.get_workspace(ctx, ref=ref), capability.backend(ref)):
+        assert isinstance(backend, E2BSandboxBackend)
+        await backend.get_sandbox()
+    await capability.destroy(ref)
+    assert fake_e2b.clients == ['a', 'a', 'a', 'a']
+
+
+async def test_no_client_leaves_it_to_the_environment(fake_e2b: FakeE2B) -> None:
+    capability = E2BSandbox()
+    await E2BSandboxBackend().get_sandbox()
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    await capability.backend(ref).get_sandbox()
+    await capability.destroy(ref)
+    assert fake_e2b.clients == [None, None, None]
+
+
+async def test_a_capability_can_use_each_users_client_from_deps(fake_e2b: FakeE2B) -> None:
+    @dataclass
+    class EachUsersClient(AbstractCapability[str]):
+        def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return E2BSandboxBackend(client=fake_e2b.client(ctx.deps), ref=ref)
+
+    agent = Agent(TestModel(call_tools=['run_command']), deps_type=str, capabilities=[EachUsersClient()])
+
+    @agent.tool
+    async def run_command(ctx: RunContext[str]) -> str:
+        return (await ctx.workspace.run(['echo', 'ok'])).stdout
+
+    await agent.run('run', deps='a')
+    await agent.run('run', deps='b')
+    assert fake_e2b.clients == ['a', 'b']
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """An `e2b.E2B` annotation must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
+    assert sorted(definitions['spec_params_E2BSandbox']['properties']) == [
+        'allow_internet_access',
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'sandbox_timeout',
+        'template',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'e2b',
+        'description': 'a sandbox',
+        'template': 'base',
+        'allow_internet_access': False,
+        'sandbox_timeout': 120,
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+    }
+    assert E2BSandbox[None].from_spec(**spec_fields) == E2BSandbox[None](**spec_fields)
 
 
 def test_capability_uses_workspace_contract() -> None:

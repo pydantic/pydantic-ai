@@ -72,7 +72,7 @@ def save_connection(connection: Connection, *, account: str = 'openrouter') -> N
     save_key_connection(value=json.dumps(value), account=account, token=connection.token)
 
 
-def model(name: str) -> OpenRouterModel:
+def model(name: str, *, base_url: str | None = None) -> OpenRouterModel:
     """Resolve a saved OpenRouter selection through core, without global API-key fallbacks."""
     ref = parse_model(name)
     setup = '/model add > openrouter' if ref.profile is None else f'/login {ref.account}'
@@ -83,7 +83,7 @@ def model(name: str) -> OpenRouterModel:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
-    provider = OpenRouterProvider(api_key=resolve_key(token=connection.token))
+    provider = OpenRouterProvider(api_key=resolve_key(token=connection.token), base_url=base_url)
     return OpenRouterModel(ref.name, provider=provider)
 
 
