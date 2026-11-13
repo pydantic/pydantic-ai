@@ -37,7 +37,7 @@ import json
 import re
 import time
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
@@ -57,7 +57,7 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[elevenlabs-agents-realtime]"`'
     ) from _import_error
 
-from .. import _utils
+from .. import _model_errors, _utils
 from .._http import legacy_httpx
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import ModelHTTPError, UserError
@@ -104,6 +104,7 @@ from ._lifecycle import (
 )
 from ._utils import (
     inject_trace_context,
+    read_rejected_upgrade,
     reject_forced_tool_choice,
     require_pcm_audio,
     resolve_advertised_tools,
@@ -798,15 +799,23 @@ def _map_rest_errors(model_name: str) -> Generator[None]:
         raise RealtimeError(model_name=model_name, message=f'Could not reach the ElevenLabs API: {e}') from e
 
 
+def _http_status_error(
+    model_name: str, status_code: int, body: str | None, headers: Mapping[str, str]
+) -> ModelHTTPError:
+    """The error for an ElevenLabs error response, in the category its HTTP status gives a regular request."""
+    return ModelHTTPError.for_category(
+        _model_errors.http_status_category(status_code, body),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+    )
+
+
 def _raise_for_status(response: httpx.Response | httpx2.Response, model_name: str) -> None:
     """Raise a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] on a non-2xx preflight response."""
     if not response.is_success:
-        raise ModelHTTPError(
-            status_code=response.status_code,
-            model_name=model_name,
-            body=response.text.strip() or None,
-            headers=response.headers,
-        )
+        raise _http_status_error(model_name, response.status_code, response.text.strip() or None, response.headers)
 
 
 class _ElevenLabsSchemaTransformer(JsonSchemaTransformer):
@@ -1002,17 +1011,10 @@ def _map_connect_errors(model_name: str) -> Generator[None]:
         raise RealtimeError(model_name=model_name, message=str(e)) from e
     except websockets.InvalidStatus as e:
         # The WebSocket upgrade was rejected (expired signed URL, unknown agent); it carries a real
-        # HTTP status, so it maps to `ModelHTTPError` exactly like a regular request.
-        response = e.response
-        body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-        raise ModelHTTPError(
-            status_code=response.status_code,
-            model_name=model_name,
-            body=body,
-            # Keep the rejected upgrade's headers, exactly like the REST path: `retry_after` on a
-            # 429 reads them.
-            headers=dict(response.headers),
-        ) from e
+        # HTTP status, so it raises what a REST error response with that status raises. Its headers are
+        # kept, exactly like the REST path's: `retry_after` on a 429 reads them.
+        body, headers = read_rejected_upgrade(e)
+        raise _http_status_error(model_name, e.response.status_code, body, headers) from e
     except websockets.WebSocketException as e:
         raise RealtimeError(model_name=model_name, message=f'WebSocket error during realtime handshake: {e}') from e
     except OSError as e:

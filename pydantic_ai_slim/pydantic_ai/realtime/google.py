@@ -40,6 +40,7 @@ except ImportError as _import_error:
         'you can use the `google-realtime` optional group - `pip install "pydantic-ai-slim[google-realtime]"`'
     ) from _import_error
 
+from .. import _model_errors
 from .._utils import generate_tool_call_id
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
@@ -126,6 +127,7 @@ from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, StaleEvent
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
+    read_rejected_upgrade,
     reconnect_with_backoff,
     reject_forced_tool_choice,
     require_pcm_audio,
@@ -977,6 +979,26 @@ def _ws_trace_context(client: Client) -> Generator[None]:
             headers.pop(key, None)
 
 
+def _rejected_upgrade_error(error: websockets.InvalidStatus, model_name: str) -> ModelHTTPError:
+    """The error for a rejected Gemini Live WebSocket upgrade, in the category a Gemini API error response gets.
+
+    `google-genai` doesn't read the response, so its body is parsed here, and stays the response text on the error.
+    """
+    body, headers = read_rejected_upgrade(error)
+    parsed, fields = _model_errors.parse_error_body(body)
+    status = fields.get('status')
+    message = fields.get('message', body)
+    return ModelHTTPError.for_category(
+        _model_errors.google_status_category(status, message, parsed)
+        or _model_errors.http_status_category(error.response.status_code, message),
+        status_code=error.response.status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=status,
+    )
+
+
 @dataclass(init=False)
 class GoogleRealtimeModel(RealtimeModel):
     """Gemini Live API model.
@@ -1505,16 +1527,9 @@ class GoogleRealtimeModel(RealtimeModel):
                 raise RealtimeError(model_name=self.model, message=str(e)) from e  # pragma: no cover
             except websockets.InvalidStatus as e:
                 # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
-                # `websockets` error rather than an `APIError`; the WebSocket is the API here, so map its
-                # HTTP status to `ModelHTTPError` like a regular request.
-                response = e.response
-                body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-                raise ModelHTTPError(
-                    status_code=response.status_code,
-                    model_name=self.model,
-                    body=body,
-                    headers=dict(response.headers),
-                ) from e
+                # `websockets` error rather than an `APIError`; the WebSocket is the API here, so it raises what
+                # the same response to a regular request raises.
+                raise _rejected_upgrade_error(e, self.model) from e
             except websockets.WebSocketException as e:
                 # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
                 # status, so surface it as a `RealtimeError` rather than letting it escape untyped.

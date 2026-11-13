@@ -7,7 +7,7 @@ import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never, overload
+from typing import TYPE_CHECKING, Literal, assert_never, overload
 
 import anyio
 
@@ -55,6 +55,9 @@ from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import TextContext
 from .settings import ReconnectPolicy
+
+if TYPE_CHECKING:
+    from websockets.exceptions import InvalidStatus
 
 
 def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -238,6 +241,17 @@ async def reconnect_with_backoff(
         if await attempt():
             return True
     return False
+
+
+def read_rejected_upgrade(error: InvalidStatus) -> tuple[str, dict[str, str]]:
+    """The body, or the reason phrase when it has none, and the headers of a rejected WebSocket upgrade's response.
+
+    The values of a repeated header, like `Set-Cookie`, are joined as `httpx` joins them: `dict(response.headers)`
+    raises `MultipleValuesError` on one.
+    """
+    response = error.response
+    body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+    return body, {name: ', '.join(response.headers.get_all(name)) for name in response.headers}
 
 
 def inject_trace_context(headers: MutableMapping[str, str]) -> None:

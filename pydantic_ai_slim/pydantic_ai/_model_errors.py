@@ -130,6 +130,41 @@ def openai_compatible_category(
     return http_status_category(status_code, message) if status_code is not None else None
 
 
+def parse_error_body(text: str | None) -> tuple[object, dict[str, str]]:
+    """`text` parsed as JSON, or `None` when it isn't JSON, and the string fields of its `error` object.
+
+    OpenAI-compatible and Google APIs send `{"error": {...}}`; an object without an `error` gives its own fields.
+    """
+    try:
+        parsed: object = pydantic_core.from_json(text) if text else None
+    except ValueError:
+        parsed = None
+    error = parsed.get('error', parsed) if is_str_dict(parsed) else None
+    fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+    return parsed, fields
+
+
+def openai_compatible_response_error(
+    model_name: str, status_code: int, body: str | None, headers: Mapping[str, str]
+) -> ModelHTTPError:
+    """The error for an OpenAI-compatible error response that no SDK read, like a rejected WebSocket upgrade.
+
+    It gets the category, error code and error type the SDK's error for the same response gets, and keeps `body` as
+    the response text.
+    """
+    _, fields = parse_error_body(body)
+    code, error_type = fields.get('code'), fields.get('type')
+    return ModelHTTPError.for_category(
+        openai_compatible_category(status_code, code, error_type, fields.get('message', body)),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
+
+
 _ZAI_QUOTA_CODES = frozenset(
     {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
 )

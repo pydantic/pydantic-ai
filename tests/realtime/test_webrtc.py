@@ -26,6 +26,7 @@ from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.exceptions import (
     ModelConnectionError,
     ModelHTTPError,
+    ModelServerError,
     ModelTimeoutError,
     UnexpectedModelBehavior,
     UserError,
@@ -1170,8 +1171,10 @@ async def test_azure_hang_up_retries_once_as_the_sdk_does(first: int | str, seco
     if succeeds:
         await hang_up
     else:
-        # Failures to reach Azure are mapped as on OpenAI's SDK path.
-        expected = {'connect-error': ModelConnectionError, 'timeout': ModelTimeoutError}.get(str(first), ModelHTTPError)
+        # Failures to reach Azure, and a persistent 5xx, are mapped as on OpenAI's SDK path.
+        expected = {'connect-error': ModelConnectionError, 'timeout': ModelTimeoutError}.get(
+            str(first), type(ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-realtime'))
+        )
         with pytest.raises(expected) as exc_info:
             await hang_up
         assert type(exc_info.value) is expected

@@ -96,8 +96,9 @@ def _raise_for_status(response: httpx.Response | httpx2.Response, model_name: st
     """Raise a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] on a non-2xx WebRTC signaling response.
 
     Signaling failures (401/403 auth, 429 rate limit, 5xx outages) are ordinary provider HTTP errors, not
-    unexpected model output, so they go through the standard HTTP exception hierarchy — callers can catch
-    `ModelHTTPError`, read `status_code`, and apply their own retry policy — with the response body preserved.
+    unexpected model output, so they raise what the same response to a regular request raises — callers can catch
+    `ModelHTTPError` or its error category, read `status_code`, and apply their own retry policy — with the
+    response body preserved.
     `model_name` carries the realtime model/deployment (not the provider), matching `ModelHTTPError`'s
     contract everywhere else, so an Azure user with several deployments can tell which one failed.
     """
@@ -105,11 +106,8 @@ def _raise_for_status(response: httpx.Response | httpx2.Response, model_name: st
         # `not is_success` (not `is_error`) so a 3xx redirect is rejected too: the signaling flow reads
         # a `call_id` from the `Location` header, and a redirect's `Location` would otherwise be mistaken
         # for a created call. `headers` is forwarded so a 429's `Retry-After` reaches `retry_after`.
-        raise ModelHTTPError(
-            status_code=response.status_code,
-            model_name=model_name,
-            body=response.text.strip() or None,
-            headers=response.headers,
+        raise _model_errors.openai_compatible_response_error(
+            model_name, response.status_code, response.text.strip() or None, response.headers
         )
 
 
