@@ -66,9 +66,8 @@ if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
 
 T = TypeVar('T')
 
-# Guards the waits on the in-process MCP server, and its handshake, against a hang, so it is far longer than any runner stall and never
-# decides a test's outcome.
 READINESS_WAIT_TIMEOUT = 300
+"""Bounds the waits on the in-process MCP server and its handshake, so it only ever catches a hang, never a slow runner."""
 
 
 def build_run_context(deps: T, run_step: int = 0, max_retries: int = 0) -> RunContext[T]:
