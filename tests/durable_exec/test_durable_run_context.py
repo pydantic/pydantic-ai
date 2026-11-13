@@ -207,6 +207,11 @@ class Bank(BaseModel):
     id: str = Field(alias='bankId')
 
 
+class Node(BaseModel):
+    name: str
+    children: list[Node] = []
+
+
 def alias(city: Annotated[str, Field(alias='cityName')]) -> None:
     pass
 
@@ -255,6 +260,14 @@ def alias_union(payment: Card | Bank, guests: Annotated[int, Field(alias='guestC
     pass
 
 
+def recursive_model(tree: Node, depth: int) -> None:
+    pass
+
+
+def alias_recursive_model(tree: Node, depth: Annotated[int, Field(alias='maxDepth')]) -> None:
+    pass
+
+
 @dataclass(frozen=True)
 class RevalidationCase:
     id: str
@@ -268,7 +281,7 @@ class RevalidationCase:
 
 
 NESTED_BY_NAME = 'nested models shipped by Python name: https://github.com/pydantic/pydantic-ai/issues/13431'
-NO_ALIASES = 'TypedDict and dataclass values carry no aliases: https://github.com/pydantic/pydantic-ai/issues/13440'
+NO_ALIASES = 'TypedDict and dataclass values ship by Python name: https://github.com/pydantic/pydantic-ai/issues/13440'
 
 REVALIDATION_CASES = [
     RevalidationCase('alias', alias, {'cityName': 'Paris'}, 'by_name', {'city': 'Paris'}),
@@ -345,6 +358,20 @@ REVALIDATION_CASES = [
         'by_name',
         {'payment': {'id': 'B1'}, 'guests': 2},
         rejected=NESTED_BY_NAME,
+    ),
+    RevalidationCase(
+        'recursive-model',
+        recursive_model,
+        {'tree': {'name': 'root', 'children': [{'name': 'leaf'}]}, 'depth': 2},
+        'by_alias',
+        {'tree': {'name': 'root', 'children': [{'name': 'leaf', 'children': []}]}, 'depth': 2},
+    ),
+    RevalidationCase(
+        'alias-recursive-model',
+        alias_recursive_model,
+        {'tree': {'name': 'root', 'children': [{'name': 'leaf'}]}, 'maxDepth': 2},
+        'by_alias',
+        {'tree': {'name': 'root', 'children': [{'name': 'leaf', 'children': []}]}, 'depth': 2},
     ),
 ]
 
