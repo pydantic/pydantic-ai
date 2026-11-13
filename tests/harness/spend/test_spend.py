@@ -2345,6 +2345,31 @@ class TestFallbackAttempts:
 
         assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
 
+    async def test_a_nested_rejection_is_charged_when_an_outer_fallback_recovers_from_the_inner_error(self):
+        """The inner `FallbackModel`'s rejected response rides on the error it raises, which only the outer one falls back on."""
+
+        def reject(response: ModelResponse) -> bool:
+            return response.model_name == 'gpt-4o-mini'
+
+        def unavailable(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(status_code=503, model_name='down')
+
+        inner = FallbackModel(
+            FunctionModel(lambda messages, info: _usage_response(100, 10), model_name='gpt-4o-mini'),
+            FunctionModel(unavailable, model_name='down'),
+            fallback_on=reject,
+        )
+        model = FallbackModel(
+            inner,
+            FunctionModel(lambda messages, info: _usage_response(20, 2), model_name='gpt-4o'),
+            fallback_on=ModelHTTPError,
+        )
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
+
+        await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
+
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
+
     @pytest.mark.parametrize('reject_all', [False, True])
     async def test_model_fallback_is_charged_like_fallback_model(self, reject_all: bool):
         """The `ModelFallback` capability bills the same chain to the same budget as `FallbackModel` does."""

@@ -49,6 +49,7 @@ from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubA
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .._deferred_tools import asking_agent, deferring_agent, pending_agent
+from ..conftest import CountingModel
 
 
 @dataclass
@@ -700,6 +701,17 @@ class TestDelegation:
         assert result.output == 'all done'
         assert captured['deps'] == 'PARENT'  # deps still forwarded
         assert captured['usage_is_parent'] is False  # usage isolated
+
+    async def test_unmanaged_child_drops_inherited_token_counting_its_model_cannot_do(self) -> None:
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+        usage = RunUsage()
+        parent: Agent[object, str] = Agent(
+            CountingModel(_delegate_then_finish('worker')),
+            capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)],
+        )
+        result = await parent.run('go', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True))
+        assert result.output == 'all done'
+        assert usage.requests == 3
 
 
 class TestRunControls:
