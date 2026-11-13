@@ -80,7 +80,7 @@ async def test_browser_sign_in_through_gh(tmp_path: Path, monkeypatch: pytest.Mo
     assert shell.loader.capabilities() == [
         GitHub[None](defer_loading=True, auth=GhToken(hostname='github.com', setup=SETUP), read_only=True)
     ]
-    assert GhToken(hostname='github.com', setup=SETUP)(None) == 'gho_browser'
+    assert await GhToken(hostname='github.com', setup=SETUP)(None) == 'gho_browser'
 
 
 async def test_the_terminal_waiting_screen_closes_once_gh_finishes(
@@ -177,19 +177,19 @@ async def test_without_gh_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert f'The GitHub CLI (gh) is not installed. {INSTALL}' in shell.output.getvalue()
     assert (await shell.sign_in())[0] == [f'The GitHub CLI (gh) is not installed. {INSTALL}']
     with pytest.raises(UserError, match='not installed'):
-        GhToken(hostname='github.com', setup=SETUP)(None)
+        await GhToken(hostname='github.com', setup=SETUP)(None)
 
 
-def test_gh_token_ignores_token_variables(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
+async def test_gh_token_ignores_token_variables(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
     monkeypatch.setenv('GH_TOKEN', 'from-the-environment')
     monkeypatch.setenv('GITHUB_TOKEN', 'from-the-environment')
     token = GhToken(hostname='github.com', setup=SETUP)
     with pytest.raises(UserError, match=r'no login for github\.com\. Run /plugins configure github'):
-        token(None)
+        await token(None)
     fake_gh.sign_in(token='gho_first')
-    assert token(None) == 'gho_first'
+    assert await token(None) == 'gho_first'
     fake_gh.sign_in(token='gho_switched')
-    assert token(None) == 'gho_switched'
+    assert await token(None) == 'gho_switched'
 
 
 @pytest.mark.parametrize(
@@ -274,7 +274,8 @@ async def test_cancelling_as_the_code_arrives_still_stops_gh(
     await shell.loader.enable('github')
     await cancel_once_gh_starts(shell, fake_gh)
     with anyio.fail_after(10):
-        while not started or started[0].process.poll() is None:
+        # `gh` may already have stopped by the first check, and then the loop body never runs.
+        while not started or started[0].process.poll() is None:  # pragma: no branch
             await anyio.sleep(0.02)
     assert shell.login() == 'key'
 

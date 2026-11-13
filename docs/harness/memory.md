@@ -9,7 +9,23 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model gets four tools, write_memory, read_memory, delete_memory and search_memory, over a notebook of Markdown files kept in a store such as FileStore, SqliteMemoryStore or PostgresMemoryStore. Your code picks the namespace, such as the user ID from the run dependencies, so the model cannot reach another user's files, and writes are compare-and-swap. On the first request of a run, Memory adds a <memory> block with an excerpt of MEMORY.md and the names of the other files next to the user's prompt, only when memory changed, within max_tokens.](../img/harness/memory.svg)
+```mermaid
+flowchart TB
+    accTitle: Memory: a notebook the agent keeps across runs
+    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
+    model(["model"])
+    code["your code"]
+    memory["Memory()<br/>four tools, such as<br/>write_memory"]:::capability
+    store[("store, such as FileStore<br/>alice/main/MEMORY.md,<br/>auth-notes.md")]:::external
+    snapshot["&lt;memory&gt; block<br/>MEMORY.md excerpt,<br/>names of other files"]:::capability
+    code -->|"namespace, such as<br/>from ctx.deps"| memory
+    model <-->|"tool call, result"| memory
+    memory <-->|"reads,<br/>compare-and-swap<br/>writes"| store
+    memory -->|"first request of each run"| snapshot
+    snapshot -->|"with the user's prompt"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Notebook model
 
@@ -46,7 +62,7 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 ### Reading memory with `FileSystem`
 
-When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
+When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
 
 `InMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays. With `inject_memory=False`, or when the guidance alone fills `max_tokens` so no snapshot fits, `read_memory` stays too: the injected `<memory>` block is where the model learns the files' directory.
 
@@ -106,6 +122,7 @@ Every `read` call passes a finite `max_chars` and every `list_paths` call a fini
 | `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `memory_operations` table until you delete old rows. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `{table}_operations` table until you delete old rows. The caller owns the pool lifecycle. |
+| `PixeltableMemoryStore(table_name=...)` | Durable shared storage in a Pixeltable catalog; receipts and table history are retained. Install `[pixeltable]` on Python 3.11 to 3.14. See the [Pixeltable guide](pixeltable.md). |
 
 ```python
 from pydantic_ai_harness import Memory
@@ -233,7 +250,7 @@ Metadata describes the write that produced the current version:
 - The bundled stores accept string keys and values without NUL characters, at most 4,096 characters as JSON, and `Memory` checks a fixed `write_metadata` mapping when it is constructed. An empty mapping is no metadata. It stays out of the model's context, the memory spans, and the memory snapshot a durable engine journals.
 - `PostgresMemoryStore` keeps it in a `write_metadata JSONB` column of its table, so the application can query it, for example `WHERE write_metadata->>'updated_by' = 'ui'`. `SqliteMemoryStore` keeps it as JSON text in a `write_metadata` column. Both add the column to an existing table on first use, and rows written before then read as `metadata=None`.
 
-`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it.
+`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it. `PixeltableMemoryStore` does not implement it either.
 
 A store records write metadata when it has a `write_with_metadata` method, so a custom store opts in by implementing the one `MetadataMemoryStore` declares. It must store the metadata in the same atomic step as the content, and the store's `write` must record none, as the bundled stores' `write` does by calling `write_with_metadata` with `metadata=None`. A custom store that implements only `MemoryStore` keeps working as before without metadata. A subclass of a bundled store that overrides `write` keeps working too; with `write_metadata` set, `Memory` calls `write_with_metadata` instead, so override that method as well.
 

@@ -26,20 +26,20 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness.subagents._control import TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
-    TaskAnswerEvent,
+    TaskAnsweredEvent,
     TaskCancelledEvent,
-    TaskCancelRequestEvent,
+    TaskCancelRequestedEvent,
     TaskCompletedEvent,
     TaskFailedEvent,
-    TaskFollowUpEvent,
-    TaskForceCancelEvent,
-    TaskMessageEvent,
+    TaskForceCancelRequestedEvent,
     TaskProgressEvent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
     TaskRequestEvent,
-    TaskRetryEvent,
+    TaskResumedEvent,
+    TaskRetriedEvent,
     TaskSettledEvent,
     TaskStartedEvent,
+    TaskSteeredEvent,
     agent_mailbox,
     task_mailbox,
 )
@@ -83,7 +83,7 @@ class _WorkerLink(TaskLink):
         answer: list[str] = []
         self._answers[question_id] = (answered, answer)
         await self.transport.send(
-            TaskQuestionEvent(
+            TaskQuestionAskedEvent(
                 task_id=self.start.task_id, agent_name=self.start.agent_name, question_id=question_id, question=question
             )
         )
@@ -105,29 +105,39 @@ class _WorkerLink(TaskLink):
         mailbox = task_mailbox(self.start.task_id, 'worker')
         while True:
             message = await self.transport.receive(mailbox)
-            if isinstance(message, TaskMessageEvent):
-                if self._ctx is None:
-                    self._pending_messages.append(message.message)
-                else:
-                    _steer(self._ctx, message.message)
-            elif isinstance(message, TaskAnswerEvent):
-                if (waiter := self._answers.pop(message.question_id, None)) is not None:
-                    answered, answer = waiter
-                    answer.append(message.answer)
-                    answered.set()
-            elif isinstance(message, TaskCancelRequestEvent):
-                self._stop_requested = True
-                if self._ctx is None:
+            match message:
+                case TaskSteeredEvent():
+                    self._handle_message(message)
+                case TaskAnsweredEvent():
+                    self._handle_answer(message)
+                case TaskCancelRequestedEvent():
+                    self._handle_cancel_request()
+                case _:
+                    assert isinstance(message, TaskForceCancelRequestedEvent), f'Unexpected message {message.kind!r}.'
+                    self.forced = True
                     self.token.cancel()
-                # A task waiting for an answer makes no model request to stop before, so stop waiting.
-                for answered, answer in self._answers.values():
-                    answer.append(CANCELLED_ANSWER)
-                    answered.set()
-                self._answers.clear()
-            else:
-                assert isinstance(message, TaskForceCancelEvent), f'Unexpected message {message.kind!r}.'
-                self.forced = True
-                self.token.cancel()
+
+    def _handle_message(self, message: TaskSteeredEvent) -> None:
+        if self._ctx is None:
+            self._pending_messages.append(message.message)
+        else:
+            _steer(self._ctx, message.message)
+
+    def _handle_answer(self, message: TaskAnsweredEvent) -> None:
+        if (waiter := self._answers.pop(message.question_id, None)) is not None:
+            answered, answer = waiter
+            answer.append(message.answer)
+            answered.set()
+
+    def _handle_cancel_request(self) -> None:
+        self._stop_requested = True
+        if self._ctx is None:
+            self.token.cancel()
+        # A task waiting for an answer makes no model request to stop before, so stop waiting.
+        for answered, answer in self._answers.values():
+            answer.append(CANCELLED_ANSWER)
+            answered.set()
+        self._answers.clear()
 
 
 class _ForwardingWorkerLink(_WorkerLink):
@@ -207,14 +217,14 @@ class SubAgentWorker(Generic[AgentDepsT]):
         context_token = otel_context.attach(propagate.extract(start.trace_context))
         try:
             await self._run_task(agent, start)
-        except Exception as e:
+        except Exception as exc:
             # One task's failure, from a misconfigured sub-agent or the transport, doesn't stop the worker,
             # which serves other tasks too. The delegating run is told if the transport still can.
-            if isinstance(e, UserError):
-                error = str(e)
+            if isinstance(exc, UserError):
+                error = str(exc)
             else:
                 _logger.exception('Sub-agent task %s failed on its worker.', start.task_id)
-                error = f'{type(e).__name__}: {e}'
+                error = f'{type(exc).__name__}: {exc}'
             try:
                 await self.transport.send(
                     TaskFailedEvent(task_id=start.task_id, agent_name=start.agent_name, error=error)
@@ -277,7 +287,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
     ) -> TaskSettledEvent:
         task_id, agent_name = start.task_id, start.agent_name
         history: list[ModelMessage] | None = None
-        if isinstance(start, TaskFollowUpEvent):
+        if isinstance(start, TaskResumedEvent):
             history = self._histories.get(task_id)
             if history is None:
                 return TaskFailedEvent(
@@ -299,34 +309,42 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     capabilities=[link, serving_model],
                     cancellation_token=link.token,
                 )
-            except RunCancelled as e:
-                self._keep(task_id, e.all_messages())
+            except RunCancelled as exc:
+                self._keep(task_id, exc.all_messages())
                 return TaskCancelledEvent(task_id=task_id, agent_name=agent_name, forced=link.forced, usage=usage)
             except UserError:
                 raise
-            except UsageLimitExceeded as e:
-                return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=str(e), usage=usage)
-            except Exception as e:
-                error = f'{type(e).__name__}: {e}'
+            except UsageLimitExceeded as exc:
+                return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=str(exc), usage=usage)
+            except Exception as exc:
+                error = f'{type(exc).__name__}: {exc}'
                 if attempt > self.retries:
                     return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=error, usage=usage)
                 await self.transport.send(
-                    TaskRetryEvent(task_id=task_id, agent_name=agent_name, attempt=attempt + 1, error=error)
+                    TaskRetriedEvent(task_id=task_id, agent_name=agent_name, attempt=attempt + 1, error=error)
                 )
                 continue
             self._keep(task_id, result.all_messages())
-            if (reason := resumable_output_reason(result.output)) is not None:
-                # The delegating run can't check on a request the run left pending, so it's cancelled.
-                await cancel_pending_output(result.output, serving_model)
-                return TaskFailedEvent(
-                    task_id=task_id,
-                    agent_name=agent_name,
-                    error=unresumable_output_message(agent_name, reason),
-                    usage=usage,
-                )
-            return TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=str(result.output), usage=usage)
+            return await _report_result(start, result.output, serving_model, usage)
 
     def _keep(self, task_id: str, messages: list[ModelMessage]) -> None:
         # Re-inserted, so the dict stays ordered from least to most recently used.
         self._histories.pop(task_id, None)
         self._histories[task_id] = messages
+
+
+async def _report_result(
+    start: TaskRequestEvent, output: object, serving_model: ServingModelRecorder, usage: RunUsage
+) -> TaskSettledEvent:
+    """The report of a task whose run returned `output`."""
+    task_id, agent_name = start.task_id, start.agent_name
+    if (reason := resumable_output_reason(output)) is not None:
+        # The delegating run can't check on a request the run left pending, so it's cancelled.
+        await cancel_pending_output(output, serving_model)
+        return TaskFailedEvent(
+            task_id=task_id,
+            agent_name=agent_name,
+            error=unresumable_output_message(agent_name, reason),
+            usage=usage,
+        )
+    return TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=str(output), usage=usage)

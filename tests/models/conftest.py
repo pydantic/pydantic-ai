@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 from pytest_mock import MockerFixture
 
 from ..conftest import RequestCapture, try_import
@@ -145,6 +145,23 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
             if block.get('cache_control') or block.get('prompt_cache_breakpoint'):
                 blocks.append(f'messages[{message_index}].content[{block_index}]')
     return cache_control, blocks
+
+
+class InfAsString(BaseModel):
+    model_config = ConfigDict(ser_json_inf_nan='strings')
+    value: float
+
+
+def items_serialized_differently_inside_a_list() -> list[object]:
+    """Tool return items whose JSON inside a list differs from their JSON alone unless each is dumped by itself.
+
+    A model whose own config writes `inf` as a string, keys that collide once dumped, and a 254-level item one
+    level short of the serializer's depth limit.
+    """
+    deep: object = {'leaf': 1}
+    for _ in range(253):
+        deep = {'child': deep}
+    return [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
 
 
 def stream_bedrock_converse_mock(mocker: MockerFixture, client: Any) -> None:

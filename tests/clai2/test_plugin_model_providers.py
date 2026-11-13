@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Generic, TypeVar, cast
 
 import pytest
+from prompt_toolkit.utils import Event
 from rich.console import Console
 from termflow.tui.menu import MenuResult
 
@@ -186,7 +187,8 @@ async def test_shell_runs_a_plugin_model(tmp_path: Path, monkeypatch: pytest.Mon
 
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
-            pass
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
 
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
