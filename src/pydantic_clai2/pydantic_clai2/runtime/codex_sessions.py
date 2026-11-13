@@ -158,13 +158,7 @@ def header(path: Path) -> Header | None:
                 return None
             meta = meta or payload
         elif record.get('type') == 'response_item' and payload.get('role') == 'user':
-            kinds = _kinds(payload)
-            texts = (
-                text(block.get('text'))
-                for index, block in enumerate(objects(payload.get('content')))
-                if _typed(text(block.get('text')), kinds[index] if index < len(kinds) else '')
-            )
-            prompt = prompt or next((t for t in texts if t), '')
+            prompt = prompt or _first_typed(payload)
         if meta and prompt:
             return Header(
                 native_id=text(meta.get('id')),
@@ -174,6 +168,17 @@ def header(path: Path) -> Header | None:
                 listed=meta.get('source') != 'exec',
             )
     return None
+
+
+def _first_typed(item: JsonObject) -> str:
+    """The first text a user message's author typed, or empty when Codex added all of it."""
+    kinds = _kinds(item)
+    texts = (
+        text(block.get('text'))
+        for index, block in enumerate(objects(item.get('content')))
+        if _typed(text(block.get('text')), kinds[index] if index < len(kinds) else '')
+    )
+    return next((t for t in texts if t), '')
 
 
 def messages(path: Path) -> list[ModelMessage]:
@@ -250,6 +255,29 @@ def _agents(path: Path, conversation_id: str) -> tuple[str, dict[str, _SubAgent]
     session_id = ''
     for record in records(path, limit=1):
         session_id = text(obj(record.get('payload')).get('id'))
+    children = _children(path)
+    agents: dict[str, _SubAgent] = {}
+    pending = [session_id]
+    while pending:
+        parent = pending.pop(0)
+        for child_path, meta in children.get(parent, []):
+            thread_id = text(meta.get('id'))
+            if not thread_id or thread_id in agents or thread_id == session_id:
+                continue
+            pending.append(thread_id)
+            agents[thread_id] = _sub_agent(
+                child_path,
+                meta,
+                thread_id=thread_id,
+                parent=parent,
+                session_id=session_id,
+                conversation_id=conversation_id,
+            )
+    return session_id, agents
+
+
+def _children(path: Path) -> dict[str, list[tuple[Path, JsonObject]]]:
+    """The sessions started no earlier than `path`'s that name a parent, with their metadata, by that parent."""
     sessions = next((parent for parent in path.parents if parent.name == 'sessions'), path.parent)
     children: dict[str, list[tuple[Path, JsonObject]]] = {}
     for candidate in sorted(sessions.rglob('rollout-*.jsonl')):
@@ -265,45 +293,48 @@ def _agents(path: Path, conversation_id: str) -> tuple[str, dict[str, _SubAgent]
             meta = obj(record.get('payload'))
             if record.get('type') == 'session_meta' and (parent := _parent(meta)):
                 children.setdefault(parent, []).append((candidate, meta))
-    agents: dict[str, _SubAgent] = {}
-    pending = [session_id]
-    while pending:
-        parent = pending.pop(0)
-        for child_path, meta in children.get(parent, []):
-            thread_id = text(meta.get('id'))
-            if not thread_id or thread_id in agents or thread_id == session_id:
-                continue
-            pending.append(thread_id)
-            subagent = obj(meta.get('source')).get('subagent')
-            spawn = obj(obj(subagent).get('thread_spawn'))
-            if spawn:
-                role = text(meta.get('agent_role')) or text(spawn.get('agent_role'))
-                name = _SELF if role in ('', 'default') else role
-            else:
-                # A review, or another kind of sub-agent CLAI has no counterpart for, keeps its kind as its name.
-                name = text(subagent) or next(iter(obj(subagent)), 'subagent')
-            nickname = text(meta.get('agent_nickname')) or text(spawn.get('agent_nickname'))
-            address = text(meta.get('agent_path')) or text(spawn.get('agent_path'))
-            # Codex encrypts the task it gives a sub-agent, so its address and nickname describe it.
-            description = ' '.join(part for part in (address, f'({nickname})' if nickname else '') if part)
-            agents[thread_id] = _SubAgent(
-                path=child_path,
-                address=address,
-                task=DelegationTask(
-                    id=uuid5(_TASK_NAMESPACE, f'{session_id}:{thread_id}').hex,
-                    run_id=uuid5(_TASK_NAMESPACE, f'{session_id}:{thread_id}:run').hex,
-                    agent_name=name,
-                    prompt=description or f'{name} {thread_id}',
-                    conversation_id=conversation_id,
-                    parent_id=uuid5(_TASK_NAMESPACE, f'{session_id}:{parent}').hex if parent != session_id else None,
-                    background=True,
-                    resumable=name == _SELF,
-                    status='finished',
-                    outcome='ok',
-                    delivered=True,
-                ),
-            )
-    return session_id, agents
+    return children
+
+
+def _sub_agent(
+    path: Path,
+    meta: JsonObject,
+    *,
+    thread_id: str,
+    parent: str,
+    session_id: str,
+    conversation_id: str,
+) -> _SubAgent:
+    """The sub-agent running thread `thread_id` under thread `parent`, from its own session's metadata."""
+    subagent = obj(meta.get('source')).get('subagent')
+    spawn = obj(obj(subagent).get('thread_spawn'))
+    if spawn:
+        role = text(meta.get('agent_role')) or text(spawn.get('agent_role'))
+        name = _SELF if role in ('', 'default') else role
+    else:
+        # A review, or another kind of sub-agent CLAI has no counterpart for, keeps its kind as its name.
+        name = text(subagent) or next(iter(obj(subagent)), 'subagent')
+    nickname = text(meta.get('agent_nickname')) or text(spawn.get('agent_nickname'))
+    address = text(meta.get('agent_path')) or text(spawn.get('agent_path'))
+    # Codex encrypts the task it gives a sub-agent, so its address and nickname describe it.
+    description = ' '.join(part for part in (address, f'({nickname})' if nickname else '') if part)
+    return _SubAgent(
+        path=path,
+        address=address,
+        task=DelegationTask(
+            id=uuid5(_TASK_NAMESPACE, f'{session_id}:{thread_id}').hex,
+            run_id=uuid5(_TASK_NAMESPACE, f'{session_id}:{thread_id}:run').hex,
+            agent_name=name,
+            prompt=description or f'{name} {thread_id}',
+            conversation_id=conversation_id,
+            parent_id=uuid5(_TASK_NAMESPACE, f'{session_id}:{parent}').hex if parent != session_id else None,
+            background=True,
+            resumable=name == _SELF,
+            status='finished',
+            outcome='ok',
+            delivered=True,
+        ),
+    )
 
 
 def _kinds(item: JsonObject) -> list[str]:
@@ -354,9 +385,17 @@ def _history(entries: list[JsonObject], agents: dict[str, _SubAgent]) -> list[Mo
             _agent_message(history, _communication(payload), by_path, reports, at=at)
         elif kind == 'compacted':
             _compacted(history, payload, at=at, model=model)
-        elif kind == 'event_msg' and payload.get('type') == 'thread_rolled_back':
+        elif kind == 'event_msg':
+            _event(history, payload)
+    return history.build()
+
+
+def _event(history: HistoryBuilder, payload: JsonObject) -> None:
+    """An event Codex logged that the history reflects: a rollback, or a request's token usage."""
+    match payload.get('type'):
+        case 'thread_rolled_back':
             history.rollback(number(payload.get('num_turns')), starts=_turn_start, ahead=_turn_context)
-        elif kind == 'event_msg' and payload.get('type') == 'token_count':
+        case 'token_count':
             if usage := obj(obj(payload.get('info')).get('last_token_usage')):
                 history.usage(
                     RequestUsage(
@@ -365,7 +404,8 @@ def _history(entries: list[JsonObject], agents: dict[str, _SubAgent]) -> list[Mo
                         output_tokens=number(usage.get('output_tokens')),
                     )
                 )
-    return history.build()
+        case _:
+            pass
 
 
 def _turn_start(part: ModelRequestPart) -> bool:
@@ -409,23 +449,36 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
         details = {'type': 'compaction', 'encrypted_content': text(item.get('encrypted_content'))}
         part = CompactionPart(None, id=text(item.get('id')) or None, provider_name=PROVIDER, provider_details=details)
         history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
+    _retained_context(history, replacement, sealed, at=at)
+
+
+def _retained_context(
+    history: HistoryBuilder, replacement: list[JsonObject], sealed: list[JsonObject], *, at: datetime
+) -> None:
+    """The items of a compaction's `replacement` other than its `sealed` summaries."""
     for item in replacement:
         # Kept from before the summary, as the history above holds them too: as context on the user's channel.
         content = _retained(item) if item not in sealed else []
         body = '\n\n'.join(entry for entry in content if isinstance(entry, str))
         files = [entry for entry in content if not isinstance(entry, str)]
         if body or files:
-            kind = f'compaction_retained:{text(item.get("role")) or text(item.get("type"))}'
-            kinds = _kinds(item)
-            blocks = objects(item.get('content'))
-            if kind == _RETAINED_USER and not any(
-                _typed(t, kinds[index] if index < len(kinds) else '')
-                for index, block in enumerate(blocks)
-                if (t := text(block.get('text')))
-            ):
-                # A local compaction's summary, or Codex's own context, rather than a prompt it kept.
-                kind = 'compaction_summary' if body.lstrip().startswith(_SUMMARY_PREFIX) else _RETAINED_CONTEXT
+            kind = _retained_kind(item, body)
             history.request(imported_context(body, source=SOURCE, kind=kind, files=files, at=at), at=at)
+
+
+def _retained_kind(item: JsonObject, body: str) -> str:
+    """The `imported_context` kind of an item compaction kept, from its role or type, and whether it was typed."""
+    kind = f'compaction_retained:{text(item.get("role")) or text(item.get("type"))}'
+    kinds = _kinds(item)
+    blocks = objects(item.get('content'))
+    if kind == _RETAINED_USER and not any(
+        _typed(t, kinds[index] if index < len(kinds) else '')
+        for index, block in enumerate(blocks)
+        if (t := text(block.get('text')))
+    ):
+        # A local compaction's summary, or Codex's own context, rather than a prompt it kept.
+        return 'compaction_summary' if body.lstrip().startswith(_SUMMARY_PREFIX) else _RETAINED_CONTEXT
+    return kind
 
 
 def _retained(item: JsonObject) -> list[UserContent]:
@@ -458,36 +511,46 @@ def _item(
 ) -> None:
     kind = item.get('type')
     role = text(item.get('role'))
-    item_id = text(item.get('id')) or None
     if kind == 'message' and role in ('user', 'developer'):
         _message(history, item, role=role, at=at)
     elif kind == 'message' and role == 'assistant':
-        phase = text(item.get('phase'))
-        for block in objects(item.get('content')):
-            if block.get('type') == 'output_text' and (content := text(block.get('text'))):
-                details = {'phase': phase} if phase else None
-                part = TextPart(content, id=item_id, provider_name=PROVIDER, provider_details=details)
-                history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
+        _assistant_message(history, item, at=at, model=model)
     elif kind == 'reasoning' and (thinking := _reasoning(item)) is not None:
         history.respond(thinking, at=at, model_name=model, provider_name=PROVIDER)
     elif kind in ('function_call', 'custom_tool_call'):
-        args = text(item.get('arguments')) if kind == 'function_call' else {'input': text(item.get('input'))}
-        namespace = text(item.get('namespace'))
-        call = ToolCallPart(
-            text(item.get('name')),
-            args,
-            tool_call_id=text(item.get('call_id')),
-            # A custom tool's call goes back as a function call, which OpenAI rejects with a custom call's ID.
-            id=item_id if kind == 'function_call' else None,
-            provider_name=PROVIDER,
-            # As OpenAI's models return a namespaced tool's call, which they need back to accept it.
-            provider_details={'namespace': namespace} if namespace else None,
-        )
-        history.respond(call, at=at, model_name=model, provider_name=PROVIDER)
+        _tool_call(history, item, at=at, model=model)
     elif kind in ('function_call_output', 'custom_tool_call_output'):
         history.result(text(item.get('call_id')), _output(item.get('output')), at=at)
     elif kind == 'agent_message':
         _agent_message(history, item, by_path, reports, at=at)
+
+
+def _assistant_message(history: HistoryBuilder, item: JsonObject, *, at: datetime, model: str | None) -> None:
+    item_id = text(item.get('id')) or None
+    phase = text(item.get('phase'))
+    for block in objects(item.get('content')):
+        if block.get('type') == 'output_text' and (content := text(block.get('text'))):
+            details = {'phase': phase} if phase else None
+            part = TextPart(content, id=item_id, provider_name=PROVIDER, provider_details=details)
+            history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
+
+
+def _tool_call(history: HistoryBuilder, item: JsonObject, *, at: datetime, model: str | None) -> None:
+    kind = item.get('type')
+    item_id = text(item.get('id')) or None
+    args = text(item.get('arguments')) if kind == 'function_call' else {'input': text(item.get('input'))}
+    namespace = text(item.get('namespace'))
+    call = ToolCallPart(
+        text(item.get('name')),
+        args,
+        tool_call_id=text(item.get('call_id')),
+        # A custom tool's call goes back as a function call, which OpenAI rejects with a custom call's ID.
+        id=item_id if kind == 'function_call' else None,
+        provider_name=PROVIDER,
+        # As OpenAI's models return a namespaced tool's call, which they need back to accept it.
+        provider_details={'namespace': namespace} if namespace else None,
+    )
+    history.respond(call, at=at, model_name=model, provider_name=PROVIDER)
 
 
 def _message(history: HistoryBuilder, item: JsonObject, *, role: str, at: datetime) -> None:

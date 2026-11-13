@@ -1,6 +1,7 @@
 """Complete research-agent harness assembled from regular capabilities."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, WebFetch, WebSearch
@@ -33,16 +34,21 @@ def _researcher(store: OverflowStore | WorkspaceStore | None = None) -> SubAgent
     return SubAgent(agent)
 
 
+@dataclass(init=False)
 class Researcher(CombinedCapability[AgentDepsT]):
-    """A complete research-agent harness built as a regular combined capability.
-
-    It comes with concise default instructions. Pass `instructions=` to
-    replace them, or `instructions=None` to run with no default instructions.
+    """Web research with search, page fetching, a research delegate, and tool-output limits.
 
     Oversized tool results are spilled to files in the run's workspace, so a
     run needs one: attach `LocalWorkspace('.')` or a sandbox capability. A run
     without a workspace fails at its start unless `store=` provides a non-workspace
     overflow store such as `LocalFileStore()`.
+
+    Args:
+        instructions: Replaces `DEFAULT_RESEARCHER_INSTRUCTIONS`; `None` adds no instructions.
+        subagents: Delegates for `SubAgents`. `None` uses a focused web `researcher`
+            delegate; an empty sequence leaves delegation out.
+        store: Where oversized tool results are spilled, for `Researcher` and its
+            default delegate. `None` uses the run's workspace.
     """
 
     def __init__(
@@ -58,7 +64,7 @@ class Researcher(CombinedCapability[AgentDepsT]):
             capabilities.append(RequireWorkspace[AgentDepsT]('Researcher'))
         if instructions is not None:
             # The id also names the capability's (empty) function toolset, which durable
-            # execution requires; mirrors `coder_instructions` (coder/_capability.py).
+            # execution requires.
             capabilities.append(Capability[AgentDepsT](id='researcher_instructions', instructions=instructions))
         capabilities.extend(
             [

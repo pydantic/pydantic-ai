@@ -17,12 +17,30 @@ arrives in between when stream traffic allows.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import AliasChoices, Field
+from typing_extensions import deprecated
 
 from pydantic_ai.messages import CapabilityEvent
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 CODE_MODE_EVENTS = 'code_mode'
 """Namespace for `CodeMode` capability events."""
+
+_SandboxFunctionName = Annotated[str, Field(validation_alias=AliasChoices('sandbox_function_name', 'sandbox_function'))]
+
+
+class _SandboxFunction:
+    sandbox_function_name: str
+
+    @property
+    @deprecated(
+        '`sandbox_function` is deprecated, use `sandbox_function_name` instead.', category=HarnessDeprecationWarning
+    )
+    def sandbox_function(self) -> str:
+        """Deprecated alias for `sandbox_function_name`."""
+        return self.sandbox_function_name
 
 
 @dataclass(kw_only=True)
@@ -31,19 +49,29 @@ class SpeculativeCodeUpdateEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
 
     Emitted per argument delta while a `run_code` tool call streams, carrying the full decoded
     code prefix, so consumers render live code without re-implementing partial-JSON decoding.
-    `closed_statements` marks the boundary between statements that are provably complete and
+    `closed_statement_count` marks the boundary between statements that are provably complete and
     the still-growing tail. Mirrors the model's delta cadence; debounce for fewer repaints.
     """
 
     code: str
     """The decoded code prefix streamed so far."""
 
-    closed_statements: int
+    closed_statement_count: Annotated[
+        int, Field(validation_alias=AliasChoices('closed_statement_count', 'closed_statements'))
+    ]
     """Top-level statements at the front of `code` that are provably complete."""
+
+    @property
+    @deprecated(
+        '`closed_statements` is deprecated, use `closed_statement_count` instead.', category=HarnessDeprecationWarning
+    )
+    def closed_statements(self) -> int:
+        """Deprecated alias for `closed_statement_count`."""
+        return self.closed_statement_count
 
 
 @dataclass(kw_only=True)
-class SpeculativeCallLaunchedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
+class SpeculativeCallLaunchedEvent(_SandboxFunction, CapabilityEvent, namespace=CODE_MODE_EVENTS):
     """A sandbox tool call was launched while its snippet was still streaming.
 
     While a parallel `InputGuardrail` is still deciding, the launched call waits for its verdict
@@ -53,7 +81,7 @@ class SpeculativeCallLaunchedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
     launch_id: str
     """Identifier shared by this launch's later settled and claimed/evicted events."""
 
-    sandbox_function: str
+    sandbox_function_name: _SandboxFunctionName
     """The function name as written in the snippet (possibly sanitized)."""
 
     wrapped_tool_name: str
@@ -113,7 +141,7 @@ class SpeculativeCallClaimedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
 
 
 @dataclass(kw_only=True)
-class SpeculativeCallMissedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
+class SpeculativeCallMissedEvent(_SandboxFunction, CapabilityEvent, namespace=CODE_MODE_EVENTS):
     """The executing snippet dispatched a speculation-eligible call that no launch matched.
 
     Only emitted for calls whose function was eligible to speculate this step; dispatches of
@@ -123,7 +151,7 @@ class SpeculativeCallMissedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
     systematic miss pattern signals broken claim keying rather than bad luck.
     """
 
-    sandbox_function: str
+    sandbox_function_name: _SandboxFunctionName
     wrapped_tool_name: str
     nested_tool_call_id: str
 

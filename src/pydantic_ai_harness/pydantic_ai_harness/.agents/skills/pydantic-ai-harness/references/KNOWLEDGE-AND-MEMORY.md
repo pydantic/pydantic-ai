@@ -4,7 +4,7 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
 Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). Only `Skills` needs an extra.
+demand). `Skills` and the optional Pixeltable integration require extras.
 
 | Need | Use |
 |---|---|
@@ -52,6 +52,7 @@ only).
 | `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
+| `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared (Pixeltable catalog) | Install `[pixeltable]` on Python 3.11 to 3.14; creates the table on first use |
 
 ```python
 from pydantic_ai import Agent
@@ -88,6 +89,16 @@ Gotchas:
   implement `MemoryStore` mutations atomically.
 - `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
+
+### Pixeltable catalog
+
+`Pixeltable(tables=['app.documents'])` gives an agent read-only tools to list and describe allowed
+tables, query rows, and search an embedding index. The `tables` allowlist is required, and two
+instances with different allowlists raise instead of merging. `PixeltableMemoryStore` is a separate store for
+`Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11 to 3.14.
+Projections omit media, array, binary, unstored computed columns, and unstored iterator outputs by
+default and reject them when explicitly requested.
+See the [Pixeltable guide](https://pydantic.dev/docs/ai/harness/pixeltable/) for limits and examples.
 
 ### Namespaces (multi-user)
 
@@ -135,8 +146,8 @@ with the model's writes.
   `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
   Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
 - Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
-- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
-  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`,
+  `PixeltableMemoryStore`, or a custom store implementing only `MemoryStore`) raises `UserError` at construction or run start.
 - A custom store opts in by implementing `write_with_metadata` (checked structurally, like
   `search`), writing metadata atomically with the content; its `write` must record none.
 
@@ -285,9 +296,14 @@ command; the model still sees it. Either field with a value other than `true` or
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
-- Reads from the run's workspace; no workspace fails the run at start. Use
-  `workspace=LocalWorkspaceBackend('/app')` to read skills shipped with the app while the agent
-  works in a sandbox.
+- Skills shipped with the app: keep `Skills` and pass
+  `workspace=LocalWorkspaceBackend(Path(__file__).parent)` (a path on disk, not an
+  `importlib.resources` `Traversable`); relative library paths resolve against it, and the run needs
+  no workspace of its own (or its workspace can be a sandbox). Only `SKILL.md` bodies load: the
+  loaded instructions leave out the skill directory and `Skills` adds no file tools, so bundled
+  `references/` or `scripts/` are usable only from a library in the run's workspace with
+  `FileSystem`/`Shell` there. Otherwise `Skills` reads from the run's workspace, and a run without
+  one fails at start.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
@@ -304,8 +320,12 @@ Gotchas:
   `hooks` are accepted but not implemented (one aggregated `UserWarning`).
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control.
-- For instructions defined in Python, use core
-  `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead.
+- Instructions that are not `SKILL.md` packages in a directory go in a core deferred
+  `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead: ones defined
+  in Python, files in a custom format
+  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files), and
+  ones kept in a database, read in an `@capability.instructions` function
+  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database).
 - In agent specs: `Skills: {directories: .agents/skills, include: [...]}` with
   `custom_capability_types=[Skills]`.
 
