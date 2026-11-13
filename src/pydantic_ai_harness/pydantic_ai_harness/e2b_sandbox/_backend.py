@@ -214,28 +214,6 @@ def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
     )
 
 
-async def _stopped_message(sandbox: e2b.AsyncSandbox) -> str:
-    """Say why a sandbox E2B still answers for no longer runs, asking E2B whether it is paused or gone."""
-    sandbox_id = sandbox.sandbox_id
-    try:
-        # The instance's lookup, so it uses the configured `client`'s account rather than the environment's.
-        state = (await sandbox.get_info()).state
-    except e2b.SandboxNotFoundException:
-        return (
-            f'The E2B sandbox {sandbox_id!r} no longer exists: it was killed. '
-            "Pass `workspace='new'` to start a fresh sandbox."
-        )
-    except Exception:
-        logger.debug('E2B state lookup for sandbox %s failed', sandbox_id, exc_info=True)
-        state = None
-    if state == 'paused':
-        return (
-            f'The E2B sandbox {sandbox_id!r} is paused; a later run that attaches to it resumes it. '
-            "Pass `workspace='new'` to start a fresh sandbox."
-        )
-    return _unavailable_message(sandbox_id, found=True)
-
-
 def _is_lifetime_refusal(error: e2b.SandboxException) -> bool:
     """Whether E2B refused the requested `sandbox_timeout`, e.g. `400: Timeout cannot be greater than 1 hours`."""
     status = error.status_code
@@ -482,7 +460,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(await _stopped_message(sandbox))
+                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
@@ -810,12 +788,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             await stopper.wait()
         except Exception:
             # A failed control-plane stop must not mask the original failure; the command may
-            # still be running, and the sandbox ref stays available for explicit cleanup. A sandbox
-            # that isn't running, such as a paused one, runs no command, and its error says so.
-            if await _is_running(sandbox):
-                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
-            else:
-                logger.debug('Could not stop E2B command in sandbox %s: it is not running', sandbox.sandbox_id)
+            # still be running, and the sandbox ref stays available for explicit cleanup.
+            logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
 
 
 class _OutputCounter:
