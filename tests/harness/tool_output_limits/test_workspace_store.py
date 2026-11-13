@@ -230,7 +230,7 @@ class TestDefaultStore:
             await tool.function(ctx, 'run/call.0')  # type: ignore[attr-defined]
 
 
-class TestWorkspaceStore:
+class TestWorkspaceOverflowStore:
     async def test_keys_become_paths_in_the_store_directory(self, tmp_path: Path):
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         store = WorkspaceOverflowStore()

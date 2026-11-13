@@ -76,7 +76,7 @@ class TestMediaUriHelpers:
             parse_media_uri('media+sha256://' + 'A' * 64)
 
 
-class TestDiskMediaStore:
+class TestFileMediaStore:
     async def test_put_get_round_trip(self, tmp_path: Path) -> None:
         store = FileMediaStore(tmp_path)
         uri = await store.put(b'hello bytes', context=MediaContext(media_type='application/octet-stream'))

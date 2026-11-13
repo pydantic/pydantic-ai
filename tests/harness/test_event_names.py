@@ -10,10 +10,10 @@ from types import ModuleType
 import pytest
 from pydantic import TypeAdapter
 
-import pydantic_ai_harness.file_system as filesystem
+import pydantic_ai_harness.file_system as file_system
 import pydantic_ai_harness.shell as shell
 import pydantic_ai_harness.step_persistence as step_persistence
-import pydantic_ai_harness.sub_agents as subagents
+import pydantic_ai_harness.sub_agents as sub_agents
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import (
@@ -77,23 +77,23 @@ def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name:
 
 def test_derived_kinds_are_unchanged() -> None:
     kinds: dict[type[CapabilityEvent], str] = {
-        filesystem.DirectoryCreatedEvent: 'file_system.directory_created',
-        filesystem.DirectoryListedEvent: 'file_system.directory_listed',
-        filesystem.FileEditedEvent: 'file_system.file_edited',
-        filesystem.FileReadEvent: 'file_system.file_read',
-        filesystem.FileWrittenEvent: 'file_system.file_written',
-        filesystem.FilesSearchedEvent: 'file_system.files_searched',
+        file_system.DirectoryCreatedEvent: 'file_system.directory_created',
+        file_system.DirectoryListedEvent: 'file_system.directory_listed',
+        file_system.FileEditedEvent: 'file_system.file_edited',
+        file_system.FileReadEvent: 'file_system.file_read',
+        file_system.FileWrittenEvent: 'file_system.file_written',
+        file_system.FilesSearchedEvent: 'file_system.files_searched',
         shell.CommandFinishedEvent: 'shell.command_finished',
         shell.CommandOutputEvent: 'shell.command_output',
         shell.CommandStartedEvent: 'shell.command_started',
-        subagents.AgentCreatedEvent: 'sub_agents.agent_created',
-        subagents.TaskAssignedEvent: 'sub_agents.task_assigned',
-        subagents.TaskBackgroundedEvent: 'sub_agents.task_backgrounded',
-        subagents.TaskCancelledEvent: 'sub_agents.task_cancelled',
-        subagents.TaskCompletedEvent: 'sub_agents.task_completed',
-        subagents.TaskFailedEvent: 'sub_agents.task_failed',
-        subagents.TaskProgressEvent: 'sub_agents.task_progress',
-        subagents.TaskStartedEvent: 'sub_agents.task_started',
+        sub_agents.AgentCreatedEvent: 'sub_agents.agent_created',
+        sub_agents.TaskAssignedEvent: 'sub_agents.task_assigned',
+        sub_agents.TaskBackgroundedEvent: 'sub_agents.task_backgrounded',
+        sub_agents.TaskCancelledEvent: 'sub_agents.task_cancelled',
+        sub_agents.TaskCompletedEvent: 'sub_agents.task_completed',
+        sub_agents.TaskFailedEvent: 'sub_agents.task_failed',
+        sub_agents.TaskProgressEvent: 'sub_agents.task_progress',
+        sub_agents.TaskStartedEvent: 'sub_agents.task_started',
     }
     assert {event_type: event_type.kind for event_type in kinds} == kinds
     assert step_persistence.SnapshotSavedEvent.kind == f'{step_persistence.STEP_PERSISTENCE_EVENTS}.snapshot_saved'
@@ -137,19 +137,19 @@ _PREVIOUS = PlanItem(id='step-1', content='draft')
             'sandbox_function_name',
         ),
         (
-            filesystem.FilesSearchedEvent(
+            file_system.FilesSearchedEvent(
                 path='.', root_dir='/w', pattern='x', search_kind='grep', match_count=1, truncated=False
             ),
             'search',
             'search_kind',
         ),
         (
-            subagents.AgentCreatedEvent(agent_name='poet', description='d', instructions='i', model=None),
+            sub_agents.AgentCreatedEvent(agent_name='poet', description='d', instructions='i', model=None),
             'name',
             'agent_name',
         ),
         (
-            subagents.DelegationStartedEvent(
+            sub_agents.DelegationStartedEvent(
                 agent_name='worker',
                 task='t',
                 truncated=False,
@@ -161,7 +161,7 @@ _PREVIOUS = PlanItem(id='step-1', content='draft')
             'parent_task_id',
         ),
         (
-            subagents.DelegationFinishedEvent(
+            sub_agents.DelegationFinishedEvent(
                 agent_name='worker',
                 outcome='ok',
                 output='done',
@@ -199,7 +199,7 @@ def test_renamed_field(event: CapabilityEvent, old: str, new: str) -> None:
 
 
 def test_delegation_duration_seconds() -> None:
-    event = subagents.DelegationFinishedEvent(
+    event = sub_agents.DelegationFinishedEvent(
         agent_name='worker', outcome='ok', output='done', truncated=False, usage=None, duration_ms=1500
     )
     payload = _EVENTS.dump_python(event, mode='json')

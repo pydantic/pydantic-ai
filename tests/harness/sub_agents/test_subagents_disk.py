@@ -69,10 +69,10 @@ class TestClampEffort:
     def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', HarnessDeprecationWarning)
-            sub_agents = importlib.import_module('pydantic_ai_harness.subagents')
+            old_subagents = importlib.import_module('pydantic_ai_harness.subagents')
         with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
-            floor = sub_agents.MINIMUM_EFFORT_FLOOR
-            clamp = sub_agents.clamp_effort
+            floor = old_subagents.MINIMUM_EFFORT_FLOOR
+            clamp = old_subagents.clamp_effort
         assert len(_user_warnings(record)) == 2
         assert all('AgentOverride(effort=' in str(warning.message) for warning in _user_warnings(record))
         assert clamp(None) == floor
@@ -86,7 +86,7 @@ class TestClampEffort:
         assert clamp('max', floor='xhigh') == 'max'
         assert clamp('xhigh', floor='max') == 'max'
         with pytest.raises(AttributeError, match="has no attribute 'missing'"):
-            sub_agents.__getattr__('missing')
+            old_subagents.__getattr__('missing')
 
 
 class TestParseAgentMarkdown:
