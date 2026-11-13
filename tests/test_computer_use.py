@@ -421,7 +421,7 @@ async def test_a_computer_call_in_a_response_that_did_not_finish_normally_does_n
 ) -> None:
     ran: list[object] = []
 
-    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
         ran.append(actions)
         return ['Done.', SCREEN]
 
@@ -511,8 +511,8 @@ async def test_a_computer_call_a_stream_ended_on_records_its_grid_for_the_run_th
     agent = _grid_agent(FunctionModel(respond, stream_function=stream, profile=GRID_PROFILE))
     with capture_run_messages() as messages:
         with pytest.raises(RuntimeError, match='Connection dropped'):
-            async with agent.run_stream('Click.') as result:
-                await result.get_output()
+            async with agent.run_stream('Click.'):
+                pass  # pragma: no cover
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
     # A run resuming the interrupted response executes its call, so the call must say it points on the grid.
     [call] = _computer_calls(history)
