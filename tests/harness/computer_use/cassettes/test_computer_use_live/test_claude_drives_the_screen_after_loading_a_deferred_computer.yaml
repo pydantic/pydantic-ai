@@ -315,7 +315,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   A rectangle on the screenshot, from its top left corner to its bottom right one.
-                  
+
                   `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                 properties:
                   left:
@@ -390,7 +390,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -403,7 +403,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                  
+
                   `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                   is validated, so every backend types the same keys.
                 properties:
@@ -478,34 +478,34 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011Cgzsf9KzrLZ61sxd2jxB9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":738,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_0171wtm6UKHvFzZYDpumFUBV","name":"load_capability","input":{},"caller":{"type":"direct"}}           }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}            }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comput"}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er\"}"}      }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0}
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":738,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":49,"output_tokens_details":{"thinking_tokens":0}} }
-        
+
         event: message_stop
         data: {"type":"message_stop" }
-        
+
   recorded_at: 2026-11-13T11:48:04.484395+00:00
 - request:
     method: POST
@@ -628,52 +628,52 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzsfEJtg2pfLVGTX5dWA","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":5927,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5927,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01NDPfHgu7VjtDMUtyiByRAY","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}        }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}        }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0             }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01QqjePL5iUpjhyQ7GSpZVqQ","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}               }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}              }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1         }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_011zgscDE6Ye9chYzBoz2KNY","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}            }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}    }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}         }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":2 }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":5927,"cache_read_input_tokens":0,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}  }
-        
+
         event: message_stop
         data: {"type":"message_stop" }
-        
+
   recorded_at: 2026-11-13T11:48:05.998659+00:00
 - request:
     method: POST
@@ -840,40 +840,40 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzsfLe8kQm6Y5hrmxh3b","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":188,"cache_read_input_tokens":5927,"cache_creation":{"ephemeral_5m_input_tokens":188,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}            }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS/AUKEAgTGAI4AUIIdGhpbmtpbmcSDPuMIybi2pp5jwqLmhoMHCrgxNzBlXv/hCGeIjA/a3+z1UQY51Jx9gcqnhNwNUR6tpBLtaensRoeM3w/XR4+rwOJ5wGyl2Q4SGxO760qmQUDgAstvzDmzIr5FOkpf4AF9S3J6fYjjVRxJwAUHXDDgu2Suts/tIxAvcASDDFSSXk2OTa8bs1ZPaQK/zbmLsCQPF17pwGPvHshMS5nMyXTLB+bcr9mKF0t6NAD20DfAGj9KDySi7z4kCgI3fLjJNJWrn9liAAK7xSCK2i3MO5t9RZ5/gs868HMoJaVJSVNxg0QtNhww2Jen2pS8u0uyX8mimMZel6CCpNtzZEBM3/tIHjKp3q8sJEMuXJWUU+Y2L3+JeOYU6it2p7MtzZUs9QyvT7pPaE/imN2978HiKkQazs0LDX5NFTD41BO8KjROgYEiwtmx44es4Ed7GMuwm7WdBNuDW11kXDlMyziSwH0TH21kiBt+4FpQZFmFydDnu5rXWDrl0blXXqswzm0oWpbHySapG9TavFgsmlP2lS25NqLtx9hUiOIdwUMVk2PnniU8O1I75SqAMIRKaQAZXBy/UPv1y/QQJgY69nRXcvWd7FNGSsDiqbF/0LiTCIxH0JmJ4To6F2yQPbNYROS3xOZr9XaTD1HteJ9piPeWmr7Fzc9Q2Xlqt+10tOLHfwNbRPuwr3XPQHEji2r9qM8p5g8ClhpVzqB3Nl5LSfaSYotZgL5vKRyOu9CD+vQ8KyYirNM7h9vE/up00hY7D6P8yBhgUvUjriA40vgIkez76f0f4/s9mMzQd/GRP7cfQ/LG7/bNXs4YrRVMEbn7ZFItaQt7PtovJGLQmhbU4YekSy6cnOHeGhx+wWxftFaTmP2ptwG40ly7FXgRCxAI+XCJ6XOlS6/NwFVUVz6g0PEvcRZkU+coyNILmtRpV/Lpk6K9C9LPy477uKVEHtapdcjnRPeIgXL5tJZ9DTTBbctqtQooX0UyUCTcbin/xgB"}    }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0             }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01BjeiSELSMwcNZkmh2hgyqS","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}           }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1             }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":188,"cache_read_input_tokens":5927,"output_tokens":89,"output_tokens_details":{"thinking_tokens":29}}  }
-        
+
         event: message_stop
         data: {"type":"message_stop"     }
-        
+
   recorded_at: 2026-11-13T11:48:07.610357+00:00
 - request:
     method: POST
@@ -1066,40 +1066,40 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzsfTVeY7cJauJQseUV7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2519,"cache_read_input_tokens":5058,"cache_creation":{"ephemeral_5m_input_tokens":2519,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01CNVTgc6xCSM2mmMzzJpeeu","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}  }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}              }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0         }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01REhbZ5xzJ9fifEpAgyFWZm","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}     }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1        }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2519,"cache_read_input_tokens":5058,"output_tokens":86,"output_tokens_details":{"thinking_tokens":0}}  }
-        
+
         event: message_stop
         data: {"type":"message_stop"          }
-        
+
   recorded_at: 2026-11-13T11:48:08.622795+00:00
 - request:
     method: POST
@@ -1330,23 +1330,23 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgzsfXpMJPe5uXAZad8UU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1469,"cache_read_input_tokens":7577,"cache_creation":{"ephemeral_5m_input_tokens":1469,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}            }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0            }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1469,"cache_read_input_tokens":7577,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}         }
-        
+
         event: message_stop
         data: {"type":"message_stop"   }
-        
+
   recorded_at: 2026-11-13T11:48:09.341172+00:00
