@@ -86,6 +86,15 @@ async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: Fa
     assert url == f'https://6080-{sandbox_id}.e2b.example/vnc.html?autoconnect=true&resize=scale#password=Pass1234'
 
 
+async def test_a_sandbox_without_public_traffic_has_no_live_view(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    """A browser can't send the access token E2B needs for a private sandbox's ports, so the link would be a 403."""
+    fake_e2b.sandbox_network = {'allow_public_traffic': False}
+    backend = E2BSandboxBackend(desktop=True)
+
+    with pytest.raises(WorkspaceError, match='The desktop viewer needs public traffic'):
+        await backend.live_view_url()
+
+
 async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     backend = E2BSandboxBackend(desktop=True)
     display.viewer_fails = True
