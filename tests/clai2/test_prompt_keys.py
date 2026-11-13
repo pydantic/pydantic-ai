@@ -125,7 +125,7 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (13, 1, 'enter'),
         (13, 2, 'shift-enter'),
         (13, 3, 'alt-enter'),
-        (13, 5, 'enter'),
+        (13, 5, 'ctrl-enter'),
         (13, 6, 'enter'),
         (13, 66, 'shift-enter'),
         (13, 130, 'shift-enter'),

@@ -566,11 +566,12 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+To steer the active run instead, press Alt+Enter (Option+Enter; Ctrl+Enter on
+Windows, see [Windows Terminal](#windows-terminal)). With a typed
 draft, this immediately shows the message in the transcript and enqueues it for
 the run's next model request. It does not interrupt the current response or
 cancel in-flight tools. Messages already queued stay queued. With an empty
-draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+draft, it sends the oldest queued follow-up instead. Each press sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
 pressed Enter. A queued message that cannot steer stays queued and is not
@@ -1278,6 +1279,17 @@ still queues the message like Enter, the terminal is sending a plain Enter:
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
 - For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
   `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
+### Windows Terminal
+
+Windows Terminal and the Windows console take Alt+Enter to toggle full screen,
+so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
+CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
+is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
+wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
+Ctrl+Enter needs a terminal that reports modified keys, such as Windows
+Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
+a newline.
 
 ### Interrupting a turn
 

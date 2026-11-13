@@ -24,7 +24,7 @@ from pydantic_clai2.ui.prompt.image_input import ATTACHED, ImageInput, clipboard
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
 from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
@@ -99,6 +99,8 @@ class LivePrompt:
         self.spinner = spinner
         self.panel = panel
         self.queue_changed = queue_changed
+        self.ctrl_enter_steers = ctrl_enter_steers()
+        """Whether Ctrl+Enter steers, as Alt+Enter does; otherwise it is Enter."""
         self.notice = ''
         self._chord_prefix = ''
         self._last_escape: float | None = None
@@ -219,6 +221,8 @@ class LivePrompt:
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
+        if key == 'ctrl-enter':
+            key = 'alt-enter' if self.ctrl_enter_steers else 'enter'
         if key in TRANSCRIPT_KEYS:
             # Leave the draft alone, and the notice unless a drag copied text.
             if self.output.transcript_key(key, data):
@@ -569,7 +573,8 @@ class LivePrompt:
         if self.interrupts.active:
             head, glyph = '─ Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
-            hints = '| Enter: queue | Alt+Enter: steer ' if self.queued_messages or self.buffer.text.strip() else ''
+            chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
+            hints = f'| Enter: queue | {chord}: steer ' if self.queued_messages or self.buffer.text.strip() else ''
             title = truncate(f'{head}{glyph} {hints}', width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'

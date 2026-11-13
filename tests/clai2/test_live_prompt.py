@@ -30,6 +30,7 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_clai2.ui.prompt.prompt_keys import ctrl_enter_steers
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
@@ -801,7 +802,8 @@ async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -
         assert live.notice == '', 'the next key clears the notice'
 
 
-async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
+@pytest.mark.parametrize('key', ['alt-enter', 'ctrl-enter'])
+async def test_steering_returns_the_transcript_to_the_newest_output(key: str) -> None:
     steered: list[str] = []
 
     def steer(text: str) -> bool:
@@ -810,6 +812,7 @@ async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
 
     async with editor() as (live, _, _):
         live.steer = steer
+        live.ctrl_enter_steers = True
         for index in range(60):
             live.output.write(f'line {index}\n')
         live.paint()
@@ -817,22 +820,54 @@ async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
         live.feed('pageup')
         assert live.output.view.anchor is not None
         live.buffer.replace('steer the draft')
-        live.feed('alt-enter')
+        live.feed(key)
         assert live.output.view.anchor is None
         # A queued prompt steers.
         live.buffer.replace('steer the queue')
         live.feed('enter')
         live.feed('pageup')
-        live.feed('alt-enter')
+        live.feed(key)
         assert live.output.view.anchor is None
         # A command never steers, so the view stays where the user scrolled.
         live.buffer.replace('/help')
         live.feed('enter')
         live.feed('pageup')
-        live.feed('alt-enter')
+        live.feed(key)
         assert live.output.view.anchor is not None
         assert await live.read() == '/help'
     assert steered == ['steer the draft', 'steer the queue']
+
+
+async def test_ctrl_enter_enters_outside_windows() -> None:
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        live.ctrl_enter_steers = False
+        live.buffer.replace('queued')
+        live.feed('ctrl-enter')
+        assert await live.read() == 'queued'
+    assert steered == []
+
+
+@pytest.mark.parametrize(
+    ('platform', 'environ', 'expected'),
+    [
+        ('win32', {}, True),
+        ('linux', {'WT_SESSION': '0b5c4e1a'}, True),
+        ('linux', {}, False),
+        ('darwin', {}, False),
+    ],
+)
+def test_ctrl_enter_steers_on_windows_and_in_windows_terminal(
+    platform: str, environ: dict[str, str], expected: bool
+) -> None:
+    """Windows Terminal, also around WSL, takes Alt+Enter for full screen (#13399)."""
+    assert ctrl_enter_steers(platform=platform, environ=environ) is expected
 
 
 class FrameClock:
