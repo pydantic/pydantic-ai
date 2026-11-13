@@ -64,6 +64,28 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
             return len(ctx.output) >= self.minimum
 
+    @dataclass
+    class InitFalseEvaluator(Evaluator[str, str, str]):
+        value: str
+        derived: str = field(init=False)
+
+        def __post_init__(self) -> None:
+            self.derived = f'derived:{self.value}'
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return ctx.output == self.derived
+
+    @dataclass
+    class InitFalseDefaultEvaluator(Evaluator[str, str, str]):
+        value: str
+        derived: str = field(default='default', init=False)
+
+        def __post_init__(self) -> None:
+            self.derived = f'derived:{self.value}'
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return ctx.output == self.derived
+
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
         value: float
@@ -161,3 +183,39 @@ def test_keyword_only_report_evaluator_file_round_trip(tmp_path: Path, fmt: Lite
     assert 'short_spec_KeywordOnlyReport' not in schema['$defs']
     report = loaded.evaluate_sync(lambda value: value)
     assert report.analyses == [ScalarResult(title='Configured value', value=4.0)]
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_evaluator_init_false_field_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml']) -> None:
+    evaluator = InitFalseEvaluator(value='configured')
+    dataset = Dataset[str, str, str](name='round-trip', cases=[Case(inputs='hello')], evaluators=[evaluator])
+    path = tmp_path / f'dataset.{fmt}'
+    dataset.to_file(path, custom_evaluator_types=[InitFalseEvaluator])
+
+    raw = yaml.safe_load(path.read_text())
+    assert raw['evaluators'] == [{'InitFalseEvaluator': 'configured'}]
+
+    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseEvaluator])
+    assert loaded.evaluators == [evaluator]
+    loaded_evaluator = loaded.evaluators[0]
+    assert isinstance(loaded_evaluator, InitFalseEvaluator)
+    assert loaded_evaluator.derived == 'derived:configured'
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_evaluator_init_false_default_field_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml']) -> None:
+    evaluator = InitFalseDefaultEvaluator(value='configured')
+    assert evaluator.derived == 'derived:configured'
+    assert evaluator.derived != 'default'
+    dataset = Dataset[str, str, str](name='round-trip', cases=[Case(inputs='hello')], evaluators=[evaluator])
+    path = tmp_path / f'dataset.{fmt}'
+    dataset.to_file(path, custom_evaluator_types=[InitFalseDefaultEvaluator])
+
+    raw = yaml.safe_load(path.read_text())
+    assert raw['evaluators'] == [{'InitFalseDefaultEvaluator': 'configured'}]
+
+    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseDefaultEvaluator])
+    assert loaded.evaluators == [evaluator]
+    loaded_evaluator = loaded.evaluators[0]
+    assert isinstance(loaded_evaluator, InitFalseDefaultEvaluator)
+    assert loaded_evaluator.derived == 'derived:configured'

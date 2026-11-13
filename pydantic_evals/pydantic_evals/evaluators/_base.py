@@ -102,6 +102,8 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         """
         raw_arguments: dict[str, Any] = {}
         for field in fields(self):
+            if not field.init:
+                continue
             value = getattr(self, field.name)
             # always exclude defaults:
             if field.default is not MISSING:
