@@ -19,7 +19,7 @@ from typing import Literal, TextIO
 from urllib.parse import quote
 
 from douwebot_opencode_result import final_text, rejection_reason, unfenced
-from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_spans, run_with_fallback
+from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -274,34 +274,6 @@ def report_privately(webhook: str, check: str, pr_number: int, repository: str, 
         pass
 
 
-def export_span(
-    token: str,
-    check: str,
-    attributes: Mapping[str, str],
-    values: Mapping[str, str | int | bool],
-    started: int,
-    attempts: list[Attempt],
-    *,
-    failed: bool,
-) -> None:
-    """Send one span per review to Logfire, with a child span per OpenCode run.
-
-    OpenCode's own spans carry no model, token or step counts, and nothing on them says how a run failed.
-    """
-    trace_id, span_id = secrets.token_hex(16), secrets.token_hex(8)
-    review = otlp_span(
-        f'PR Review Check {check}',
-        {**attributes, **values},
-        started,
-        time.time_ns(),
-        trace_id=trace_id,
-        span_id=span_id,
-        failed=failed,
-    )
-    runs = run_spans(attempts, attributes, trace_id=trace_id, parent_id=span_id)
-    export_spans(token, 'pr-review-checks', [review, *runs])
-
-
 def main() -> None:
     """Review one check and write its publishable result for the publisher job."""
     env = os.environ
@@ -319,6 +291,8 @@ def main() -> None:
         'github.run_attempt': env['GITHUB_RUN_ATTEMPT'],
     }
     started = time.time_ns()
+    # The review's span, which each OpenCode run's span names as its parent.
+    trace_id, span_id = secrets.token_hex(16), secrets.token_hex(8)
     attempts: list[Attempt] = []
     values: dict[str, str | int | bool] = {}
     try:
@@ -346,6 +320,8 @@ def main() -> None:
             # The `detect` job builds the matrix in `select` order.
             matrix_index=list(selected).index(check.name),
             attempts=attempts,
+            trace_id=trace_id,
+            parent_id=span_id,
         )
         values = {
             'pr_review_checks.steps': usage.steps,
@@ -375,8 +351,17 @@ def main() -> None:
                 **({'pr_review_checks.restarted': True} if any(run.finished for run in attempts[:-1]) else {}),
             }
         if token := env.get('LOGFIRE_TOKEN', ''):
-            failed = 'pr_review_checks.exception' in values
-            export_span(token, check.name, attributes, values, started, attempts, failed=failed)
+            # OpenCode's own spans carry no model, token or step counts.
+            span = otlp_span(
+                f'PR Review Check {check.name}',
+                {**attributes, **values},
+                started,
+                time.time_ns(),
+                trace_id=trace_id,
+                span_id=span_id,
+                failed='pr_review_checks.exception' in values,
+            )
+            export_spans(token, 'pr-review-checks', [span])
         else:
             print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:

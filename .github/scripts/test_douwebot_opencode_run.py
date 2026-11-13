@@ -113,8 +113,8 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, object]]]:
-    """Give the review a Logfire token and its workflow run; return the spans of each export it sends."""
+def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Give the review a Logfire token and its workflow run; return the span each export sends."""
     environment = {
         'LOGFIRE_TOKEN': 'logfire-token',
         'LOGFIRE_URL': 'https://logfire-eu.pydantic.info/',
@@ -125,7 +125,7 @@ def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dic
     }
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
-    exports: list[list[dict[str, object]]] = []
+    exports: list[dict[str, object]] = []
 
     def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
         assert (request.full_url, request.get_header('Authorization')) == (
@@ -136,9 +136,11 @@ def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dic
         # Neither the provider's message nor its response body leaves the job.
         assert b'Rate limit reached' not in request.data and LIMIT.encode() not in request.data
         [resource] = json.loads(request.data)['resourceSpans']
-        assert resource['resource'] == {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'douwebot'}}]}
+        service = {'key': 'service.name', 'value': {'stringValue': 'opencode-fallback'}}
+        assert resource['resource'] == {'attributes': [service]}
         [scope] = resource['scopeSpans']
-        exports.append(scope['spans'])
+        [span] = scope['spans']
+        exports.append(span)
         return contextlib.nullcontext()
 
     monkeypatch.setattr(douwebot_opencode_run.urllib.request, 'urlopen', urlopen)
@@ -250,7 +252,7 @@ def test_launcher_sends_shared_review_and_restricts_environment(
 
 
 def test_logfire_token_tags_each_runs_telemetry_with_its_plan(
-    exported: list[list[dict[str, object]]], monkeypatch: pytest.MonkeyPatch
+    exported: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With `LOGFIRE_TOKEN`, each run exports OpenCode's telemetry, tagged with its workflow run, plan and place."""
     invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
@@ -482,19 +484,19 @@ RUN = {
     ],
 )
 def test_logfire_token_exports_a_span_per_run(
-    exported: list[list[dict[str, object]]],
+    exported: list[dict[str, object]],
     monkeypatch: pytest.MonkeyPatch,
     last_run: list[Mapping[str, object]],
     raised: type[BaseException] | None,
     failure: dict[str, object],
 ) -> None:
-    """Each run exports a span with its plan, its place and how it failed, a run the chain moved past included."""
+    """Each run exports a span as it ends, with its plan, its place and how it failed, even when the chain raised."""
     refusal = subprocess.CalledProcessError(1, 'opencode')
     handover = [REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}]
     fake_opencode(monkeypatch, (REFUSED, refusal), (handover, refusal), (last_run, refusal if raised else None))
     with pytest.raises(raised) if raised else contextlib.nullcontext():
         douwebot_opencode_run.main()
-    [runs] = exported
+    runs = exported
     assert [span['name'] for span in runs] == ['OpenCode run'] * 3
     assert len({span['traceId'] for span in runs}) == 1
     assert not [span for span in runs if 'parentSpanId' in span]
@@ -748,6 +750,7 @@ def classify_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
     monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
+    monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
     return github_output
 
 

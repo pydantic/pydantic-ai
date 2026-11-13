@@ -333,8 +333,8 @@ def _returning(value: object) -> Callable[..., object]:
 
 
 @pytest.fixture
-def exported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, object]]]:
-    """Stage `main` for the `general` check with its git and context steps stubbed; return each export's spans."""
+def exported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Stage `main` for the `general` check with its git and context steps stubbed; return the spans it exports."""
     (tmp_path / 'workspace' / 'pr-head').mkdir(parents=True)
     stubs: dict[str, object] = {
         'changed_files': [],
@@ -344,7 +344,7 @@ def exported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dict[
     }
     for name, value in stubs.items():
         monkeypatch.setattr(run_pr_review_check, name, _returning(value))
-    exports: list[list[dict[str, object]]] = []
+    spans: list[dict[str, object]] = []
 
     def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
         assert (request.full_url, request.get_header('Authorization')) == (
@@ -354,7 +354,12 @@ def exported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dict[
         assert isinstance(request.data, bytes)
         # Neither the provider's message nor the model's text leaves the job.
         assert b'Rate limit reached' not in request.data and b'Reviewed a.py' not in request.data
-        exports.append(json.loads(request.data)['resourceSpans'][0]['scopeSpans'][0]['spans'])
+        [resource] = json.loads(request.data)['resourceSpans']
+        [service] = [attribute['value']['stringValue'] for attribute in resource['resource']['attributes']]
+        [span] = resource['scopeSpans'][0]['spans']
+        # Each OpenCode run exports its own span as it ends, under the fallback's service.
+        assert service == ('opencode-fallback' if span['name'] == 'OpenCode run' else 'pr-review-checks')
+        spans.append(span)
         return contextlib.nullcontext()
 
     monkeypatch.setattr(run_pr_review_check.urllib.request, 'urlopen', urlopen)
@@ -372,7 +377,7 @@ def exported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[dict[
     }
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
-    return exports
+    return spans
 
 
 def _span_attributes(span: dict[str, object]) -> dict[str, object]:
@@ -478,7 +483,7 @@ ANSWER = [
 def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    exported: list[list[dict[str, object]]],
+    exported: list[dict[str, object]],
     zai: str,
     raised: type[BaseException] | None,
     outcome: dict[str, object],
@@ -492,7 +497,7 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
     with pytest.raises(raised) if raised else contextlib.nullcontext():
         run_pr_review_check.main()
-    [[span, *runs]] = exported
+    *runs, span = exported
     assert span['name'] == 'PR Review Check general'
     assert span.get('status') == (None if raised is None else {'code': 2})
     assert _span_attributes(span) == {
@@ -517,7 +522,7 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
 def test_review_span_marks_a_review_the_chain_restarted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    exported: list[list[dict[str, object]]],
+    exported: list[dict[str, object]],
     steps: str,
     restart: dict[str, object],
 ) -> None:
@@ -533,7 +538,7 @@ def test_review_span_marks_a_review_the_chain_restarted(
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
     run_pr_review_check.main()
     assert [line.split()[-1] for line in launches.read_text().splitlines()] == ['go-key', 'zai-key', 'zai-backup-key']
-    [[span, *runs]] = exported
+    *runs, span = exported
     assert _span_attributes(span) == {
         **REVIEW_ATTRIBUTES,
         'pr_review_checks.outcome': 'COMPLETE',
@@ -552,10 +557,10 @@ def test_review_span_marks_a_review_the_chain_restarted(
     ]
 
 
-def test_cancelled_review_exports_its_span(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[list[dict[str, object]]]
+def test_interrupted_review_exports_its_span(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
 ) -> None:
-    """Cancelling the job interrupts the run in flight; the span still names its plan."""
+    """An interrupt in the run in flight still exports that run's span, and the review's span names its plan."""
     _fake_opencode(tmp_path, monkeypatch, 'exit 1')
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
 
@@ -565,7 +570,7 @@ def test_cancelled_review_exports_its_span(
     monkeypatch.setattr(run_pr_review_check, 'run_opencode', cancelled)
     with pytest.raises(KeyboardInterrupt):
         run_pr_review_check.main()
-    [[span, run]] = exported
+    run, span = exported
     assert _runs_of(span, [run]) == [_run(OPENCODE_GO, 1, {})]
     assert 'status' not in run
     assert _span_attributes(span) == {
@@ -582,7 +587,7 @@ def test_review_without_a_logfire_token_exports_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    exported: list[list[dict[str, object]]],
+    exported: list[dict[str, object]],
 ) -> None:
     """Without `LOGFIRE_TOKEN`, a review exports no span and says so in the job log."""
     _fake_opencode(tmp_path, monkeypatch, 'exit 1')
@@ -604,7 +609,7 @@ def test_failed_export_never_replaces_the_reviews_own_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    exported: list[list[dict[str, object]]],
+    exported: list[dict[str, object]],
     error: Exception,
 ) -> None:
     """A span export that fails while the review's own exception propagates only warns."""
@@ -621,7 +626,7 @@ def test_failed_export_never_replaces_the_reviews_own_failure(
 
 
 def test_review_that_fails_before_opencode_runs_exports_its_span(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[list[dict[str, object]]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
 ) -> None:
     """A review its checkout rejects never starts OpenCode; its span still says it failed, and names no plan."""
     _fake_opencode(tmp_path, monkeypatch, 'exit 1')
@@ -629,7 +634,7 @@ def test_review_that_fails_before_opencode_runs_exports_its_span(
     (tmp_path / 'workspace' / 'pr-head' / 'escape').symlink_to(tmp_path)
     with pytest.raises(ValueError, match='Symlink escapes review checkout'):
         run_pr_review_check.main()
-    [[span]] = exported
+    [span] = exported
     assert _span_attributes(span) == {
         **REVIEW_ATTRIBUTES,
         'pr_review_checks.outcome': 'FAILED',
