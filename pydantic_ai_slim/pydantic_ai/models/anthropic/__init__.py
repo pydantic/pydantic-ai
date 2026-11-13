@@ -1195,10 +1195,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         computer_tool_version = _computer_tool_version_for_client(
             _profile.get('anthropic_computer_tool_version'), client, self.model_name
         )
-        # A profile without its own native tools lists every type, so the version also takes it away.
-        if computer_tool_version is not None:
-            supported_native_tools = supported_native_tools | {ComputerTool}
-        else:
+        if computer_tool_version is None:
             supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
@@ -4546,7 +4543,7 @@ def _computer_tool_params(
     """Anthropic's computer use tool, sent in the `computer` tool's place when it's declared."""
     if native_computer is None or native_computer.name not in tool_defs:
         return []
-    if not native_computer.is_toolset and native_computer.name != 'computer' and 'computer' in tool_defs:
+    if native_computer.name != 'computer' and 'computer' in tool_defs:
         # Its calls would be told apart from the function tool's by name alone.
         raise UserError(
             f"Anthropic's computer use tool is named `computer`, so the `{native_computer.name}` computer tool "
