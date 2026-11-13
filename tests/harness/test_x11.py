@@ -323,6 +323,8 @@ async def test_x11_computer_tries_every_release_when_one_fails() -> None:
     [
         (HoldKeys(keys=('shift',), seconds=5), ['xdotool', 'keyup', 'shift']),
         (TypeText(text='!'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0021']),
+        # A scroll, like a click, can stop between pressing and releasing its wheel button.
+        (Scroll(direction='down', amount=3), ['xdotool', 'mouseup', '5']),
     ],
 )
 async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: DisplayAction, release: list[str]) -> None:

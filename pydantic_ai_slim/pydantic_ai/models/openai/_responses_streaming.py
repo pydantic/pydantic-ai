@@ -19,7 +19,7 @@ from pydantic_core import to_json
 
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
-from ...computer_use import COMPUTER_KIND, ComputerCallPart
+from ...computer_use import COMPUTER_KIND
 from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
@@ -451,9 +451,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         match item:
             case responses.ResponseFunctionToolCall():
                 yield self._handle_function_call_part(item)
-            case responses.ResponseComputerToolCall():
-                yield from self._map_computer_call_added(item)
-            case responses.ResponseReasoningItem():
+            case responses.ResponseComputerToolCall() | responses.ResponseReasoningItem():
+                # A computer call's actions arrive whole in its done event, where it's mapped.
                 pass
             case responses.ResponseOutputMessage():
                 if item.phase is not None:
@@ -601,36 +600,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             item.call_id, self.provider_response_id if self._tool_call_ids_are_response_scoped else None
         )
 
-    def _map_computer_call_added(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
-        """Start the `computer` call, when the request has a `computer` tool to run it.
-
-        Its actions arrive whole in its done event, but its place among the other calls is set now, as when the
-        response isn't streamed. Until then it has no actions, so nothing runs.
-        """
-        if computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND):
-            part = ComputerCallPart(
-                computer_name,
-                None,
-                tool_call_id=self._computer_call_id(item),
-                id=item.id,
-                provider_name=self.provider_name,
-            )
-            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=part)
-
     def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
         if not (computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
             return
+        # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
+        # call starts complete here and keeps its place among the other parts.
         call = map_computer_call(item, computer_name, self._computer_call_id(item), self.provider_name)
-        if isinstance(self._parts_manager.get_part_by_vendor_id(item.id), ComputerCallPart):
-            # Started at its added event, so it's completed as a delta; a second start would read as another call.
-            event = self._parts_manager.handle_tool_call_delta(
-                vendor_part_id=item.id, args=call.args, provider_details=call.provider_details
-            )
-            # A delta to a complete part always makes an event.
-            assert event is not None
-            yield event
-        else:
-            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+        yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str

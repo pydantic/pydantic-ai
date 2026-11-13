@@ -132,6 +132,8 @@ _DESKTOP_TEMPLATE = 'desktop'
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
+_XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
+
 _VIEWER_PORT = 6080
 
 _START_VIEWER = (
@@ -154,9 +156,10 @@ _START_VIEWER = (
     # without the password, so ours starts instead and fails while that one holds the port.
     + f"fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
-    # `--web`, else novnc_proxy serves the working directory if it has a `vnc.html`.
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} --web /opt/noVNC '
-    '>"$d/novnc.log" 2>&1 9>&- & '
+    # Run from its own directory, as `e2b_desktop` does: novnc_proxy takes a `self.pem` in its working directory as
+    # its certificate. `--web`, else it serves its working directory's files.
+    '(cd /opt/noVNC/utils/ && exec setsid ./novnc_proxy --vnc 127.0.0.1:5900 '
+    f'--listen {_VIEWER_PORT} --web /opt/noVNC) >"$d/novnc.log" 2>&1 9>&- & '
     + wait_until_ready(
         'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
     )
@@ -174,15 +177,18 @@ count."""
 
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     f'if command -v startxfce4 >/dev/null && ! {_XFCE_ON_DISPLAY}; then '
-    'setsid startxfce4 >/dev/null 2>&1 9>&- & i=0; '
-    'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
-    'sleep 0.1; i=$((i+1)); done; fi'
+    f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
+    + wait_until_ready(
+        'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1', '$!', 'the XFCE desktop', _XFCE_LOG
+    )
+    + 'fi'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, and the XFCE desktop.
 
 XFCE starts unless its session runs on the display, which recovers one that died. The script then waits up to 10
-seconds for the desktop window, so the first screenshot isn't black. A template without XFCE gets a display with no
-window manager. Output goes to files, since E2B keeps a command open while a background child holds its output.
+seconds for the desktop window, so the first screenshot isn't black, and fails if XFCE exits first or the window never
+shows. A template without XFCE gets a display with no window manager. Output goes to files, since E2B keeps a command
+open while a background child holds its output.
 """
 
 
