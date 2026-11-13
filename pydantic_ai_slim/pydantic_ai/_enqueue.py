@@ -179,24 +179,34 @@ def stamp_capability_parts(
     `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
     authority on its way to the model.
 
-    Requests and parts are copied, never changed in place: a capability can enqueue a request it took from the run's
-    history, which must stay as it was.
+    A `ModelResponse` from a capability below `'operator'` raises `UserError`. Requests and parts are copied, never
+    changed in place: a capability can enqueue a request it took from the run's history, which must stay as it was.
     """
     return [
         replace(
             message,
             parts=[
                 _stamped(part, capability_id, ceiling) if isinstance(part, CapabilityPart) else part
-                for part in (_within_ceiling(part, capability_id, ceiling) for part in message.parts)
+                for part in (within_ceiling(part, capability_id, ceiling) for part in message.parts)
             ],
         )
         if isinstance(message, ModelRequest)
-        else message
+        else _response_within_ceiling(message, capability_id, ceiling)
         for message in messages
     ]
 
 
-def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+def _response_within_ceiling(message: ModelResponse, capability_id: str, ceiling: Authority) -> ModelResponse:
+    """`message`, which only a capability with operator authority can enqueue: the model reads it as its own turn."""
+    if ceiling != 'operator':
+        raise UserError(
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue a `ModelResponse`, which '
+            "the model reads as its own turn. Only a capability with operator authority can write the model's turns."
+        )
+    return message
+
+
+def within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
     """`part` as a capability below operator authority may send it, or `UserError` if it can't send it at all.
 
     An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice:
@@ -219,7 +229,7 @@ def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authori
             return UserPromptPart(content=text, timestamp=part.timestamp)
         # TODO(v3): remove RetryPromptPart
         case RetryPromptPart(tool_name=None):  # pyright: ignore[reportDeprecated]
-            return _within_ceiling(_translate_legacy_retry_part(part), capability_id, ceiling)
+            return within_ceiling(_translate_legacy_retry_part(part), capability_id, ceiling)
         # A legacy retry bound to a tool call is that call's result: tool output.
         case CapabilityPart() | RetryPromptPart():  # pyright: ignore[reportDeprecated]
             return part
