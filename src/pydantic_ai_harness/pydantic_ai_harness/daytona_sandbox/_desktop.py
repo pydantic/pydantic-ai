@@ -29,7 +29,14 @@ from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
-from daytona import DaytonaBadGatewayError, DaytonaConnectionError, DaytonaTimeoutError, ScreenshotRegion
+from daytona import (
+    DaytonaAuthenticationError,
+    DaytonaBadGatewayError,
+    DaytonaConnectionError,
+    DaytonaForbiddenError,
+    DaytonaTimeoutError,
+    ScreenshotRegion,
+)
 
 from pydantic_ai.computer_use import (
     Click,
@@ -150,8 +157,13 @@ async def _let_go(error: BaseException, held: list[str], release: Callable[[str]
                 raise  # a release that may still be running ends the run, as any unconfirmed input does
             except Exception:
                 pass
-    # An input that may still be running ends the run, so the model won't act with these held.
-    if held and isinstance(error, Exception) and not isinstance(error, WorkspaceUnavailableError):
+    # An input that may still be running ends the run, so the model won't act with these held. A credential failure
+    # goes on unwrapped, for the backend to clean its text and end the run.
+    if (
+        held
+        and isinstance(error, Exception)
+        and not isinstance(error, (WorkspaceUnavailableError, DaytonaAuthenticationError, DaytonaForbiddenError))
+    ):
         raise WorkspaceError(
             f'{error}; releasing {" and ".join(held)} failed too, so {"it" if len(held) == 1 else "they"} '
             'may still be held'
