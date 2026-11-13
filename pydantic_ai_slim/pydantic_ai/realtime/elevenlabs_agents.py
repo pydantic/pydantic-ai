@@ -81,6 +81,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..models import ModelRequestParameters, get_user_agent
+from ..models._tool_choice import ResolvedToolChoice
 from ..native_tools import MCPServerTool
 from ..profiles.elevenlabs import elevenlabs_agents_realtime_model_profile
 from ..providers import Provider, infer_provider
@@ -928,6 +929,65 @@ def _tool_config(tool: ToolDefinition, remote: _AgentToolConfig | None = None) -
     return config
 
 
+def _client_tool_configs(
+    tools: Sequence[ToolDefinition], remote_by_name: dict[str, _AgentToolConfig]
+) -> dict[str, dict[str, Any]]:
+    """Each local tool's ElevenLabs tool config, by name, raising one `UserError` for every tool that has none."""
+    problems: list[str] = []
+    configs: dict[str, dict[str, Any]] = {}
+    for tool in tools:
+        try:
+            configs[tool.name] = _tool_config(tool, remote_by_name.get(tool.name))
+        except UserError as error:
+            problems.append(str(error))
+    if problems:
+        raise UserError('\n'.join(problems)) from None
+    return configs
+
+
+def _sort_attached_tool_ids(
+    attached_ids: list[str], workspace_tools: dict[str, _WorkspaceTool]
+) -> tuple[list[str], dict[str, str]]:
+    """The attached ids a tool sync keeps as they are, and the ids of the attached client tools by name."""
+    # Sort the agent's attached ids into two buckets. Client tools are the run's responsibility:
+    # their name-to-id mapping is kept so a differing one can be updated in place (the agent's
+    # inline tool configs carry no ids). Everything else is preserved as-is: server-side
+    # (webhook/MCP/system) tools are owned by ElevenLabs and have no Pydantic AI counterpart, and
+    # an attached id the listing doesn't report can't be classified at all, so it is kept rather
+    # than risk dropping a server-side tool. `preserved_ids` seeds `target_tool_ids`, so these
+    # survive the re-point; a client tool the run doesn't define lands in neither bucket and is
+    # detached by it.
+    client_id_by_name: dict[str, str] = {}
+    preserved_ids: list[str] = []
+    for tool_id in attached_ids:
+        workspace_tool = workspace_tools.get(tool_id)
+        if workspace_tool is None or workspace_tool.tool_config.type != 'client':
+            preserved_ids.append(tool_id)
+        elif workspace_tool.tool_config.name:  # pragma: no branch
+            client_id_by_name[workspace_tool.tool_config.name] = tool_id
+    return preserved_ids, client_id_by_name
+
+
+def _adoptable_tools(
+    attached_ids: list[str], workspace_tools: dict[str, _WorkspaceTool]
+) -> dict[str, list[_WorkspaceTool]]:
+    """The unattached workspace client tools a tool sync may adopt, by name."""
+    # A sync that failed between a create and the final re-point leaves its created tools in the
+    # workspace but unattached; recreating them on the retry would accumulate duplicates. An
+    # unattached client tool whose config already matches exactly AND which no agent in the
+    # workspace depends on is adopted instead. The dependents check matters because "not attached
+    # to this agent" is not "orphaned": adopting another agent's matching tool would let a later
+    # sync's PATCH rewrite it under that agent. A tool that differs, or that anything depends on,
+    # is left alone and a fresh one is created.
+    attached_id_set = set(attached_ids)
+    adoptable_by_name: dict[str, list[_WorkspaceTool]] = {}
+    for workspace_tool in workspace_tools.values():
+        name = workspace_tool.tool_config.name
+        if workspace_tool.id not in attached_id_set and workspace_tool.tool_config.type == 'client' and name:
+            adoptable_by_name.setdefault(name, []).append(workspace_tool)
+    return adoptable_by_name
+
+
 def _schemas_match(local: dict[str, Any], remote: dict[str, Any]) -> bool:
     """Whether a prepared local JSON schema (see `_prepared_parameters`) and a server-normalized stored schema agree.
 
@@ -947,13 +1007,8 @@ def _schemas_match(local: dict[str, Any], remote: dict[str, Any]) -> bool:
         return False
     if set(cast('list[str]', local.get('required') or [])) != set(cast('list[str]', remote.get('required') or [])):
         return False
-    local_properties = cast('dict[str, Any]', local.get('properties') or {})
-    remote_properties = cast('dict[str, Any]', remote.get('properties') or {})
-    if set(local_properties) != set(remote_properties):
+    if not _properties_match(local, remote):
         return False
-    for name, local_property in local_properties.items():
-        if not _schemas_match(cast('dict[str, Any]', local_property), cast('dict[str, Any]', remote_properties[name])):
-            return False
     local_items = local.get('items')
     remote_items = remote.get('items')
     if isinstance(local_items, dict):
@@ -963,6 +1018,18 @@ def _schemas_match(local: dict[str, Any], remote: dict[str, Any]) -> bool:
     # A local array without `items` accepts anything; a remote that constrains its items is still a
     # different contract and must count as a mismatch, exactly like the inverse case above.
     return not isinstance(remote_items, dict)
+
+
+def _properties_match(local: dict[str, Any], remote: dict[str, Any]) -> bool:
+    """Whether two schemas declare the same property names, with matching schemas (see `_schemas_match`)."""
+    local_properties = cast('dict[str, Any]', local.get('properties') or {})
+    remote_properties = cast('dict[str, Any]', remote.get('properties') or {})
+    if set(local_properties) != set(remote_properties):
+        return False
+    for name, local_property in local_properties.items():
+        if not _schemas_match(cast('dict[str, Any]', local_property), cast('dict[str, Any]', remote_properties[name])):
+            return False
+    return True
 
 
 def _tool_mismatches(local: Sequence[ToolDefinition], remote: Sequence[_AgentToolConfig]) -> list[str]:
@@ -1274,6 +1341,45 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         _raise_for_status(response, self.agent_id)
         return _CreatedToolResponse.model_validate_json(response.content).id
 
+    async def _reconcile_tools(
+        self,
+        agent: _AgentPreflight,
+        tools: list[ToolDefinition],
+        *,
+        advertised_tools: list[ToolDefinition],
+        tool_choice: ResolvedToolChoice | None,
+        instructions: str,
+        settings: ElevenLabsAgentsRealtimeModelSettings,
+    ) -> list[str]:
+        """Reconcile the agent's client tools with the run's per `elevenlabs_agents_tool_sync`; return its tool ids."""
+        tool_sync = settings.get('elevenlabs_agents_tool_sync', 'error')
+        match tool_sync:
+            case 'error':
+                if mismatches := _tool_mismatches(tools, agent.client_tools):
+                    details = '\n'.join(f'- {mismatch}' for mismatch in mismatches)
+                    raise UserError(
+                        f'The tools of the ElevenLabs agent {self.agent_id!r} do not match this agent run:\n'
+                        f'{details}\n'
+                        "Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to "
+                        "sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent."
+                    )
+                return agent.tool_ids
+            case 'sync':
+                # The sync changes workspace state, so everything else that can refuse the conversation is checked
+                # first. Synced, the agent's client tools are the run's, so a `tool_choice` restriction needs the
+                # `tool_ids` override exactly when it leaves out one of them (whatever ids it then names).
+                restricts = (tool_choice == 'none' or isinstance(tool_choice, tuple)) and bool(
+                    {tool.name for tool in tools} - {tool.name for tool in advertised_tools}
+                )
+                self._check_override_permissions(
+                    agent, settings, self._requested_overrides(instructions, settings, [] if restricts else None)
+                )
+                return await self._sync_tools(agent, tools)
+            case 'off':
+                return agent.tool_ids
+            case _:
+                assert_never(tool_sync)
+
     async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> list[str]:
         """Make the agent's client tools match the session's tools over REST (`elevenlabs_agents_tool_sync='sync'`).
 
@@ -1298,49 +1404,13 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         # call: a validation failure must cost zero workspace mutations. Validating inside the create
         # loop would orphan the tools already created (created but never attached, since the
         # re-point at the end never runs) and surface offending tools one connect at a time.
-        problems: list[str] = []
-        configs: dict[str, dict[str, Any]] = {}
-        for tool in tools:
-            try:
-                configs[tool.name] = _tool_config(tool, remote_by_name.get(tool.name))
-            except UserError as error:
-                problems.append(str(error))
-        if problems:
-            raise UserError('\n'.join(problems)) from None
+        configs = _client_tool_configs(tools, remote_by_name)
 
         workspace_tools = await self._workspace_tool_listing()
 
         attached_ids = agent.tool_ids
-        client_id_by_name: dict[str, str] = {}
-        # Sort the agent's attached ids into two buckets. Client tools are the run's responsibility:
-        # their name-to-id mapping is kept so a differing one can be updated in place (the agent's
-        # inline tool configs carry no ids). Everything else is preserved as-is: server-side
-        # (webhook/MCP/system) tools are owned by ElevenLabs and have no Pydantic AI counterpart, and
-        # an attached id the listing doesn't report can't be classified at all, so it is kept rather
-        # than risk dropping a server-side tool. `preserved_ids` seeds `target_tool_ids`, so these
-        # survive the re-point; a client tool the run doesn't define lands in neither bucket and is
-        # detached by it.
-        preserved_ids: list[str] = []
-        for tool_id in attached_ids:
-            workspace_tool = workspace_tools.get(tool_id)
-            if workspace_tool is None or workspace_tool.tool_config.type != 'client':
-                preserved_ids.append(tool_id)
-            elif workspace_tool.tool_config.name:  # pragma: no branch
-                client_id_by_name[workspace_tool.tool_config.name] = tool_id
-
-        # A sync that failed between a create and the final re-point leaves its created tools in the
-        # workspace but unattached; recreating them on the retry would accumulate duplicates. An
-        # unattached client tool whose config already matches exactly AND which no agent in the
-        # workspace depends on is adopted instead. The dependents check matters because "not attached
-        # to this agent" is not "orphaned": adopting another agent's matching tool would let a later
-        # sync's PATCH rewrite it under that agent. A tool that differs, or that anything depends on,
-        # is left alone and a fresh one is created.
-        attached_id_set = set(attached_ids)
-        adoptable_by_name: dict[str, list[_WorkspaceTool]] = {}
-        for workspace_tool in workspace_tools.values():
-            name = workspace_tool.tool_config.name
-            if workspace_tool.id not in attached_id_set and workspace_tool.tool_config.type == 'client' and name:
-                adoptable_by_name.setdefault(name, []).append(workspace_tool)
+        preserved_ids, client_id_by_name = _sort_attached_tool_ids(attached_ids, workspace_tools)
+        adoptable_by_name = _adoptable_tools(attached_ids, workspace_tools)
 
         # The ids the agent is re-pointed at: preserved server-side ids first, then one id per local
         # tool (adopted, created, or existing) in the run's order.
@@ -1548,32 +1618,14 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         # The agent's client tools are reconciled with every tool of the run, as they are workspace
         # state shared with every conversation; a `tool_choice` restriction is this conversation's, and
         # narrows the attached tools through the `tool_ids` override below.
-        tool_sync = settings.get('elevenlabs_agents_tool_sync', 'error')
-        attached_ids = agent.tool_ids
-        if tool_sync == 'error':
-            if mismatches := _tool_mismatches(tools, agent.client_tools):
-                details = '\n'.join(f'- {mismatch}' for mismatch in mismatches)
-                raise UserError(
-                    f'The tools of the ElevenLabs agent {self.agent_id!r} do not match this agent run:\n'
-                    f'{details}\n'
-                    "Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to "
-                    "sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent."
-                )
-        elif tool_sync == 'sync':
-            # The sync changes workspace state, so everything else that can refuse the conversation is checked
-            # first. Synced, the agent's client tools are the run's, so a `tool_choice` restriction needs the
-            # `tool_ids` override exactly when it leaves out one of them (whatever ids it then names).
-            restricts = (tool_choice == 'none' or isinstance(tool_choice, tuple)) and bool(
-                {tool.name for tool in tools} - {tool.name for tool in advertised_tools}
-            )
-            self._check_override_permissions(
-                agent, settings, self._requested_overrides(instructions, settings, [] if restricts else None)
-            )
-            attached_ids = await self._sync_tools(agent, tools)
-        elif tool_sync == 'off':
-            pass
-        else:
-            assert_never(tool_sync)
+        attached_ids = await self._reconcile_tools(
+            agent,
+            tools,
+            advertised_tools=advertised_tools,
+            tool_choice=tool_choice,
+            instructions=instructions,
+            settings=settings,
+        )
 
         restricted_tool_ids: list[str] | None = None
         if tool_choice == 'none' or isinstance(tool_choice, tuple):
@@ -1919,33 +1971,31 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                     continue
                 finished, read = read, None
                 try:
-                    raw = finished.result()
+                    frame = await self._read_frame(finished.result())
                 except self.transport_errors as e:
+                    # A failed receive, or answering a ping on an already-dropped socket, which is the same
+                    # fatal condition.
                     yield self._connection_lost(e)
                     return
-                if not isinstance(raw, str):
-                    continue
-                try:
-                    # `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and
-                    # a bad base64 audio payload: a malformed frame shouldn't tear down the session
-                    # (mirroring the OpenAI provider), so it surfaces as a recoverable error instead.
-                    events = await self._map_event(_loads_obj(raw))
-                except ValueError as e:
-                    error = RealtimeSessionErrorEvent(
-                        message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True
-                    )
-                    yield self._lifecycle.frame_for([error])
-                    continue
-                except self.transport_errors as e:
-                    # Answering a ping can hit an already-dropped socket; that is the same fatal
-                    # condition as a failed receive.
-                    yield self._connection_lost(e)
-                    return
-                if events or self._cuts:
-                    yield self._frame(events)
+                if frame is not None:
+                    yield frame
         finally:
             if read is not None:
                 await _utils.cancel_and_drain(read)
+
+    async def _read_frame(self, raw: str | bytes) -> RealtimeFrame | None:
+        """The frame one received message makes, or `None` when it makes none."""
+        if not isinstance(raw, str):
+            return None
+        try:
+            # `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and
+            # a bad base64 audio payload: a malformed frame shouldn't tear down the session
+            # (mirroring the OpenAI provider), so it surfaces as a recoverable error instead.
+            events = await self._map_event(_loads_obj(raw))
+        except ValueError as e:
+            error = RealtimeSessionErrorEvent(message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True)
+            return self._lifecycle.frame_for([error])
+        return self._frame(events) if events or self._cuts else None
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
@@ -1997,10 +2047,13 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # The cut-off response's terminal, after the lifecycle saw the cut: what it says was heard comes
             # after the response is over, so it ends the response, and its transcript trails it.
             self._cut_shown = False
-            late = [event for event in events if isinstance(event, OutputTranscript)]
-            frame = self._lifecycle.frame_for([event for event in events if not isinstance(event, OutputTranscript)])
-            return [*frame, *(StaleEvent(event) for event in late)]
+            return self._cut_off_terminal_frame(events)
         return self._lifecycle.frame_for(events)
+
+    def _cut_off_terminal_frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
+        late = [event for event in events if isinstance(event, OutputTranscript)]
+        frame = self._lifecycle.frame_for([event for event in events if not isinstance(event, OutputTranscript)])
+        return [*frame, *(StaleEvent(event) for event in late)]
 
     def _connection_lost(self, error: Exception) -> RealtimeFrame:
         """The frame ending the conversation: no reconnect support, so a dropped conversation is fatal.
@@ -2102,44 +2155,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             self._queued = status == 'waiting'
             return []
         if event_type == 'audio':
-            # Parse (and decode) before marking the response open, so a malformed frame that is
-            # reported as a recoverable error leaves the turn state untouched.
-            payload = _AudioEvent.model_validate(data).audio_event
-            # `validate=True` so corrupted base64 raises (a `ValueError` the receive loop reports as
-            # a recoverable error) instead of silently decoding to garbage or empty bytes.
-            audio = base64.b64decode(payload.audio_base_64, validate=True)
-            if self._queued:
-                # Hold audio the server plays while the conversation waits for a free slot.
-                return []
-            # Audio of another turn than the reply whose text is complete: that reply was voiced in full.
-            ended = self._end_tail() if self._tail is not None and payload.event_id != self._tail.event_id else []
-            self._response_open = True
-            self._open_event_id = payload.event_id
-            return [*ended, AudioDelta(data=audio), *self._time_speech(payload.alignment)]
+            return self._map_audio(data)
         if event_type == 'client_tool_call':
-            call = _ClientToolCallEvent.model_validate(data).client_tool_call
-            # Every call goes through, including one naming a tool this run does not define (possible
-            # with `elevenlabs_agents_tool_sync='off'`, or after a dashboard edit that races the preflight):
-            # the session's tool manager answers it with the standard unknown-tool error, so the call
-            # and its outcome land in history and reach consumers like any other.
-            # The calls end the response that makes them (the agent goes on in a response of its own once their
-            # results are in, which the turn's `agent_response` then ends), so a barge-in from here on cuts nothing.
-            self._response_open = False
-            self._turn_interrupted = False
-            if not call.expects_response:
-                self._fire_and_forget_tool_call_ids.add(call.tool_call_id)
-            if isinstance(call.parameters, str):
-                args = call.parameters
-            else:
-                args = to_json(call.parameters or {}).decode()
-            # Its response ends with the reply's last call (see `_TOOL_CALL_BATCH_WINDOW`), so that parallel calls are
-            # one response, as the agent answers them.
-            self._calls_open = True
-            return [
-                ToolCall(
-                    tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args, response_usage_follows=True
-                )
-            ]
+            return self._map_client_tool_call(data)
         if event_type == 'mcp_tool_call':
             return await self._map_mcp_tool_call(_McpToolCallEvent.model_validate(data).mcp_tool_call)
         if event_type == 'context_usage':
@@ -2170,6 +2188,45 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             message = error.message or error.error_name or 'unknown error'
             return [RealtimeSessionErrorEvent(message=f'{_PROVIDER_LABEL} error: {message}', recoverable=True)]
         return self._map_turn_event(event_type, data)
+
+    def _map_audio(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        # Parse (and decode) before marking the response open, so a malformed frame that is
+        # reported as a recoverable error leaves the turn state untouched.
+        payload = _AudioEvent.model_validate(data).audio_event
+        # `validate=True` so corrupted base64 raises (a `ValueError` the receive loop reports as
+        # a recoverable error) instead of silently decoding to garbage or empty bytes.
+        audio = base64.b64decode(payload.audio_base_64, validate=True)
+        if self._queued:
+            # Hold audio the server plays while the conversation waits for a free slot.
+            return []
+        # Audio of another turn than the reply whose text is complete: that reply was voiced in full.
+        ended = self._end_tail() if self._tail is not None and payload.event_id != self._tail.event_id else []
+        self._response_open = True
+        self._open_event_id = payload.event_id
+        return [*ended, AudioDelta(data=audio), *self._time_speech(payload.alignment)]
+
+    def _map_client_tool_call(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        call = _ClientToolCallEvent.model_validate(data).client_tool_call
+        # Every call goes through, including one naming a tool this run does not define (possible
+        # with `elevenlabs_agents_tool_sync='off'`, or after a dashboard edit that races the preflight):
+        # the session's tool manager answers it with the standard unknown-tool error, so the call
+        # and its outcome land in history and reach consumers like any other.
+        # The calls end the response that makes them (the agent goes on in a response of its own once their
+        # results are in, which the turn's `agent_response` then ends), so a barge-in from here on cuts nothing.
+        self._response_open = False
+        self._turn_interrupted = False
+        if not call.expects_response:
+            self._fire_and_forget_tool_call_ids.add(call.tool_call_id)
+        if isinstance(call.parameters, str):
+            args = call.parameters
+        else:
+            args = to_json(call.parameters or {}).decode()
+        # Its response ends with the reply's last call (see `_TOOL_CALL_BATCH_WINDOW`), so that parallel calls are
+        # one response, as the agent answers them.
+        self._calls_open = True
+        return [
+            ToolCall(tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args, response_usage_follows=True)
+        ]
 
     async def _map_mcp_tool_call(self, call: _McpToolCallPayload) -> list[RealtimeCodecEvent]:
         """A step of an MCP call ElevenLabs runs itself: its call part, a request for approval, or its outcome."""
@@ -2231,54 +2288,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     def _map_turn_event(self, event_type: object, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         """Map the frames making up the agent's turn: transcripts, the boundary, and interruptions."""
         if event_type == 'agent_chat_response_part':
-            # Text-only conversations stream the response as start/delta/stop parts ahead of the
-            # whole-text `agent_response` (verified live; these arrive regardless of the agent's
-            # `client_events` set). Deltas map incrementally; the empty start/stop markers carry
-            # nothing (a tool-call-only model response is exactly one empty start/stop pair).
-            part = _AgentChatResponsePartEvent.model_validate(data).text_response_part
-            if part.type == 'start':
-                # (A message's `stop` part can trail its `agent_response`, so only its `start` names the open one.)
-                self._open_response_id = part.response_id
-                self._open_event_id = part.event_id
-            if part.type == 'delta' and part.text:
-                self._response_open = True
-                text = part.text if self._tag_stripper is None else self._tag_stripper.feed(part.text)
-                if text:
-                    # Named by its message, which a correction names to say what of it the user heard.
-                    return [
-                        OutputTranscript(
-                            text=text, is_final=False, output_text=self._text_output, item_id=part.response_id
-                        )
-                    ]
-            return []
+            return self._map_chat_response_part(data)
         if event_type == 'agent_response':
-            # The whole response text, once per reply, after any tool loop. In text mode it follows the streamed
-            # parts and ends the reply; the session reconciles the full text against them. In audio mode it arrives
-            # when the LLM finishes writing, while TTS can still be voicing the reply (verified live), so the reply
-            # ends with its last audio instead (see `_AudioTail`). A reply already cut off has no more audio coming:
-            # this is its text, cut down to what was heard. (Audio's `is_final` marks the end of one TTS generation,
-            # which can come mid-reply, so it isn't read.)
-            payload = _AgentResponseEvent.model_validate(data).agent_response_event
-            if (answered := payload.in_response_to_ids) is not None:
-                # Which of the text inputs the reply answers, revising what the lifecycle worked out from the order.
-                self._lifecycle.reply_named(answered)
-            self._response_open = True
-            self._open_event_id = payload.event_id
-            text, details = payload.agent_response, None
-            if self._tag_stripper is not None:
-                # The whole text, stripped at once, which is what the stripped pieces streamed before it add up to.
-                self._tag_stripper = _AudioTagStripper()
-                text, tags = _strip_audio_tags(text)
-                details = {'audio_tags': tags} if tags else None
-            transcript = OutputTranscript(
-                text=text, is_final=True, output_text=self._text_output, item_id=payload.response_id
-            )
-            if self._text_output or self._turn_interrupted:
-                return self._end_message(transcript, payload.response_id, details)
-            self._tail = _AudioTail(
-                event_id=payload.event_id, response_id=payload.response_id, provider_details=details
-            )
-            return [transcript]
+            return self._map_agent_response(data)
         if event_type == 'agent_response_correction':
             return self._map_correction(data)
         if event_type == 'agent_response_complete':
@@ -2289,22 +2301,72 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # `tentative_user_transcript` enabled in `client_events`.
             return [InputTranscript(text=payload.user_transcript, is_final=True)]
         if event_type == 'interruption':
-            # The user barged in and the server stops streaming audio. Recorded live: while the reply
-            # is still being generated, the `agent_response` that follows is already cut down to what
-            # was heard (no correction frame); during playback of a finished reply, the server sends
-            # an `agent_response_correction` instead. Only an interruption that lands while the
-            # response is still open marks the turn interrupted: during playback the reply has already
-            # ended with its last audio, and the flag must not leak into the next turn.
-            if self._response_open:
-                self._turn_interrupted = True
-            if (tail := self._tail) is not None:
-                # Cut off while its audio was still coming: the correction that follows ends it.
-                tail.interrupted = True
-            return [RealtimeResponseInterruptedEvent()]
+            return self._map_interruption()
         # Server-side tool/MCP progress, VAD scores, guardrail notices, response metadata, tentative
         # responses, and anything newer than this adapter are informational; ignore them rather than
         # failing the stream.
         return []
+
+    def _map_chat_response_part(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        # Text-only conversations stream the response as start/delta/stop parts ahead of the
+        # whole-text `agent_response` (verified live; these arrive regardless of the agent's
+        # `client_events` set). Deltas map incrementally; the empty start/stop markers carry
+        # nothing (a tool-call-only model response is exactly one empty start/stop pair).
+        part = _AgentChatResponsePartEvent.model_validate(data).text_response_part
+        if part.type == 'start':
+            # (A message's `stop` part can trail its `agent_response`, so only its `start` names the open one.)
+            self._open_response_id = part.response_id
+            self._open_event_id = part.event_id
+        if part.type == 'delta' and part.text:
+            self._response_open = True
+            text = part.text if self._tag_stripper is None else self._tag_stripper.feed(part.text)
+            if text:
+                # Named by its message, which a correction names to say what of it the user heard.
+                return [
+                    OutputTranscript(text=text, is_final=False, output_text=self._text_output, item_id=part.response_id)
+                ]
+        return []
+
+    def _map_agent_response(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        # The whole response text, once per reply, after any tool loop. In text mode it follows the streamed
+        # parts and ends the reply; the session reconciles the full text against them. In audio mode it arrives
+        # when the LLM finishes writing, while TTS can still be voicing the reply (verified live), so the reply
+        # ends with its last audio instead (see `_AudioTail`). A reply already cut off has no more audio coming:
+        # this is its text, cut down to what was heard. (Audio's `is_final` marks the end of one TTS generation,
+        # which can come mid-reply, so it isn't read.)
+        payload = _AgentResponseEvent.model_validate(data).agent_response_event
+        if (answered := payload.in_response_to_ids) is not None:
+            # Which of the text inputs the reply answers, revising what the lifecycle worked out from the order.
+            self._lifecycle.reply_named(answered)
+        self._response_open = True
+        self._open_event_id = payload.event_id
+        text, details = payload.agent_response, None
+        if self._tag_stripper is not None:
+            # The whole text, stripped at once, which is what the stripped pieces streamed before it add up to.
+            self._tag_stripper = _AudioTagStripper()
+            text, tags = _strip_audio_tags(text)
+            details = {'audio_tags': tags} if tags else None
+        transcript = OutputTranscript(
+            text=text, is_final=True, output_text=self._text_output, item_id=payload.response_id
+        )
+        if self._text_output or self._turn_interrupted:
+            return self._end_message(transcript, payload.response_id, details)
+        self._tail = _AudioTail(event_id=payload.event_id, response_id=payload.response_id, provider_details=details)
+        return [transcript]
+
+    def _map_interruption(self) -> list[RealtimeCodecEvent]:
+        # The user barged in and the server stops streaming audio. Recorded live: while the reply
+        # is still being generated, the `agent_response` that follows is already cut down to what
+        # was heard (no correction frame); during playback of a finished reply, the server sends
+        # an `agent_response_correction` instead. Only an interruption that lands while the
+        # response is still open marks the turn interrupted: during playback the reply has already
+        # ended with its last audio, and the flag must not leak into the next turn.
+        if self._response_open:
+            self._turn_interrupted = True
+        if (tail := self._tail) is not None:
+            # Cut off while its audio was still coming: the correction that follows ends it.
+            tail.interrupted = True
+        return [RealtimeResponseInterruptedEvent()]
 
     def _map_complete(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         """End the reply of the turn `agent_response_complete` names, if it is still under way."""

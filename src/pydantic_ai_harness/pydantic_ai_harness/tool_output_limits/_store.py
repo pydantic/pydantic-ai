@@ -1,10 +1,10 @@
 """Storage backends for spilled tool outputs.
 
-`WorkspaceStore` is the default: it writes each payload to a file inside the run's workspace
+`WorkspaceOverflowStore` is the default: it writes each payload to a file inside the run's workspace
 (`ctx.workspace`), or a workspace of its own, so with a remote sandbox the spilled files live in
 the sandbox, next to the files the agent's other tools see. `OverflowStore` is the narrow
 protocol for any other backend (a blob store, a durable engine's storage): persist a payload
-under a key, read it back by handle. `LocalFileStore` implements it on the host filesystem.
+under a key, read it back by handle. `LocalFileOverflowStore` implements it on the host filesystem.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
 from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
 SPILL_DIR = 'tool-output'
-"""The directory under `.pydantic-ai-harness` in the working directory that `WorkspaceStore` writes to."""
+"""The directory under `.pydantic-ai-harness` in the working directory that `WorkspaceOverflowStore` writes to."""
 
 
 @runtime_checkable
@@ -78,7 +78,7 @@ def _segments(key: str) -> list[str]:
 
 
 @dataclass
-class WorkspaceStore:
+class WorkspaceOverflowStore:
     """The default store: each spilled payload is a file inside the run's workspace.
 
     The handle is the file's absolute workspace path. Files live under
@@ -101,7 +101,7 @@ class WorkspaceStore:
     _workspace: Workspace | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._workspace = secondary_workspace(self.workspace, 'WorkspaceStore')
+        self._workspace = secondary_workspace(self.workspace, 'WorkspaceOverflowStore')
 
     def bind(self, workspace: Workspace) -> OverflowStore:
         """Bind a run workspace to the common store interface."""
@@ -137,7 +137,7 @@ class WorkspaceStore:
 
 @dataclass
 class _BoundWorkspaceStore:
-    store: WorkspaceStore
+    store: WorkspaceOverflowStore
     workspace: Workspace
 
     async def write(self, key: str, data: bytes) -> str:
@@ -169,11 +169,11 @@ def _default_root() -> Path:
 
 
 @dataclass
-class LocalFileStore:
+class LocalFileOverflowStore:
     """`OverflowStore` that writes each payload to a file on the host running the agent.
 
     Pass it as `store=` to keep spills on this machine, for instance for a run with no workspace;
-    with a workspace, the default `WorkspaceStore` keeps spills where the agent's other tools can
+    with a workspace, the default `WorkspaceOverflowStore` keeps spills where the agent's other tools can
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
@@ -280,7 +280,7 @@ class LocalFileStore:
         try:
             self._prune_sync()
         except Exception as exc:  # never let cleanup fail a run or block the hot path
-            warnings.warn(f'LocalFileStore cleanup failed: {exc}', stacklevel=2)
+            warnings.warn(f'LocalFileOverflowStore cleanup failed: {exc}', stacklevel=2)
 
     def _prune_sync(self) -> None:
         """Delete files older than `cleanup_after` (by `st_mtime`)."""
