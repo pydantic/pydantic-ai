@@ -422,7 +422,9 @@ Gotchas:
   `code` and `message`) waits for approval, as OpenAI asks; resolve it with
   `HandleDeferredToolCalls` (approve, or `ToolDenied`) or `DeferredToolRequests` output, or the run ends with an
   error. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
-  `isinstance(call, ComputerCallPart)` and an action isn't `screenshot`, `zoom`, `wait` or `cursor_position`.
+  `tool_def.tool_kind == COMPUTER_KIND.id` (from `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false and an
+  action in the validated `args['actions']` isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test
+  `isinstance(call, ComputerCallPart)`: a call whose arguments a hook repaired arrives as a plain `ToolCallPart`.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
   each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot

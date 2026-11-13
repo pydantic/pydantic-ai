@@ -6,13 +6,13 @@ these recordings run the real capability, with its instructions, scaling and res
 
 from __future__ import annotations
 
-from typing import Any, cast
+from collections.abc import AsyncIterable
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import JsonValue
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.computer_use import Click, PressKeys, TypeText
 from pydantic_ai_harness.computer_use import ComputerUse
 from tests.models.conftest import content_blocks, json_objects
@@ -34,8 +34,15 @@ needs_anthropic = pytest.mark.skipif(not anthropic_installed(), reason='anthropi
 TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
 
 
-def _items(body: dict[str, Any], type: str) -> list[dict[str, Any]]:
-    return [item for item in cast(list[dict[str, Any]], body['input']) if item.get('type') == type]
+def _objects(body: dict[str, JsonValue], key: str) -> list[dict[str, JsonValue]]:
+    """The objects in a request body's list under `key`, such as `tools` or `input`."""
+    value = body[key]
+    assert isinstance(value, list)
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _items(body: dict[str, JsonValue], type: str) -> list[dict[str, JsonValue]]:
+    return [item for item in _objects(body, 'input') if item.get('type') == type]
 
 
 def _gpt(openai_api_key: str, capture: RequestCapture) -> OpenAIResponsesModel:
@@ -50,7 +57,7 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     provider = ScreenProvider()
     agent = Agent(_gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse()])
 
-    async def drain(ctx: Any, events: Any) -> None:
+    async def drain(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
         async for _ in events:
             pass
 
@@ -59,11 +66,13 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/responses')
     # The capability's `computer` tool went out as OpenAI's own, not as a function.
-    assert {'type': 'computer'} in cast(list[Any], first['tools'])
-    assert not any(tool.get('name') == 'computer' for tool in cast(list[dict[str, Any]], first['tools']))
+    assert {'type': 'computer'} in _objects(first, 'tools')
+    assert not any(tool.get('name') == 'computer' for tool in _objects(first, 'tools'))
     # And its results came back as screenshots in `computer_call_output`s, at full detail.
     outputs = _items(last, 'computer_call_output')
-    assert outputs and all(output['output']['detail'] == 'original' for output in outputs)
+    assert outputs and all(
+        isinstance(screenshot := output['output'], dict) and screenshot['detail'] == 'original' for output in outputs
+    )
 
 
 @needs_openai
@@ -80,11 +89,11 @@ async def test_gpt_drives_the_screen_after_loading_a_deferred_computer(
     first, second, *_ = bodies = request_capture.bodies('/responses')
     # Before loading, the model has only `load_capability`; after it, the native computer tool. The API refuses a
     # function named `computer`, in `tools` or in an `additional_tools` item.
-    assert {'type': 'computer'} not in cast(list[Any], first['tools'])
-    assert {'type': 'computer'} in cast(list[Any], second['tools'])
+    assert {'type': 'computer'} not in _objects(first, 'tools')
+    assert {'type': 'computer'} in _objects(second, 'tools')
     for body in bodies:
-        declared = [*cast(list[dict[str, Any]], body['tools'])]
-        declared += [tool for item in _items(body, 'additional_tools') for tool in item['tools']]
+        declared = _objects(body, 'tools')
+        declared += [tool for item in _items(body, 'additional_tools') for tool in _objects(item, 'tools')]
         assert not any(tool.get('name') == 'computer' for tool in declared)
 
 
@@ -129,11 +138,11 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello'), PressKeys(keys=('enter',))]
     first_native, *_, last = request_capture.bodies('/responses')
-    assert {'type': 'computer'} in cast(list[Any], first_native['tools'])
+    assert {'type': 'computer'} in _objects(first_native, 'tools')
     # The opted-out agent declares a function, and the earlier native calls go back as function calls without
     # their `cu_` ids, after the reasoning that made them.
-    assert [tool['name'] for tool in cast(list[dict[str, Any]], last['tools'])] == ['computer']
-    kinds = [item.get('type') for item in cast(list[dict[str, Any]], last['input'])]
+    assert [tool['name'] for tool in _objects(last, 'tools')] == ['computer']
+    kinds = [item.get('type') for item in _objects(last, 'input')]
     assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
     calls = _items(last, 'function_call')
     assert calls and all(call['name'] == 'computer' for call in calls)
