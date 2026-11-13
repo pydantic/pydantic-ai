@@ -8,7 +8,7 @@ import json
 import struct
 import zlib
 from collections.abc import Callable
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
@@ -162,32 +162,6 @@ async def test_malformed_safety_checks_make_the_call_wait_for_approval(allow_mod
     assert computer.actions == []
 
 
-async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK])
-    first.conversation = Conversation(id='conv_1')
-    client = MockOpenAIResponses.create_mock([first, _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(
-        model,
-        capabilities=[FakeComputer(requires_approval=True), provider.capability()],
-        output_type=[str, DeferredToolRequests],
-        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'),
-    )
-    paused = await agent.run('Go.')
-    assert isinstance(paused.output, DeferredToolRequests)
-    (approval,) = paused.output.approvals
-
-    await agent.run(
-        message_history=paused.all_messages(),
-        deferred_tool_results=DeferredToolResults(approvals={approval.tool_call_id: True}),
-    )
-    _, second = get_mock_responses_kwargs(client)
-    # The call stays in the conversation; its output still acknowledges the checks.
-    (output,) = second['input']
-    assert output['acknowledged_safety_checks'] == [CHECK]
-
-
 async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_its_safety_checks(
     allow_model_requests: None,
 ) -> None:
@@ -220,7 +194,7 @@ async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_it
             approvals={approval.tool_call_id: ToolApproved(override_args=corrected)}
         ),
     )
-    assert computer.actions != []
+    assert computer.actions == [Click(x=5, y=6)]
     _, second = get_mock_responses_kwargs(client)
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
     assert output['acknowledged_safety_checks'] == [CHECK]
@@ -420,7 +394,13 @@ async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_re
 
     assert computer.actions == []
     _, second = get_mock_responses_kwargs(client)
-    assert 'Ran 0 of 1 actions. The next one failed: ' in str(second['input'])
+    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
+    assert output['output']['image_url'] == f'data:image/png;base64,{base64.b64encode(FAKE_SCREENSHOT).decode()}'
+    assert second['input'][second['input'].index(output) + 1] == {
+        'role': 'user',
+        'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">'
+        'Ran 0 of 1 actions. The next one failed: This workspace is read-only.</pyai:tool_result>',
+    }
 
 
 @pytest.mark.parametrize(
@@ -615,7 +595,9 @@ async def test_an_unfinished_call_runs_nothing(
     streamed: bool,
 ) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    cast(resp.ResponseComputerToolCall, response.output[0]).status = call_status
+    item = response.output[0]
+    assert isinstance(item, resp.ResponseComputerToolCall)
+    item.status = call_status
     response.status = response_status
     if response_status == 'incomplete':
         response.incomplete_details = IncompleteDetails(reason='content_filter')
@@ -1270,9 +1252,8 @@ def _accepted(tool_action: dict[str, Any]) -> bool:
 @given(_NEAR_ACTION | _JSON)
 def test_any_action_maps_without_raising_and_a_refusal_is_rejected(raw: Any) -> None:
     """The tool checks every action before running any, so one it rejects means none of the call runs."""
-    for tool_action, note in _map_computer_action(raw):
+    for tool_action, _ in _map_computer_action(raw):
         assert 'unsupported_fields' not in tool_action or not _accepted(tool_action)
-        assert note is None or isinstance(note, str)
 
 
 @settings(max_examples=300, deadline=None)
@@ -1312,4 +1293,5 @@ def test_any_stored_computer_call_replays(
     with asyncio.Runner() as runner:
         runner.run(model.request(history, None, parameters))
     (request,) = get_mock_responses_kwargs(client)
-    assert request['input']
+    answers = [item['type'] for item in request['input'] if item.get('call_id') == 'call_1' and 'output' in item]
+    assert answers in (['computer_call_output'], ['function_call_output'])

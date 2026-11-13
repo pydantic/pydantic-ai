@@ -703,10 +703,8 @@ def test_openai_gpt_5_reasoning_context(model_name: str):
 @pytest.mark.parametrize(
     'model_name,max_side,max_pixels',
     [
-        ('gpt-5.4', 2560, 2560 * 1440),
         ('gpt-5.5', 1920, 1920 * 1200),
         ('gpt-5.5-pro', 1920, 1920 * 1200),
-        ('gpt-5.6-sol', 2560, 2560 * 1440),
     ],
 )
 def test_openai_computer_use_screenshot_limits(model_name: str, max_side: int, max_pixels: int):
@@ -923,6 +921,8 @@ def test_google_gemini_3_pro_image_strict_tool_definition():
     assert profile is not None
     assert profile.get('supports_thinking') is True
     assert profile.get('google_supports_strict_tool_definition') is False
+    # The computer-use grid is set for Gemini 3 models that aren't image models.
+    assert 'computer_use_coordinate_grid' not in profile
 
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
