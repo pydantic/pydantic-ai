@@ -153,8 +153,10 @@ _START_VIEWER = (
     # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
     + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
     # A viewer counts only with our web root: a foreign one, such as `--web /home/user`, would serve those files
-    # without the password, so ours starts instead and fails while that one holds the port.
-    + f"fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
+    # without the password, so ours starts instead and fails while that one holds the port. novnc_proxy adds
+    # `--cert` when it finds a `self.pem`, such as one in the working directory.
+    + "fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC (--cert [^ ]+ )?"
+    + f"{_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
     # `--web`, else novnc_proxy serves the working directory if it has a `vnc.html`.
     f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} --web /opt/noVNC '
