@@ -22,7 +22,7 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -142,9 +142,13 @@ async def _let_go(error: BaseException, held: list[str], release: Callable[[str]
     """
     with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
         for name in reversed(list(held)):
-            with suppress(Exception):
+            try:
                 await _send_input(partial(release, name))
                 held.remove(name)
+            except WorkspaceUnavailableError:
+                raise  # a release that may still be running ends the run, as any unconfirmed input does
+            except Exception:
+                pass
     # An input that may still be running ends the run, so the model won't act with these held.
     if held and isinstance(error, Exception) and not isinstance(error, WorkspaceUnavailableError):
         raise WorkspaceError(

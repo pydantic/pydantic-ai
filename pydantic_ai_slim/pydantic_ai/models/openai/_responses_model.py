@@ -724,7 +724,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
+        """Turn off Batch API, Responses WebSocket and native computer tool defaults for Azure clients and the gateway.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -735,8 +735,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
-            # while HTTP succeeds (live, 2026-10-22).
-            return merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
+            # while HTTP succeeds (live, 2026-10-22). Azure's computer tool sends `pending_safety_checks: null`, which
+            # the native mapping reads as unreadable checks, so `ComputerUse` keeps its function tool on an Azure client.
+            return merge_profile(
+                profile,
+                OpenAIModelProfile(openai_responses_supports_websocket=False, openai_supports_computer_tool=False),
+            )
         return profile
 
     @classmethod
