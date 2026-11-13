@@ -95,6 +95,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from tests.models.conftest import items_serialized_differently_inside_a_list
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
@@ -3217,6 +3218,26 @@ def test_tool_return_part_model_response_str_and_user_content():
             '</pyai:tool_result>',
         ]
     )
+
+    # Items beside a file keep the JSON form they have without one: structured values stay JSON values in the
+    # array rather than strings holding their JSON text, and a value whose JSON form is a string stays that string.
+    items = [{'temp': 20}, 3, None, [1, 2], 'sunny', datetime(2026, 1, 1, 12, 0)]
+    assert ToolReturnPart(tool_name='t', content=items, tool_call_id='c7').model_response_str() == snapshot(
+        '[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00"]'
+    )
+    text, _ = ToolReturnPart(
+        tool_name='t', content=[*items, img], tool_call_id='c7'
+    ).model_response_str_and_user_content()
+    assert text == snapshot('[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00","See file d5a901."]')
+
+    # Each item beside a file is serialized as it is alone: with its own settings, its keys as it dumps them, and no
+    # extra nesting level against the serializer's depth limit.
+    for item in items_serialized_differently_inside_a_list():
+        alone = ToolReturnPart(tool_name='t', content=item, tool_call_id='c8').model_response_str()
+        text, _ = ToolReturnPart(
+            tool_name='t', content=[item, img], tool_call_id='c8'
+        ).model_response_str_and_user_content()
+        assert text == f'[{alone},"See file d5a901."]'
 
 
 def test_args_as_dict_valid_json():

@@ -10,7 +10,7 @@ import os
 import sys
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
@@ -1739,6 +1739,16 @@ def _tool_return_text(value: Any) -> str:
     return dumped.decode()
 
 
+def _tool_return_items_json(items: Iterable[object]) -> str:
+    """A JSON array of `items`, each serialized as it is when it is a tool's whole return value.
+
+    Each item's own JSON text is joined into the array rather than the list dumped whole: that would serialize
+    every item one level deeper, so a value nested just under the serializer's depth limit would fail in the array
+    though it serializes alone.
+    """
+    return f'[{",".join(tool_return_ta.dump_json(item, by_alias=True).decode() for item in items)}]'
+
+
 class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
@@ -2649,7 +2659,8 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
-        returned file content list.
+        returned file content list. Non-file items keep the JSON form they have when they are the
+        tool's whole return value.
 
         Each file is framed by `_tool_result_provenance_tags` so the model can tell it from the
         user's own uploads, which travel on the same channel.
@@ -2663,15 +2674,15 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
         if not files:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
 
-        tool_content_parts: list[str] = []
+        tool_content_parts: list[object] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str', wrap_if_error=False):
+        for item in self.content_items():
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
                 file_content.extend([open_tag, item, close_tag])
-            elif isinstance(item, str):  # pragma: no branch
+            else:
                 tool_content_parts.append(item)
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
@@ -2680,10 +2691,11 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
             file_references = [f'See file {file.identifier}.' for file in files]
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
-            return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
-        # Safe: when was_list is False, content is either scalar data (→ str item) or a single
-        # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
-        return tool_content_parts[0], file_content
+            return _tool_return_items_json(tool_content_parts), file_content
+        # Content that isn't a list but has a file is that one file, so its 'See file ...' reference is the whole text.
+        [reference] = tool_content_parts
+        assert isinstance(reference, str)
+        return reference, file_content
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         part = _otel_messages.ToolCallResponsePart(

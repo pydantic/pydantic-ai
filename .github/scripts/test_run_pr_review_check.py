@@ -481,6 +481,46 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
     }
 
 
+@pytest.mark.parametrize(
+    ('steps', 'restart'),
+    [
+        pytest.param(shlex.quote(_step(10)), {'pr_review_checks.restarted': True}, id='after-a-step'),
+        pytest.param('', {}, id='before-a-step'),
+    ],
+)
+def test_review_span_marks_a_review_the_chain_restarted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exported: list[dict[str, object]],
+    steps: str,
+    restart: dict[str, object],
+) -> None:
+    """A review the first account rate-limited after steps is marked restarted; a handover before a step is not.
+
+    Both reach the backup account as the third attempt.
+    """
+    rate_limited = f'printf "%s\\n" {steps} {shlex.quote(RATE_LIMITED)}; exit 1'
+    answer = f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}'
+    zai = f'if [ "$ZHIPU_API_KEY" = zai-key ]; then {rate_limited}; else {answer}; fi'
+    launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1', zai)
+    monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    run_pr_review_check.main()
+    assert [line.split()[-1] for line in launches.read_text().splitlines()] == ['go-key', 'zai-key', 'zai-backup-key']
+    [span] = exported
+    assert _span_attributes(span) == {
+        **REVIEW_ATTRIBUTES,
+        'pr_review_checks.outcome': 'COMPLETE',
+        'pr_review_checks.findings': '0',
+        'pr_review_checks.steps': '1',
+        'pr_review_checks.tokens': '5',
+        'pr_review_checks.provider': 'zai-coding-plan',
+        'pr_review_checks.plan': 'the backup Coding Plan',
+        'pr_review_checks.attempts': '3',
+        **restart,
+    }
+
+
 def test_cancelled_review_exports_its_span(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
 ) -> None:
@@ -598,18 +638,6 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
             'validation failed: json_invalid',
             id='text-after-the-fence',
         ),
-        pytest.param(
-            f"I've read the files.\n\n```json\n{_result('a.py')}",
-            'stop',
-            'validation failed: json_invalid',
-            id='unterminated-fence',
-        ),
-        pytest.param(
-            f"I've read the files.\n\n{_result('a.py')}",
-            'stop',
-            'validation failed: json_invalid',
-            id='text-before-bare-json',
-        ),
     ],
 )
 def test_rejected_answer_under_the_budget_fails_with_its_reason(
@@ -644,10 +672,13 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
             f'The caller:\n\n```python\nf()\n```\n\n```json\n{_result("a.py", indent=2)}\n```',
             id='code-block-before-the-fence',
         ),
+        pytest.param(f"I've read the files.\n\n{_result('a.py')}", id='text-before-bare-json'),
+        pytest.param(f"I've read the files.\n\n```json\n{_result('a.py')}", id='unterminated-fence'),
+        pytest.param(f'`a.py` reads `${{{{ inputs.ref }}}}`.\n\n{_result("a.py")}', id='prose-holding-braces'),
     ],
 )
 def test_accepted_answer_completes_the_review(tmp_path: Path, text: str) -> None:
-    """An answer that is the JSON object, or that ends with it in a Markdown code fence, completes the review."""
+    """An answer that ends with the JSON object, bare or in a Markdown code fence, completes the review after any prose."""
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
     assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
 

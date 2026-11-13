@@ -89,6 +89,7 @@ from ..conftest import (
     legacy_retry_prompt_part,
     try_import,
 )
+from .conftest import items_serialized_differently_inside_a_list
 from .mock_openai import with_history_digests
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
@@ -1563,6 +1564,74 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
         ],
     }
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
+
+
+async def test_failed_tool_return_keeps_a_structured_item_beside_an_image(allow_model_requests: None):
+    """A dict in a failed return with an image goes in the error wrapper as the JSON object it is without the image.
+
+    Mocks the transport: the cassette matchers ignore the request body, so a recording would not pin it.
+    """
+    image = BinaryContent(b'tool-image', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Check the weather.'),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-1', outcome='failed')]),
+    ]
+    captured = Captured(boolean_answers)
+
+    await Agent(mock_model(captured), output_type=bool, instructions='Is it warm?').run(
+        'Is it warm?', message_history=history
+    )
+
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict)
+    assert request_body['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Check the weather.'},
+            {'type': 'function_call', 'call_id': 'tool-1', 'name': 'weather', 'arguments': '{}'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'tool-1',
+                'output': [
+                    {'type': 'input_text', 'text': '{"error":"[{\\"temp\\":20},\\"<image 1>\\"]"}'},
+                    {'type': 'input_text', 'text': '<image 1>:'},
+                    {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ==', 'detail': 'auto'},
+                ],
+            },
+            {'role': 'user', 'content': 'Is it warm?'},
+        ]
+    )
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'retried'])
+async def test_failed_tool_return_serializes_items_beside_an_image_as_alone(
+    allow_model_requests: None, outcome: Literal['failed', 'retried']
+):
+    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level.
+
+    Mocks the transport: the cassette matchers ignore the request body, so a recording would not pin it.
+    """
+    items = items_serialized_differently_inside_a_list()
+    alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
+    image = BinaryContent(b'tool-image', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Check the readings.'),
+        ModelResponse(parts=[ToolCallPart('read', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('read', [*items, image], tool_call_id='tool-1', outcome=outcome)]),
+    ]
+    captured = Captured(boolean_answers)
+
+    await Agent(mock_model(captured), output_type=bool, instructions='Are they valid?').run(
+        'Are they valid?', message_history=history
+    )
+
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict) and isinstance(request_body['input'], list)
+    [output] = [item['output'] for item in request_body['input'] if isinstance(item, dict) and 'output' in item]
+    assert isinstance(output, list) and isinstance(output[0], dict)
+    labelled = f'[{alone},"<image 1>"]'
+    error = labelled if outcome == 'retried' else json.dumps(labelled)
+    assert output[0]['text'] == f'{{"error":{error}}}'
 
 
 def pick_first_route(body: DecisionCreateParams) -> httpx2.Response | None:

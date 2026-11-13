@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,6 +26,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     BaseToolReturnPart,
     BinaryContent,
     CachePoint,
@@ -53,8 +54,10 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _tool_return_items_json,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
+    tool_return_ta,
 )
 from ..profiles import ModelProfile, merge_profile
 from ..profiles.decision import DecisionModelProfile
@@ -2511,15 +2514,30 @@ def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | 
     return '\n\n'.join(texts)
 
 
+def _labelled_tool_return_text(part: BaseToolReturnPart, labelled: Iterable[object]) -> str:
+    """The text of `part` with its files replaced by the labels in `labelled`, each item serialized as it is alone.
+
+    An errored return is wrapped as `model_response_str` wraps a list: a retry's array as it is, a failed return's
+    array as a string. Calling `model_response_str()` on a relabelled copy instead would dump the list whole, a level
+    deeper, and put a retry's items through `dump_python`, which drops their own serializer settings.
+    """
+    text = _tool_return_items_json(labelled)
+    if part.outcome not in ERROR_OUTCOMES:
+        return text
+    error = text if part.outcome == 'retried' else tool_return_ta.dump_json(text).decode()
+    return f'{{"error":{error}}}'
+
+
 def _tool_return_entry(part: BaseToolReturnPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """A tool result as history, preserving file positions and failed-result wrapping."""
     if part.files:
         if images is None:
             raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
-        content: list[str] = []
-        for item in part.content_items(mode='str', wrap_if_error=False):
-            content.append(item if isinstance(item, str) else _image_label(item, images, 'A tool result'))
-        part = dataclasses.replace(part, content=content)
+        labelled = [
+            _image_label(item, images, 'A tool result') if is_multi_modal_content(item) else item
+            for item in part.content_items()
+        ]
+        return {'tool_return': {'name': part.tool_name, 'content': _labelled_tool_return_text(part, labelled)}}
     return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 
 
