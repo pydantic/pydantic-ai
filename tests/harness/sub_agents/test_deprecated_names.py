@@ -30,7 +30,7 @@ def test_deprecated_names_stay_in_the_old_module() -> None:
         shim = importlib.import_module('pydantic_ai_harness.subagents')
 
     with pytest.warns(
-        HarnessDeprecationWarning, match='renamed to `pydantic_ai_harness.subagents.DelegationFinishedEvent`'
+        HarnessDeprecationWarning, match='renamed to `pydantic_ai_harness.sub_agents.DelegationFinishedEvent`'
     ) as caught:
         getattr(shim, 'DelegationEndEvent')
     assert [warning.filename for warning in caught] == [__file__]

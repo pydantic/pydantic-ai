@@ -147,7 +147,7 @@ _RENAMED = {
 def __getattr__(name: str) -> object:
     renamed = _RENAMED.get(name)
     if renamed is not None:
-        warn_class_renamed(name, renamed.__name__, __name__)
+        warn_class_renamed(name, renamed.__name__, __name__, new_module='pydantic_ai_harness.sub_agents')
         return renamed
     if name in {'MINIMUM_EFFORT_FLOOR', 'clamp_effort'}:
         from pydantic_ai_harness.sub_agents import _effort

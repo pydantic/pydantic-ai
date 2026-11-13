@@ -30,7 +30,7 @@ def test_deprecated_names_stay_in_the_old_module() -> None:
         shim = importlib.import_module('pydantic_ai_harness.filesystem')
 
     with pytest.warns(
-        HarnessDeprecationWarning, match='renamed to `pydantic_ai_harness.filesystem.FileChangeRequestedEvent`'
+        HarnessDeprecationWarning, match='renamed to `pydantic_ai_harness.file_system.FileChangeRequestedEvent`'
     ) as caught:
         getattr(shim, 'FileChangeRequestEvent')
     assert [warning.filename for warning in caught] == [__file__]

@@ -64,8 +64,9 @@ old_subagents = _renamed_module('subagents')
 def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:
     """An abstract event has no kind, which is the empty string."""
     event_type = getattr(module, new_name)
+    new_module = {old_filesystem: file_system, old_subagents: sub_agents}.get(module, module)
     message = (
-        f'`{module.__name__}.{old_name}` has been renamed to `{module.__name__}.{new_name}`. '
+        f'`{module.__name__}.{old_name}` has been renamed to `{new_module.__name__}.{new_name}`. '
         'Update your imports; this deprecated alias will be removed in a future release.'
     )
     with pytest.warns(HarnessDeprecationWarning, match=re.escape(message)):

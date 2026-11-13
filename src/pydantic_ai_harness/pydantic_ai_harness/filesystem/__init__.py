@@ -118,6 +118,6 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     if name == 'FileChangeRequestEvent':
-        warn_class_renamed(name, 'FileChangeRequestedEvent', __name__)
+        warn_class_renamed(name, 'FileChangeRequestedEvent', __name__, new_module='pydantic_ai_harness.file_system')
         return FileChangeRequestedEvent
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
