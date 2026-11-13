@@ -1049,7 +1049,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
             unwrapped_output = _utils.unwrap_annotated(output)
-            if _utils.is_model_like(unwrapped_output):
+            if _utils.has_object_schema(unwrapped_output):
                 # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
                 json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
             else:

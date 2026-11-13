@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal, cast
 import pydantic_core
 import pytest
 from griffe import Docstring
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, RootModel, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -792,6 +792,44 @@ def test_takes_model_and_int():
 
     result = agent.run_sync('', model=TestModel())
     assert result.output == snapshot('{"takes_just_model":"0 a 0"}')
+
+
+class Numbers(RootModel[list[int]]):
+    pass
+
+
+class FooMap(RootModel[dict[str, Foo]]):
+    pass
+
+
+def test_takes_root_model_with_non_object_root():
+    """A `RootModel` is only used as the whole tool or output schema when its root is an object."""
+    agent = Agent()
+
+    @agent.tool_plain
+    def takes_numbers(numbers: Numbers) -> int:
+        return sum(numbers.root)
+
+    @agent.tool_plain
+    def takes_foo_map(foos: FooMap) -> int:
+        return len(foos.root)
+
+    assert agent._function_toolset.tools['takes_numbers'].tool_def.parameters_json_schema == snapshot(
+        {
+            '$defs': {'Numbers': {'items': {'type': 'integer'}, 'title': 'Numbers', 'type': 'array'}},
+            'additionalProperties': False,
+            'properties': {'numbers': {'$ref': '#/$defs/Numbers'}},
+            'required': ['numbers'],
+            'type': 'object',
+        }
+    )
+    assert agent._function_toolset.tools['takes_foo_map'].tool_def.parameters_json_schema['type'] == 'object'
+
+    result = agent.run_sync('', model=TestModel())
+    assert result.output == snapshot('{"takes_numbers":0,"takes_foo_map":1}')
+
+    result = Agent(TestModel(), output_type=Numbers).run_sync('')
+    assert result.output == Numbers([0])
 
 
 # pyright: reportPrivateUsage=false

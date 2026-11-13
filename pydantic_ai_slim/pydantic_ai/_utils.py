@@ -22,6 +22,7 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
+    Mapping,
 )
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -46,7 +47,7 @@ from urllib.parse import urlparse
 
 import anyio
 from anyio.to_thread import run_sync
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, RootModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
@@ -243,6 +244,18 @@ def is_model_like(type_: Any) -> bool:
             or getattr(type_, '__is_model_like__', False)  # pyright: ignore[reportUnknownArgumentType]
         )
     )
+
+
+def has_object_schema(type_: Any) -> bool:
+    """Check if a model-like type generates an object JSON Schema, so it can be a tool's or output's whole schema.
+
+    A `RootModel` generates its root's schema, so it only does when its root is model-like or a mapping.
+    """
+    if isinstance(type_, type) and not isinstance(type_, GenericAlias) and issubclass(type_, RootModel):
+        root = unwrap_annotated(type_.model_fields['root'].annotation)
+        root_origin = get_origin(root) or root
+        return is_model_like(root) or (isinstance(root_origin, type) and issubclass(root_origin, Mapping))
+    return is_model_like(type_)
 
 
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:

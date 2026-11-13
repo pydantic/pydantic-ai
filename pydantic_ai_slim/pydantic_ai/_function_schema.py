@@ -27,8 +27,8 @@ from ._run_context import RunContext
 from ._utils import (
     await_maybe,
     check_object_json_schema,
+    has_object_schema,
     is_async_callable,
-    is_model_like,
     run_in_executor,
     takes_run_context,
 )
@@ -330,7 +330,7 @@ def _add_field(schema_context: _FunctionSchemaContext, p: Parameter, annotation:
     schema_context.fields[field_name] = td_schema
     # noinspection PyTypeChecker
     metadata = td_schema.setdefault('metadata', {})
-    metadata['is_model_like'] = is_model_like(annotation)
+    metadata['is_model_like'] = has_object_schema(annotation)
 
     if p.kind == Parameter.POSITIONAL_ONLY or (
         schema_context.has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
