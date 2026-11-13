@@ -333,7 +333,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         """Process a non-streamed response, and prepare a message to return."""
         if not response.choices:
             raise ModelEmptyResponseError(
-                self.model_name, f'Empty response from {self.system}: no choices', body=dict(response)
+                self.model_name, f'Empty response from {self.system}: no choices', body=response
             )
         choice = response.choices[0]
         content = choice.message.content
