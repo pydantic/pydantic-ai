@@ -402,12 +402,12 @@ attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` wh
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
-`opencode_fallback.provider`. A run that did not serve, an interrupted one included, has an error status. When the
-run's process failed, the span adds the error type, status and provider code the job log names, as
-`opencode_fallback.error_type`, `opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the
-stream holds a `step_finish`, as `opencode_fallback.step_finish`.
-Outside the job log, these spans are the only record of how a run the chain moved past failed. A `PR Review Checks`
-review's run spans are children of its review span; every other chain's runs share a trace of their own.
+`opencode_fallback.provider`. A run that did not serve has an error status. When the run's process failed, the span
+adds the error type, status and provider code the job log names, as `opencode_fallback.error_type`,
+`opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the stream holds a `step_finish`, as
+`opencode_fallback.step_finish`. Outside the job log, these spans are the only record of how a run the chain moved past
+failed. A `PR Review Checks` review's run spans are children of its review span; every other chain's runs share a trace
+of their own.
 
 Threat detection does not set the token. Its `gh-aw.detector.result` span records each detection's usage and outcome,
 and the provider and plan of its last run, which the detector step writes as its `provider` and `plan` outputs.

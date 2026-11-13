@@ -357,8 +357,10 @@ def exported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
         [resource] = json.loads(request.data)['resourceSpans']
         [service] = [attribute['value']['stringValue'] for attribute in resource['resource']['attributes']]
         [span] = resource['scopeSpans'][0]['spans']
-        # Each OpenCode run exports its own span as it ends, under the fallback's service.
-        assert service == ('opencode-fallback' if span['name'] == 'OpenCode run' else 'pr-review-checks')
+        # Each OpenCode run exports its own span as it ends, under the fallback's service, and waits less for it, as
+        # the next run's time budget pays for the wait.
+        run = span['name'] == 'OpenCode run'
+        assert (service, timeout) == (('opencode-fallback', 5) if run else ('pr-review-checks', 30))
         spans.append(span)
         return contextlib.nullcontext()
 

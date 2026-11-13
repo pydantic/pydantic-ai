@@ -128,9 +128,10 @@ def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str
     exports: list[dict[str, object]] = []
 
     def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
-        assert (request.full_url, request.get_header('Authorization')) == (
+        assert (request.full_url, request.get_header('Authorization'), timeout) == (
             'https://logfire-eu.pydantic.info/v1/traces',
             'logfire-token',
+            5,
         )
         assert isinstance(request.data, bytes)
         # Neither the provider's message nor its response body leaves the job.
