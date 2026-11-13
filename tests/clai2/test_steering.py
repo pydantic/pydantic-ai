@@ -880,6 +880,7 @@ async def test_removing_the_prompt_before_the_one_being_edited_keeps_its_place()
             live.feed('escape')
             assert live.queued_messages == ('a', 'c')
             live.feed('ctrl-c')
+        assert (live.buffer.text, live.queued_messages) == ('a\nc', ())
 
 
 @pytest.mark.parametrize('edit', ['!printf injected', '!'])
@@ -893,3 +894,53 @@ async def test_ctrl_c_never_queues_an_edit_that_was_not_sent(edit: str) -> None:
         # Only Enter makes an edit runnable: the queued prompt returns unchanged, and Up finds the edit in history.
         assert (live.buffer.text, live.queued_messages) == ('follow up', ())
         assert live.buffer.history[-1] == edit
+
+
+@pytest.mark.parametrize(
+    ('queued', 'expected', 'notice'),
+    [
+        (('b',), 'draft', 'Removed the queued message.'),
+        (('a', 'b'), 'a\ndraft', 'Queued messages moved to the input. Press Enter to send them.'),
+    ],
+)
+async def test_ctrl_c_removes_a_queued_prompt_whose_edit_was_cleared(
+    queued: tuple[str, ...], expected: str, notice: str
+) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, *queued)
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.replace('')
+            live.feed('ctrl-c')
+        # As Esc on a cleared edit does, and the draft from before Up comes back.
+        assert (live.buffer.text, live.queued_messages, live.notice) == (expected, (), notice)
+
+
+@pytest.mark.parametrize('draft', ['/help', '!ls'])
+async def test_ctrl_c_while_editing_puts_queued_prompts_ahead_of_a_command_draft(draft: str) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a')
+            live.buffer.replace(draft)
+            live.feed('up')
+            live.buffer.insert('2')
+            live.feed('ctrl-c')
+        # Ahead of the prompts, the command draft is just another line of the prompt Enter sends.
+        assert (live.buffer.text, live.queued_messages) == (f'a2\n{draft}', ())
+
+
+async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b')
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.insert('2')
+            # As the web UI removes the queued prompt the terminal is editing.
+            live.discard(live.queued_prompts()[1])
+            assert (live.buffer.text, live.queued_messages) == ('b2', ('a',))
+            # No edit remains, so Enter queues the draft as a new prompt.
+            live.feed('enter')
+            assert live.queued_messages == ('a', 'b2')
+            live.feed('ctrl-c')

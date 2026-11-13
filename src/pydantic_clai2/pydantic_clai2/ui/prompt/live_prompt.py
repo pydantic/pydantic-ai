@@ -375,9 +375,7 @@ class LivePrompt:
         if self.buffer.text.strip():
             self._put_back(self._editing)
         else:
-            self._drop_editing()
-            self.notice = 'Removed the queued message.'
-            telemetry.record('prompt submitted', route='discarded queued')
+            self._remove_editing()
         self.buffer.search = None
         self.buffer.history_index = None
         self.buffer.replace(self._shelved_draft)
@@ -413,18 +411,25 @@ class LivePrompt:
 
     def _end_edit(self, editing: QueuedPrompt) -> None:
         """Return the prompt being edited to the queue with the edit in the draft, or remove it if that is empty."""
-        self._editing = None
-        if edit := self.buffer.text.strip():
-            command = expand_bare_command(edit)
-            if input_kind(command) == 'prompt' and not command.startswith('!'):
-                editing.text, editing.recorded = command, edit
-            else:
-                # Only Enter makes a command or shell line runnable, and one would not join the input either:
-                # the prompt returns unchanged, as Esc returns it, and Up finds the edit in history.
-                self.history.append_string(edit)
-                self.buffer.history.append(edit)
-            self._put_back(editing)
+        if not (edit := self.buffer.text.strip()):
+            self._remove_editing()
+            return
+        command = expand_bare_command(edit)
+        if input_kind(command) == 'prompt' and not command.startswith('!'):
+            editing.text, editing.recorded = command, edit
+        else:
+            # Only Enter makes a command or shell line runnable, and one would not join the input either:
+            # the prompt returns unchanged, as Esc returns it, and Up finds the edit in history.
+            self.history.append_string(edit)
+            self.buffer.history.append(edit)
+        self._put_back(editing)
         self.queue_changed()
+
+    def _remove_editing(self) -> None:
+        """Remove the queued prompt whose draft was cleared, as the hint `Clear it to remove` says."""
+        self._drop_editing()
+        self.notice = 'Removed the queued message.'
+        telemetry.record('prompt submitted', route='discarded queued')
 
     def restore_draft(self, text: str) -> None:
         """Replace the draft after a rewind, without editing a queued submission."""

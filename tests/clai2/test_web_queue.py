@@ -264,6 +264,33 @@ async def test_the_terminal_and_the_browser_share_one_queue(tmp_path: Path) -> N
     assert shell.live_session.queue == [] and shell.queued == 0
 
 
+async def test_the_browser_removing_the_prompt_the_terminal_edits_keeps_the_edit(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    async with editor() as (live, _, _):
+        live.queue_changed = shell.live_session.changed
+        shell.bind(live)
+        live.buffer.replace('queued')
+        live.feed('enter')
+        live.feed('up')
+        live.buffer.insert('2')
+        # The browser still lists the prompt being edited, and can remove it.
+        [editing] = shell.live_session.queue
+        shell.live_session.remove_queued(editing.id)
+        assert (live.buffer.text, shell.live_session.queue) == ('queued2', [])
+        shell.bind(None)
+
+
 def test_a_live_session_without_a_prompt_queues_nothing() -> None:
     """A `LiveRuntime` built without the session's prompt, as `PluginLoader` builds one in tests, holds no input."""
     host = PluginHost[None](name='', console=Console(file=StringIO()), settings={})
