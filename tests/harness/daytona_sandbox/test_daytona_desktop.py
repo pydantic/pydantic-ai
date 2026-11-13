@@ -174,13 +174,17 @@ async def test_a_cancelled_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDay
     [
         pytest.param(TypeText(text='a' * 4_001), f'type {"a" * 2_000}', id='type'),
         pytest.param(Scroll(x=1, y=2, direction='down', amount=501), 'scroll 1 2 down 500 modifiers=[]', id='scroll'),
+        pytest.param(Click(x=1, y=2), 'click 1 2 left clicks=1 modifiers=[]', id='click'),
     ],
 )
 @pytest.mark.parametrize('native', [False, True], ids=['scope-cancel', 'task-cancel'])
-async def test_a_cancelled_type_or_scroll_waits_for_the_part_daytona_accepted(
+async def test_a_cancelled_action_waits_for_the_input_daytona_accepted(
     fake_daytona: FakeDaytona, action: DisplayAction, sent: str, native: bool
 ) -> None:
-    """Daytona finishes a part it accepted even when the caller stops waiting, so the next action can't overtake it."""
+    """Daytona carries out input it accepted even when the caller stops waiting, so the next action can't overtake it.
+
+    Typing and scrolling are sent in parts, and a cancel sends no more of them.
+    """
     backend, sandbox = await _started(fake_daytona)
     desktop = sandbox.computer_use
     desktop.request_gate = asyncio.Event()
@@ -229,6 +233,29 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
         'keyup a',
         'keyup ctrl',
     ]
+
+
+@pytest.mark.parametrize('sandbox_deleted', [False, True], ids=['release-failed', 'sandbox-deleted'])
+async def test_a_failed_release_after_a_failed_action_says_the_key_may_still_be_held(
+    fake_daytona: FakeDaytona, sandbox_deleted: bool
+) -> None:
+    """The model must not type on with ctrl held; a lost sandbox ends the run instead."""
+    backend, sandbox = await _started(fake_daytona)
+
+    async def failing(*args: object, **kwargs: object) -> None:
+        if sandbox_deleted:
+            fake_daytona.purge(sandbox)
+        raise DaytonaInternalServerError('unexpected EOF', status_code=500)
+
+    sandbox.computer_use.move = failing
+    sandbox.computer_use.up = failing
+    expected = (
+        pytest.raises(WorkspaceUnavailableError, match='no longer exists')
+        if sandbox_deleted
+        else pytest.raises(WorkspaceError, match='Releasing ctrl failed too, so it may still be held')
+    )
+    with expected:
+        await screen(backend).act(MoveMouse(x=1, y=1, modifiers=('ctrl',)))
 
 
 async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona, no_pauses: None) -> None:

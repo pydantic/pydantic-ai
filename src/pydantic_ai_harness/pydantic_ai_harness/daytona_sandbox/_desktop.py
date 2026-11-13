@@ -21,7 +21,7 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from functools import partial
 from typing import TYPE_CHECKING
@@ -118,6 +118,16 @@ def _button(button: str) -> str:
     return button
 
 
+async def _send_input(request: Callable[[], Awaitable[object]]) -> object:
+    """Send one input request to Daytona, which carries out a request it accepted even if we stop waiting.
+
+    So a cancel stops before the request is sent, or waits for it to finish: the next action, perhaps another run's,
+    must not reach the screen before it. Every input request goes through here.
+    """
+    await anyio.lowlevel.checkpoint_if_cancelled()
+    return await run_to_completion(request)
+
+
 def _keys(keys: Sequence[str]) -> list[str]:
     """Daytona's names for the keys, in order, with `shift` before a shifted symbol."""
     names: list[str] = []
@@ -191,30 +201,37 @@ class DaytonaDesktop:
 
     @asynccontextmanager
     async def _holding(self, keys: Sequence[str]) -> AsyncGenerator[None]:
-        """Hold Daytona's `keys` down, in order; on any failure or cancel, even while letting go, let go of them all."""
+        """Hold Daytona's `keys` down, in order; on any failure or cancel, even while letting go, let go of them all.
+
+        A failure that leaves keys down says which, so the model doesn't type on with them held.
+        """
         keyboard = self._computer_use.keyboard
         pressed: list[str] = []
         try:
             for key in keys:
                 pressed.append(key)  # before the request, which can press the key and still fail
-                await keyboard.down(key, request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(keyboard.down, key, request_timeout=_REQUEST_TIMEOUT))
             yield
             while pressed:
-                await keyboard.up(pressed[-1], request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(keyboard.up, pressed[-1], request_timeout=_REQUEST_TIMEOUT))
                 pressed.pop()  # only once it's up, so a failed release is retried below
-        except BaseException:
+        except BaseException as error:
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
-                for key in reversed(pressed):
+                for key in reversed(list(pressed)):
                     with suppress(Exception):
-                        await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
+                        await _send_input(partial(keyboard.up, key, request_timeout=_REQUEST_TIMEOUT))
+                        pressed.remove(key)
+            if pressed and isinstance(error, Exception):
+                raise WorkspaceError(
+                    f"Daytona's desktop failed: {error}. Releasing {' and '.join(pressed)} failed too, "
+                    f'so {"it" if len(pressed) == 1 else "they"} may still be held.'
+                ) from error
             raise
 
     async def _scroll(self, x: int, y: int, direction: str, amount: int, modifiers: list[str]) -> None:
         """Scroll `amount` wheel clicks, `_SCROLLED_PER_REQUEST` at a time."""
         for start in range(0, amount, _SCROLLED_PER_REQUEST):
             clicks = min(_SCROLLED_PER_REQUEST, amount - start)
-            await anyio.lowlevel.checkpoint_if_cancelled()  # a cancel stops here, before the next part is sent
-            # Daytona scrolls a part it accepted even if we stop waiting, so a cancel waits for it, as in `_type`.
             scroll = partial(
                 self._computer_use.mouse.scroll,
                 x,
@@ -225,7 +242,7 @@ class DaytonaDesktop:
                 request_timeout=_REQUEST_TIMEOUT,
             )
             # The one call that reports a failure in its result rather than raising.
-            if not await run_to_completion(scroll):
+            if not await _send_input(scroll):
                 raise WorkspaceError("Daytona's desktop did not scroll.")
 
     async def _type(self, text: str) -> None:
@@ -235,13 +252,10 @@ class DaytonaDesktop:
         keyboard = self._computer_use.keyboard
         for index, segment in enumerate(text.split('\t')):
             if index:
-                await keyboard.press('tab', request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(keyboard.press, 'tab', request_timeout=_REQUEST_TIMEOUT))
             for start in range(0, len(segment), _TYPED_PER_REQUEST):
-                await anyio.lowlevel.checkpoint_if_cancelled()  # a cancel stops here, before the next part is sent
-                # Daytona types a part it accepted even if we stop waiting, so a cancel waits for it: the next action
-                # must not reach the screen before this text does.
                 part = segment[start : start + _TYPED_PER_REQUEST]
-                await run_to_completion(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
+                await _send_input(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
 
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()
@@ -250,17 +264,19 @@ class DaytonaDesktop:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 button, held = _button(button), _keys(modifiers)
                 x, y = await self._at(x, y)
-                await mouse.click(x, y, button, clicks=count, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(
+                    partial(mouse.click, x, y, button, clicks=count, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
+                )
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 async with self._holding(_keys(modifiers)):
-                    await mouse.move(x, y, request_timeout=_REQUEST_TIMEOUT)
+                    await _send_input(partial(mouse.move, x, y, request_timeout=_REQUEST_TIMEOUT))
             case Drag(path=path, modifiers=modifiers):
                 async with self._holding(_keys(modifiers)):
                     await self._drag(path)
             case MouseDown(button=button):
-                await mouse.down(button=_button(button), request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(mouse.down, button=_button(button), request_timeout=_REQUEST_TIMEOUT))
             case MouseUp(button=button):
-                await mouse.up(button=_button(button), request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(mouse.up, button=_button(button), request_timeout=_REQUEST_TIMEOUT))
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 held = _keys(modifiers)
                 await self._scroll(*await self._at(x, y), direction, amount, held)
@@ -277,16 +293,16 @@ class DaytonaDesktop:
     async def _drag(self, path: Sequence[Point]) -> None:
         mouse, start, end = self._computer_use.mouse, path[0], path[-1]
         try:
-            await mouse.down(start.x, start.y, request_timeout=_REQUEST_TIMEOUT)
+            await _send_input(partial(mouse.down, start.x, start.y, request_timeout=_REQUEST_TIMEOUT))
             await anyio.sleep(DRAG_PRESS_PAUSE)
             for point in drag_steps(path):
                 await anyio.sleep(DRAG_STEP_PAUSE)
-                await mouse.move(point.x, point.y, request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(mouse.move, point.x, point.y, request_timeout=_REQUEST_TIMEOUT))
             await anyio.sleep(DRAG_PRESS_PAUSE)
-            await mouse.up(end.x, end.y, request_timeout=_REQUEST_TIMEOUT)
+            await _send_input(partial(mouse.up, end.x, end.y, request_timeout=_REQUEST_TIMEOUT))
         except BaseException:
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                await mouse.up(request_timeout=_REQUEST_TIMEOUT)
+                await _send_input(partial(mouse.up, request_timeout=_REQUEST_TIMEOUT))
             raise
 
     async def _press(self, names: list[str], repeat: int) -> None:
@@ -294,7 +310,8 @@ class DaytonaDesktop:
         others = [name for name in names if name not in modifiers]
         for _ in range(repeat):
             if len(others) == 1:
-                await self._computer_use.keyboard.press(others[0], modifiers, request_timeout=_REQUEST_TIMEOUT)
+                keyboard = self._computer_use.keyboard
+                await _send_input(partial(keyboard.press, others[0], modifiers, request_timeout=_REQUEST_TIMEOUT))
             else:  # only modifiers, or several other keys: `press` takes one
                 async with self._holding(names):
                     pass
