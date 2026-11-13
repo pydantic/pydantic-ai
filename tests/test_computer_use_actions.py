@@ -100,6 +100,11 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
         PressKeys(keys=('Hyper_L',))
 
 
+def test_a_scroll_at_a_position_and_a_region_build() -> None:
+    assert Scroll(direction='down', x=10, y=20).x == 10
+    assert Region(left=0, top=0, right=5, bottom=5).right == 5
+
+
 @pytest.mark.parametrize(
     'build',
     [

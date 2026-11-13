@@ -32,7 +32,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from ..display_contract import check_display_contract
+from ..display_contract_live import check_display_contract
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT
 
 pytestmark = pytest.mark.modal_live
