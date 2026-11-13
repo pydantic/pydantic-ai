@@ -1514,6 +1514,10 @@ class _RedSquareBackend(ScreenBackend):
 
 
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(
+    reason="GoogleModel counts a tool result's files as a frame, so the framing announcement joins the system prompt "
+    'once, from the request after the first screenshot'
+)
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
 async def test_gemini_clicks_on_target_through_its_grid(allow_model_requests: None, gemini_api_key: str) -> None:
     """Gemini 3 points on a 0-999 grid: told so in the tool description, its click lands on the square in pixels.
