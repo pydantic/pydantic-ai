@@ -43,7 +43,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
-from ..display_contract import check_display_contract
+from ..display_contract_live import check_display_contract
 
 pytestmark = [pytest.mark.sprites_live]
 
