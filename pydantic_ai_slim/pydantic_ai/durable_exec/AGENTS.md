@@ -27,6 +27,12 @@ Choose the backend tier from the engine SDK's execution model:
   the four model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
+If user code can open its own durable unit around tool code in the same process (a DBOS step via
+`DBOS.step_id`, a Prefect task via `TaskRunContext`), override `in_durable_unit` to detect it, as the
+DBOS and Prefect capabilities do. `RunContext.submit_output()` refuses inside a unit, because replaying
+the unit's recorded result wouldn't submit the output again; a unit the capability can't see would
+lose the submission on recovery.
+
 When durable units can run in another process (Temporal activities, Render child tasks), give the
 backend a `ParameterTransports` subclass that moves the public `*Params` types across the boundary,
 and serialize and rebuild their `RunContext` with `DurableRunContext` (subclass it for
