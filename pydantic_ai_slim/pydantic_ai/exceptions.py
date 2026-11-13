@@ -718,8 +718,8 @@ class ModelQuotaExceededError(ModelAPIError):
     """Raised when the provider refused the request because the account's quota, credits, or billing is exhausted.
 
     Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
-    Anthropic's `billing_error`, Bedrock's `ServiceQuotaExceededException`, a Gemini API `RESOURCE_EXHAUSTED` that
-    names a daily quota, or its `FAILED_PRECONDITION` asking to enable billing. Unlike a
+    Anthropic's `billing_error` or a reached spend limit, Bedrock's `ServiceQuotaExceededException`, a Gemini API
+    `RESOURCE_EXHAUSTED` that names a daily quota, or its `FAILED_PRECONDITION` asking to enable billing. Unlike a
     [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], retrying after a wait won't help.
     """
 
@@ -819,8 +819,8 @@ class ModelTimeoutError(ModelConnectionError):
 class ModelRequestRejectedError(ModelAPIError):
     """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
 
-    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
-    subclasses say why, where the provider does:
+    For example an HTTP 400, 413 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies.
+    Its subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
     [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
     [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].

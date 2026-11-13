@@ -569,6 +569,30 @@ async def test_gemini_refused_job_deletes_its_input_file(
     assert deleted_files == (['files/input'] if deleted else [])
 
 
+async def test_gemini_refused_job_raises_its_refusal_when_deleting_its_input_file_fails(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting the input file of a refused job is best effort, so a status a retrying transport gave up on doesn't
+    replace the refusal.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_PENDING'})
+
+    async def create(*, model: str, src: str, config: Any = None) -> BatchJob:
+        raise errors.ClientError(429, {'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED'}})
+
+    async def delete(*, name: str, config: Any = None) -> None:
+        request = httpx2.Request('DELETE', f'https://generativelanguage.googleapis.com/v1beta/{name}')
+        raise httpx2.HTTPStatusError('Server error 503', request=request, response=httpx2.Response(503))
+
+    monkeypatch.setattr(model.client.aio.batches, 'create', create)
+    monkeypatch.setattr(model.client.aio.files, 'delete', delete)
+    with pytest.raises(ModelRateLimitError):
+        await model.batch_create([await model.batch_encode(_request())])
+
+
 async def test_gemini_batch_results_keep_the_input_file_of_a_job_still_running(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -608,8 +632,14 @@ async def test_gemini_succeeded_job_whose_rows_all_failed(
         # Built lazily, as `errors` only exists when google-genai is installed.
         lambda: errors.ClientError(404, {'error': {'code': 404, 'message': 'Not found', 'status': 'NOT_FOUND'}}),
         lambda: httpx2.ConnectError('Connection refused'),
+        # What a retrying transport re-raises for the status it gave up on.
+        lambda: httpx2.HTTPStatusError(
+            'Server error 503',
+            request=httpx2.Request('DELETE', 'https://generativelanguage.googleapis.com/v1beta/files/input'),
+            response=httpx2.Response(503),
+        ),
     ],
-    ids=['not-found', 'connect-error'],
+    ids=['not-found', 'connect-error', 'transport-gave-up'],
 )
 async def test_gemini_batch_results_survive_failing_to_delete_the_input_file(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception]
@@ -632,6 +662,46 @@ async def test_gemini_batch_results_survive_failing_to_delete_the_input_file(
     batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request('ok'))]))
     [result] = await model.batch_results(batch)
     assert result.status == 'succeeded'
+
+
+@pytest.mark.parametrize('method', ['batch_create', 'batch_status', 'batch_results', 'batch_cancel'])
+async def test_gemini_batch_status_the_transport_gave_up_on(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """A status a retrying transport gave up on surfaces as a categorized `ModelHTTPError` with Gemini's wait.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    created_by = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(monkeypatch, created_by, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}})
+    encoded = [await created_by.batch_encode(_request())]
+    batch = await created_by.batch_status(await created_by.batch_create(encoded))
+    error = {
+        'code': 429,
+        'message': 'Resource has been exhausted',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+    }
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        response = httpx2.Response(429, json={'error': error}, request=request)
+        raise httpx2.HTTPStatusError('Client error 429', request=request, response=response)
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key', http_client=http_client))
+    calls = {
+        'batch_create': lambda: model.batch_create(encoded),
+        'batch_status': lambda: model.batch_status(batch),
+        'batch_results': lambda: model.batch_results(batch),
+        'batch_cancel': lambda: model.batch_cancel(batch),
+    }
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await calls[method]()
+    assert isinstance(exc_info.value, ModelRateLimitError)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.retry_after == 14.0
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
 
 
 async def test_gemini_batch_size_limits(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:

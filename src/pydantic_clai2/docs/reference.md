@@ -77,8 +77,8 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--update`, `clai2 update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
-| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
-| `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `clai2` too |
+| `clai2 plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
 | `clai2 sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
 
 ### Settings
@@ -579,11 +579,12 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+To steer the active run instead, press Alt+Enter (Option+Enter; Ctrl+Enter on
+Windows, see [Windows Terminal](#windows-terminal)). With a typed
 draft, this immediately shows the message in the transcript and enqueues it for
 the run's next model request. It does not interrupt the current response or
 cancel in-flight tools. Messages already queued stay queued. With an empty
-draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+draft, it sends the oldest queued follow-up instead. Each press sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
 pressed Enter. A queued message that cannot steer stays queued and is not
@@ -816,6 +817,35 @@ support what you send. This is also the escape hatch for custom endpoints and
 provider options not listed in the form. Reset `custom_params` to remove all
 pairs. Do not put credentials here: values are stored as plaintext in SQLite.
 
+Set `base_url` to send a model's requests to your own endpoint, such as a corporate
+proxy, an AI gateway, or a self-hosted server. It must be an `http://` or `https://`
+URL. It is saved per model, so two models of one provider can use different endpoints,
+and it wins over the provider's environment variable, such as `OPENAI_BASE_URL`. It
+sets the provider's own endpoint option: `azure_endpoint` for Azure, `api_base` for
+LiteLLM, and `api_host` for xAI, which takes an `https://HOST[:PORT]` URL. A model on one
+account, `PROVIDER@PROFILE:MODEL`, uses its own `base_url`, else the one saved for
+`PROVIDER@*:MODEL`, else for `PROVIDER:MODEL`, so pooled accounts share it.
+`openai-codex` sends its credentials to that origin, which must be HTTPS. A chain uses
+each of its models' own `base_url`, so chains and plugin models have no Base URL row;
+a provider with no endpoint, such as `sentence-transformers`, fails the turn. CLAI
+versions before this setting ignore it and send to the provider's default endpoint, so
+if you depend on a gateway, also set the provider's environment variable or don't
+downgrade.
+
+Set `api_key` to the name of a `/keys` entry for a model to use that key instead of
+the provider's environment variable. Only the name is saved; the key stays in `/keys`
+and is read each time the model is built, so deleting or renaming the key in `/keys`
+fails the turn until you pick another. The row
+shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
+The plain model's `api_key` also applies to its `@default` account, which uses the
+environment's key; a profile such as `openai@work` keeps its own sign-in unless its
+own model sets `api_key`. While `accounts.pool` runs a plain model on every signed-in
+account, each keeps its own key, so its `api_key` reaches only the `@default` account,
+if that is one of them. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
+and plugin models take their keys elsewhere and have no API Key row. CLAI versions
+before this setting ignore it and use the environment's key, sending it to any saved
+`base_url`, so don't downgrade while a model relies on both.
+
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
@@ -876,14 +906,17 @@ in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
 
-When no keyring backend exists at all (keyring raises `NoKeyringError` or
-`InitError`, typical on a headless Linux box or over SSH), credentials go to a
+When no usable keyring backend exists (keyring raises `NoKeyringError`,
+`InitError`, `RuntimeError`, or `PasswordSetError`, `kwallet.DBusKeyring`
+cannot open a wallet, or the backend does not retain the key, typical on a headless
+Linux box, over SSH, or on KDE / Steam Deck with KWallet disabled or unconfigured), credentials go to a
 `0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
-these files are per user, so `--database PATH` does not move them. `/login` says so in its confirmation. A locked keyring is not treated as
-missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh encrypts the credentials and deletes the plaintext file.
+these files are per user, so `--database PATH` does not move them; `/login` says so in its
+confirmation. Reading or writing one logs a single warning per process. A locked keyring is not
+treated as missing; unlock it instead. Once a keyring becomes available, the next login or token
+refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
@@ -1319,6 +1352,20 @@ still queues the message like Enter, the terminal is sending a plain Enter:
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
 - For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
   `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
+### Windows Terminal
+
+Windows Terminal and the Windows console take Alt+Enter to toggle full screen,
+so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
+CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
+is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
+wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
+Ctrl+Enter needs a terminal that reports modified keys, such as Windows
+Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
+a newline.
+SSH does not forward `WT_SESSION`, so a remote session started from Windows
+Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
+example with `export WT_SESSION=1` in the shell you start CLAI from.
 
 ### Interrupting a turn
 
@@ -1850,14 +1897,19 @@ not the filesystem the file tools act on there.
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
-  `read_only_patterns` set, or a `ToolGuardrail` (a plugin's or the agent's own)
-  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`.
+  `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
+  or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
+  or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
+  the agent's own, or a plugin's) mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
-  `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
-  one, a supplied agent that does not expose its capabilities, or a plugin that
-  adds a capability function or
-  `DynamicCapability` (which could supply one at run time). File access then
-  goes through the file tools only.
+  `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
+  `FileSystem`, more than one, a supplied agent that does not expose its
+  capabilities, or a plugin that adds a capability function or
+  `DynamicCapability` (which could supply one at run time). So does any
+  `Hooks`, such as a `before_tool` hooks table, and a `ToolCallJudge` over
+  every tool or chosen by metadata or a function: which tools they check can't
+  be read before the run. An `after_tool` table only reports, so it keeps the
+  mount. File access then goes through the file tools only.
 
 While the model writes:
 
@@ -1956,8 +2008,9 @@ that code mode's sandbox keeps the folder as the turn mounted it until the next 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
-only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
-gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
+sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
+`read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
 can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
@@ -2733,10 +2786,10 @@ For a repository where Git cannot perform the cleanup you want, set
 canonical absolute Git common directory to a nonempty argv list. Find the key
 with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
 The match is exact, with no wildcards. Keys resolving to the same directory are
-rejected rather than silently choosing one command. For example:
+rejected rather than silently choosing one command. For example, in a CLAI session:
 
-```sh
-clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
+```text
+/set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
 ```
 
 The executable is your own cleanup program. Only whole argv tokens are
@@ -2967,7 +3020,10 @@ of the launch directory and its ancestors into the agent's
 instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-`coder` clears old tool results as the context fills. The built-in `compaction`
+`coder` clears old tool results as the context fills.
+CLAI sends every tool, MCP tool, and output tool with strict mode off, whatever the
+provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
+the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
@@ -3053,7 +3109,7 @@ CLAI2's separate `notifications` plugin is unchanged; use
 
 ### Agent of Empires integration
 
-Run `clai2 plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
+Run `/plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
 (AoE) show CLAI2 sessions as `running`, `waiting`, `idle`, or `error` and reopen a
 restarted session's conversation. Titling the AoE session after the conversation is
 opt-in: turn off AoE's `session.tie_workdir_to_name` first, so a rename does not move the

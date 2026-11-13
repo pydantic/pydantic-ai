@@ -5,9 +5,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import fields, replace
 from typing import Any, Literal
 
-from aws_durable_execution_sdk_python.config import Duration, StepConfig, StepSemantics
+from aws_durable_execution_sdk_python.concurrency.models import BatchResult
+from aws_durable_execution_sdk_python.config import Duration, ParallelConfig, StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.retries import RetryDecision, RetryPresets
-from aws_durable_execution_sdk_python.serdes import SerDes
+from aws_durable_execution_sdk_python.serdes import SerDes, SerDesContext
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai.durable_exec import (
@@ -49,6 +50,9 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
         base_config = _parse_step_config(base)
         self.base_step_config = base_config
         """The `StepConfig` every step gets unless a tool's metadata overrides it."""
+        self.serdes = _serdes(base_config)
+        """The configured `serdes`, which a `parallel` operation's results are checkpointed with too."""
+        self.parallel_config = _parallel_config(self.serdes)
 
         def resolve_tool(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
@@ -131,6 +135,29 @@ def _waiting_retry_after(config: StepConfig | None) -> StepConfig:
         return RetryDecision.retry(Duration(seconds=math.ceil(delay)))
 
     return replace(step_config, retry_strategy=retry_strategy)
+
+
+def _serdes(config: StepConfig | None) -> SerDes[Any] | None:
+    return config.serdes if config is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+
+
+def _parallel_config(serdes: SerDes[Any] | None) -> ParallelConfig | None:
+    return None if serdes is None else ParallelConfig(serdes=_BatchResultSerDes(serdes), item_serdes=serdes)
+
+
+class _BatchResultSerDes(SerDes[BatchResult[Any]]):
+    """Checkpoints a `parallel` operation's `BatchResult` through a serializer of plain values."""
+
+    def __init__(self, inner: SerDes[Any]) -> None:
+        self._inner = inner
+
+    def serialize(self, value: BatchResult[Any], serdes_context: SerDesContext) -> str:
+        data: dict[str, Any] = value.to_dict()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        return self._inner.serialize(data, serdes_context)
+
+    def deserialize(self, data: str, serdes_context: SerDesContext) -> BatchResult[Any]:
+        batch: BatchResult[Any] = BatchResult.from_dict(self._inner.deserialize(data, serdes_context))  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        return batch
 
 
 def _parse_step_config(config: Mapping[str, Any] | None) -> StepConfig | None:

@@ -286,7 +286,7 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
 opt out).
 
-Approvals: add core `RequestInput(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`)
+Approvals: add core `HandleDeferredToolCalls(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`), whose `ask` takes a resume token,
 next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting
 a second run. A call that needs approval, an answer or external execution creates a Lambda callback and
 runs `ask(ctx, requests, callback_id)` once in a step (`{name}__external_event.deferred_tool_calls.ask`).
@@ -300,7 +300,7 @@ raw-in-base64-out --result '<json>'` (boto3 `send_durable_execution_callback_suc
 model is not called again and `ask` does not rerun. A timeout or `send-durable-execution-callback-failure`
 denies every pending approval and fails every pending external call with a message, and the run
 continues; an invalid decision or a stale tool call ID raises `UserError`. Other deferred-call handlers
-(`HandleDeferredToolCalls`, `ApprovalReviewer`, `AskUser`) run first. An `ask` that returns `None` only
+(a token-less `HandleDeferredToolCalls`, `ApprovalReviewer`, `AskUser`) run first. An `ask` that returns `None` only
 delivers the question; the answer comes from your approval endpoint. Outside a durable handler (local development) the same agent
 waits in process and `pydantic_ai.external_events.resolve_external_event(token, decision)` resolves it;
 from inside a checkpointed tool, the wait raises `UserError`.
@@ -558,19 +558,19 @@ from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness.experimental.acp import (
-    AcpSession,
-    AcpSessionConfig,
+    ACPSession,
+    ACPSessionConfig,
     InMemorySessionStore,
     run_acp_stdio_sync,
 )
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5')
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    return AcpSessionConfig(
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+    return ACPSessionConfig(
         deps=None,
         capabilities=[FileSystem[None](), Shell[None]()],
         workspace=LocalWorkspaceBackend(session.cwd),
@@ -583,7 +583,7 @@ if __name__ == '__main__':
     )
 ```
 
-`AcpSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
+`ACPSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
 `workspace` default to `None`, so an agent without file or shell tools needs no workspace.
 
 Gotchas: root tools at `session.cwd` through `session_config`, not a static `FileSystem`. Tools marked

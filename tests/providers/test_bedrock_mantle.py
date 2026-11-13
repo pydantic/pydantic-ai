@@ -345,7 +345,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_prompt_cache_breakpoints': True,
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
-            'openai_responses_tool_call_ids_are_response_scoped': True,
+            'tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
         }
     )
@@ -357,19 +357,11 @@ def test_bedrock_mantle_profiles() -> None:
     # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across
     # separate responses (verified live on 5.5 and 5.6), so response-scoping keys on the interface,
     # not the model version.
-    assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('openai_responses_tool_call_ids_are_response_scoped')
-        is True
-    )
-    assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('openai_responses_tool_call_ids_are_response_scoped')
-        is True
-    )
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('tool_call_ids_are_response_scoped') is True
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('tool_call_ids_are_response_scoped') is True
     # GPT-OSS on `/v1/responses` keeps globally-unique IDs, so it is not response-scoped.
     assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get(
-            'openai_responses_tool_call_ids_are_response_scoped', False
-        )
+        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('tool_call_ids_are_response_scoped', False)
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'

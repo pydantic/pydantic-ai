@@ -156,7 +156,7 @@ _CAPABILITY_PAGE_META = {
     'ipython-code-mode.md': ('ipython_code_mode', 'IPython Code Mode'),
     'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
-    'filesystem.md': ('filesystem', 'FileSystem'),
+    'filesystem.md': ('file_system', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
@@ -173,7 +173,7 @@ _CAPABILITY_PAGE_META = {
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
-    'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
+    'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
@@ -193,7 +193,8 @@ _CAPABILITY_PAGE_META = {
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
-    'subagents.md': ('subagents', 'Subagents'),
+    'subagents.md': ('sub_agents', 'Subagents'),
+    'peers.md': ('peers', 'Peers'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
@@ -206,7 +207,7 @@ _CAPABILITY_PAGE_META = {
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
     'artifact-scanning.md': ('artifact_scanning', 'Artifact Scanning'),
-    'spend.md': ('spend', 'Spend'),
+    'spend.md': ('spend_limits', 'Spend'),
     'localstack.md': ('localstack', 'LocalStack'),
     'logfire-mcp.md': ('logfire_mcp', 'Logfire MCP'),
     'linear.md': ('linear', 'Linear'),
@@ -379,6 +380,18 @@ def test_graduated_doc_page_has_no_experimental_framing(page: Path) -> None:
         f'{page.relative_to(_ROOT)}: graduated capability still carries experimental framing ({hit!r}). '
         'Only ACP keeps an experimental note; soften the rest to the README stability note.'
     )
+
+
+_MERMAID_FENCE = re.compile(r'^```mermaid\n(.*?)^```', flags=re.DOTALL | re.MULTILINE)
+
+
+@pytest.mark.parametrize('page', _CAPABILITY_DOC_PAGES, ids=lambda p: p.name)
+def test_doc_page_diagrams_match_readme(page: Path) -> None:
+    module, _ = _CAPABILITY_PAGE_META[page.name]
+    readme = _PACKAGE / module / 'README.md'
+    assert _MERMAID_FENCE.findall(readme.read_text(encoding='utf-8')) == _MERMAID_FENCE.findall(
+        page.read_text(encoding='utf-8')
+    ), f'{page.name} and {readme.relative_to(_ROOT)} must carry the same Mermaid diagrams.'
 
 
 @pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))

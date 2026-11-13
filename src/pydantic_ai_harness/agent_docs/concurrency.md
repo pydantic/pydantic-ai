@@ -104,7 +104,7 @@ before writing cleanup.
   exceptions (`CallDeferred`, `ApprovalRequired`, `SkipModelRequest`, ...)
   from a single `_ALWAYS_PROPAGATE` tuple, and re-raises a shared
   `UsageLimitExceeded`, before its `contain_errors` branch turns anything else
-  into a `ModelRetry` (`subagents/_toolset.py`). `CancelledError` is a
+  into a `ModelRetry` (`sub_agents/_toolset.py`). `CancelledError` is a
   `BaseException`, so `except Exception` never catches it; the file says so at
   the top, so a reader does not go looking for a missing branch.
 
