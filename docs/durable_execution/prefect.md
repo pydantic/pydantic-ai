@@ -158,8 +158,6 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
-Per-run capabilities that only add hooks, instructions or settings are allowed; a per-run capability that contributes an executing toolset or `@durable_operation` methods, or chooses or wraps the model (`resolve_model_id`, `get_model` or `get_wrapper_model`), must still be attached at construction.
-
 ### Durable Capability Operations
 
 Capability tasks include the agent's name in their cache key, so two agents in one flow never
