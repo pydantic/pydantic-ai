@@ -157,7 +157,7 @@ def unattended_only(
     """
     if not any(isinstance(capability, ApprovalHandler) for capability in bound):
         return tuple(permissions)
-    return tuple(capability for capability in permissions if not isinstance(capability, DenyUnanswered))
+    return tuple(capability for capability in permissions if not isinstance(capability, DenyUnansweredInSession))
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
