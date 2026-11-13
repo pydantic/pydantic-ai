@@ -102,6 +102,21 @@ async def test_a_linked_directory_keeps_the_parents_cap(tmp_path: Path) -> None:
     await _assert_delegate_levels(workspace, 'evil', 'none')
 
 
+async def test_a_link_into_the_delegates_directory_keeps_its_cap(tmp_path: Path) -> None:
+    # `aliasdir/alias` is an operator entry, but it's a link inside `aliasdir` (at `none`) to `dir/sub`, so the parent
+    # caps `dir/sub` at `none`; a delegate rooted at `dir` mustn't give `dir/sub` the entry's level.
+    (tmp_path / 'dir' / 'sub').mkdir(parents=True)
+    (tmp_path / 'aliasdir').mkdir()
+    (tmp_path / 'aliasdir' / 'alias').symlink_to(tmp_path / 'dir' / 'sub', target_is_directory=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(tmp_path)),
+        authority='operator',
+        path_authority={'aliasdir': 'none', 'aliasdir/alias': 'operator'},
+    )
+    assert await workspace.authority_of('dir/sub/AGENTS.md') == 'none'
+    await _assert_delegate_levels(workspace, 'dir', 'none')
+
+
 async def test_a_link_out_of_the_parents_root_keeps_its_cap(tmp_path: Path) -> None:
     # `vendor/trusted` is an operator entry, but it's a link inside `vendor` (at `none`) leading out of the parent's
     # root, so the parent caps its target at `none`; the delegate, rooted at the target, mustn't get the entry's level.
