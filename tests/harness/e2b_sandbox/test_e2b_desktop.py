@@ -6,11 +6,11 @@ import base64
 
 import pytest
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent
 from pydantic_ai.computer_use import Click, ComputerReturnPart
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
@@ -25,8 +25,6 @@ class FakeDisplay:
         self.up = up
         self.starts: list[str] = []
         self.xdotool: list[str] = []
-        self.viewers: list[str] = []
-        self.viewer_fails = False
 
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
@@ -42,11 +40,6 @@ class FakeDisplay:
             return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
         elif command.startswith('xdotool ') or ' xdotool ' in command:  # input runs `xdotool` through a script
             self.xdotool.append(command)
-        elif 'novnc_proxy' in command:
-            self.viewers.append(command)
-            if self.viewer_fails or not self.up:
-                return '', 'the viewer did not start:\nno display', 1
-            return 'Pass1234', '', 0
         return '', '', 0
 
 
@@ -77,41 +70,6 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
     assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
 
 
-async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    backend = E2BSandboxBackend(desktop=True)
-
-    url = await backend.live_view_url()
-
-    sandbox_id = fake_e2b.sandboxes[0].sandbox_id
-    assert url == f'https://6080-{sandbox_id}.e2b.example/vnc.html?autoconnect=true&resize=scale#password=Pass1234'
-
-
-async def test_a_sandbox_without_public_traffic_has_no_live_view(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    """A browser can't send the access token E2B needs for a private sandbox's ports, so the link would be a 403."""
-    fake_e2b.sandbox_network = {'allow_public_traffic': False}
-    backend = E2BSandboxBackend(desktop=True)
-
-    with pytest.raises(WorkspaceError, match='The desktop viewer needs public traffic'):
-        await backend.live_view_url()
-
-
-async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    backend = E2BSandboxBackend(desktop=True)
-    display.viewer_fails = True
-
-    with pytest.raises(WorkspaceError, match=r'Could not start the desktop viewer.*the viewer did not start'):
-        await backend.live_view_url()
-
-
-async def test_the_live_view_starts_an_x_server_that_stopped(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    backend = E2BSandboxBackend(desktop=True)
-    await screen(backend).display_size()
-    display.up = False  # the X server stopped since the last call
-
-    assert (await backend.live_view_url()).endswith('#password=Pass1234')
-    assert len(display.starts) == 2
-
-
 async def test_commands_see_the_desktop_and_the_env(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     await E2BSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('true', shell=True)
 
@@ -126,13 +84,8 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
     assert start.endswith(' sh 1440x900')
 
 
-async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> None:
-    backend = E2BSandboxBackend()
-
-    assert backend.display is None
-    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
-        await backend.live_view_url()
-    assert fake_e2b.create_calls == []
+def test_a_sandbox_without_a_desktop_has_no_display() -> None:
+    assert E2BSandboxBackend().display is None
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
