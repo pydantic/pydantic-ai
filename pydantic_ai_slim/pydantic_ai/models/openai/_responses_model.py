@@ -1174,7 +1174,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details=provider_details or None,
         )
 
-    def _map_output_items(  # noqa: C901
+    def _map_output_items(
         self, response: responses.Response, model_settings: OpenAIResponsesModelSettings
     ) -> list[ModelResponsePart]:
         """Map the output items of a non-streamed response to parts."""
@@ -1209,26 +1209,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     items.extend(self._map_image_generation_call(item))
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
-                case responses.ResponseComputerToolCall():  # pragma: lax no cover
-                    # Pydantic AI doesn't yet support the ComputerUse built-in tool
-                    pass
-                case responses.ResponseCustomToolCall():  # pragma: lax no cover
-                    # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
-                    pass
-                case responses.response_output_item.LocalShellCall():  # pragma: lax no cover
-                    # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
-                    pass
                 case responses.ResponseFileSearchToolCall():
                     items.extend(map_file_search_tool_call(item, self.system))
                 case responses.response_output_item.McpCall():
                     items.extend(map_mcp_call(item, self.system))
                 case responses.response_output_item.McpListTools():
                     items.extend(map_mcp_list_tools(item, self.system))
-                case responses.response_output_item.McpApprovalRequest():  # pragma: no cover
-                    # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
-                    pass
-                case _:  # pragma: lax no cover
-                    pass
+                case _:
+                    warnings.warn(
+                        f'Handling of this item type is not yet implemented. Please report on our GitHub: {item}',
+                        UserWarning,
+                    )
         return items
 
     def _map_output_message(

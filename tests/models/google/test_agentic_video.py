@@ -351,11 +351,22 @@ async def test_signed_unsupported_parts_keep_the_unsupported_error(stream: bool)
         'thought_signature': b'a',
     }
 
-    if stream:
-        with pytest.raises(AssertionError, match='Unexpected part'):
+    with pytest.raises(UnexpectedModelBehavior, match='Unsupported response from Gemini'):
+        if stream:
             await _stream_response_parts([[part]])
-    else:
-        with pytest.raises(UnexpectedModelBehavior, match='Unsupported response from Gemini'):
+        else:
+            _process_response([part], grounding={})
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
+async def test_function_call_without_name_is_unsupported(stream: bool) -> None:
+    """Unit test: no real model sends a nameless function call, so this pins the parser's defensive guard."""
+    part: dict[str, object] = {'function_call': {'args': {'a': 1}}}
+
+    with pytest.raises(UnexpectedModelBehavior, match='Unsupported response from Gemini'):
+        if stream:
+            await _stream_response_parts([[part]])
+        else:
             _process_response([part], grounding={})
 
 

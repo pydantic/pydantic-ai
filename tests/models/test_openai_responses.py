@@ -136,6 +136,7 @@ with try_import() as imports_successful:
     from openai.types import responses as resp
     from openai.types.responses import (
         CompactedResponse,
+        ComputerToolParam,
         ResponseCreatedEvent,
         ResponseFunctionWebSearch,
         ResponseQueuedEvent,
@@ -356,6 +357,21 @@ def test_openai_citations_kept_with_logprobs():
     assert isinstance(part, TextPart)
     assert part.provider_details is not None
     assert part.provider_details.keys() == {'citations', 'logprobs'}
+
+
+async def test_openai_responses_unsupported_output_item_warns(allow_model_requests: None, openai_api_key: str):
+    """A non-streamed `computer_call` warns like the streamed one instead of being dropped silently."""
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_native_tools=[ComputerToolParam(type='computer')])
+
+    with pytest.warns(
+        UserWarning, match=r'Handling of this item type is not yet implemented.*ResponseComputerToolCall'
+    ):
+        response = await direct_model_request(
+            model, [ModelRequest.user_text_prompt('Take a screenshot of the screen.')], model_settings=settings
+        )
+
+    assert response.parts == []
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
