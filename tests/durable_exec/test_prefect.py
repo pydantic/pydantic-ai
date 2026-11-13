@@ -2935,16 +2935,15 @@ class _CachedPagePart(DataCapabilityPart, namespace='test_prefect', name='page',
 
 @dataclass
 class _EnqueuesCapabilityParts(AbstractCapability[object]):
-    """Sends an instruction part and a data part with the first request, as a capability reporting on its work."""
+    """Sends an instruction part and a data part with each request, as a capability reporting on its work."""
 
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        if not any(isinstance(message, ModelResponse) for message in request_context.messages):
-            ctx.enqueue(
-                _CachedNotePart(content=OperatorText('Be brief.'), source=OperatorSource()),
-                _CachedPagePart(content='Page text.', source=ToolResultSource(tool_name='fetch')),
-            )
+        ctx.enqueue(
+            _CachedNotePart(content=OperatorText('Be brief.'), source=OperatorSource()),
+            _CachedPagePart(content='Page text.', source=ToolResultSource(tool_name='fetch')),
+        )
         return request_context
 
 
