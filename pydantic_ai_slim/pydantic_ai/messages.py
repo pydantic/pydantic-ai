@@ -11,7 +11,7 @@ import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
@@ -1746,6 +1746,16 @@ def _tool_return_text(value: Any) -> str:
     return dumped.decode()
 
 
+def _tool_return_items_json(items: Iterable[object]) -> str:
+    """A JSON array of `items`, each serialized as it is when it is a tool's whole return value.
+
+    Each item's own JSON text is joined into the array rather than the list dumped whole: that would serialize
+    every item one level deeper, so a value nested just under the serializer's depth limit would fail in the array
+    though it serializes alone.
+    """
+    return f'[{",".join(tool_return_ta.dump_json(item, by_alias=True).decode() for item in items)}]'
+
+
 class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
@@ -2656,7 +2666,8 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
-        returned file content list.
+        returned file content list. Non-file items keep the JSON form they have when they are the
+        tool's whole return value.
 
         Each file is framed by `_tool_result_provenance_tags` so the model can tell it from the
         user's own uploads, which travel on the same channel.
@@ -2670,15 +2681,15 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
         if not files:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
 
-        tool_content_parts: list[str] = []
+        tool_content_parts: list[object] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str', wrap_if_error=False):
+        for item in self.content_items():
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
                 file_content.extend([open_tag, item, close_tag])
-            elif isinstance(item, str):  # pragma: no branch
+            else:
                 tool_content_parts.append(item)
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
@@ -2687,10 +2698,11 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
             file_references = [f'See file {file.identifier}.' for file in files]
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
-            return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
-        # Safe: when was_list is False, content is either scalar data (→ str item) or a single
-        # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
-        return tool_content_parts[0], file_content
+            return _tool_return_items_json(tool_content_parts), file_content
+        # Content that isn't a list but has a file is that one file, so its 'See file ...' reference is the whole text.
+        [reference] = tool_content_parts
+        assert isinstance(reference, str)
+        return reference, file_content
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         part = _otel_messages.ToolCallResponsePart(
@@ -5442,6 +5454,25 @@ _CAPABILITY_PART_ENVELOPE_FIELDS = frozenset(f.name for f in dataclasses.fields(
 """Fields every capability part has, as opposed to a kind's typed fields, which ride in `data` on an unknown part."""
 
 
+@dataclass(repr=False, kw_only=True)
+class _CapabilityContentPart(
+    DataCapabilityPart, namespace='pydantic_ai', name='capability_content', tag='capability_content'
+):
+    """User content a capability with no more than `'none'` authority enqueued, as data framed on the user channel.
+
+    `ctx.enqueue` turns such a capability's user content into this, so it can't reach the model as the user's words.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class _CapabilityInstructionPart(InstructionCapabilityPart, namespace='pydantic_ai', name='capability_instruction'):
+    """A `SystemPromptPart` a capability with less than `'operator'` authority enqueued, downgraded to that authority.
+
+    `ctx.enqueue` turns such a capability's system prompt into this, so it can't reach the model in the application's
+    voice.
+    """
+
+
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
 
@@ -5584,6 +5615,23 @@ ModelResponsePart = Annotated[
     pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
+
+
+def is_retry(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[ToolReturnPart | RetryFeedbackPart]:
+    """Check whether a message part is a retry Pydantic AI sent the model.
+
+    A retry that answers a tool call is that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]
+    with `outcome='retried'`, and one that answers no tool call is a
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Together they are what the deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] used to record, and a stored history loads in this
+    shape too, so use `is_retry(part)` where code used to check `isinstance(part, RetryPromptPart)`. A
+    `RetryPromptPart` your own code still constructs isn't matched.
+
+    A tool call that failed (`outcome='failed'`) isn't a retry. To find every tool call that reached the model
+    as an error, check a [`BaseToolReturnPart`][pydantic_ai.messages.BaseToolReturnPart]'s `outcome` against
+    [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES] instead.
+    """
+    return isinstance(part, RetryFeedbackPart) or (isinstance(part, ToolReturnPart) and part.outcome == 'retried')
 
 
 @dataclass(frozen=True, kw_only=True)
