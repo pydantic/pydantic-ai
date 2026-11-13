@@ -54,15 +54,6 @@ That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
 
-Each call spills to its own handle. A `tool_call_id` is only unique within one response, and a
-provider that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the
-run. The first call to spill keeps the plain handle; a later call that would land on the same one
-is parked one level down, under the run step that produced it, instead of overwriting the earlier
-spill. That step comes from the run context, not from the message history, so a capability that
-rewrites the history between two responses (a compaction, say) cannot make two calls derive the
-same handle. Every other handle keeps the documented shape, so code that builds or globs it, such
-as a cleanup job, still matches.
-
 ## Usage
 
 Construct an `Agent` with `ToolOutputLimits()` in its `capabilities`. With no arguments it
@@ -446,9 +437,13 @@ replay.
   content that overflows is left unreduced with a warning.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
-  earlier attempt's spill. A `tool_call_id` is only unique within one response, so the first call
-  to spill keeps the plain handle and a later response reusing the id moves one level down, under
-  its run step, even after a compaction has rewritten the history in between.
+  earlier attempt's spill. A `tool_call_id` is only unique within one response, so a provider
+  that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the run:
+  the first call to spill keeps the plain handle, and a later call that would land on the same
+  one moves under the run step that produced it, so each call gets its own spill. The step comes
+  from the run context rather than the history, so a compaction rewriting `ctx.messages` between
+  the two responses cannot make them collide. Every other handle keeps the documented shape, so
+  code that builds or globs it, such as a cleanup job, still matches.
 
 ## Relationship to other capabilities
 
