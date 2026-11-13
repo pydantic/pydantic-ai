@@ -508,7 +508,7 @@ conversation from `message_history`, in a new workflow or flow, works in the
 | Commands: `run_command`, `shell` | Yes, within the [activity timeout](durable_execution/temporal.md#harness-command-timeouts) | Yes | Yes |
 | Background jobs: `start_command`, `check_command`, `stop_command` | Yes | Yes | Yes |
 | Sticky `cd`: `Shell(persist_cwd=True)` | Yes | Yes | Yes |
-| File-change approval: [`FileChangeRequestEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
+| File-change approval: [`FileChangeRequestedEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
 | Live tool events | [File-change requests and write events only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
 | Delegation: `delegate_task` | [To `self` only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
 
@@ -701,6 +701,9 @@ class MySandbox(WorkspaceBackend, SupportsCommands):
   replacement for it.
 - The backend never destroys the environment when a run ends. Whoever holds the ref decides when to
   delete it; see [Cleaning up](#cleaning-up).
+- The backend never stops a process that a command detached into its own session, neither when the
+  command returns nor when a backend attaches by the same ref later.
+  [`Shell`](harness/shell.md) background jobs depend on it. A provider's own idle pause or stop is separate.
 - A non-zero exit is a result, not an exception. A program that can't start is exit 127 (not found)
   or 126 (not executable), as in `sh`. A path-level failure raises the builtin file error, and a
   timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate, so a
@@ -733,8 +736,8 @@ and Trio when installed). For an asyncio-only SDK, override the `anyio_backend` 
 `'asyncio'`, class-scoped when your `backend` fixture is. A class-scoped fixture starts one environment for the whole
 suite instead of one per rule. Under durable execution every workspace call rebuilds your backend from
 its ref, so provide `attach_backend`, a factory that builds a backend for a ref the way your capability's
-`get_workspace` does: it enables the rule that a backend attached by ref reaches the same files and
-commands and keeps that ref. To check destruction,
+`get_workspace` does: it enables the rules that a backend attached by ref reaches the same files and
+commands, keeps that ref, and finds a process that an earlier command detached still running. To check destruction,
 also provide `destroy_environment` and `destructive_backend`, a factory for an independent environment.
 The latter defaults to `fresh_backend` when supplied. The destructive rule never uses the shared `backend` fixture.
 
@@ -748,7 +751,8 @@ Before shipping a backend, use the suite to check:
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
-  reattachment, a destroyed reference, and destruction during a command. These optional rules
+  reattachment, a detached process that a backend attached by ref must find still running, a
+  destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.
 
 A skipped rule is not a passed rule: run pytest with `-rs` to see what went unchecked. Four boolean

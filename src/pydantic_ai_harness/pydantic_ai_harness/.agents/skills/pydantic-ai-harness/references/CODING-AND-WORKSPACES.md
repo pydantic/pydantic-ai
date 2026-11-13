@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine, or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
+`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -16,9 +16,9 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
-| Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
+| A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
-| Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
+| Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
 Workspace capabilities (`LocalWorkspace` and the sandboxes) register **no tools**. `allowed_commands`,
@@ -89,7 +89,12 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
   `grep(pattern, path='.', glob=None, file_type=None, ignore_case=False, literal=False, context=0)`
 - `shell(command, mode='foreground', timeout=None)` (`mode='background'` too), `delegate_task(agent_name, task)`
 
-Keyword-only options: `instructions=None` (appended to the default guidance),
+Keyword-only options: `instructions=None` (appended to the default guidance), `autonomy='high'`
+(`'low'` proposes a plan and waits for approval; `'medium'` asks when a choice really matters; `'high'`
+asks only for credentials, approvals, or real ambiguity and measures stated numeric targets; `'max'` never
+asks, also deletes its scratch files, and treats an unmet stated criterion as a misreading. This is guidance, not a tool limit; `Permissions` asks before
+writes or commands. A delegate finishes on its own and measures numeric targets whatever the level;
+the type is `Autonomy`),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
 files as the agent reads, inlining up to 32,000 characters of them per conversation before switching to pointers; pass a
@@ -198,8 +203,8 @@ descendants; denied and read-only patterns ignore case), `read_only=False` (`Tru
   `*.key`, `**/secrets*`, `**/.pydantic-ai-harness/**`).
 - Walkers skip dotfiles and dot-directories unless a path or pattern names one explicitly, and filter entries, not the root, by
   `allowed_patterns`. A read-only workspace gets only read tools.
-- Veto writes with `@agent.on_event(FileChangeRequestEvent)` + `event.cancel(reason)` (from
-  `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
+- Veto writes with `@agent.on_event(FileChangeRequestedEvent)` (not `FileChangeRequestEvent`) +
+  `event.cancel(reason)` (from `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
 - Recognize the file tools by kind, never by name: each declares `tool_kind` `file_system.<tool>`
   (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.filesystem`), and its calls
   become typed parts (`isinstance(part, ReadFileCallPart)`; `part.typed_args` is `None` until the
@@ -435,10 +440,10 @@ Python up to 3.14.
 - Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
 
-### DockerSandbox
+### DockerContainer
 
-`DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
-(backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
+`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+(backend `DockerContainerBackend`) runs commands and file operations in a local container through the
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
@@ -446,7 +451,7 @@ Python up to 3.14.
   capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
-  so it comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
+  so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
   Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
 - Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
   adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`:
@@ -503,30 +508,36 @@ so keys, ports and jump hosts come from `~/.ssh/config` and `ssh-agent`. No extr
 - A background child holding stdout/stderr open keeps `run()` waiting (sshd waits for the output):
   redirect it, as in `server > server.log 2>&1 &`.
 
-### BubblewrapSandbox
+### BubblewrappedWorkspace
 
-`BubblewrapSandbox(wrapped_capability, *, network=False, bwrap_args=())` runs the wrapped workspace
-capability's commands in a Linux `bwrap` sandbox on that workspace's host:
-`BubblewrapSandbox(SSHWorkspace('dev@box', working_dir='/srv/app'))` or
-`BubblewrapSandbox(LocalWorkspace('.'))`. The host needs `bwrap` and user namespaces.
+`BubblewrappedWorkspace(wrapped_capability, *, network=False, bwrap_args=())` runs the wrapped workspace
+capability's commands in a Linux `bwrap` wrapper on that workspace's host:
+`BubblewrappedWorkspace(SSHWorkspace('dev@box', working_dir='/srv/app'))` or
+`BubblewrappedWorkspace(LocalWorkspace('.'))`. The host needs `bwrap` and user namespaces.
 
+- Best-effort convenience to keep a trusted agent from accidentally changing files outside its working
+  directory; **not a security boundary** and **not a sandbox for untrusted code or untrusted agents**
+  (commands share the host kernel and run as the host user; for untrusted agents use a VM or
+  microVM-backed sandbox).
 - Read-only host, writable working dir, private `/tmp`, empty `/run` (no daemon sockets), required user
   namespace, no capabilities. `bwrap_args` come after the defaults (`['--bind', p, p]`, `['--tmpfs', p]`).
 - `network=False` (default): no network, plus a Codex-style seccomp filter: no socket connect/bind/listen
-  (host Unix sockets and the sandbox's own loopback included), no Unix datagram sockets, no
+  (host Unix sockets and the wrapper's own loopback included), no Unix datagram sockets, no
   `ptrace`/`io_uring`. Tests that start a local server, and Python 3.14's default `forkserver`
   multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
-- File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
+- File methods (and the `FileSystem`/`Coder` file tools) run in the wrapper as shell commands, so a
   swapped-in symlink can't lead a write outside the working dir.
-- A working dir containing `~` (SSH's default) gets `~/.ssh`, `~/.pam_environment`, `~/.bashrc`,
-  `~/.zshenv`, `~/.cshrc`, `~/.tcshrc`, `~/.config/fish` read-only (created if missing; a symlink there
-  is unavailable), since the next SSH login runs them on the host. Prefer a project `working_dir`.
+- Do **not** set `working_dir` to `~` (or a directory containing it): only the default startup locations
+  (`~/.ssh`, `~/.pam_environment`, `~/.bashrc`, `~/.bashrc.d`, `~/.cargo/env`, `~/.local/bin/env`,
+  `~/.zshenv`, `~/.cshrc`, `~/.tcshrc`, `~/.config/fish`) are mounted read-only (created if missing; a
+  symlink there is unavailable), while interactive login files (`~/.profile`, `~/.bash_profile`) and
+  configuration under a non-default `$XDG_CONFIG_HOME` remain writable. Always pass a project `working_dir`.
 - The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and
-  sandboxed commands can see and signal the host user's processes.
-- Not a hostile-agent boundary: commands read everything the host user can (hide `~/.ssh` with
-  `--tmpfs`), and files they write (Git hooks, `Makefile`) run unsandboxed if you run them later.
+  wrapped commands can see and signal the host user's processes.
+- Commands read everything the host user can (hide `~/.ssh` with `--tmpfs`), and files they write
+  (Git hooks, `Makefile`) run outside the wrapper if you run them later.
 - The ref and `backend` are the wrapped workspace's. `BubblewrapWorkspace` is the wrapper for building
-  a `workspace=` directly: `BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@box')))`.
+  a `workspace=` directly: `BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@box', working_dir='/srv/app')))`.
 
 ## Durable execution
 
@@ -536,7 +547,7 @@ every activity reattaches to that environment.
 
 | Feature | Temporal | DBOS | Prefect |
 | --- | --- | --- | --- |
-| File tools, background jobs, `persist_cwd`, `FileChangeRequestEvent` | Yes | Yes | Yes |
+| File tools, background jobs, `persist_cwd`, `FileChangeRequestedEvent` | Yes | Yes | Yes |
 | `run_command`, `shell` | Yes, within the activity timeout | Yes | Yes |
 | Live tool events | File-change request and write events only | Yes | Yes |
 | `delegate_task` | To `self` only | Yes | Yes |
@@ -575,7 +586,7 @@ files beneath it. See
 for resolution, labels, and backend requirements.
 
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
-whatever `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
 prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
 applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.

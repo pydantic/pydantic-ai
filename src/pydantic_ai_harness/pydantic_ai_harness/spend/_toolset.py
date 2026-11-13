@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.spend._capability import SpendLimits
 
 
-def build_toolset(limits: SpendLimits[AgentDepsT]) -> FunctionToolset[AgentDepsT]:
+def make_toolset(limits: SpendLimits[AgentDepsT]) -> FunctionToolset[AgentDepsT]:
     """A one-tool toolset reporting what the agent has spent so far."""
 
     async def get_spend(ctx: RunContext[AgentDepsT]) -> str:

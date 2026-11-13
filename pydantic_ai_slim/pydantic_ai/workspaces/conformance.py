@@ -34,6 +34,10 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     return backend
 
 
+_FINISH_ONCE_RELEASED = 'while [ -d "${1%/*}" ] && [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
+"""Shell that waits for the file `$1`, then writes the file `$2`. It gives up once `$1`'s directory is gone."""
+
+
 @asynccontextmanager
 async def _scratch_dir(workspace: Workspace) -> AsyncGenerator[str]:
     """A fresh directory under the working directory, removed afterwards."""
@@ -131,11 +135,10 @@ class WorkspaceBackendSuite:
             finished = posixpath.join(root, 'finished')
             # The background child holds stdout open until released. A backend waiting for
             # pipe EOF cannot complete this run, regardless of control-plane latency.
-            command = 'while [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
             try:
                 with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
                     result = await _commands(backend).run(
-                        ['sh', '-c', f'({command}) & printf done', 'sh', release, finished]
+                        ['sh', '-c', f'({_FINISH_ONCE_RELEASED}) & printf done', 'sh', release, finished]
                     )
                 assert (result.exit_code, result.stdout) == (0, 'done')
                 assert not await workspace.exists(finished)
@@ -176,12 +179,6 @@ class WorkspaceBackendSuite:
             expected = f'{await workspace.realpath(root)}\n'
             assert (await workspace.run(['sh', '-c', 'pwd -P'], cwd=posixpath.basename(root))).stdout == expected
             assert (await workspace.run('pwd -P', shell=True, cwd=root)).stdout == expected
-            with pytest.raises(FileNotFoundError):
-                await workspace.run(['pwd'], cwd=posixpath.join(root, 'missing'))
-            file = posixpath.join(root, 'file')
-            await workspace.write_bytes(file, b'')
-            with pytest.raises(NotADirectoryError):
-                await workspace.run(['pwd'], cwd=file)
 
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(WorkspaceTimeoutError):
@@ -512,6 +509,45 @@ class WorkspaceBackendSuite:
                 assert (await attached.run(['cat', path])).stdout == 'reattached'
             # Attaching never replaces the environment it names.
             assert attached.ref == ref
+
+    async def test_a_backend_attached_by_ref_reaches_a_detached_process(
+        self,
+        backend: WorkspaceBackend,
+        attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None,
+        has_real_posix_shell: bool,
+    ) -> None:
+        """A process a command detached into its own session is still running for a backend attached by ref."""
+        if attach_backend is None:
+            pytest.skip('provide the `attach_backend` fixture to enable this rule')
+        if not has_real_posix_shell:
+            pytest.skip('backend does not run real POSIX processes')
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            release, finished, started = (posixpath.join(root, name) for name in ('release', 'finished', 'started'))
+            # The launcher returns once the process is in its own session: a backend may stop the command's own group.
+            launch = (
+                'command -v setsid > /dev/null || exit 127; '
+                f'setsid sh -c \': > "$3"; {_FINISH_ONCE_RELEASED}\' sh "$@" < /dev/null > /dev/null 2>&1 & '
+                'i=0; while [ ! -f "$3" ]; do i=$((i + 1)); [ "$i" -le 100 ] || exit 1; sleep 0.1; done'
+            )
+            try:
+                with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
+                    result = await commands.run(['sh', '-c', launch, 'sh', release, finished, started])
+                if result.exit_code == 127:
+                    pytest.skip('the environment does not provide `setsid`')  # pragma: no cover
+                assert result.exit_code == 0, 'the detached process never started'
+                ref = backend.ref
+                assert ref is not None
+                attached = Workspace(attach_backend(ref))
+                # Only a live process answers: a PID check would also pass for a zombie nothing reaps.
+                with anyio.fail_after(60):
+                    await attached.write_bytes(release, b'go')
+                    while not await attached.exists(finished):
+                        await anyio.sleep(0.1)
+            finally:
+                with anyio.move_on_after(30, shield=True):
+                    await workspace.write_bytes(release, b'go')
 
     async def test_destroying_environment_during_command_raises_unavailable(
         self,

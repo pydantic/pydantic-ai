@@ -123,7 +123,7 @@ def openai_compatible_category(
     if says_overloaded(code, error_type):
         return ModelOverloadedError
     if code == 'model_not_found':
-        # The Responses API sends it as a 400, the Chat Completions API as a 404.
+        # An error inside a stream carries no status, so only the code says what it is.
         return ModelNotFoundError
     if code == 'invalid_api_key':
         return ModelAuthenticationError
@@ -198,6 +198,27 @@ def google_exceeds_daily_quota(body: object) -> bool:
                 ):
                     return True
     return False
+
+
+def google_retry_after(error: ModelHTTPError) -> float | None:
+    """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
+
+    Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string of seconds, like
+    `'14s'` or `'0.5s'`; one that's absent, doesn't end in `s`, holds no number before it, or is negative or
+    infinite says nothing.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    for detail in google_error_details(error.body):
+        if isinstance(raw := detail.get('retryDelay'), str) and raw.endswith('s'):
+            try:
+                seconds = float(raw[:-1])
+            except ValueError:
+                continue
+            if 0 <= seconds < float('inf'):
+                return seconds
+    return None
 
 
 def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:

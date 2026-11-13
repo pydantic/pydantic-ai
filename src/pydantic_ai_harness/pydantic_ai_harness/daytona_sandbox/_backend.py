@@ -147,19 +147,12 @@ def _translate(error: Exception, context: str, *, path: str | None = None) -> Ex
     retry as transient. A not-found answer is a missing `path` for a path operation, and a refused
     request otherwise.
     """
-    if path is not None and isinstance(error, daytona.DaytonaError):
-        # Path failures carry the POSIX `strerror` text, as a 400 or, for a read, a 500.
-        message = str(error).lower()
-        if 'too many levels of symbolic links' in message:
-            return OSError(errno.ELOOP, 'Too many levels of symbolic links in the Daytona sandbox', path)
-        for phrase, error_type in (
-            ('Not a directory', NotADirectoryError),
-            ('Is a directory', IsADirectoryError),
-            ('Permission denied', PermissionError),
-            ('File exists', FileExistsError),
-        ):
-            if phrase.lower() in message:
-                return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
+    if (
+        path is not None
+        and isinstance(error, daytona.DaytonaError)
+        and (path_error := _path_error(error, path)) is not None
+    ):
+        return path_error
     if path is not None and isinstance(error, daytona.DaytonaForbiddenError):
         # Toolbox authorization is about the requested file, not the API credentials.
         return PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
@@ -177,6 +170,23 @@ def _translate(error: Exception, context: str, *, path: str | None = None) -> Ex
     ):
         return WorkspaceError(f'{context}: {error}')
     return error
+
+
+def _path_error(error: daytona.DaytonaError, path: str) -> OSError | None:
+    """The `OSError` named by the POSIX `strerror` text of a failed path operation, or `None` if it names none."""
+    # Path failures carry the POSIX `strerror` text, as a 400 or, for a read, a 500.
+    message = str(error).lower()
+    if 'too many levels of symbolic links' in message:
+        return OSError(errno.ELOOP, 'Too many levels of symbolic links in the Daytona sandbox', path)
+    for phrase, error_type in (
+        ('Not a directory', NotADirectoryError),
+        ('Is a directory', IsADirectoryError),
+        ('Permission denied', PermissionError),
+        ('File exists', FileExistsError),
+    ):
+        if phrase.lower() in message:
+            return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
+    return None
 
 
 async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
@@ -262,7 +272,7 @@ class _DaytonaProcess:
         self._process = sandbox.process
         self._session_id = f'pydantic-ai-{uuid.uuid4().hex}'
         self._marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
-        self._out, self._err = f'/tmp/{self._marker}.out', f'/tmp/{self._marker}.err'
+        self._out, self._error = f'/tmp/{self._marker}.out', f'/tmp/{self._marker}.err'
         self._command_id: str | None = None
         self._finished = False
         self.missing_cwd = False
@@ -281,7 +291,7 @@ class _DaytonaProcess:
             argv = ['env', '--', *(f'{name}={value}' for name, value in env.items()), *argv]
         missing_cwd = f'{{ printf %s {self._marker}-cwd >{self._out}; exit 125; }}'
         prefix = f'cd -- {shlex.quote(cwd)} || {missing_cwd}; ' if cwd is not None else ''
-        script = f'{prefix}"$@" </dev/null >{self._out} 2>{self._err}'
+        script = f'{prefix}"$@" </dev/null >{self._out} 2>{self._error}'
         return shlex.join(['sh', '-c', script, 'sh', *argv])
 
     async def start(self, line: str) -> None:
@@ -324,27 +334,27 @@ class _DaytonaProcess:
                 with anyio.fail_after(_REQUEST_TIMEOUT):
                     # Sizes first: a command can grow a file without writing it (`truncate`).
                     sizes = await self._process.exec(
-                        f'for f in {self._out} {self._err}; do if [ -e "$f" ]; then wc -c < "$f"; else echo 0; fi; done',
+                        f'for f in {self._out} {self._error}; do if [ -e "$f" ]; then wc -c < "$f"; else echo 0; fi; done',
                         timeout=_REQUEST_TIMEOUT,
                     )
                     try:
-                        out_size, err_size = (int(size) for size in sizes.result.split())
+                        out_size, error_size = (int(size) for size in sizes.result.split())
                     except ValueError:
                         raise WorkspaceError(f'Could not read the command output sizes: {sizes.result!r}') from None
-                    if out_size + err_size > _MAX_OUTPUT_BYTES:
+                    if out_size + error_size > _MAX_OUTPUT_BYTES:
                         stdout, stderr = await self._excerpts('head', _OUTPUT_PREVIEW_BYTES)
                         raise WorkspaceOutputLimitError(
                             _OUTPUT_LIMIT_MESSAGE, limit=_MAX_OUTPUT_BYTES, stdout=stdout, stderr=stderr
                         )
                     out = await self._sandbox.fs.download_file(self._out, _REQUEST_TIMEOUT) if out_size else b''
-                    err = await self._sandbox.fs.download_file(self._err, _REQUEST_TIMEOUT) if err_size else b''
+                    error = await self._sandbox.fs.download_file(self._error, _REQUEST_TIMEOUT) if error_size else b''
                     # A background child can keep writing after the sizes were read.
-                    if len(out) + len(err) > _MAX_OUTPUT_BYTES:
+                    if len(out) + len(error) > _MAX_OUTPUT_BYTES:
                         raise WorkspaceOutputLimitError(
                             _OUTPUT_LIMIT_MESSAGE,
                             limit=_MAX_OUTPUT_BYTES,
                             stdout=out[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
-                            stderr=err[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                            stderr=error[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
                         )
         finally:
             await self._remove_output_files()
@@ -352,19 +362,19 @@ class _DaytonaProcess:
         if f'{self._marker}-cwd' in stdout:
             self.missing_cwd = True
             return CommandResult(exit_code=exit_code, stdout='', stderr='')
-        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=err.decode(errors='replace'))
+        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=error.decode(errors='replace'))
 
     async def _excerpts(self, end: Literal['head', 'tail'], limit: int) -> tuple[str, str]:
         """At most `limit` bytes from one end of each output file, cut in the sandbox before transfer."""
-        paths = (self._out, self._err)
+        paths = (self._out, self._error)
         cuts = '; '.join(f'{end} -c {limit} -- {path} > {path}.part 2>/dev/null || : > {path}.part' for path in paths)
         await self._process.exec(cuts, timeout=_REQUEST_TIMEOUT)
-        out, err = [await self._sandbox.fs.download_file(f'{path}.part', _REQUEST_TIMEOUT) for path in paths]
-        return out.decode(errors='replace'), err.decode(errors='replace')
+        out, error = [await self._sandbox.fs.download_file(f'{path}.part', _REQUEST_TIMEOUT) for path in paths]
+        return out.decode(errors='replace'), error.decode(errors='replace')
 
     async def _remove_output_files(self) -> None:
         """Best effort: a file left behind only takes space in the sandbox's `/tmp`."""
-        paths = f'{self._out} {self._err} {self._out}.part {self._err}.part'
+        paths = f'{self._out} {self._error} {self._out}.part {self._error}.part'
         with anyio.move_on_after(_REQUEST_TIMEOUT, shield=True):
             try:
                 await self._process.exec(f'rm -f -- {paths}', timeout=_REQUEST_TIMEOUT)

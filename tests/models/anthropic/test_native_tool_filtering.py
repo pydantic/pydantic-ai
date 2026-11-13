@@ -231,9 +231,17 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
         ),
         pytest.param([WebSearchTool()], {'citations': True}, False, id='citations-web-search'),
         pytest.param([WebFetchTool()], {'citations': True}, False, id='citations-web-fetch'),
-        pytest.param([WebFetchTool(enable_citations=True)], None, False, id='web-fetch-enable-citations'),
         pytest.param(
-            [WebSearchTool(), WebFetchTool(enable_citations=True)], None, True, id='uncited-web-search-keeps-default'
+            [WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}})],
+            None,
+            False,
+            id='web-fetch-enable-citations',
+        ),
+        pytest.param(
+            [WebSearchTool(), WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}})],
+            None,
+            True,
+            id='uncited-web-search-keeps-default',
         ),
         pytest.param(
             [WebFetchTool()],
@@ -313,7 +321,7 @@ async def test_anthropic_agent_recovers_from_unconfigured_native_tool_call(allow
             {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]},
             {
                 'role': 'user',
-                'content': [{'text': '<system>Please return text.</system>', 'type': 'text'}],
+                'content': [{'text': '<system verified>Please return text.</system>', 'type': 'text'}],
             },
         ]
     )
