@@ -72,7 +72,7 @@ agent = Agent(
             max_retries=5,
         ),
         Shell(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell']),  # shell
-        RepoContext(expose_inventory_tool=False),  # AGENTS.md and CLAUDE.md
+        RepoContext(walk_up='repo_root'),  # AGENTS.md and CLAUDE.md, from the repo root down
         SubAgents(include_self=True),  # delegate_task to a fresh run of this agent
         ClearToolResults(max_fraction=0.7),  # clear old tool results as the context fills
         ToolOutputLimits(bands=[Band(over=64_000, action=Truncate(max_chars=64_000))]),  # cap tool output
@@ -82,7 +82,7 @@ agent = Agent(
 )
 ```
 
-This is close to `Coder()`, not identical: `Coder` has longer default instructions and turns off strict tool schemas for its own tools. The [Coder composition](harness/coder.md#composition) lists the exact configuration. From here every line is yours to change: allowlist commands with `Shell(allowed_commands=[...])`, make the file tools [read-only](harness/filesystem.md), or drop delegation.
+This is close to `Coder()`, not identical. `Coder` has longer default instructions and turns off strict tool schemas for its own tools, and two of its pieces are specializations you cannot write from outside: its `ToolOutputLimits` adds no `read_tool_result` tool, because bounded truncation never spills, while the plain capability above does; and once a tool's retries run out, `Coder` sends the last error back to the model as a failed tool result, where the agent above ends the run. The [Coder composition](harness/coder.md#composition) lists the exact configuration. From here every line is yours to change: allowlist commands with `Shell(allowed_commands=[...])`, make the file tools [read-only](harness/filesystem.md), or drop delegation.
 
 ## Change the pieces
 
@@ -121,7 +121,7 @@ agent = Agent(
 ```
 
 - [Planning](harness/planning.md) gives the model a plan it writes and updates as it works, and reminds it of the plan as the conversation grows.
-- [Skills](harness/skills.md) reads [Agent Skills](capabilities/on-demand.md) (`SKILL.md` files) from a directory in the workspace, here `.agents/skills`, and loads each one only when the model asks for it; `missing_directories='skip'` lets the agent start before that directory exists. Install the `skills` extra.
+- [Skills](harness/skills.md) reads [Agent Skills](https://agentskills.io/specification) (`SKILL.md` files) from a directory in the workspace, here `.agents/skills`, and loads each one only when the model asks for it; `missing_directories='skip'` lets the agent start before that directory exists. Install the `skills` extra.
 - [Guardrails](harness/guardrails.md) check tool calls before they run. This one asks you in the terminal before each call to the `shell` tool, including calls from the agent's delegates, which run with the same capabilities. File edits and other tools, like the `run_tests` tool below, need guardrails of their own if you want to approve them too. To decide on a server or in a queue instead, return `GuardrailResult.approve()` and the run ends with [deferred tool requests](deferred-tools.md#human-in-the-loop-tool-approval) you answer later. To let a second model approve the harmless calls first, add [Approval Reviewer](harness/approval-reviewer.md).
 
 Other capabilities slot in the same way: [Memory](harness/memory.md) across sessions, [Web Search](capabilities/web-search.md) and [Web Fetch](capabilities/web-fetch.md) for documentation, [summarizing compaction](harness/compaction.md) for very long conversations, [Detect Loops](harness/detect-loops.md), and [Spend Limits](harness/spend.md). The [capability index](harness/index.md#capabilities) lists all of them.
@@ -157,7 +157,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[ModalSandbox(), Coder()])
 ```
 
-[Workspaces](workspace.md) explains how a sandbox is created, reused across runs, shared with another agent, and cleaned up.
+Install the `modal` extra and set up Modal's credentials first; each sandbox page lists its own extra. [Workspaces](workspace.md) explains how a sandbox is created, reused across runs, shared with another agent, and cleaned up.
 
 ### Use a different model
 
