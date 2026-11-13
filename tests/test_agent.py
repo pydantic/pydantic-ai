@@ -2373,10 +2373,10 @@ def text_alias_named_like_hidden_arg(
 
 
 def test_output_type_text_output_function_alias_named_like_hidden_arg():
-    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, as on `main`.
+    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, a known gap.
 
     The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
-    after a Python name keeps naming that arg. A known gap, kept so the call matches `main`.
+    after a parameter's Python name keeps naming that parameter.
     Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
     """
 
