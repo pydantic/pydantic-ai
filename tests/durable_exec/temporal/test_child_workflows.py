@@ -172,7 +172,8 @@ async def test_child_workflow_metadata_added_after_worker_configured(client: Cli
         'workflow was not registered with the worker, because no tool in the toolset had `child_workflow` metadata '
         'when the worker was configured, or because the worker was configured with '
         '`AgentPlugin(agent, register_workflows=False)`. Set the metadata on the tool, or with a `SetToolMetadata` '
-        'capability, before creating the worker, and register the worker through `PydanticAIPlugin` or `AgentPlugin`.'
+        'capability, before creating the worker, and register the worker that runs this workflow through '
+        '`PydanticAIPlugin` or `AgentPlugin` without `register_workflows=False`.'
     )
 
 
