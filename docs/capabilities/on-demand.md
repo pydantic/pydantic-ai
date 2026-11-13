@@ -690,7 +690,7 @@ This gates the skill's tools as a bundle. To let the model find individual tools
 
 If your team keeps runbooks in a database rather than in files, make each runbook a deferred [`Capability`][pydantic_ai.capabilities.Capability] and read its body in an instructions function registered with [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions]. The function receives the [`RunContext`][pydantic_ai.tools.RunContext], so it can query the database connection you pass as `deps`.
 
-The example below builds the catalog from the `runbooks` table when the agent is created, so every run sends the same catalog and it stays in the cached prefix; a runbook added to the table appears once the agent is rebuilt. The body of a runbook is read only after the model loads it, and again on each later request of the run, so an edited runbook reaches the next run without a redeploy. An edit made after the model loaded the runbook is [appended](../agent.md#appending-instruction-changes) to the conversation as an update. Like any loaded capability's instructions, a runbook's body is stated in the system voice, so anyone who can write to the table can instruct the model with your authority: limit write access to people you would let edit your agent's instructions.
+The example below builds the catalog from the `runbooks` table when the agent is created, so every run sends the same catalog and it stays in the cached prefix; a runbook added to the table appears once the agent is rebuilt. To pick up runbooks while a run is going, build them per step instead; see [Capabilities that change during a run](#per-step). The body of a runbook is read only after the model loads it, and again on each later request of the run, so an edited runbook reaches the next run without a redeploy. An edit made after the model loaded the runbook is [appended](../agent.md#appending-instruction-changes) to the conversation as an update. Like any loaded capability's instructions, a runbook's body is stated in the system voice, so anyone who can write to the table can instruct the model with your authority: limit write access to people you would let edit your agent's instructions.
 
 An in-memory SQLite database stands in for yours, the instructions function prints each runbook it reads, and a [`FunctionModel`][pydantic_ai.models.function.FunctionModel] stands in for a real model that loads the `db-failover` runbook:
 
@@ -760,3 +760,78 @@ db.close()
 ```
 
 The first request sends only the catalog, so no runbook body is read. After the model loads `db-failover`, the second request reads that runbook's body and sends it to the model; `cert-renewal` is never read. With an async database driver, make the instructions function `async def` and `await` the query.
+
+## Capabilities that change during a run {#per-step}
+
+A [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] calls its function once per run by default. With `per_run_step=True`, like [`DynamicToolset(per_run_step=True)`][pydantic_ai.toolsets.DynamicToolset], it calls it again ahead of each step of the run, and the on-demand capabilities it returns can change from one step to the next. Use it when what the model may load depends on what has happened in the conversation so far, for example a workflow that only becomes available once the customer is verified.
+
+The function may only return on-demand capabilities (`defer_loading=True`, each with its own `id`), or a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] of them, or `None`:
+
+```python {title="per_step_capability.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability, DynamicCapability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+refunds = Capability(
+    id='refunds',
+    description='Use for refund eligibility, refund status, or processing a refund.',
+    instructions='Always confirm the order ID before issuing a refund.',
+    defer_loading=True,
+)
+
+
+@refunds.tool_plain
+def refund_status(order_id: str) -> str:
+    """Look up the refund status for an order."""
+    return f'Order {order_id}: refund issued on 2026-05-01.'
+
+
+def refunds_once_verified(ctx: RunContext) -> Capability | None:
+    verified = any(
+        isinstance(part, ToolReturnPart) and part.tool_name == 'verify_customer'
+        for message in ctx.messages
+        for part in message.parts
+    )
+    return refunds if verified else None
+
+
+def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    step = sum(isinstance(message, ModelResponse) for message in messages)
+    if step == 0:
+        return ModelResponse(parts=[ToolCallPart('verify_customer', {'email': 'jane@example.com'})])
+    if step == 1:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+    if step == 2:
+        return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'ABC-123'})])
+    return ModelResponse(parts=[TextPart('Your refund was issued on 2026-05-01.')])
+
+
+agent = Agent(
+    FunctionModel(scripted_model),
+    capabilities=[DynamicCapability(refunds_once_verified, per_run_step=True)],
+)
+
+
+@agent.tool_plain
+def verify_customer(email: str) -> str:
+    """Verify the customer's identity."""
+    return f'{email} is verified.'
+
+
+result = agent.run_sync('Where is my refund for order ABC-123?')
+print(result.output)
+#> Your refund was issued on 2026-05-01.
+```
+
+_(This example is complete, it can be run "as is")_
+
+The first request has no catalog, since `refunds` doesn't exist yet, but it already offers the `load_capability` tool: a run with a per-step `DynamicCapability` always does, because adding the tool later would change the tool definitions the provider has cached. Once `verify_customer` has returned, the next request adds `refunds` to the catalog, and the model loads it as usual. Code can load it too, with [`ctx.load_capability('refunds')`](#loading-from-code) from that step on; either way it leaves the same records in message history as a capability the agent had from the start.
+
+The catalog changes the way it does when a capability is added between runs: the change is [appended](../agent.md#appending-instruction-changes) to the conversation and the instructions at the start of the prompt stay as they were, so the cached prefix holds. A capability's hidden tools reach the request the same way any [tool that appears mid-run](../tools-advanced.md#mid-run-tool-additions) does; see [Cache implications](#cache-implications).
+
+When the function stops returning a capability, it leaves the catalog through an appended change too. If the model had loaded it, it's no longer loaded: its instructions are withdrawn the same way, and its tools leave the request like any tool that's removed, which on most providers changes the tool definitions and so the cached prefix. If the function returns it again later, its earlier load counts again.
+
+The function is called at the start of the run and then once ahead of each step, with the step's [`RunContext`][pydantic_ai.tools.RunContext]. Derive the capabilities from the run context, such as `ctx.deps` and `ctx.messages`, rather than from state outside it: a [resumed conversation](#resumable-across-runs) or a replayed [durable](../durable_execution/overview.md) run finds a capability loaded in history only if the function returns it again. Return the same instance on consecutive steps to keep it, with any state or connections it holds; a new instance replaces it from that step on.
+
+A capability returned this way contributes its instructions, tools, model settings, and hooks once loaded. It can't contribute native tools, and its hooks run at the position of the `DynamicCapability` among the agent's capabilities.

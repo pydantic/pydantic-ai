@@ -5124,6 +5124,53 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
 
 
+async def test_dbos_durability_per_step_dynamic_capability_appearing_mid_run(dbos: DBOS) -> None:
+    """An on-demand capability a per-step factory first returns mid-run loads, and its tool runs in a DBOS step."""
+    calls: list[str] = []
+
+    def refund_status() -> str:
+        calls.append('called')
+        return 'refund issued'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any] | None:
+        if ctx.run_step < 2:
+            return None
+        return Capability(id='refunds', description='Refund tools.', tools=[refund_status], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id='ping')])
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id='load')])
+        if step == 2:
+            return ModelResponse(parts=[ToolCallPart('refund_status', {}, tool_call_id='status')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def ping() -> str:
+        return 'pong'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='dbos_per_step_capability',
+        tools=[ping],
+        capabilities=[DynamicCapability(factory, id='dyn', per_run_step=True), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Refund my order')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_agent()
+
+    assert output == 'done'
+    assert calls == ['called']
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_per_step_capability__dynamic_toolset__dyn.call_tool' in step_names
+
+
 async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation(dbos: DBOS) -> None:
     """Concurrent invocations share one registration without sharing call-local routing state."""
 

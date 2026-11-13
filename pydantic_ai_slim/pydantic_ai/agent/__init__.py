@@ -93,7 +93,7 @@ from ..capabilities import (
     ModelSelector,
     ToolSearch as ToolSearchCap,
 )
-from ..capabilities._dynamic import wrap_capability_funcs
+from ..capabilities._dynamic import has_per_step_capabilities, wrap_capability_funcs
 from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
@@ -3760,13 +3760,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
-        # Inject the loader only if a deferred capability is present AND `for_run` didn't already return
-        # one, or a second loader toolset then errors on the reserved `load_capability` name
-        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047).
-        if inject_deferred_loader and (
-            any(capability.defer_loading is True for capability in capabilities.values())
-            and not has_capability_type([run_capability], DeferredCapabilityLoader)
-        ):
+        if inject_deferred_loader and _needs_deferred_loader(run_capability, capabilities):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
             capabilities = _build_run_capabilities(run_capability)
 
@@ -5529,6 +5523,22 @@ def _resolve_layered_model_settings(
         layered = merge_model_settings(layered, resolved)
         run_context.model_settings = merged
     return _agent_graph.StepModelSettings(merged=merged, layered=layered)
+
+
+def _needs_deferred_loader(
+    run_capability: AbstractCapability[Any], capabilities: dict[str, AbstractCapability[Any]]
+) -> bool:
+    """Whether the run needs the `DeferredCapabilityLoader` injected.
+
+    Only if a deferred capability is present AND `for_run` didn't already return a loader, or a second loader toolset
+    then errors on the reserved `load_capability` name (cf. https://github.com/pydantic/pydantic-ai/issues/5047). A
+    per-step `DynamicCapability` may return one at any later step, so it gets the loader from the start: adding the
+    `load_capability` tool then would change the cached tool definitions.
+    """
+    may_defer = any(capability.defer_loading is True for capability in capabilities.values())
+    return (may_defer or has_per_step_capabilities(capabilities.values())) and not has_capability_type(
+        [run_capability], DeferredCapabilityLoader
+    )
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:

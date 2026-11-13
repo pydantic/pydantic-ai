@@ -278,7 +278,7 @@ def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) ->
         for group_id, group in ctx.capabilities.items()
         if group.defer_loading is True
         and group_id not in ctx.loaded_capability_ids
-        and any(inner is capability for inner in _beneath(group))
+        and any(inner is capability for inner in registered_beneath(group))
     ]
     names = ' or '.join(repr(group_id) for group_id in groups)
     return (
@@ -322,7 +322,7 @@ def capability_tool_names(tool_defs: Mapping[str, ToolDefinition], capability_id
     return sorted(name for name, tool_def in tool_defs.items() if tool_def.capability_id == capability_id)
 
 
-def _beneath(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
+def registered_beneath(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
     """What `capability` registers beneath itself: `apply` visits the capability first."""
     visited: list[AbstractCapability[Any]] = []
     capability.apply(visited.append)

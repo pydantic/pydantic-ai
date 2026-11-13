@@ -1255,7 +1255,7 @@ Never mutate `self` inside `for_run` — return a new instance instead. When `fo
 
 Capabilities can be built dynamically ahead of each agent run using a function that takes the agent [`RunContext`][pydantic_ai.tools.RunContext] and returns a capability or `None`. This is useful when the capability — its instructions, model settings, hooks, or contributed toolset — depends on information specific to a run, like its [dependencies](../dependencies.md).
 
-To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or `agent.run()`. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, native tools, and hooks all flow through normally.
+To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or `agent.run()`. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, native tools, and hooks all flow through normally. To call it again ahead of each step of the run instead, wrap it in [`DynamicCapability(..., per_run_step=True)`][pydantic_ai.capabilities.DynamicCapability.per_run_step]; it can then return [on-demand capabilities that change during a run](on-demand.md#per-step).
 
 ```python {title="dynamic_capability.py"}
 from dataclasses import dataclass
@@ -1305,7 +1305,7 @@ To return more than one capability from a single factory, wrap them in a [`Combi
 
     Dynamic capabilities, including their contributed toolsets, work with durable execution. Set a stable `id` on [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] with all three engines so their activities, steps, or tasks can be registered consistently. Since a bare [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] passed directly to `capabilities=` cannot carry an `id`, wrap it explicitly: `DynamicCapability(my_func, id='...')`.
 
-    DBOS runs dynamic tool discovery and calls in steps, checkpointing any MCP I/O, while Prefect runs dynamic tool calls in tasks and resolves tools in flow code. Both reuse the capability already resolved for the run inside their steps or tasks. Temporal re-runs the factory inside activities because the activity boundary cannot carry the run's resolved capability. On all three engines the factory itself executes in workflow or flow code, which re-runs on replay, recovery, or flow retry — so keep it deterministic given the run's dependencies and leave I/O to the toolset it returns.
+    DBOS runs dynamic tool discovery and calls in steps, checkpointing any MCP I/O, while Prefect runs dynamic tool calls in tasks and resolves tools in flow code. Both reuse the capability already resolved for the run inside their steps or tasks. Temporal re-runs the factory inside activities because the activity boundary cannot carry the run's resolved capability. On all three engines the factory itself executes in workflow or flow code, ahead of each step too with `per_run_step=True`, which re-runs on replay, recovery, or flow retry — so keep it deterministic given the run's dependencies and leave I/O to the toolset it returns.
 
 ## Composition and middleware semantics
 
