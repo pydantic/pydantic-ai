@@ -373,7 +373,8 @@ class HasMatchingSpan(Evaluator[object, object, object]):
 
     def __post_init__(self):
         # The query is not validated otherwise, and a query loaded from a file with a misspelled key matches every span.
-        _SPAN_QUERY_ADAPTER.validate_python(self.query)
+        # Keep the validated query, so a value loaded as a string (`min_child_count: '2'`) is used as its real type.
+        self.query = _SPAN_QUERY_ADAPTER.validate_python(self.query)
 
     def evaluate(
         self,
