@@ -5281,10 +5281,12 @@ def _temporal_refund_status() -> str:
     return 'refund issued'
 
 
-def _temporal_per_step_factory(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+def _temporal_per_step_factory(ctx: RunContext[object]) -> AbstractCapability[object] | None:
     if ctx.run_step < 2:
         return None
-    return Capability(id='refunds', description='Refund tools.', tools=[_temporal_refund_status], defer_loading=True)
+    return Capability[object](
+        id='refunds', description='Refund tools.', tools=[_temporal_refund_status], defer_loading=True
+    )
 
 
 def _temporal_per_step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

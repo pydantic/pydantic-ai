@@ -783,7 +783,7 @@ class Precise(AbstractCapability[object]):
 async def test_model_settings_of_a_capability_appearing_mid_run_apply_once_loaded() -> None:
     temperatures: list[float | None] = []
 
-    def capability_for_step(ctx: RunContext[object]) -> Capability[object] | None:
+    def capability_for_step(ctx: RunContext[object]) -> AbstractCapability[object] | None:
         if ctx.run_step < 2:
             return None
         return Precise(id='precise', defer_loading=True)

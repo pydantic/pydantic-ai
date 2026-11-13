@@ -5132,10 +5132,10 @@ async def test_dbos_durability_per_step_dynamic_capability_appearing_mid_run(dbo
         calls.append('called')
         return 'refund issued'
 
-    def factory(ctx: RunContext[Any]) -> Capability[Any] | None:
+    def factory(ctx: RunContext[object]) -> Capability[object] | None:
         if ctx.run_step < 2:
             return None
-        return Capability(id='refunds', description='Refund tools.', tools=[refund_status], defer_loading=True)
+        return Capability[object](id='refunds', description='Refund tools.', tools=[refund_status], defer_loading=True)
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         step = sum(isinstance(message, ModelResponse) for message in messages)

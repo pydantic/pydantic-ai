@@ -258,6 +258,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'PrefixTools': Anonymous('structural wrapper, applied once per wrapped capability'),
     'DynamicCapability': Anonymous('one per capability function'),
     'ResolvedDynamicCapability': Anonymous('the resolved form of a `DynamicCapability`'),
+    'PerStepDynamicCapability': Anonymous('the resolved form of a `DynamicCapability(per_run_step=True)`'),
     'NativeTool': Anonymous('one per native tool'),
     'NativeOrLocalTool': Anonymous('used directly it is parameterized by the tools passed to it'),
     'MCP': Anonymous(
