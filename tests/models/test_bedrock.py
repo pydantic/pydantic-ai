@@ -9672,133 +9672,100 @@ async def test_non_json_response_body_raises_model_api_error(
         assert isinstance(exc_info.value.__cause__, EventStreamParserError)
 
 
-async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-):
-    """GPT-on-Bedrock encrypted reasoning is not replayed into a Claude-on-Bedrock agent."""
-    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
-    mock_converse = mocker.patch.object(model.client, 'converse')
-    mock_converse.return_value = {
-        'output': {
-            'message': {
-                'role': 'assistant',
-                'content': [
-                    {
-                        'reasoningContent': {
-                            'redactedContent': b'\x01\x02\x03',
-                            'signature': 'gpt-bedrock-signature',
-                            'text': 'Internal reasoning about the answer.',
-                        }
-                    },
-                    {'text': 'Ok!'},
-                ],
-            }
-        },
+def _converse_response(*content: dict[str, object]) -> dict[str, object]:
+    return {
+        'output': {'message': {'role': 'assistant', 'content': list(content)}},
         'stopReason': 'end_turn',
         'usage': {'inputTokens': 10, 'outputTokens': 10},
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
-    result = await agent.run('Hi', model_settings={'max_tokens': 32})
-    assert result.output == 'Ok!'
+
+
+async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """GPT-5.6's encrypted reasoning on Bedrock is not replayed into Claude on Bedrock.
+
+    The client is mocked because the claim is about what the Claude request leaves out, and cassette
+    matching doesn't pin the request body.
+    """
+    gpt_model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    mocker.patch.object(gpt_model.client, 'converse').return_value = _converse_response(
+        {'reasoningContent': {'redactedContent': b'rsn_gpt-encrypted-reasoning'}}, {'text': 'Ok!'}
+    )
+    result = await Agent(gpt_model, model_settings=ModelSettings(max_tokens=32)).run('Hi')
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.canonical_system == 'bedrock'
 
     claude_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-    claude_agent = Agent(model=claude_model, system_prompt='You are a helpful assistant.')
     mock_claude_converse = mocker.patch.object(claude_model.client, 'converse')
-    mock_claude_converse.return_value = {
-        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Hello!'}]}},
-        'stopReason': 'end_turn',
-        'usage': {'inputTokens': 10, 'outputTokens': 10},
-        'ResponseMetadata': {'HTTPStatusCode': 200},
-    }
-
-    await claude_agent.run('Continue', message_history=result.all_messages(), model_settings={'max_tokens': 32})
+    mock_claude_converse.return_value = _converse_response({'text': 'Hello!'})
+    # Without `max_tokens`, a Claude request is streamed behind the scenes rather than sent to `converse`.
+    await Agent(claude_model, model_settings=ModelSettings(max_tokens=32)).run(
+        'Continue', message_history=result.all_messages()
+    )
 
     _, kwargs = mock_claude_converse.call_args
-    request_json = json.dumps(kwargs['messages'])
-    assert 'redactedContent' not in request_json
-    assert 'gpt-bedrock-signature' not in request_json
-    assert 'Ok!' in request_json
+    assert kwargs['messages'][1] == snapshot({'role': 'assistant', 'content': [{'text': 'Ok!'}]})
 
 
 async def test_bedrock_same_family_history_replay_keeps_thinking(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
-    """Same-family history replay keeps thinking: Claude re-sends its signature; GPT-OSS keeps the text."""
-    claude_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-    claude_agent = Agent(model=claude_model, system_prompt='You are a helpful assistant.')
-    mock_converse = mocker.patch.object(claude_model.client, 'converse')
-    mock_converse.return_value = {
-        'output': {
-            'message': {
-                'role': 'assistant',
-                'content': [
-                    {
-                        'reasoningContent': {
-                            'reasoningText': {
-                                'signature': 'claude-signature',
-                                'text': 'Internal reasoning about the answer.',
-                            }
-                        }
-                    },
-                    {'text': 'Ok!'},
-                ],
-            }
-        },
-        'stopReason': 'end_turn',
-        'usage': {'inputTokens': 10, 'outputTokens': 10},
-        'ResponseMetadata': {'HTTPStatusCode': 200},
+    """Same-family history replay keeps thinking: Claude re-sends its signature; GPT-OSS keeps the text.
+
+    The client is mocked because the claim is about the replayed request body, which cassette matching
+    doesn't pin.
+    """
+    thinking: dict[str, object] = {
+        'reasoningContent': {
+            'reasoningText': {'signature': 'own-signature', 'text': 'Internal reasoning about the answer.'}
+        }
     }
-    result = await claude_agent.run('Hi', model_settings={'max_tokens': 32})
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.canonical_system == 'anthropic'
 
-    mock_converse.reset_mock()
-    await claude_agent.run('Continue', message_history=result.all_messages(), model_settings={'max_tokens': 32})
-
+    claude_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_converse.return_value = _converse_response(thinking, {'text': 'Ok!'})
+    claude_agent = Agent(claude_model, model_settings=ModelSettings(max_tokens=32))
+    result = await claude_agent.run('Hi')
+    await claude_agent.run('Continue', message_history=result.all_messages())
     _, kwargs = mock_converse.call_args
-    request_json = json.dumps(kwargs['messages'])
-    assert 'claude-signature' in request_json
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'reasoningContent': {
+                        'reasoningText': {'text': 'Internal reasoning about the answer.', 'signature': 'own-signature'}
+                    }
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
 
     gpt_model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
-    gpt_agent = Agent(model=gpt_model, system_prompt='You are a helpful assistant.')
-    mock_gpt_converse = mocker.patch.object(gpt_model.client, 'converse')
-    mock_gpt_converse.return_value = {
-        'output': {
-            'message': {
-                'role': 'assistant',
-                'content': [
-                    {
-                        'reasoningContent': {
-                            'reasoningText': {
-                                'signature': 'gpt-bedrock-signature',
-                                'text': 'Internal reasoning about the answer.',
-                            }
-                        }
-                    },
-                    {'text': 'Ok!'},
-                ],
-            }
-        },
-        'stopReason': 'end_turn',
-        'usage': {'inputTokens': 10, 'outputTokens': 10},
-        'ResponseMetadata': {'HTTPStatusCode': 200},
-    }
-    gpt_result = await gpt_agent.run('Hi', model_settings={'max_tokens': 32})
-    gpt_response = gpt_result.all_messages()[-1]
-    assert isinstance(gpt_response, ModelResponse)
-    assert gpt_response.canonical_system == 'bedrock'
-
-    mock_gpt_converse.reset_mock()
-    await gpt_agent.run('Continue', message_history=gpt_result.all_messages(), model_settings={'max_tokens': 32})
-
-    _, gpt_kwargs = mock_gpt_converse.call_args
-    gpt_request_json = json.dumps(gpt_kwargs['messages'])
-    # GPT-OSS has no native send-back channel (`bedrock_send_back_thinking_parts` is unset): the
-    # thinking text is kept as text, and its signature is not replayed.
-    assert 'Internal reasoning about the answer.' in gpt_request_json
-    assert 'gpt-bedrock-signature' not in gpt_request_json
+    mock_converse = mocker.patch.object(gpt_model.client, 'converse')
+    mock_converse.return_value = _converse_response(thinking, {'text': 'Ok!'})
+    gpt_agent = Agent(gpt_model, model_settings=ModelSettings(max_tokens=32))
+    result = await gpt_agent.run('Hi')
+    await gpt_agent.run('Continue', message_history=result.all_messages())
+    _, kwargs = mock_converse.call_args
+    # GPT-OSS has no native send-back channel (`bedrock_send_back_thinking_parts` is unset), so its thinking is
+    # replayed as text without the signature.
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'text': """\
+<think>
+Internal reasoning about the answer.
+</think>\
+"""
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
