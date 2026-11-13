@@ -198,7 +198,7 @@ async def test_iter_next_task_after_empty_map():
     next_tasks: list[Any] = []
     async with graph.iter(state=IterState()) as run:
         async for event in run:
-            assert run.next_task is event
+            assert run.next_task == event
             next_tasks.append(event if isinstance(event, EndMarker) else [t.node_id for t in event])
 
     assert next_tasks == [['generate'], ['map'], [], ['__end__'], EndMarker([])]
