@@ -215,8 +215,8 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
 
 
 def _warning_kinds(caught: list[warnings.WarningMessage]) -> list[str]:
-    """Each warning's category and message up to its payload, which is the stream event or the item."""
-    return [f'{w.category.__name__}: {str(w.message).split(": ")[0]}' for w in caught]
+    """Each warning's category and full message."""
+    return [f'{w.category.__name__}: {w.message}' for w in caught]
 
 
 async def test_recorded_streams_match_the_complete_response() -> None:

@@ -480,7 +480,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
             case _:
                 warnings.warn(
-                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {type(item).__name__}',
                     UserWarning,
                 )
 
