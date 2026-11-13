@@ -891,6 +891,12 @@ class DaytonaSandboxBackend(
     async def _start_display(self) -> None:
         """Start the desktop unless it's running."""
         sandbox = await self.get_sandbox()
+        if sandbox.public:
+            # Daytona serves a public sandbox's preview links without a token, so the desktop could be used by anyone.
+            raise UserError(
+                f'The Daytona sandbox {sandbox.id!r} is public, so anyone could open its desktop without the signed '
+                'link. Make it private with `await sandbox.set_public(False)` to use its desktop.'
+            )
         computer_use = sandbox.computer_use
         try:
             status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)

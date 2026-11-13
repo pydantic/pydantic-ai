@@ -320,6 +320,12 @@ _MEMBERS: dict[str, type[_Strict]] = {
 }
 """The input each computer use member takes that maps onto the `computer` tool."""
 
+
+def takes_no_input(name: str) -> bool:
+    """Whether the computer use member takes no input, so it streams none."""
+    return _MEMBERS.get(name) is _NoInput
+
+
 _COMPUTER_MEMBER_TYPES: dict[str, str] = {
     **dict.fromkeys(_COMPUTER_CLICKS, 'click'),
     'mouse_move': 'move',

@@ -714,15 +714,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        # The provider's profile says which models take the native computer tool. A profile without its own native
-        # tools lists every type, so the flag also removes it.
-        supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-        supported = (
-            supported | {ComputerTool}
-            if profile.get('openai_supports_computer_tool', False)
-            else supported - {ComputerTool}
-        )
-        profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
+        # The provider's profile says which models take the native computer tool.
+        if not profile.get('openai_supports_computer_tool', False):
+            supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ComputerTool}
+            profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
@@ -2225,6 +2220,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # function tool via `ModelRequestParameters.function_tools` (unaffected by this
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = has_tool_search(model_request_parameters)
+        computer = model_request_parameters.declared_tool_defs.get(computer_name or '')
+        if computer is not None and computer.defer_loading:
+            # The native tool replaces it, so tool search would find nothing, and the API can't defer the native tool.
+            raise UserError(
+                f"OpenAI sends the {computer_name!r} tool as its native computer tool, which tool search can't load. "
+                'Drop `defer_loading` from the tool, or defer it with `ComputerUse(defer_loading=True)`.'
+            )
         tools: list[responses.FunctionToolParam | responses.ComputerToolParam] = [
             responses.ComputerToolParam(type='computer')
             if t.name == computer_name

@@ -499,6 +499,7 @@ class FakeSandbox:
         self.id = sandbox_id
         self.name: str | None = None
         self.state = SandboxState.STARTED
+        self.public = False
         self.purged = False
         self.refresh_error: Exception | None = None
         # What a toolbox call to a deleted sandbox raises, when not the default 404.

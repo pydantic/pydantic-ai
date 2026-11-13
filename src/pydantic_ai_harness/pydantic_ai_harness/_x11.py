@@ -432,7 +432,8 @@ class X11Computer:
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
                 command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', _repeat(repeat), '--', '+'.join(keysyms)]
-                await self._input([command], [release], repeat * _KEY_SECONDS)
+                # xdotool pauses after each key of the chord, not once per repeat.
+                await self._input([command], [release], repeat * len(keysyms) * _KEY_SECONDS)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)
             case _:

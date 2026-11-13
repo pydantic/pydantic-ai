@@ -204,6 +204,7 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
         (HoldKeys(keys=('shift',), seconds=200), 350),
         (Scroll(direction='down', amount=1_000), 170),
         (PressKeys(keys=('a',), repeat=1_000), 162),
+        (PressKeys(keys=('ctrl', 'shift', 'a'), repeat=1_000), 186),
         (TypeText(text='a' * 1_000), 162),
         # 0.1 s before the first move and after the last, and 0.05 s before each of the 2 moves.
         (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.3),

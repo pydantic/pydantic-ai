@@ -285,6 +285,19 @@ async def test_the_live_view_starts_a_desktop_that_stopped_with_the_sandbox(fake
     assert sandbox.desktop_calls == ['start', 'signed_preview 6080 3600']
 
 
+async def test_a_public_sandbox_desktop_is_refused_before_it_starts(fake_daytona: FakeDaytona) -> None:
+    """Daytona serves a public sandbox's preview links without a token, so its desktop would be open to anyone."""
+    backend, sandbox = await _started(fake_daytona)
+    sandbox.computer_use.stop_with_sandbox()
+    sandbox.public = True
+
+    with pytest.raises(UserError, match='is public'):
+        await screen(backend).screenshot()
+    with pytest.raises(UserError, match='is public'):
+        await backend.live_view_url()
+    assert sandbox.desktop_calls == []
+
+
 async def test_a_desktop_that_does_not_answer_in_time_is_a_timeout(
     fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
 ) -> None:
