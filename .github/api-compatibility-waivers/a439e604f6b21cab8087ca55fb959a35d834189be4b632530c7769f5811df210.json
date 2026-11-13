@@ -1,0 +1,5 @@
+{
+  "against": "v2.67.0",
+  "reason": "Harness 0.x: `ExaSearch`'s `num_results` is renamed to `max_results` and kept as a deprecated alias. The alias defaults to `None` in `__init__` so that it can tell whether it was passed; the default of 5 moved to `max_results`. `ExaSearch(num_results=...)` still works and warns; read `max_results` instead of `num_results`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13075"
+}

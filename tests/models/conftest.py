@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx2
 import pytest
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 from pytest_mock import MockerFixture
 
 from ..conftest import RequestCapture, try_import
@@ -164,6 +164,23 @@ def mock_downloads(
         return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
+
+
+class InfAsString(BaseModel):
+    model_config = ConfigDict(ser_json_inf_nan='strings')
+    value: float
+
+
+def items_serialized_differently_inside_a_list() -> list[object]:
+    """Tool return items whose JSON inside a list differs from their JSON alone unless each is dumped by itself.
+
+    A model whose own config writes `inf` as a string, keys that collide once dumped, and a 254-level item one
+    level short of the serializer's depth limit.
+    """
+    deep: object = {'leaf': 1}
+    for _ in range(253):
+        deep = {'child': deep}
+    return [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
 
 
 def stream_bedrock_converse_mock(mocker: MockerFixture, client: Any) -> None:

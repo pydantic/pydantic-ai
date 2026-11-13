@@ -175,6 +175,7 @@ KnownModelName = TypeAliasType(
         'google-cloud:gemini-3.8-flash',
         'google-cloud:gemini-4-argon',
         'google-cloud:gemini-4-carbon',
+        'google-decisions:gemini-decision-1',
         'google:gemini-3-pro-image',
         'google:gemini-3.1-flash-image',
         'google:gemini-3.1-flash-lite',
