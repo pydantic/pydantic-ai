@@ -31,7 +31,7 @@ It contains:
 - the installed Pydantic AI version;
 - the Python version, operating system, and machine architecture;
 - the installed Pydantic AI Harness and `genai-prices` versions, when present; and
-- the coding agent name when it is recognized, or the generic name `agent` otherwise.
+- when a coding agent is detected, its name when it is recognized, or the generic name `agent` otherwise.
 
 It does not contain an identifier, model or provider names, prompts, tool or capability names, paths, hostnames, or usernames. Unrecognized coding-agent names provided through the environment are never sent.
 
