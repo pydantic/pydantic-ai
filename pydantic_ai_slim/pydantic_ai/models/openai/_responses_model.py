@@ -2220,13 +2220,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # function tool via `ModelRequestParameters.function_tools` (unaffected by this
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = has_tool_search(model_request_parameters)
-        computer = model_request_parameters.declared_tool_defs.get(computer_name or '')
-        if computer is not None and computer.defer_loading:
-            # The native tool replaces it, so tool search would find nothing, and the API can't defer the native tool.
-            raise UserError(
-                f"OpenAI sends the {computer_name!r} tool as its native computer tool, which tool search can't load. "
-                'Drop `defer_loading` from the tool, or defer it with `ComputerUse(defer_loading=True)`.'
-            )
         tools: list[responses.FunctionToolParam | responses.ComputerToolParam] = [
             responses.ComputerToolParam(type='computer')
             if t.name == computer_name
@@ -2245,7 +2238,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The name of the `computer` tool when the request sends a `ComputerTool` in its place."""
         if not any(isinstance(tool, ComputerTool) for tool in model_request_parameters.native_tools):
             return None
-        return model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
+        name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
+        computer = model_request_parameters.declared_tool_defs.get(name or '')
+        if computer is not None and computer.defer_loading:
+            # The native tool replaces it, so tool search would find nothing, and the API can't defer the native tool.
+            raise UserError(
+                f"OpenAI sends the {name!r} tool as its native computer tool, which tool search can't load. "
+                'Drop `defer_loading` from the tool, or defer it with `ComputerUse(defer_loading=True)`.'
+            )
+        return name
 
     def _map_tool_choice_restriction(
         self,
