@@ -422,8 +422,8 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Bedrock gets the earlier beta tool, which Anthropic documents its toolset models also accept there (and which ran
-# live there). The other platforms serve the toolset like the Claude API.
+# Bedrock gets the earlier beta tool, which Anthropic documents its toolset models also accept there. The other
+# platforms serve the toolset like the Claude API.
 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
 _COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
