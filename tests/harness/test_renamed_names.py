@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import re
 import sys
 import warnings
@@ -11,14 +12,16 @@ import pytest
 
 from pydantic_ai_harness import HarnessDeprecationWarning
 
+_needs_acp = pytest.mark.skipif(importlib.util.find_spec('acp') is None, reason='needs the `acp` extra')
+
 
 @pytest.mark.parametrize(
     ('module', 'old', 'new'),
     [
-        ('pydantic_ai_harness.experimental.acp', 'AcpFileSystemToolset', 'ACPFileSystemToolset'),
-        ('pydantic_ai_harness.experimental.acp', 'AcpSession', 'ACPSession'),
-        ('pydantic_ai_harness.experimental.acp', 'AcpSessionConfig', 'ACPSessionConfig'),
-        ('pydantic_ai_harness.experimental.acp', 'AcpTerminalToolset', 'ACPTerminalToolset'),
+        *(
+            pytest.param('pydantic_ai_harness.experimental.acp', old, f'ACP{old[3:]}', marks=_needs_acp)
+            for old in ('AcpFileSystemToolset', 'AcpSession', 'AcpSessionConfig', 'AcpTerminalToolset')
+        ),
         ('pydantic_ai_harness.memory', 'FileStore', 'FileMemoryStore'),
         ('pydantic_ai_harness.memory', 'InMemoryStore', 'InMemoryMemoryStore'),
         ('pydantic_ai_harness.media', 'DiskMediaStore', 'FileMediaStore'),
