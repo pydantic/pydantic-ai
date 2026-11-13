@@ -312,7 +312,7 @@ def run_with_fallback(
     and an environment whose only provider key is that account's. A run whose process fails prints its model, OpenCode
     error type, status and provider code. Each run appends an `Attempt` to `attempts`, so a caller can report a chain
     that raised. The returned result and `output` come from the run that served, so a run the chain moved past shows
-    only as its `Attempt`, whatever steps and tokens it spent.
+    only as its `Attempt` and its span, which count that run's own steps and tokens.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in

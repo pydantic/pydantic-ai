@@ -23,7 +23,7 @@ from urllib.parse import quote
 from douwebot_opencode_result import final_text, rejection_reason, unfenced
 from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback, step_tokens
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 
 PROMPTS = Path('.github/pr-review-checks/prompts')

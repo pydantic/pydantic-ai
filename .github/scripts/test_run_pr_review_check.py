@@ -24,6 +24,7 @@ from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import douwebot_opencode_run
 import run_pr_review_check
 from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, run_with_fallback
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
@@ -604,13 +605,19 @@ def test_cancelled_review_exports_its_span(
     """
     _fake_opencode(tmp_path, monkeypatch, 'exit 1')
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
-    export = run_pr_review_check.urllib.request.urlopen
+    export = douwebot_opencode_run.export_spans
 
-    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.AbstractContextManager[None]:
+    def export_during_the_kill(
+        token: str, service: str, spans: list[dict[str, object]], *, timeout: float = 30
+    ) -> None:
+        # Under the default disposition, this SIGTERM would end the test process rather than fail the test.
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
         os.kill(os.getpid(), signal.SIGTERM)
-        return export(request, timeout)
+        export(token, service, spans, timeout=timeout)
 
-    monkeypatch.setattr(run_pr_review_check.urllib.request, 'urlopen', urlopen)
+    # The run's span exports through `douwebot_opencode_run`, the review's through the name `main` imported.
+    monkeypatch.setattr(douwebot_opencode_run, 'export_spans', export_during_the_kill)
+    monkeypatch.setattr(run_pr_review_check, 'export_spans', export_during_the_kill)
 
     def cancelled(*args: object, **kwargs: object) -> Usage:
         os.kill(os.getpid(), signum)
