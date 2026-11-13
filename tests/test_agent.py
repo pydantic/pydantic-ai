@@ -4258,8 +4258,8 @@ def test_agent_run_id_empty_string_raises() -> None:
 async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
     """The pending request already carries `run_id` when `before_model_request` hooks see it.
 
-    The request is stamped again after hooks, so this pre-hook stamp is only observable
-    from inside a hook. Not a VCR test: in-memory framework behavior.
+    The request is stamped again after hooks, so a hook is where the pre-hook stamp shows, except for a resumed
+    tail that an `'asap'` drain keeps in history. Not a VCR test: in-memory framework behavior.
     """
     seen: list[str | None] = []
 

@@ -73,7 +73,7 @@ from pydantic_graph import End
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, try_import
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -2063,13 +2063,13 @@ async def test_enqueue_asap_with_rich_message_history_tail():
                     UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
+                run_id=(run_id := IsSameStr()),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='injected after rich tail', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
+                run_id=run_id,
                 conversation_id=IsStr(),
             ),
             ModelResponse(
