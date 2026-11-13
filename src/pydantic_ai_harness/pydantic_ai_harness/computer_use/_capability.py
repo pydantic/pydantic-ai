@@ -82,10 +82,8 @@ the tool with a single `screenshot` action first.
 where you need to see the result before deciding what to do next.
 - Check each returned screenshot to confirm the previous actions did what you intended before continuing.
 - Prefer keyboard shortcuts and typing over clicking small targets, and scroll to bring targets into view.
-- When the user asks for something to be done on the screen, do it on the screen, even when another tool could do \
-it. You may start the program it needs from the shell.
-- Otherwise, prefer your other tools (shell, files, web) when they can do the job, and use the screen only for work \
-that needs a GUI.
+- Prefer your other tools (shell, files, web) unless the work needs the screen: using a program's window, checking \
+what the screen shows, or doing what the user asked to be done on the screen.
 - A key is a single character or one of these names, and other names are refused: the modifiers ctrl, shift, alt \
 and super (the Windows key, or cmd on macOS); enter, tab, escape, backspace, delete, insert, space, up, down, left, \
 right, home, end, pageup, pagedown, f1 to f24, printscreen, pause, menu, capslock, numlock, scrolllock; numpad0 to \
@@ -540,8 +538,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """Stable capability ID: an agent controls one display."""
 
     description: str | None = (
-        'See and control the screen of the computer you work on. Needed for work that needs a GUI, and for anything '
-        'the user asks to do on the screen.'
+        'See and control the screen of the computer you work on. Load it when the work needs the screen: using a '
+        "program's window, checking what the screen shows, or doing what the user asked to be done on the screen."
     )
     """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 

@@ -45,12 +45,11 @@ On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only
 ## What the model is told
 
 The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
-it starts from the shell opens on the screen. They tell it to prefer those tools, unless the user asks for the work to
-be done on the screen.
+it starts from the shell opens on the screen. They tell it to prefer those tools unless the work needs the screen:
+using a program's window, checking what the screen shows, or doing what the user asked to be done on the screen.
 
-With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default says
-the screen is for GUI work and for anything the user asks to do on the screen. Pass `description=` to change when the
-model loads it.
+With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
+the same three cases. Pass `description=` to change when the model loads it.
 
 ## Models
 
