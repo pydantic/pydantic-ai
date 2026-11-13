@@ -373,10 +373,10 @@ def test_go_refusal_skips_a_coding_plan_account_without_a_key(
         # Z.AI codes 1302 and 1305: OpenCode retried the 429 within the run before it failed.
         pytest.param(
             '3188',
-            'zai-backup-key',
+            None,
             [*FINISHED, {'type': 'error', 'error': zai_error('provider.rate-limit', '1305')}],
             'error type provider.rate-limit, status 429, code 1305',
-            id='rate-limit-after-a-step',
+            id='no-backup-key-rate-limit-after-a-step',
         ),
     ],
 )
@@ -389,9 +389,9 @@ def test_coding_plan_failure_stays_on_the_primary_account(
     events: list[dict[str, object]],
     described: str,
 ) -> None:
-    """Only a quota or rate-limit refusal before the first step reaches the backup, and only with its key.
+    """Only a quota or rate-limit refusal before the first step, or a rate limit after it, reaches the backup.
 
-    The job fails otherwise.
+    The backup needs its key. The job fails otherwise.
     """
     monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
     if backup_key is None:
@@ -407,6 +407,81 @@ def test_coding_plan_failure_stays_on_the_primary_account(
     assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
 
 
+RATE_LIMITED_AFTER_A_STEP: list[Mapping[str, object]] = [
+    *FINISHED,
+    {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')},
+]
+
+
+@pytest.mark.parametrize(
+    ('run_number', 'first', 'second'),
+    [pytest.param('3188', ZAI, ZAI_BACKUP, id='even-run'), pytest.param('3189', ZAI_BACKUP, ZAI, id='odd-run')],
+)
+def test_coding_plan_rate_limit_after_a_step_restarts_the_review_on_the_other_account(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    run_number: str,
+    first: Provider,
+    second: Provider,
+) -> None:
+    """A Coding Plan account that rate-limits the review after it took steps hands the review to the other account.
+
+    The restart is its own attempt, and its log line tells it from a refusal before the first step.
+    """
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (RATE_LIMITED_AFTER_A_STEP, refusal), (FINISHED, None))
+    attempts: list[douwebot_opencode_run.Attempt] = []
+    provider = douwebot_opencode_run.run_read_only(
+        'Review.',
+        cwd=review_env.parent,
+        agent='reviewer',
+        output=review_env.parent / 'review.ndjson',
+        attempts=attempts,
+    )
+    assert provider == second
+    assert [launch.input for launch in invoked] == ['Review.'] * 3
+    assert_runs_on(invoked[1], first)
+    assert_runs_on(invoked[2], second)
+    assert [(attempt.provider, attempt.error_type, attempt.code, attempt.finished) for attempt in attempts] == [
+        (OPENCODE_GO, 'provider.go-limit', None, False),
+        (first, 'provider.rate-limit', '1302', True),
+        (second, None, None, None),
+    ]
+    model = 'zai-coding-plan/glm-5.3-flash'
+    assert capsys.readouterr().out == (
+        f'{GO_LIMIT_LOG}\n'
+        f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {model} on {first.plan}.\n'
+        f'OpenCode run on {model} on {first.plan} failed with error type provider.rate-limit, status 429, code 1302.\n'
+        f'{model} rate-limited the run after it took steps; restarting the run on {model} on {second.plan}.\n'
+        f'OpenCode run served by {model} on {second.plan}.\n'
+    )
+
+
+@pytest.mark.parametrize(
+    'first_events',
+    [
+        pytest.param([REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}], id='handover'),
+        pytest.param(RATE_LIMITED_AFTER_A_STEP, id='restart'),
+    ],
+)
+def test_last_coding_plan_account_rate_limit_after_a_step_fails_the_job(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, first_events: list[Mapping[str, object]]
+) -> None:
+    """Each account runs the review at most once, so a rate limit after steps on the last account fails the job."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(
+        monkeypatch, (REFUSED, refusal), (first_events, refusal), (RATE_LIMITED_AFTER_A_STEP, refusal)
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert len(invoked) == 3
+    assert_runs_on(invoked[1], ZAI)
+    assert_runs_on(invoked[2], ZAI_BACKUP)
+    assert review_env.read_text(encoding='utf-8') == ''
+
+
 @pytest.mark.parametrize(
     ('zai_key', 'events', 'error', 'log'),
     [
@@ -418,6 +493,13 @@ def test_coding_plan_failure_stays_on_the_primary_account(
             subprocess.CalledProcessError(1, 'opencode'),
             GO_LIMIT_LOG,
             id='after-a-step',
+        ),
+        pytest.param(
+            'zai-key',
+            [*FINISHED, {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
+            subprocess.CalledProcessError(1, 'opencode'),
+            'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.rate-limit, status 429.',
+            id='rate-limit-after-a-step',
         ),
         pytest.param('zai-key', [], subprocess.CalledProcessError(1, 'opencode'), NO_TYPE_LOG, id='no-error-event'),
         pytest.param(

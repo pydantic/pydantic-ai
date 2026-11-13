@@ -105,21 +105,24 @@ def billed_web_searches(
 
     OpenAI bills native web search per search action (see
     <https://developers.openai.com/api/docs/guides/tools-web-search>) but doesn't report the count in `usage`.
-    Newer responses carry it as `tool_usage.web_search.num_requests`, which the SDK doesn't type yet; older ones
-    don't, so fall back to counting `search` actions. Reasoning models also emit `open_page` and `find_in_page`
-    actions, which aren't billed as searches. A streamed `in_progress` or `queued` snapshot returns 0: its
-    searches are counted again from the terminal event's response.
+    Newer responses carry it as `tool_usage.web_search.num_requests`, an extra field on older SDKs and a typed one on
+    newer SDKs, so it's read through `model_dump`. Older responses don't carry it, so fall back to counting `search`
+    actions. Reasoning models also emit `open_page` and `find_in_page` actions, which aren't billed as searches, and
+    OpenAI can return a `web_search_call` item without any action, which isn't counted either. A streamed
+    `in_progress` or `queued` snapshot returns 0: its searches are counted again from the terminal event's response.
     """
     if not isinstance(response, responses.Response) or response.status in ('in_progress', 'queued'):
         return 0
-    match (response.model_extra or {}).get('tool_usage'):
+    match response.model_dump(include={'tool_usage'}).get('tool_usage'):
         case {'web_search': {'num_requests': int() as num_requests}}:
             return num_requests
         case _:
             return sum(
                 1
                 for item in response.output
-                if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
+                if isinstance(item, responses.ResponseFunctionWebSearch)
+                and (action := item.action)
+                and action.type == 'search'
             )
 
 

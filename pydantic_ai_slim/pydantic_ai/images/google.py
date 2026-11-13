@@ -4,7 +4,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
-from pydantic_ai._model_errors import google_retry_after
+import httpx2
+
+from pydantic_ai._model_errors import connection_error, google_retry_after, transport_status_error
 from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -16,6 +18,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 
 from ._google_geometry import resolve_google_geometry
@@ -242,6 +245,15 @@ class GoogleImageGenerationModel(ImageGenerationModel):
                 error.retry_after = google_retry_after(error)
                 raise error from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+            error = transport_status_error(self.model_name, e.response)
+            error.retry_after = google_retry_after(error)
+            raise error from e
+        except httpx2.TransportError as e:
+            # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+            timeout = isinstance(e, httpx2.TimeoutException)
+            raise connection_error(self.model_name, transport_error_message(e), e, timeout=timeout) from e
 
         return self._map_response(prompt, response)
 
