@@ -55,7 +55,8 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude 4 and later get Anthropic's own computer use tool; see [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
+- Claude 4 and later get Anthropic's own computer use tool through `AnthropicModel`, and the function tool
+  through other APIs such as Bedrock Converse; see [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
 - GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool on the Responses API; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
@@ -146,7 +147,7 @@ Some models only take screenshots up to a size, set by `computer_use_screenshot_
 `computer_use_screenshot_max_pixels` in their profile:
 
 - Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and 3.6 megapixels.
-- Earlier Claude models and Claude Mythos Preview: 1568 pixels and about 1.15 megapixels.
+- Other Claude 4 models and Claude Mythos Preview: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
 
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
