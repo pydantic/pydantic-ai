@@ -646,8 +646,9 @@ file/sqlite/mongo/postgres backends externalize any `BinaryContent.data`, and an
 part whose string `content` is at or above 64 KiB, through a configured
 `MediaStore`, leaving a URI reference in the snapshot.
 `media_threshold_bytes` sets that threshold for binary and text alike, except
-that `FileStepStore` externalizes binary of any size, since each of its snapshot
-files repeats the whole history. Round-trip is transparent -- `latest_snapshot(...).messages[*]`
+that `FileStepStore` externalizes binary of any size: each of its snapshot files
+repeats the whole history, so an image left inline would be written again at
+every step. Round-trip is transparent -- `latest_snapshot(...).messages[*]`
 returns the original `BinaryContent` bytes and text.
 
 Text externalization applies to every store with a media store, not only
