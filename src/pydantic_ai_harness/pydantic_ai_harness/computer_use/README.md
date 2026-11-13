@@ -28,9 +28,9 @@ image, which takes a few minutes.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse, DockerSandbox
+from pydantic_ai_harness import ComputerUse, DockerContainer
 
-agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
+agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 
 
 async def main():
@@ -38,14 +38,14 @@ async def main():
     print(result.output)
 ```
 
-The container keeps running after the run; see [Clean up](../docker_sandbox/#clean-up). If the run fails, remove it
+The container keeps running after the run; see [Clean up](../docker_container/#clean-up). If the run fails, remove it
 in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 
 ### Where the screen comes from
 
 | Capability | Screen |
 |---|---|
-| `DockerSandbox(desktop=True)` | A container on your machine |
+| `DockerContainer(desktop=True)` | A container on your machine |
 | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 | [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop) | An E2B cloud sandbox |
 | [`ModalSandbox(desktop=True)`](../modal_sandbox/#give-the-agent-a-desktop) | A Modal cloud sandbox |
@@ -53,6 +53,15 @@ in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the agent can take screenshots but not act.
+
+## What the model is told
+
+The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
+it starts from the shell opens on the screen. They tell it to prefer those tools unless the work needs the screen:
+using a program's window, checking what the screen shows, or doing what the user asked to be done on the screen.
+
+With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
+the same three cases. Pass `description=` to change when the model loads it.
 
 ## What the display needs
 

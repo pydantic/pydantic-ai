@@ -73,12 +73,15 @@ Please don't spend effort chasing green CI, addressing every automated review co
 
 Do not force-push updates to an open PR. Rewriting its commits invalidates previous reviews; push follow-up commits instead. We will squash them when merging.
 
-### Automated review is advisory, not a gate
+### Automated review
 
-PRs are automatically reviewed by Devin and our own tooling. These reviews are advisory:
+PRs also receive automated reviews. They add to a maintainer's review; they don't replace it:
 
-- A bot approval does not mean your PR is ready to merge. Only a human maintainer's review counts.
-- A bot finding does not mean you must act on it. If you disagree, say so.
+- When a maintainer requests it, douwebot checks a PR against the repository's guidelines and looks for bugs it can find by reading the code. It doesn't run your code. A PR labeled `size: M` or larger needs a douwebot approval with no findings on its latest commit before it can merge.
+- pydanty runs code to review a PR, when a maintainer requests it.
+- Other bots' comments are advisory.
+- A bot approval does not mean your PR is ready to merge. A maintainer still reviews it.
+- A bot finding is not the final word. If you disagree, reply on its thread, and a maintainer will decide.
 - If automated review is generating noise on your PR, tell us. We use that feedback to retune the tooling.
 
 ### Priority

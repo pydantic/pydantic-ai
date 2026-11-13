@@ -72,14 +72,19 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 _INSTRUCTIONS = """\
-You can see and control a computer screen with the `computer` tool. Each call runs a list of actions in order and \
-returns a screenshot of the result. If you have no screenshot yet, call the tool with a single \
-`screenshot` action first.
+You can see and control the screen of the computer you work on with the `computer` tool. Your shell and file \
+tools, if you have any, run on this same computer, so a program with a window that you start from the shell opens on \
+this screen. Start such a program in the background with its output redirected, such as \
+`setsid <program> >/dev/null 2>&1 &`, or the shell command waits for the program to exit.
+Each call runs a list of actions in order and returns a screenshot of the result. If you have no screenshot yet, call \
+the tool with a single `screenshot` action first.
 - Batch steps whose outcome you can predict, such as clicking a field, typing, and pressing Enter. End the batch \
 where you need to see the result before deciding what to do next.
 - Check each returned screenshot to confirm the previous actions did what you intended before continuing.
 - Prefer keyboard shortcuts and typing over clicking small targets, and scroll to bring targets into view.
-- Prefer your other tools (shell, files, web) when they can do the job; use the screen for work only a GUI can do.
+- Prefer your other tools (shell, files, web) unless the work needs the screen: using a program's window, checking \
+what the screen shows, or doing what the user asked to be done on the screen. When the user asks for work on the \
+screen, do it on the screen: the shell may start the program it needs, but with none of that work in its command.
 - A key is a single character or one of these names, and other names are refused: the modifiers ctrl, shift, alt \
 and super (the Windows key, or cmd on macOS); enter, tab, escape, backspace, delete, insert, space, up, down, left, \
 right, home, end, pageup, pagedown, f1 to f24, printscreen, pause, menu, capslock, numlock, scrolllock; numpad0 to \
@@ -107,7 +112,7 @@ _Limit: TypeAlias = tuple[int | None, int | None] | None
 
 _NO_DISPLAY = (
     "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with one, such as "
-    '`DockerSandbox(desktop=True)`.'
+    '`DockerContainer(desktop=True)`.'
 )
 
 _READ_ONLY = (
@@ -533,6 +538,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     id: str | None = 'computer'
     """Stable capability ID: an agent controls one display."""
 
+    description: str | None = (
+        'See and control the screen of the computer you work on. Load it when the work needs the screen: using a '
+        "program's window, checking what the screen shows, or doing what the user asked to be done on the screen."
+    )
+    """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
+
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -701,14 +712,16 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
         That's the latest screenshot, or the display's size before the first. Resolved for each model a step tries.
         """
-        # Read every step, even with a screenshot, so a durable run reads the display at the same steps on replay.
+        if (seen := _last_screenshot_size(ctx.messages)) is not None:
+            # The display isn't read once there's a screenshot, so a reply that doesn't use the screen doesn't start
+            # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
+            return ComputerTool(display_size=seen, optional=True)
         size = await self._screen_size(ctx)
         if isinstance(size, _NotRun):
             if size.kind == 'tool':
                 return None  # the call itself will report the display's error
             raise size.error()
-        seen = _last_screenshot_size(ctx.messages)
-        return ComputerTool(display_size=seen or size, optional=True)
+        return ComputerTool(display_size=size, optional=True)
 
     @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:

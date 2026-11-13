@@ -122,6 +122,20 @@ def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
     assert params.tool_name_for_kind('computer_use.other') is None
 
 
+def test_computer_tool_is_sent_once_history_reveals_its_deferred_computer_tool() -> None:
+    # A deferred capability's tools stay deferred after the model loads it; history revealing them makes them callable.
+    computer = ComputerTool(display_size=(1280, 800), optional=True)
+    params = _prepare(
+        ModelRequestParameters(
+            function_tools=[_computer_tool_def(defer_loading=True)],
+            native_tools=[computer],
+            revealed_tool_names={'my_computer'},
+        )
+    )
+    assert params.native_tools == [computer]
+    assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
+
+
 @pytest.mark.parametrize(
     'function_tools',
     [
@@ -145,7 +159,7 @@ def test_computer_tool_needs_a_computer_tool_that_is_not_deferred(function_tools
 
 def test_computer_tool_refuses_two_computer_tools_that_could_run_its_calls() -> None:
     other = ToolDefinition(name='other_computer', tool_kind=COMPUTER_KIND)
-    with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one that is not deferred'):
+    with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one the model can call'):
         _prepare(
             ModelRequestParameters(
                 function_tools=[_computer_tool_def(), other],
@@ -302,7 +316,9 @@ async def test_a_computer_call_with_safety_checks_refuses_an_external_executor(h
         capabilities=[hooks] if hook_asks else [],
         output_type=[str, DeferredToolRequests],
     )
-    with pytest.raises(UserError, match='approval cannot reach'):
+    # With a hook asking, core refuses first: no external call can wait for approval in the run.
+    message = 'so the run cannot approve it' if hook_asks else 'approval cannot reach'
+    with pytest.raises(UserError, match=message):
         await agent.run('Click.')
 
 
