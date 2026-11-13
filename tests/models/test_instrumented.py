@@ -221,6 +221,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -561,6 +562,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -659,6 +661,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -764,6 +767,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1083,9 +1087,9 @@ Fix the errors and try again.\
                         'type': 'text',
                         'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 Output did not validate.
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                     },
                     {'type': 'text', 'content': 'Thanks.'},
@@ -1141,18 +1145,18 @@ def test_messages_to_otel_messages_retry_feedback_across_versions():
                             'type': 'text',
                             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         },
                         {
                             'type': 'text',
                             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in French.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         },
                     ],
@@ -1166,18 +1170,18 @@ Answer in French.
                             'type': 'text',
                             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         },
                         {
                             'type': 'text',
                             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in French.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         },
                     ],
@@ -1248,9 +1252,9 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1266,9 +1270,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1287,9 +1291,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1305,9 +1309,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1326,9 +1330,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1344,9 +1348,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1365,9 +1369,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1383,9 +1387,9 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer in English.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                             }
                         ],
@@ -1886,6 +1890,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

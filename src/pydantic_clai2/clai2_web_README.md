@@ -28,28 +28,37 @@ session's directory. A session left idle for an hour, with nothing running or qu
 watching it (a page watches the last five sessions it showed), closes, except the one CLAI started
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
-The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
-after its main checkout's folder, with as much of its path as tells apart projects of one name, as
-`a/scratch` and `b/scratch`), then by worktree (each checkout, labelled with its branch), with
-the current ones first and search across all of them. A folder outside Git is a project of its own.
-A session remembers its checkout when it is saved, so one from a worktree you have since removed
-stays under its project, marked removed, in one **Removed worktrees** group after the live ones,
-closed until you open it; an older session from a removed folder is placed by where it was, or
-listed under Removed folders. A worktree's `…` menu archives its sessions at once, except the open
-and running ones, and not during a search. Click a session to switch to it, even while other
-sessions run turns: each session you open stays live and keeps working while you look at another.
-A dot by a live session shows that it runs a turn, pulsing; runs one with input queued behind it,
-ringed; or waits for your answer to a question, amber. Use a session's menu to rename, fork,
-archive, or delete it. Archiving hides a session from the sidebar and `/resume` without deleting
-anything; the archive button beside the search lists archived sessions too, muted, and searches
-them, each with **Unarchive** in its menu. The shown session and running ones cannot be archived,
-and resuming an archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be
-deleted. A session whose directory is gone, such as a removed worktree, opens read-only; so does,
-with `/web` from a terminal, a session saved in another directory, since the terminal works where it
-started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and
-no other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the
-sidebar. As in the terminal, Up on the composer's first line recalls the session's sent prompts,
-newest first, and Down on its last line steps back toward your unsent draft.
+The sidebar lists the sessions `/resume` shows. **Projects** groups them by project (the Git
+repository, named after its main checkout's folder, with as much of its path as tells apart projects
+of one name, as `a/scratch` and `b/scratch`), each row showing its branch when the project has
+sessions on more than one; **Recent** lists every project's sessions in one list. A folder outside
+Git is a project of its own. Projects are listed by name and sessions newest created first, so a row
+never moves when you select it, a turn ends, a session is renamed, or the list refreshes; a new
+session appears at the top. A session remembers its checkout when it is saved, so one from a
+worktree you have since removed stays with its project; sessions whose folder is gone, including an
+older session from a removed folder, fold into **Removed worktrees** at the bottom, closed until you
+open it. When two rows of one project or list share a title, each shows a short ID. Click one to
+switch to it, even while other sessions run turns: the row is selected at once, and each session you
+open stays live and keeps working while you look at another. Each row has one status mark. A
+spinner, with how long the turn has run, means a turn runs here (ringed when input waits behind it);
+a hollow ring means another CLAI runs it, named with its process ID in the tooltip; **Needs input**
+means it waits for your answer; a bold title with a dot means it changed since you last looked (open
+it, or use **Mark as read**); a red or amber dot means its last turn failed or was interrupted.
+**Attention** (Cmd/Ctrl+Alt+U) lists only the sessions running, waiting for you, or unread. Use a
+session's menu to rename, fork, archive, or delete it, or to archive every session of its branch,
+and a project's menu to archive all its chats; these skip the open and running sessions, and are off
+during a search, which lists only some of them. Archiving hides a session from the sidebar and
+`/resume` without deleting anything; **Archived** lists archived sessions, each with **Unarchive**
+in its menu. The shown session and running ones cannot be archived, and resuming an archived one, or
+a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A session whose directory
+is gone, such as a removed worktree, opens read-only; so does, with `/web` from a terminal, a
+session saved in another directory, since the terminal works where it started. Keyboard: Enter
+sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no other, Cmd/Ctrl+K
+searches sessions (Down moves to the results, Enter opens the first), Cmd/Ctrl+Shift+O starts a new
+one, Cmd/Ctrl+B hides the sidebar. In the session list, Up and Down move between rows, Enter opens
+one, and Left and Right fold and open a project. As in the terminal, Up on the composer's first line
+recalls the session's sent prompts, newest first, and Down on its last line steps back toward your
+unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
@@ -60,6 +69,12 @@ message. Everything waiting is listed above the composer,
 whether you queued it here, in another browser, or in the terminal: edit a message in place (Enter
 saves, Esc cancels), steer it now, or remove it before it runs. A message that runs while you edit it
 is queued again as a new follow-up when you save, as in the terminal.
+
+Between turns, hover or focus one of your prompts for **Edit** and **Retry**, the browser's
+[rewind](README.md#rewind-a-conversation). Edit opens the prompt in place; Send (or Enter) removes it
+and everything after it from the conversation, then sends your edited text with its images. Retry
+sends it again unchanged. Neither undoes changes to files. Prompts the terminal's rewind disables,
+and steering messages, offer neither.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
@@ -357,9 +372,10 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   carry no `session`; every `snapshot` lists the open dialogs.
 - `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
   conversation, or changes state:
-  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
+  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "busy": true | false, "title": "…" | null, "workspace": "/abs/path"}]}`.
   `queued` means input waits while that session's turn runs; `asking` means a question its turn
-  asked waits for the user.
+  asked waits for the user. `busy` is `LiveSession.busy`, true past the turn while its `TurnEnd`
+  hooks run: the page offers Edit and Retry only once it is false.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
   watches. The server answers with a `snapshot` for each newly watched live session; the default session
   a connection got on connect counts as watched already, so naming it sends no second one. An ID that is not
@@ -386,6 +402,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |
 | `PUT /api/sessions/{id}/queue/{input_id}` | rewrite a queued input in place, body `{"text": "…"}`; 404 once it ran or was removed |
 | `DELETE /api/sessions/{id}/queue/{input_id}` | remove a queued input; 404 once it ran or was removed |
+| `POST /api/sessions/{id}/rewind/{run_id}` | Edit or Retry: drop the turn that `run_id` (a `user` item's `run_id`) started and every later one, then send body `{"text": "…"}` with that prompt's images in its place, or the prompt as saved for `{"text": null}` (`text` is required); answers 204, 400 for a `/command` or `!` line, 404 once that prompt can no longer be rewound to, 409 while the session is busy |
 | `POST /api/sessions/{id}/queue/{input_id}/steer` | send a queued prompt to the running turn, taking it out of the queue; answers `{"steered": false}` and leaves it queued when nothing takes it |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `GET /api/sessions/{id}/files?q=…` | the composer's `@` picker: the 50 files and folders in the session's folder that best match `q` (Git's tracked and unignored files in a checkout), each a completion of `@q` |
@@ -412,7 +429,7 @@ choosing a model in session B's `/model` menu switches B alone, and B's `/effort
 CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
-The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
+The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/rewind/…`, `/api/interrupt`,
 `/api/complete`, `/api/files`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the

@@ -17,6 +17,31 @@ const { redactManifestValue, collectArtifactSecretValues } = released('safe_outp
 const save = (name, value) => fs.writeFileSync(path.join(evidence, name), JSON.stringify(value, null, 2) + '\n');
 (async () => {
   const captured = readProtectedCommandOutput(process.env.GH_AW_AGENT_OUTPUT);
+  // Run the actual host forwarding step on spans produced inside the native
+  // sandbox. Only the network destination is replaced; private content is not saved.
+  const shared = fs.readFileSync(process.env.PYDANTIC_AI_WORKFLOW_ENGINE_SOURCE, 'utf8');
+  const forwardBody = shared.split('      script: |\n')[1].split('\nsafe-outputs:')[0]
+    .split('\n').map(line => line.replace(/^ {8}/, '')).join('\n');
+  const forward = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', 'fetch', 'core', forwardBody);
+  const forwarded = [];
+  await forward(name => {
+    if (name === 'fs') return fs;
+    if (name === 'path') return path;
+    assert.equal(name, path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'send_otlp_span.cjs'));
+    return {
+      parseOTLPEndpoints: () => [{ url: 'https://collector.invalid', headers: 'host-only' }],
+      parseOTLPHeaders: value => { assert.equal(value, 'host-only'); return { Authorization: value }; },
+    };
+  }, process, async (url, options) => {
+    assert.equal(url, 'https://collector.invalid/v1/traces');
+    assert.equal(options.headers.Authorization, 'host-only');
+    forwarded.push(JSON.parse(options.body));
+    return { ok: true, status: 200 };
+  }, { warning: () => assert.fail('unexpected export failure') });
+  assert(forwarded.length > 0, 'native sandbox did not export Python spans');
+  assert(!fs.existsSync('/tmp/gh-aw/pydantic-ai-private-otel.jsonl'), 'host forwarding retained private content');
+  const spanNames = forwarded.flatMap(payload => payload.resourceSpans.flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans.map(span => span.name))));
+  save('private-telemetry-forwarding.json', { status: 'passed', payloads: forwarded.length, spanNames });
   assert.equal(captured.exitCode, Number(expectedExitText));
   assert(!captured.content.includes('forged-native-fixture'), 'ordinary-stream forgery entered protected stderr');
   const parsed = parser.parseLog(captured.content);
@@ -45,6 +70,8 @@ const save = (name, value) => fs.writeFileSync(path.join(evidence, name), JSON.s
     const result = events.at(-1);
     assert.equal(result.type, 'session.result');
     assert.equal(result.data.status, scenario === 'success' ? 'success' : 'failure');
+    assert.equal(result.data.metadata.provider_health.task_key, 'native-capture');
+    assert.equal(result.data.metadata.provider_health.failure?.kind, scenario === 'failure' ? 'rate_limit' : undefined);
     assert.equal(result.data.usage.input_tokens, 100);
     assert.equal(result.data.usage.output_tokens, 3);
     const message = events.find(event => event.type === 'assistant.message');
