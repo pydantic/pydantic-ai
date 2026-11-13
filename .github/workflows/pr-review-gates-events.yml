@@ -10,6 +10,9 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  # Resolving an optional douwebot finding can make the head pass the gate.
+  pull_request_review_thread:
+    types: [resolved, unresolved]
 
 permissions: {}
 

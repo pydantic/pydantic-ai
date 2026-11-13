@@ -2416,6 +2416,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_name='weather',
                     content=[
                         'sunny',
+                        {'temp': 20},
                         BinaryContent(data=b'tool-image', media_type='image/png', identifier='weather.png'),
                     ],
                     tool_call_id='call-1',
@@ -2466,7 +2467,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             },
             {
                 'parts': [
-                    {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
+                    {'text': '[Tool call-1: weather returned: ["sunny",{"temp":20},"See file weather.png."]]'},
                     {'text': '<pyai:tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '</pyai:tool_result>'},
