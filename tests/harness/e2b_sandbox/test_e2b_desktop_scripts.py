@@ -7,6 +7,7 @@ does what it should, with stub programs for the sandbox's own.
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -63,6 +64,14 @@ def _run(script: str, stubs: Path, *args: str) -> subprocess.CompletedProcess[st
         script = script.replace(old, new)
     env = {'PATH': f'{stubs}:/usr/bin:/bin'}
     return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.skipif(not shutil.which('shellcheck'), reason='shellcheck not installed (the CI runner image has it)')
+async def test_the_start_script_passes_shellcheck(fake_e2b: FakeE2B) -> None:
+    # SC2046 and SC2086 flag the unquoted `/proc/$(...)` and `/proc/$p` paths, which hold a PID or nothing.
+    check = ['shellcheck', '-s', 'sh', '-e', 'SC2046,SC2086', '-']
+    result = subprocess.run(check, input=await _start_script(fake_e2b), capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout
 
 
 @pytest.mark.parametrize(('session_display', 'starts'), [(':1', False), (':0', True)])
