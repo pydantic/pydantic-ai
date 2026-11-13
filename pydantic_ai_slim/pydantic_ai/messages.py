@@ -4173,7 +4173,7 @@ class FilePart:
     def __post_init__(self) -> None:
         # The `AfterValidator` on `content` only runs on validation, so narrow direct construction
         # too: a custom model returning `FilePart(BinaryContent(image))` must yield a `BinaryImage`.
-        if type(self.content) is BinaryContent:
+        if not isinstance(self.content, BinaryImage):
             self.content = BinaryContent.narrow_type(self.content)
 
     def has_content(self) -> bool:
