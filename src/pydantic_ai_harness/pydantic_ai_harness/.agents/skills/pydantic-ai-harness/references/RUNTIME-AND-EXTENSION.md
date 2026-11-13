@@ -500,7 +500,9 @@ agent = Agent(
 Gotchas: it takes a backend, not the `LocalWorkspace` capability. Spills there are outside the model's
 file tools, so the model reads them with `read_tool_result`. An explicit `ToolOutputLimits(store=...)`
 wins. Its I/O runs in-process, not through a durable engine's workflow. Pass it per run
-(`agent.run(..., capabilities=[CapabilityStorage(...)])`) for a location per tenant.
+(`agent.run(..., capabilities=[CapabilityStorage(...)])`) for a location per tenant. Under Temporal, set it
+on the agent: `capabilities=` on a run inside a workflow is refused, and one returned from a dynamic
+capability is not seen inside activities, so spills go to the run's workspace.
 
 ## Harness capabilities in agent specs
 

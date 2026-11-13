@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import CombinedCapability, LocalWorkspace
+from pydantic_ai.capabilities import AgentCapability, CombinedCapability, LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import CapabilityStorage, ToolOutputLimits
+from pydantic_ai_harness import CapabilityStorage, FileSystem, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import READ_TOOL_NAME, Band, Spill, WorkspaceStore
 
 PAYLOAD = '\n'.join(f'line {i}' for i in range(500))
@@ -38,8 +38,8 @@ def _spill_then_read(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
 
-def _agent(*capabilities: CapabilityStorage | ToolOutputLimits | LocalWorkspace | CombinedCapability) -> Agent:
-    agent = Agent(FunctionModel(_spill_then_read), capabilities=list(capabilities))
+def _agent(*capabilities: AgentCapability[None]) -> Agent[None, str]:
+    agent = Agent(FunctionModel(_spill_then_read), deps_type=type(None), capabilities=capabilities)
 
     @agent.tool_plain
     def big_tool() -> str:
@@ -110,6 +110,46 @@ async def test_storage_inside_a_combined_capability(tmp_path: Path):
     result = await agent.run('go')
 
     assert _spill_handle(result.all_messages()).startswith(f'{tmp_path.resolve()}/')
+
+
+async def test_storage_returned_from_a_capability_func(tmp_path: Path):
+    agent = _agent(lambda ctx: CapabilityStorage(LocalWorkspaceBackend(tmp_path)), _limits())
+
+    result = await agent.run('go')
+
+    assert _spill_handle(result.all_messages()).startswith(f'{tmp_path.resolve()}/')
+
+
+async def test_the_later_of_two_storages_wins(tmp_path: Path):
+    first = tmp_path / 'first'
+    second = tmp_path / 'second'
+    first.mkdir()
+    second.mkdir()
+    agent = _agent(
+        CapabilityStorage(LocalWorkspaceBackend(first), id='first'),
+        CapabilityStorage(LocalWorkspaceBackend(second), id='second'),
+        _limits(),
+    )
+
+    result = await agent.run('go')
+
+    assert _spill_handle(result.all_messages()).startswith(f'{second.resolve()}/')
+    assert list(first.iterdir()) == []
+
+
+async def test_stored_spills_are_read_with_read_tool_result_beside_file_tools(tmp_path: Path):
+    """`read_file` cannot reach the storage workspace, so `read_tool_result` does not step aside for it."""
+    work = tmp_path / 'work'
+    storage = tmp_path / 'storage'
+    work.mkdir()
+    storage.mkdir()
+    agent = _agent(LocalWorkspace(work), FileSystem(), CapabilityStorage(LocalWorkspaceBackend(storage)), _limits())
+
+    result = await agent.run('go')
+
+    [spilled] = _returns(result.all_messages(), 'big_tool')
+    assert f'{READ_TOOL_NAME}(handle=' in str(spilled.content)
+    assert result.output.endswith('line 0\nline 1')
 
 
 async def test_an_explicit_store_workspace_takes_precedence(tmp_path: Path):

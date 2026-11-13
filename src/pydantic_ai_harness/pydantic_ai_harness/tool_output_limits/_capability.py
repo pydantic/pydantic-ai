@@ -248,12 +248,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when a band can spill but no store has a workspace to write to."""
-        store = self._store
         if (
-            isinstance(store, WorkspaceStore)
-            and store.workspace is None
+            self._spills_to_run_workspace(ctx)
             and not ctx.workspace.attached
-            and storage_workspace(ctx) is None
             and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
         ):
             raise UserError(
@@ -262,14 +259,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 'spills in a workspace of their own, or pass `store=LocalFileStore()` to keep spills on this machine.'
             )
 
-    @property
-    def _spills_to_run_workspace(self) -> bool:
+    def _spills_to_run_workspace(self, ctx: RunContext[AgentDepsT]) -> bool:
         """Whether spills are files in the run's workspace, which the run's file tools can read.
 
-        Known from configuration: the default `WorkspaceStore` without a `workspace` of its own.
+        The default `WorkspaceStore` without a `workspace` of its own, on a run without a `CapabilityStorage`.
         """
         store = self._store
-        return isinstance(store, WorkspaceStore) and store.workspace is None
+        return isinstance(store, WorkspaceStore) and store.workspace is None and storage_workspace(ctx) is None
 
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
@@ -313,11 +309,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             """
             return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
 
-        tool = Tool(
-            read_tool_result,
-            tool_kind=READ_TOOL_RESULT_KIND,
-            prepare=step_aside_for_read_file if self._spills_to_run_workspace else None,
-        )
+        def step_aside(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+            return step_aside_for_read_file(ctx, tool_def) if self._spills_to_run_workspace(ctx) else tool_def
+
+        tool = Tool(read_tool_result, tool_kind=READ_TOOL_RESULT_KIND, prepare=step_aside)
         return FunctionToolset([tool], id=self.id or 'tool_output_limits')
 
     # --- reduction ---
@@ -559,7 +554,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
     def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
         """How the model reads a spill back, naming the tools by the names they have in this run."""
-        if self._spills_to_run_workspace and (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
+        if self._spills_to_run_workspace(ctx) and (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
             return f' Read it with {reader}(path={handle!r}).'
         reader = ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME
         return f' Read it with {reader}(handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).'
