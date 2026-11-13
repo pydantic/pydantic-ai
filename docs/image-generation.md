@@ -465,7 +465,7 @@ Image generation raises the same exceptions as the rest of Pydantic AI:
   type the selected provider does not accept, or `dimensions` the selected model cannot produce exactly.
 - [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] for other 4xx and 5xx provider responses, and
   [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the provider cannot be reached. xAI's gRPC status codes
-  are mapped onto these same two exceptions. From Google and xAI, the error is also an instance of an error category
+  are mapped onto these same two exceptions. From Google, OpenAI, and xAI, the error is also an instance of an error category
   like [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
   [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, as
   when a [model request fails](models/overview.md#handling-model-api-errors).

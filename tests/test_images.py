@@ -39,6 +39,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelNotFoundError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRequestRejectedError,
     ModelServerError,
@@ -4472,8 +4473,117 @@ async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
     with pytest.raises(ModelHTTPError) as exc_info:
         await model.generate('edit this image', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
 
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-image-1')
+    )
     assert exc_info.value.status_code == 500
     assert exc_info.value.body == {'error': 'test error'}
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'),
+    [
+        pytest.param(
+            429,
+            {'retry-after': '7'},
+            {'message': 'Rate limit reached', 'type': 'requests', 'code': 'rate_limit_exceeded'},
+            ModelRateLimitError,
+            7.0,
+            id='rate-limit',
+        ),
+        pytest.param(
+            429,
+            None,
+            {'message': 'Quota exceeded', 'type': 'insufficient_quota', 'code': 'insufficient_quota'},
+            ModelQuotaExceededError,
+            None,
+            id='quota-exceeded',
+        ),
+        pytest.param(
+            503,
+            None,
+            {'message': 'The engine is currently overloaded', 'type': 'server_error', 'code': None},
+            ModelOverloadedError,
+            None,
+            id='overloaded',
+        ),
+        pytest.param(
+            401,
+            None,
+            {'message': 'Incorrect API key provided', 'type': 'invalid_request_error', 'code': 'invalid_api_key'},
+            ModelAuthenticationError,
+            None,
+            id='invalid-api-key',
+        ),
+        pytest.param(
+            404,
+            None,
+            {
+                'message': 'The model `gpt-image-unknown` does not exist',
+                'type': 'invalid_request_error',
+                'code': 'model_not_found',
+            },
+            ModelNotFoundError,
+            None,
+            id='model-not-found',
+        ),
+        pytest.param(
+            500,
+            None,
+            {'message': 'The server had an error processing your request', 'type': 'server_error', 'code': None},
+            ModelServerError,
+            None,
+            id='server-error',
+        ),
+        pytest.param(
+            400,
+            None,
+            {'message': 'Invalid prompt', 'type': 'invalid_request_error', 'code': None},
+            ModelRequestRejectedError,
+            None,
+            id='bad-request',
+        ),
+    ],
+)
+async def test_openai_image_generation_status_error(
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelAuthenticationError
+        | ModelNotFoundError
+        | ModelRequestRejectedError
+    ],
+    expected_retry_after: float | None,
+):
+    """An OpenAI error status surfaces as its `ModelHTTPError` category, with code, type and reported wait."""
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, headers=headers, json={'error': error})
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
+
+    try:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.generate('tiny robot')
+    finally:
+        await http_client.aclose()
+
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gpt-image-1')
+    )
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.provider_error_code == error.get('code')
+    assert exc_info.value.provider_error_type == error.get('type')
+    assert exc_info.value.body == error
+    assert exc_info.value.retry_after == expected_retry_after
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

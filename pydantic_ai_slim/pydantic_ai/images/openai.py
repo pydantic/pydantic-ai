@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
+from pydantic_ai import _model_errors
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
@@ -270,11 +271,14 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                         ) from e
                     case _:
                         pass
-                raise ModelHTTPError(
+                raise ModelHTTPError.for_category(
+                    _model_errors.openai_compatible_category(status_code, e.code, e.type, e.message),
                     status_code=status_code,
                     model_name=self.model_name,
                     body=e.body,
                     headers=dict(e.response.headers),
+                    provider_error_code=e.code,
+                    provider_error_type=e.type,
                 ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
