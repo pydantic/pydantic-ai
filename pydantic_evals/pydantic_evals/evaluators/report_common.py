@@ -57,13 +57,11 @@ def _get_positive(
     if positive_from == 'expected_output':
         return bool(case.expected_output) if case.expected_output is not None else None
     elif positive_from == 'assertions':
-        if positive_key is None:
-            raise ValueError("'positive_key' is required when positive_from='assertions'")
+        assert positive_key is not None  # checked by `_extract_scored_cases`
         assertion = case.assertions.get(positive_key)
         return assertion.value if assertion else None
     elif positive_from == 'labels':
-        if positive_key is None:
-            raise ValueError("'positive_key' is required when positive_from='labels'")
+        assert positive_key is not None  # checked by `_extract_scored_cases`
         label = case.labels.get(positive_key)
         return bool(label.value) if label else None
     assert_never(positive_from)
@@ -77,6 +75,9 @@ def _extract_scored_cases(
     positive_key: str | None,
 ) -> list[tuple[float, bool]]:
     """Extract (score, is_positive) pairs from report cases, skipping cases with missing data."""
+    # Checked before the loop, so the error is raised even when the report has no cases.
+    if positive_from != 'expected_output' and positive_key is None:
+        raise ValueError(f"'positive_key' is required when positive_from={positive_from!r}")
     scored_cases: list[tuple[float, bool]] = []
     for case in cases:
         score = _get_score(case, score_key, score_from)

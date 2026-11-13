@@ -498,6 +498,15 @@ def test_precision_recall_labels_requires_key():
         evaluator.evaluate(ctx)
 
 
+def test_positive_key_required_without_cases():
+    """The missing key is reported even when no case reached the report, e.g. because every case failed."""
+    evaluator = ROCAUCEvaluator(score_key='s', positive_from='labels')
+    ctx = ReportEvaluatorContext(name='test', report=_make_report([]), experiment_metadata=None)
+
+    with pytest.raises(ValueError, match="'positive_key' is required when positive_from='labels'"):
+        evaluator.evaluate(ctx)
+
+
 # --- Custom ReportEvaluator test ---
 
 
