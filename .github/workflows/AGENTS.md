@@ -274,7 +274,7 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  on every outcome it sees, a failed or rejected review included. The span names the provider and
+  on every outcome, a failed, rejected or cancelled review included. The span names the provider and
   plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
   review took. When the review's run completes or reaches its time budget, the span adds its steps,
   tokens and duration. A validated answer adds the outcome and the number of findings. A review that
@@ -283,9 +283,14 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
   ends, a run the chain moved past included, it exports a child
   [`OpenCode run` span](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan) with the same
-  failure fields. A job that Actions cancels exports no review span; the spans of its runs that
-  ended before the cancellation remain.
-  OpenCode's spans carry no prompt or completion text
+  failure fields and its own steps and tokens. When Actions cancels a job, it sends SIGINT to the
+  step's entry process and SIGTERM 7.5 s later, then kills the process tree 2.5 s after that; see
+  [workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
+  The review step `exec`s the runner, so the runner is that process. The first signal raises
+  `KeyboardInterrupt` in it and the runner ignores the rest, so a cancelled review exports its run
+  span and then its review span in those 10 s. The run span's export waits up to 5 s and the
+  review span's up to 30 s, so a Logfire that answers slowly can still lose the review span.
+  OpenCode's own spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
   artifacts are public, so they carry no private report. A
@@ -402,7 +407,9 @@ attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` wh
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
-`opencode_fallback.provider`. A run that did not serve has an error status. When the run's process failed, the span
+`opencode_fallback.provider`. It also counts the `step_finish` events in the run's stream and the tokens they report,
+every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
+or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
 adds the error type, status and provider code the job log names, as `opencode_fallback.error_type`,
 `opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the stream holds a `step_finish`, as
 `opencode_fallback.step_finish`. Outside the job log, these spans are the only record of how a run the chain moved past
