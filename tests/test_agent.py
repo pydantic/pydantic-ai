@@ -15,6 +15,7 @@ from dirty_equals import IsJson
 from pydantic import BaseModel, Field, TypeAdapter, field_validator
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -2048,6 +2049,99 @@ def test_output_type_text_output_invalid():
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # pyright: ignore[reportArgumentType]
         Agent('test', output_type=output_type)
+
+
+class TextModel(BaseModel):
+    text: str
+
+
+class TextTypedDict(TypedDict):
+    text: str
+
+
+@dataclass
+class TextDataclass:
+    text: str
+
+
+def model_arg(m: TextModel) -> str:
+    return m.text  # pragma: no cover
+
+
+def model_arg_named_like_field(text: TextModel) -> str:
+    return text.text  # pragma: no cover
+
+
+def typed_dict_arg(m: TextTypedDict) -> str:
+    return m['text']  # pragma: no cover
+
+
+def typed_dict_arg_named_like_field(text: TextTypedDict) -> str:
+    return text['text']  # pragma: no cover
+
+
+def dataclass_arg_named_like_field(text: TextDataclass) -> str:
+    return text.text  # pragma: no cover
+
+
+def ctx_and_model_arg_named_like_field(ctx: RunContext[None], text: TextModel) -> str:
+    return text.text  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'output_function',
+    [
+        model_arg,
+        model_arg_named_like_field,
+        typed_dict_arg,
+        typed_dict_arg_named_like_field,
+        dataclass_arg_named_like_field,
+        ctx_and_model_arg_named_like_field,
+    ],
+)
+def test_output_type_text_output_model_like_arg(output_function: Callable[..., str]):
+    """A model-like arg takes the model's JSON schema, so a model with one `str` field looks like a `str` arg.
+
+    The function would still be handed the raw text, so it's rejected like any other non-`str` arg.
+
+    Not a VCR test: the `UserError` is raised when the agent is created, before any request is sent.
+    """
+    with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
+        Agent('test', output_type=TextOutput(output_function))
+
+
+TextAlias = str
+
+
+def str_arg(text: str) -> str:
+    return f'text={text}'
+
+
+def type_alias_str_arg(text: TextAlias) -> str:
+    return f'text={text}'
+
+
+def constrained_str_arg(text: Annotated[str, Field(max_length=10)]) -> str:
+    return f'text={text}'
+
+
+def ctx_and_str_arg(ctx: RunContext[None], text: str) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('output_function', [str_arg, type_alias_str_arg, constrained_str_arg, ctx_and_str_arg])
+def test_output_type_text_output_str_arg_forms(output_function: Callable[..., str]):
+    """Every form of `str` arg passes the construction check that rejects a model-like arg.
+
+    Not a VCR test: the check runs when the agent is created, and calling the function with the text is in-memory
+    framework behavior that no provider response changes.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
+    assert agent.run_sync('hi').output == 'text=hello'
 
 
 def test_output_type_native_output_must_be_only():
