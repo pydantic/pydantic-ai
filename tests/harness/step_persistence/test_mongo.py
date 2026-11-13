@@ -61,6 +61,10 @@ def _is_string_keyed_dict(value: object) -> TypeIs[dict[str, object]]:
     return all(isinstance(key, str) for key in entries)
 
 
+def test_is_string_keyed_dict_rejects_non_dict() -> None:
+    assert not _is_string_keyed_dict(None)
+
+
 def _fake_container_env_info() -> dict[str, object]:
     return {}
 
@@ -168,7 +172,7 @@ class TestMongoStepStoreConstruction:
                     if opcode == 2013:
                         response = struct.pack('<iB', 0, 0) + encode(reply)
                         response_opcode = 2013
-                    else:
+                    else:  # pragma: no cover -- supported PyMongo versions use OP_MSG only
                         response = struct.pack('<iqii', 0, 0, 0, 1) + encode(reply)
                         response_opcode = 1
                     writer.write(struct.pack('<iiii', 16 + len(response), 1, request_id, response_opcode) + response)
