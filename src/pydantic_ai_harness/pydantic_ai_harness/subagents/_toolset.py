@@ -337,12 +337,10 @@ def _local_abilities(ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT
 
 
 def _new_task_id(ctx: RunContext[Any], owner: DelegationTasks) -> str:
-    """A new task's ID: under durable execution, one replay derives again from the run and the recorded tool call.
+    """A new task's ID, derived from the run and the tool call, so a replay or a rerun with the same `run_id` gets it again.
 
     A provider can reuse a tool call ID within a run, so a taken ID is derived again with a counter.
     """
-    if not ctx.in_durable_context:
-        return uuid4().hex
     seed = f'{ctx.run_id}:{ctx.tool_call_id}'
     task_id, count = uuid5(NAMESPACE_URL, seed).hex, 0
     while task_id in owner.records:
