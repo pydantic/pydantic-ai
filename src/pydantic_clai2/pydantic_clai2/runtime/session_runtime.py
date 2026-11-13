@@ -909,7 +909,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), strict mode off, then speculation.
 
         Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
-        mount stays within every `FileSystem` and `ToolGuardrail` the run has.
+        mount stays within every `FileSystem`, `ToolGuardrail`, `ToolCallJudge`, `Hooks` and `Permissions`
+        the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
         bound = (

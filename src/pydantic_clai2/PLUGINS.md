@@ -1268,7 +1268,7 @@ tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
-`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url`, which is
+`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url` and `api_key`, which are
 set in `/model settings`). For example,
 `{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
 Models, accounts, saved chains, and saved settings
@@ -2836,6 +2836,14 @@ The ones people reach for:
 The full list and every signature are in the
 [hooks reference](https://pydantic.dev/docs/ai/core-concepts/hooks/).
 
+Which tools a `Hooks` checks can't be read before the run, so with any `Hooks`
+bound, [code mode](docs/reference.md#code-mode-and-speculative-execution) does
+not mount the workspace: `pathlib` in `run_code` can't read or write files a
+`before_tool_execute` hook would have stopped, and file access goes through the
+file tools. A plugin that only observes keeps the mount by returning its own
+`AbstractCapability` subclass, with `@on_event` or the hook method, instead of a
+`Hooks`.
+
 ### React to a typed event: `hooks.on.event(EventClass)`
 
 Tools and capabilities emit typed events (a shell started, a file was written).
@@ -3155,7 +3163,7 @@ has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
+its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
 through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
 appear immediately in the transcript and are enqueued for the next model request,
@@ -4085,7 +4093,7 @@ A `LiveSession` is one live session:
 | `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
 | `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
 | `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
-| `steer(text)` | send `text` to its running turn now, as Alt+Enter at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
+| `steer(text)` | send `text` to its running turn now, as steering at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
 | `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
