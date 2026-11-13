@@ -1,0 +1,113 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "122"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: nvidia/nemotron-3.5-lightning:free
+        stream: false
+        messages:
+        - role: user
+          content: Say hi in one word.
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1794599592-jhT3Wdz9pi4q4LBnfSkF
+        object: chat.completion
+        created: 1794599592
+        model: nvidia/nemotron-3.5-lightning:free
+        provider: Nvidia
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: Hi
+            refusal: null
+            reasoning: |-
+              Here's a thinking process:
+              
+              1.  **Analyze User Input:** The user says "Say hi in one word."
+              2.  **Identify Core Request:** The user wants a greeting, specifically in the form of a single word.
+              3.  **Determine Response:** The most direct and appropriate one-word greeting is "Hi" or "Hello". Since they said "Say hi", I could just say "Hi". But to be safe and follow the constraint exactly, I'll output a single word that greets them.
+              4.  **Formulate Output:** Just "Hi" or "Hello". I'll go with "Hi" since they used that word. But wait, they said "Say hi in one word." So the response should be exactly one word that is a greeting. "Hi" fits perfectly.
+              5.  **Check Constraints:** One word only. "Hi" is one word. Perfect.
+              6.  **Final Output:** Hi
+              
+              I'll just output "Hi". Actually, to be slightly more natural but still one word, "Hello" is also fine. I'll stick with "Hi".✅
+            reasoning_details:
+            - type: reasoning.text
+              text: |-
+                Here's a thinking process:
+                
+                1.  **Analyze User Input:** The user says "Say hi in one word."
+                2.  **Identify Core Request:** The user wants a greeting, specifically in the form of a single word.
+                3.  **Determine Response:** The most direct and appropriate one-word greeting is "Hi" or "Hello". Since they said "Say hi", I could just say "Hi". But to be safe and follow the constraint exactly, I'll output a single word that greets them.
+                4.  **Formulate Output:** Just "Hi" or "Hello". I'll go with "Hi" since they used that word. But wait, they said "Say hi in one word." So the response should be exactly one word that is a greeting. "Hi" fits perfectly.
+                5.  **Check Constraints:** One word only. "Hi" is one word. Perfect.
+                6.  **Final Output:** Hi
+                
+                I'll just output "Hi". Actually, to be slightly more natural but still one word, "Hello" is also fine. I'll stick with "Hi".✅
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 22
+          completion_tokens: 238
+          total_tokens: 260
+          cost: 0
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0
+            upstream_inference_prompt_cost: 0
+            upstream_inference_completions_cost: 0
+          completion_tokens_details:
+            reasoning_tokens: 235
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-13T19:53:14.893177+00:00

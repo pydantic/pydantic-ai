@@ -598,6 +598,29 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     )
 
 
+async def test_openrouter_free_model_cost(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """A free model reports `usage.cost` as 0, which is a real cost and must not be dropped as missing."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('nvidia/nemotron-3.5-lightning:free', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('Say hi in one word.')
+
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
+    assert last_message.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'downstream_provider': 'Nvidia',
+            'cost': 0.0,
+            'upstream_inference_cost': 0.0,
+            'upstream_inference_prompt_cost': 0.0,
+            'upstream_inference_completions_cost': 0.0,
+            'is_byok': False,
+            'timestamp': IsDatetime(),
+        }
+    )
+
+
 async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)

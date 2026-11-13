@@ -706,7 +706,7 @@ def _map_openrouter_usage_provider_details(
     if not (usage := response.usage):
         return provider_details
 
-    if cost := usage.cost:
+    if (cost := usage.cost) is not None:
         provider_details['cost'] = cost
 
     if cost_details := usage.cost_details:
