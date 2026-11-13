@@ -184,8 +184,23 @@ def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str,
                     _stamp_capability_part(part, capability_id, ceiling)
 
 
+_FRAMEWORK_STATE_PARTS = (
+    InstructionDeltaPart,
+    InstructionBaselinePart,
+    ToolAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
+    ModelSettingsDeltaPart,
+)
+"""The framework's records of the run's own state, which the model reads in the application's voice."""
+
+
 def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
     """`part` as a capability part at `ceiling` if it's a prompt part that would speak with more authority."""
+    if ceiling != 'operator' and isinstance(part, _FRAMEWORK_STATE_PARTS):
+        raise UserError(
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue '
+            f"`{type(part).__name__}`, which the model reads in the application's voice."
+        )
     source = CapabilitySource(capability_id, authority=ceiling)
     if ceiling != 'operator' and isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
         # `'no_output'` feedback is the one retry the model reads in the application's voice: below it, it's user text.

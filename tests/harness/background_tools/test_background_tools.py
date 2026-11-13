@@ -16,7 +16,6 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -73,6 +72,7 @@ from pydantic_ai_harness import BackgroundTools, CodeMode
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_graph import End
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
+from tests.harness._rendering import sent_messages
 
 from ...realtime_connections import InferredConnection
 
@@ -100,7 +100,7 @@ def _prompt_texts(messages: list[ModelMessage]) -> list[str]:
             for item in ([part.content] if isinstance(part.content, str) else part.content)
             if isinstance(item, str | TextContent)
         )
-        for msg in render_capability_parts(messages)
+        for msg in sent_messages(messages)
         if isinstance(msg, ModelRequest)
         for part in msg.parts
         if isinstance(part, UserPromptPart)
@@ -2023,6 +2023,6 @@ async def test_tool_result_call_id_cannot_break_out_of_its_attribute():
     follow_up = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
     [part] = follow_up.parts
     assert isinstance(part, BackgroundToolResultPart) and part.tool_call_id == hostile_id
-    assert _prompt_texts(render_capability_parts([follow_up])) == [
+    assert _prompt_texts(sent_messages([follow_up])) == [
         '<tool_result tool_name="lookup" tool_call_id="call-1&quot; &amp; &lt;b&gt;">value</tool_result>'
     ]

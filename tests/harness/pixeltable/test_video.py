@@ -10,7 +10,6 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -23,6 +22,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests.conftest import try_import
+from tests.harness._rendering import sent_messages
 
 with try_import() as imports_successful:
     import pixeltable as pxt
@@ -68,7 +68,7 @@ def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.M
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         prompts = [
             part
-            for message in render_capability_parts(messages)
+            for message in sent_messages(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, UserPromptPart)

@@ -15,7 +15,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -54,6 +53,7 @@ from pydantic_ai_harness.repo_context._loader import (
     find_dir_context_file,
     render_context_files,
 )
+from tests.harness._rendering import sent_messages
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 
@@ -98,7 +98,7 @@ def _user_text(part: UserPromptPart) -> str:
 def _repo_notes(messages: list[ModelMessage]) -> list[str]:
     """The nested notes' user-channel text as the model sees it, from what it was sent or from the run's history."""
     notes: list[str] = []
-    for message in render_capability_parts(messages):
+    for message in sent_messages(messages):
         for part in message.parts:
             if isinstance(part, UserPromptPart) and (text := _user_text(part)).startswith('<context_file'):
                 notes.append(text)
@@ -934,11 +934,15 @@ class TestNestedTraversal:
         result = await agent.run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         # What the model sees: the note's own wording in the application's voice, the path and contents as data.
         parts = [
-            (type(part), part.content if isinstance(part, SystemPromptPart) else _user_text(part))
-            for message in render_capability_parts(result.all_messages())
+            (SystemPromptPart, part.content)
+            if isinstance(part, SystemPromptPart)
+            else (UserPromptPart, _user_text(part))
+            for message in sent_messages(result.all_messages())
             if isinstance(message, ModelRequest)
             for part in message.parts
+            # The lookalike note about the file's own closing tag is checked below.
             if isinstance(part, SystemPromptPart | UserPromptPart)
+            and not (isinstance(part, SystemPromptPart) and '</context_file>' in part.content)
         ]
         assert parts == [(UserPromptPart, 'go'), *note]
         # A file that closes its own frame goes out as written, with a note saying its author wrote that tag.

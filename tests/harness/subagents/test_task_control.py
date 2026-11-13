@@ -25,7 +25,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -91,6 +90,7 @@ from pydantic_ai_harness.subagents import (
     is_task_report,
     serialize_message,
 )
+from tests.harness._rendering import sent_messages
 
 from .._deferred_tools import pending_agent
 from .._recording_durability import RecordingDurability
@@ -155,9 +155,10 @@ def tool_returns(messages: Sequence[ModelMessage]) -> list[str]:
 def part_text(part: ModelRequestPart) -> str:
     """A user part's text, or a task report's or question's as the model is sent it."""
     if isinstance(part, TaskOutputPart | TaskQuestionPart):
-        [request] = render_capability_parts([ModelRequest(parts=[part])])
+        [request] = sent_messages([ModelRequest(parts=[part])])
         assert isinstance(request, ModelRequest)
-        part = request.parts[-1]
+        # The framed body; a note in the application's voice may follow it.
+        [part] = [part for part in request.parts if isinstance(part, UserPromptPart)]
     assert isinstance(part, UserPromptPart)
     if isinstance(part.content, str):
         return part.content

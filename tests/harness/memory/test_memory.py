@@ -28,7 +28,6 @@ from pydantic_ai import (
     ToolReturn,
     capture_run_messages,
 )
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
@@ -91,6 +90,7 @@ from tests._inline_snapshot import snapshot
 from tests.conftest import try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness._rendering import sent_messages
 from tests.harness.conftest import IsPartialDict
 
 with try_import() as provider_imports:
@@ -255,7 +255,7 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
     A snapshot is a `<memory>` frame, or a legacy snapshot's text in a user prompt.
     """
     contexts: list[str] = []
-    for message in render_capability_parts(messages):
+    for message in sent_messages(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in message.parts:

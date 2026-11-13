@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -56,6 +55,7 @@ from tests.harness._recording_durability import (
     RecordingDurability,
     RestrictedRunContext,
 )
+from tests.harness._rendering import sent_messages
 from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
@@ -1069,7 +1069,7 @@ class TestLLMReminder:
             result = await agent.run('hi')
         assert fired == [_generated_sent_text('refocus', 'some-model')]
         # The event reports what the model was sent; the deprecated `on_fire` keeps its earlier rendering.
-        sent = render_capability_parts(result.all_messages())[1]
+        sent = sent_messages(result.all_messages())[1]
         assert isinstance(sent, ModelRequest)
         assert [part.content for part in sent.parts if isinstance(part, SystemPromptPart)] == [
             _generated_note('some-model')
