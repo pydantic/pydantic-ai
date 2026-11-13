@@ -342,6 +342,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         }
         if self.stream_check_every < 1:
             raise ValueError(f'`stream_check_every` must be at least 1, got {self.stream_check_every}.')
+        if unknown := [channel for channel in self.stream_channels if channel not in _IN_RESPONSE_PATTERNS]:
+            raise ValueError(f'Unknown `stream_channels` {unknown}; choose from {list(_IN_RESPONSE_PATTERNS)}.')
         for name, threshold in thresholds.items():
             if threshold is not None and threshold < 2:
                 raise ValueError(f'`{name}` must be at least 2 or `None`, got {threshold}.')

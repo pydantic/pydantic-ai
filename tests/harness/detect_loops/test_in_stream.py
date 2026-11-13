@@ -657,6 +657,10 @@ class TestDetectLoops:
             ),
             (lambda: DetectLoops[object](stream_check_every=0), '`stream_check_every` must be at least 1, got 0.'),
             (
+                lambda: DetectLoops[object](stream_channels=('text', 'txt')),  # pyright: ignore[reportArgumentType]
+                "Unknown `stream_channels` ['txt']; choose from ['thinking', 'text', 'tool_args'].",
+            ),
+            (
                 lambda: DetectLoops[object](repeated_parallel_call_threshold=1),
                 '`repeated_parallel_call_threshold` must be at least 2 or `None`, got 1.',
             ),
