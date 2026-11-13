@@ -109,6 +109,9 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         capability = await self._resolve_capability(ctx)
         if capability is None:
             return None
+        if self.per_run_step:
+            # Owned by the capabilities it returned, as in the run, so their tools stay hidden until they're loaded.
+            capability = CombinedCapability[AgentDepsT]([capability])
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
     async def _call_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
