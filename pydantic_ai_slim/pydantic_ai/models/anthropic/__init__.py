@@ -28,6 +28,7 @@ from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -4109,12 +4110,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
-        metadata = part.result if isinstance(part, ComputerReturnPart) else None
-        # A summary, what each action returned, then the screen (or the note that replaced it in this request). Read
-        # as validated, so content stored as a JSON string still reads as a list.
+        # A summary, what each action returned, then the screen, unless something such as a history processor dropped
+        # it or left a note in its place. Read as validated, so content stored as a JSON string still reads as a list.
         typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
         content: list[Any] = list(typed) if typed is not None else part.content_items(mode='str')
-        if metadata is None or metadata.get('changed'):
+        if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
             # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: each call gets
             # the summary instead of `OK`, and the last one the rest. With no content at all, each still gets a result.
             mapped = [await self._map_tool_result_item(item, map_context) for item in content]
@@ -4122,7 +4122,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 _computer_result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
                 for index, block in enumerate(blocks)
             ]
-        run = _ComputerRun.of(replay, metadata, content)
+        run = _ComputerRun.of(replay, metadata, content, part.screenshot)
         return [await self._map_member_result(run, index, map_context) for index in range(len(blocks))]
 
     async def _map_member_result(
@@ -4147,11 +4147,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else []
         )
         ok = BetaTextBlockParam(text='OK', type='text')
-        if index != run.last_ran or run.screen is None:
+        if index != run.last_ran:
             return _computer_result(block, False, ok, *returned)
-        if isinstance(run.screen, str):
-            # The screenshot was left out of this request: the call gets the text saying why.
-            text = ' '.join(item for item in (run.summary, run.screen) if isinstance(item, str))
+        if run.screen is None:
+            # The screenshot was left out of this request: the call gets the summary and any note saying why.
+            text = ' '.join(item for item in (run.summary, *run.outputs) if isinstance(item, str)) or 'OK'
             return _computer_result(block, False, BetaTextBlockParam(text=text, type='text'), *returned)
         return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(run.screen, map_context))
 
@@ -4159,7 +4159,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, run: _ComputerRun, block: ComputerBlock, error: str, map_context: _MapMessagesContext
     ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
         """The call whose action failed gets the error."""
-        if run.last_ran == -1 and run.screen is not None and not isinstance(run.screen, str):
+        if run.last_ran == -1 and run.screen is not None:
             # Nothing before it ran to carry the screen, and an error result can't hold an image.
             failed = BetaTextBlockParam(text=f'Failed: {error}', type='text')
             return _computer_result(block, False, failed, await self._map_tool_result_item(run.screen, map_context))
@@ -4568,16 +4568,19 @@ class _ComputerRun:
     last_ran: int
     """The index of the last call whose actions all ran, or -1."""
     outputs: list[Any]
-    """What each action returned, such as a zoom's image, in order."""
-    summary: Any
-    screen: Any
-    """The closing screenshot, or the note that replaced it in this request."""
+    """What each action returned, such as a zoom's image, in order, then any note left in the screenshot's place."""
+    summary: str | None
+    screen: BinaryImage | None
+    """The closing screenshot, unless it was left out of this request."""
 
     @classmethod
-    def of(cls, replay: ComputerReplay, metadata: ComputerResult, content: list[Any]) -> _ComputerRun:
+    def of(
+        cls, replay: ComputerReplay, metadata: ComputerResult, content: list[Any], screen: BinaryImage | None
+    ) -> _ComputerRun:
         counts = replay['computer_action_counts']
         ends = list(itertools.accumulate(counts))
-        performed = metadata.get('performed', ends[-1])
+        performed = metadata['performed']
+        summary = content[0] if content and isinstance(content[0], str) else None
         return cls(
             blocks=replay['computer_blocks'],
             ends=ends,
@@ -4585,9 +4588,9 @@ class _ComputerRun:
             performed=performed,
             error=metadata.get('error'),
             last_ran=max((index for index, end in enumerate(ends) if end <= performed), default=-1),
-            outputs=list(content[1:-1]),
-            summary=content[0] if content else None,
-            screen=content[-1] if len(content) > 1 else None,
+            outputs=content[summary is not None : len(content) - (screen is not None)],
+            summary=summary,
+            screen=screen,
         )
 
     def ran(self, index: int) -> bool:
