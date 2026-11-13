@@ -85,8 +85,8 @@ class DelegateModel(BaseModel):
         from pydantic_clai2.models.model_settings import ModelSettingsForm
 
         ModelSettingsForm.model_validate(value)
-        if 'base_url' in value:
-            raise ValueError('Set base_url in /model settings, where the model is built with it.')
+        if built := {'base_url', 'api_key'} & value.keys():
+            raise ValueError(f'Set {" and ".join(sorted(built))} in /model settings, where the model is built with it.')
         return value
 
     @model_serializer(mode='plain')

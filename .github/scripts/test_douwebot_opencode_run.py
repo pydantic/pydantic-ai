@@ -491,7 +491,7 @@ def test_logfire_token_exports_a_span_per_run(
     raised: type[BaseException] | None,
     failure: dict[str, object],
 ) -> None:
-    """Each run exports a span as it ends, with its plan, its place and how it failed, even when the chain raised."""
+    """Each run exports a span as it ends, with its plan, place, usage and how it failed, even when the chain raised."""
     refusal = subprocess.CalledProcessError(1, 'opencode')
     handover = [REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}]
     fake_opencode(monkeypatch, (REFUSED, refusal), (handover, refusal), (last_run, refusal if raised else None))
@@ -508,6 +508,8 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'OpenCode Go',
             'opencode_fallback.attempt': '1',
             'opencode_fallback.provider': 'opencode-go',
+            'opencode_fallback.steps': '0',
+            'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.go-limit',
             'opencode_fallback.error_status': '429',
             'opencode_fallback.step_finish': False,
@@ -517,6 +519,8 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'the primary Coding Plan',
             'opencode_fallback.attempt': '2',
             'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.steps': '0',
+            'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.rate-limit',
             'opencode_fallback.error_status': '429',
             'opencode_fallback.error_code': '1302',
@@ -527,9 +531,25 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'the backup Coding Plan',
             'opencode_fallback.attempt': '3',
             'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.steps': '1',
+            'opencode_fallback.tokens': '0',
             **failure,
         },
     ]
+
+
+def test_run_span_counts_steps_and_tokens_past_lines_that_are_not_events(
+    exported: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run's span counts each valid `step_finish` event and every kind of token it reports, skipping other lines."""
+    tokens = {'input': 30, 'output': 4, 'reasoning': 2, 'cache': {'read': 8, 'write': 1}}
+    step = {'type': 'step_finish', 'part': {'messageID': 'msg_1', 'reason': 'stop', 'tokens': tokens}}
+    stream = [b'\xff not an event', step, '{"type": "step_finish", "part": []}', step]
+    fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (stream, None))
+    douwebot_opencode_run.main()
+    _, served = exported
+    usage = {key: value for key, value in span_attributes(served).items() if key.endswith(('.steps', '.tokens'))}
+    assert usage == {'opencode_fallback.steps': '2', 'opencode_fallback.tokens': '90'}
 
 
 @pytest.mark.parametrize(
