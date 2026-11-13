@@ -179,21 +179,32 @@ def stamp_capability_parts(
     `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
     authority on its way to the model.
 
-    A `ModelResponse` from a capability below `'operator'` raises `UserError`. Requests and parts are copied, never
+    A `ModelResponse`, or a request with `instructions`, from a capability below `'operator'` raises `UserError`. Requests and parts are copied, never
     changed in place: a capability can enqueue a request it took from the run's history, which must stay as it was.
     """
     return [
-        replace(
-            message,
-            parts=[
-                _stamped(part, capability_id, ceiling) if isinstance(part, CapabilityPart) else part
-                for part in (within_ceiling(part, capability_id, ceiling) for part in message.parts)
-            ],
-        )
+        _request_within_ceiling(message, capability_id, ceiling)
         if isinstance(message, ModelRequest)
         else _response_within_ceiling(message, capability_id, ceiling)
         for message in messages
     ]
+
+
+def _request_within_ceiling(message: ModelRequest, capability_id: str, ceiling: Authority) -> ModelRequest:
+    """A copy of `message` with each part as a capability at `ceiling` may send it, and attributed to the capability."""
+    if ceiling != 'operator' and message.instructions is not None:
+        raise UserError(
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue a `ModelRequest` with '
+            "`instructions`, which the model reads in the application's voice. Send what it says as a "
+            '`CapabilityPart` instead.'
+        )
+    return replace(
+        message,
+        parts=[
+            _stamped(part, capability_id, ceiling) if isinstance(part, CapabilityPart) else part
+            for part in (within_ceiling(part, capability_id, ceiling) for part in message.parts)
+        ],
+    )
 
 
 def _response_within_ceiling(message: ModelResponse, capability_id: str, ceiling: Authority) -> ModelResponse:
