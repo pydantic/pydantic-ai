@@ -4269,8 +4269,10 @@ async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
 
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
     await agent.run('hi', run_id='run-pre-hook')
+    # A trailing request from `message_history`, as UI adapters send it, is stamped before hooks too.
+    await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')])], run_id='run-from-history')
 
-    assert seen == ['run-pre-hook']
+    assert seen == ['run-pre-hook', 'run-from-history']
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
