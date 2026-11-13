@@ -25,7 +25,6 @@ from typing import (
     cast,
     overload,
 )
-from urllib.parse import urlparse
 
 import anyio
 import pydantic_core
@@ -1973,9 +1972,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 def _host_derived_id(client: object) -> str | None:
     """The `id` an `MCPToolset` without one takes from its server URL's hostname, or `None` without a URL."""
     url = getattr(getattr(client, 'transport', None), 'url', None)
-    host = urlparse(url).hostname if isinstance(url, str) else None
-    # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
-    return host.replace(':', '-') if host else None
+    return _utils.host_derived_id(url) if isinstance(url, str) else None
 
 
 def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> MessageHandlerT:
@@ -2378,7 +2375,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
     and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
     in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
-    to disambiguate tools across multiple servers.
+    to disambiguate tools across multiple servers. An entry with both `command` and `url` runs `command`
+    and ignores `url` and `headers`.
 
     Environment variables can be referenced in the configuration file using:
 

@@ -58,6 +58,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
+    BenchmarkInstructions,
     Coder,
     CompactOnRequest,
     Planning,
@@ -75,9 +76,10 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
@@ -206,6 +208,10 @@ def _check_background_tools(merged: Any) -> None:
     assert callable(merged.tools)
 
 
+def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
+    assert merged.id == 'benchmark_instructions'
+
+
 def _check_sub_agents(merged: Any) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
@@ -304,6 +310,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
         _check_background_tools,
     ),
+    'BenchmarkInstructions': Combines(
+        'one fixed text; two would state it twice',
+        lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
+        _check_benchmark_instructions,
+    ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
     'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
@@ -393,6 +404,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
         lambda cls: (cls(answerer=_decline), cls(answerer=None)),
+    ),
+    'Peers': Narrows(
+        'one peer network per id; merging two networks would widen who receives messages',
+        lambda cls: (
+            cls(network=InMemoryPeerNetwork().join(handle='a')),
+            cls(network=InMemoryPeerNetwork().join(handle='b')),
+        ),
     ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',
@@ -579,7 +597,7 @@ def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch:
 
     # Any module the walk visits will do; the class it defines is re-exported elsewhere, so what
     # is under test is that the *import failure* is recorded as skipped rather than propagated.
-    a_capability_module = 'pydantic_ai_harness.subagents._capability'
+    a_capability_module = 'pydantic_ai_harness.sub_agents._capability'
 
     def wrapped_in_user_error() -> Exception:
         """What a capability raises when it builds something needing a missing extra at import.

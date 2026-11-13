@@ -405,6 +405,32 @@ evaluators:
 - MaxDuration: 2.0
 ```
 
+The short form passes its value as the first positional argument, so a keyword-only parameter uses the dict form even when it is the only one:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+@dataclass(kw_only=True)
+class MinimumLength(Evaluator):
+    minimum: int
+
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return len(ctx.output) >= self.minimum
+```
+
+In YAML:
+
+```yaml
+evaluators:
+- MinimumLength:
+    minimum: 4
+```
+
+The short form reads a mapping with string keys as keyword arguments, so a single parameter whose value is such a mapping, like a `dict` or a Pydantic model, uses the dict form too.
+
 ### 3. Multiple Parameters (Dict Form)
 
 ```yaml
