@@ -25,7 +25,7 @@ from pydantic_ai.computer_use import (
     SafetyCheck,
     Screenshot,
 )
-from pydantic_ai.exceptions import ToolFailed
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -359,6 +360,22 @@ async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requ
     assert 'tools' not in request
 
 
+async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_requests: None) -> None:
+    # The native tool would replace it, leaving tool search with nothing to load.
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock([])))
+    computer = ToolDefinition(
+        name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id, defer_loading=True
+    )
+    params = ModelRequestParameters(
+        function_tools=[computer],
+        native_tools=[ToolSearchTool(), COMPUTER_TOOL],
+        revealed_tool_names={'computer'},
+        allow_text_output=True,
+    )
+    with pytest.raises(UserError, match="OpenAI sends the 'computer' tool as its native computer tool"):
+        await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
+
+
 async def test_the_native_tool_is_sent_and_a_call_with_no_actions_is_answered_with_a_screenshot(
     allow_model_requests: None,
 ) -> None:
@@ -623,6 +640,9 @@ def _without_native_tools(profile: ModelProfile) -> ModelProfile:
     [
         pytest.param('gpt-5.2', True, None, id='a-model-without-it'),
         pytest.param('gpt-5.2', True, _without_native_tools, id='a-profile-that-lists-every-native-tool'),
+        pytest.param(
+            'gpt-5.5', True, ModelProfile(supported_native_tools=frozenset()), id='a-profile-without-native-tools'
+        ),
         # As `ComputerUse(native=False)` asks, so the model gets the tool's own actions.
         pytest.param('gpt-5.5', False, None, id='a-tool-that-opts-out'),
     ],
@@ -631,7 +651,7 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
     allow_model_requests: None,
     model_name: str,
     native: bool,
-    profile: Callable[[ModelProfile], ModelProfile] | None,
+    profile: ModelProfile | Callable[[ModelProfile], ModelProfile] | None,
 ) -> None:
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client), profile=profile)
