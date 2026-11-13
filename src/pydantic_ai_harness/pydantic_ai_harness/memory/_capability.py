@@ -378,7 +378,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     }
                 )
             try:
-                main, subfiles, files_truncated, error_type, self._run_source = await self._load_snapshot(ctx)
+                main, subfiles, files_truncated, error_type, source = await self._load_snapshot(ctx)
             except Exception as exc:
                 _record_load_error(span, type(exc).__name__)
                 if self.injection_errors == 'raise':
@@ -386,8 +386,10 @@ class Memory(AbstractCapability[AgentDepsT]):
                 return request_context
 
             if error_type is not None:
+                # The snapshot this run keeps is still the one history recorded, with the source it was recorded with.
                 _record_load_error(span, error_type)
                 return request_context
+            self._run_source = source
 
             main, withheld = self._withhold_flagged(ctx, main)
             snapshot = self._render_snapshot(
