@@ -207,9 +207,9 @@ async def main():
     print(result.output)
 ```
 
-Every boxd machine has a desktop, and the agent drives it through boxd's computer API, so nothing is installed first. The desktop needs boxd's default machine image at a recent version, so a fork or snapshot of an older image won't have it; use a fresh machine. It starts on the first action, in a few seconds, with no window manager, so apps the agent starts from the shell open at the top left without title bars. Commands get `DISPLAY` set for it, and boxd's default image has `xterm`. The desktop starts empty, with no taskbar or launcher: run `agent-browser open <url>` to open a browser on it, or `boxd-desktop-launch '<command>'` for any other app.
+Machines on boxd's current default image have a desktop, and the agent drives it through boxd's computer API, so nothing is installed first. A fork or snapshot of an older image doesn't have it; use a fresh machine. It starts on the first action, in a few seconds, with no window manager, so apps the agent starts from the shell open at the top left without title bars. Commands get `DISPLAY` set for it, and boxd's default image has `xterm`. The desktop starts empty, with no taskbar or launcher: run `agent-browser open <url>` to open a browser on it, or `boxd-desktop-launch '<command>'` for any other app.
 
-The screen is held at 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent can type any text, including accented letters and emoji.
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent can type any text, including accented letters and emoji.
 
 There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
 
@@ -271,7 +271,7 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |
-| `desktop` | Give the agent the machine's desktop for [`ComputerUse`](computer-use.md): `True` holds it at 1280x800, or pass its `(width, height)`. Default: `False`. |
+| `desktop` | Give the agent the machine's desktop for [`ComputerUse`](computer-use.md): `True` for 1280x800, or pass its `(width, height)`. Default: `False`. |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 
