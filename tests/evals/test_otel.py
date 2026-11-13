@@ -1138,7 +1138,7 @@ async def test_span_query_child_count():
 
 
 async def test_empty_sub_queries_are_real_conditions():
-    """Empty sub-queries are applied as written instead of skipped: `{}` matches every span, and `or_: []` matches none."""
+    """Empty sub-queries are applied as written, not skipped: `{}` matches every span and `or_: []` matches none."""
     with context_subtree() as tree:
         with logfire.span('root'):
             with logfire.span('child'):
