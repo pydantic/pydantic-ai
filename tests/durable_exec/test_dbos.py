@@ -179,8 +179,6 @@ pytestmark = [
     pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'),
 ]
 
-READINESS_WAIT_TIMEOUT = 10
-
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = httpx2.AsyncClient()
@@ -5151,7 +5149,10 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
 
 
-async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(dbos: DBOS) -> None:
+@pytest.mark.parametrize('nested', [False, True])
+async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    dbos: DBOS, nested: bool
+) -> None:
     """Parallel tool-call units each call through the stepped toolset they listed their tool on.
 
     A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit,
@@ -5182,7 +5183,7 @@ async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dyn
                 listed[ctx.tool_call_id] = self.serial
                 if len(listed) == 2:
                     both_listed.set()
-                async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                async with asyncio.timeout(10):
                     await both_listed.wait()
             return tools
 
@@ -5203,17 +5204,21 @@ async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dyn
             ]
         )
 
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        if nested:
+            # As `PrefixTools(Toolset(factory))` contributes from inside a dynamic capability.
+            return DynamicToolset(lambda ctx: StepStateToolset(FunctionToolset([echo])))
+        return StepStateToolset(FunctionToolset([echo]))
+
     agent = Agent(
         FunctionModel(model),
         deps_type=type(None),
-        name='dbos_parallel_run_held_dynamic',
-        toolsets=[
-            DynamicToolset(lambda ctx: StepStateToolset(FunctionToolset([echo])), per_run_step=False, id='step_state')
-        ],
+        name=f'dbos_parallel_run_held_dynamic_{nested}',
+        toolsets=[DynamicToolset(factory, per_run_step=False, id='step_state')],
         capabilities=[DBOSDurability()],
     )
 
-    @DBOS.workflow()
+    @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{nested}')
     async def run_agent() -> str:
         return (await agent.run('go')).output
 
