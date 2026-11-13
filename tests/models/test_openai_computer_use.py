@@ -1040,7 +1040,9 @@ async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(
     assert isinstance(final, ComputerCallPart) and final.actions == [Screenshot()]
     if not added:
         assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
-        assert isinstance(events[0], PartStartEvent) and events[0].part.args == {'actions': [{'type': 'screenshot'}]}
+        [start, _] = events
+        assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart)
+        assert start.part.args == {'actions': [{'type': 'screenshot'}]}
         return
     assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent']
     start, delta, _ = events
