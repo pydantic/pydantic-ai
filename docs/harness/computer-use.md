@@ -84,7 +84,7 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 | Setting | Default | What it does |
 |---|---|---|
 | `settle_seconds` | `0` | Wait this long after acting before the screenshot. Set it when screenshots show pages still loading or animating. |
-| `action_limits` | no limits | The most one action may ask for, as a [`ComputerUseActionLimits`][pydantic_ai_harness.computer_use.ComputerUseActionLimits]: `max_wait_seconds`, `max_hold_seconds`, `max_typed_chars`, `max_key_repeat`, `max_scroll_amount` and `max_drag_points`. A call over a limit is refused before any of its actions run, and the model is told which limit it went over. |
+| `action_limits` | no limits | The most one action may ask for, as a [`ComputerUseActionLimits`][pydantic_ai_harness.computer_use.ComputerUseActionLimits]: `max_wait_seconds`, `max_hold_seconds`, `max_typed_chars`, `max_key_repeat`, `max_scroll_amount` and `max_drag_points`. A call over a limit is refused before any of its actions run, and the model is told which limit it went over. Two `ComputerUse` on one agent keep the smaller value of each limit. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 `ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request resends the screenshots. Set
@@ -166,7 +166,7 @@ largest size that fits. A 1280x800 screen fits every model.
 - A position outside the screen fails the whole call before anything runs.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A call releases every mouse button it presses with `mouse_down`, so the next call, perhaps another agent's, starts with none pressed. A call that doesn't is refused before any action runs, and a button pressed by a call that fails is released.
+- A call releases every mouse button it presses with `mouse_down`, so the next call, perhaps another agent's, starts with none pressed. A call that doesn't is refused before any action runs, and a button pressed by a call that fails is released. If that release fails too, the call fails saying the button may still be held.
 
 ## Watching a run
 

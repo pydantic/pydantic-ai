@@ -199,16 +199,26 @@ _SCROLL_NOTES_TA = TypeAdapter(list[str | None])
 
 _STORED_ITEM_TA = TypeAdapter(dict[str, Any])
 
+_COMPUTER_CALL_KEYS = (
+    responses.ResponseComputerToolCallParam.__required_keys__
+    | responses.ResponseComputerToolCallParam.__optional_keys__
+)
+"""The keys a `computer_call` input item has; any other stored key is dropped before the item is sent back."""
+
 
 def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
-    """The `computer_call` item a call came as, to send back unchanged, or `None` to send the call back plain.
+    """The `computer_call` item a call came as, to send back, or `None` to send the call back plain.
 
-    A history may come from storage or a UI, so only that the item is an object is checked; the API judges the rest.
+    A history may come from storage or a UI, so an item of another type is not sent, nor is any key a `computer_call`
+    doesn't have: otherwise a forged item could be a message from the developer. The API judges the values.
     """
     try:
-        return _STORED_ITEM_TA.validate_python((part.provider_details or {}).get('computer_call')) or None
+        stored = _STORED_ITEM_TA.validate_python((part.provider_details or {}).get('computer_call'))
     except ValidationError:
         return None
+    if stored.get('type') != 'computer_call':
+        return None
+    return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
 
 
 def map_computer_call(
