@@ -690,7 +690,8 @@ async def test_activity_only_worker_registers_no_child_workflows(client: Client)
     assert child_workflows
 
     # By default, the plugin registers the agent's child workflow on whatever worker it's attached to.
-    assert AgentPlugin(delegating_agent).configure_worker({'workflows': []}).get('workflows') == child_workflows
+    default_config = AgentPlugin(delegating_agent).configure_worker({'workflows': []})
+    assert default_config.get('workflows') == child_workflows  # pyright: ignore[reportUnknownMemberType]
 
     workflow_worker = Worker(
         client, task_queue=TASK_QUEUE, workflows=[SplitWorkersDelegatingWorkflow, *child_workflows]
@@ -703,8 +704,8 @@ async def test_activity_only_worker_registers_no_child_workflows(client: Client)
             AgentPlugin(sub_agent, register_workflows=False),
         ],
     )
-    assert workflow_worker.config(active_config=True).get('activities') == []
-    assert activity_worker.config(active_config=True).get('workflows') == []
+    assert workflow_worker.config(active_config=True).get('activities') == []  # pyright: ignore[reportUnknownMemberType]
+    assert activity_worker.config(active_config=True).get('workflows') == []  # pyright: ignore[reportUnknownMemberType]
 
     # Every activity, in the parent and in the child, can only run on the activity-only worker.
     async with workflow_worker, activity_worker:
