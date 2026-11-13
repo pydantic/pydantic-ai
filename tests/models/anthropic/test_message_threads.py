@@ -702,7 +702,7 @@ async def test_leading_cache_point_starts_a_new_thread(allow_model_requests: Non
 
 
 async def test_history_digest_key(allow_model_requests: None):
-    """With `history_digest_key` the digest is an HMAC, and a response recorded under another key isn't continued."""
+    """With `history_digest_key` the digest and the fingerprint are HMACs, and another key's response isn't continued."""
     api = _Api()
     async with _model(api, history_digest_key=b'one') as model:
         agent = Agent(model, model_settings=_SETTINGS)
@@ -717,6 +717,8 @@ async def test_history_digest_key(allow_model_requests: None):
     keyed, unkeyed = first[-1], plain[-1]
     assert isinstance(keyed, ModelResponse) and isinstance(unkeyed, ModelResponse)
     assert keyed.history_digest != unkeyed.history_digest
+    assert keyed.provider_details and unkeyed.provider_details
+    assert keyed.provider_details['thread_fingerprint'] != unkeyed.provider_details['thread_fingerprint']
 
 
 @pytest.mark.parametrize(

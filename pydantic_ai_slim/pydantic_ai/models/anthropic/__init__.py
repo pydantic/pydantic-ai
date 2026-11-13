@@ -1095,8 +1095,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 The default 'anthropic' provider will use the default `..profiles.anthropic.anthropic_model_profile`.
             settings: Default model settings for this model instance.
             history_digest_key: A secret to key each thread response's
-                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] with (an HMAC-SHA256), so
-                stored history can't be used to test guesses at content redacted from it later. Every model
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] and `'thread_fingerprint'`
+                with (an HMAC-SHA256), so stored history can't be used to test guesses at content redacted from
+                it later. Every model
                 continuing the same conversations needs the same key; a response recorded with another key, or
                 none, starts a new thread rather than being continued.
         """
@@ -1807,7 +1808,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared.initial_thinking,
             prepared.initial_thinking_override,
         )
-        fingerprint = thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
+        fingerprint = thread_fingerprint(
+            params, prepared.initial_betas | {MESSAGE_THREADS_BETA}, self._history_digest_key
+        )
         if thread_unsupported(messages, fingerprint):
             thread_record.fingerprint = fingerprint
             return await send(None)

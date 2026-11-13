@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import hashlib
+import hmac
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -35,11 +36,13 @@ _THREAD_FIXED_PARAMS = (
 )
 
 
-def thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
+def thread_fingerprint(params: _MessageCreateParams, betas: set[str], key: bytes | None) -> str:
     """A digest of the fields a request must share with the thread's create request to continue it.
 
-    MCP authorization tokens may change between requests of a thread, so they're left out, also from servers that
-    `extra_body` sets. `fallbacks`, which only `extra_body` sends, may change too: only whether it's sent is fixed.
+    It's an HMAC with `key`, the model's `history_digest_key`, when there is one, like each response's
+    `history_digest`. MCP authorization tokens may change between requests of a thread, so they're left out, also
+    from servers that `extra_body` sets. `fallbacks`, which only `extra_body` sends, may change too: only whether
+    it's sent is fixed.
     """
     fixed: dict[str, object] = {name: params[name] for name in _THREAD_FIXED_PARAMS}
     extra_body = params['extra_body']
@@ -59,7 +62,9 @@ def thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     fixed['fallbacks'] = 'fallbacks' in overrides
     fixed['betas'] = sorted(betas)
     serialized = json.dumps(fixed, sort_keys=True, default=lambda _omit: None)
-    return hashlib.sha256(serialized.encode()).hexdigest()
+    hasher: Hasher = hashlib.sha256() if key is None else hmac.new(key, digestmod=hashlib.sha256)
+    hasher.update(serialized.encode())
+    return hasher.hexdigest()
 
 
 @dataclass(kw_only=True)
