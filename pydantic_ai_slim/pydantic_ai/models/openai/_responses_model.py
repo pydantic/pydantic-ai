@@ -141,6 +141,7 @@ from .. import (
     get_user_agent,
 )
 from .._decode_errors import check_json_response, map_decode_errors
+from .._history_digest import Hasher, continuation_digest, history_hasher
 from .._sdk_retries import with_max_retries
 from .._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ._caching import (
@@ -172,7 +173,7 @@ from ._errors import (
     response_error_type,
     status_error,
 )
-from ._history_digest import Hasher, continuation_digest, history_hasher, with_history_digest
+from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
 from ._native_tools import (

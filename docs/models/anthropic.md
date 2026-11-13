@@ -574,6 +574,36 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Message threads (Beta)
+
+In a long conversation, every request normally sends the whole history again. With Anthropic's [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads), Anthropic keeps the conversation and each request sends only what's new, which keeps time to first token low as the conversation grows. Set [`AnthropicModelSettings.anthropic_thread`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thread] to `True` to use them:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    instructions='Instructions...',
+    model_settings=AnthropicModelSettings(anthropic_thread=True),
+)
+
+result1 = agent.run_sync('Your question')  # creates a thread
+result2 = agent.run_sync('Follow-up question', message_history=result1.all_messages())  # sends only the new prompt
+```
+
+The thread is found from the message history, so nothing else needs to be kept: a request continues the thread of the most recent response, and leaves out the messages before it and the instructions and tools, which the thread keeps. A thread can't change its instructions, tools, thinking or other request-level settings, so a request where any of these changed starts a new thread with the full history instead. So does a request after a response from another model or a refusal, and one whose new messages open with a [`CachePoint`][pydantic_ai.messages.CachePoint]: it marks the end of the previous response, which a continue request can't send again. Threads expire 5 minutes after their last use; when Anthropic can no longer continue one, the full history is sent again in a new thread. If the most recent response, or the history before it, changed since it was sent (a history processor trimmed or redacted it, say), a new thread is started too, so the change isn't lost. A request using something threads don't support, such as context management, is sent without a thread, and so is one whose `extra_body` sets `messages`, which replaces the history the thread is built from.
+
+Each response sent in a thread records `'thread_fingerprint'` in its [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and a digest of its ID, its parts and the history it was created from as [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], which is how the next request knows it can continue. Keep both when you store the message history; a response without them starts a new thread. If the history comes from a client, pass a `history_digest_key` (see below) or leave threads off, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history). When Anthropic rejects a thread because the request uses something threads don't support, Pydantic AI warns and sends the request again without one, and the response records `'thread_unsupported': True` beside its `'thread_fingerprint'`. The next request with the same fixed fields is then sent without a thread straight away, and changing one of them tries a thread again.
+
+!!! warning "Redacting stored history"
+    The digest and the fingerprint are plain SHA-256 hashes by default, so anyone holding the stored history can use them to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] to make both HMACs. Every model continuing the same conversations needs the same key; a response recorded with a different key, or none, starts a new thread.
+
+    Anthropic still holds the unredacted thread until it expires. The redacted history is what gets sent from then on, in a new thread.
+
+!!! warning "Data retention"
+    Threads aren't eligible for Zero Data Retention: Anthropic holds the conversation, system prompt and tools in memory for up to an hour after the thread's last use. They're available on the Claude API, Claude Platform on AWS, Claude Models on Google Cloud (Anthropic managed) and Microsoft Foundry.
+
 ## Carried-over thinking
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.

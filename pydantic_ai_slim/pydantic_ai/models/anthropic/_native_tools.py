@@ -356,7 +356,7 @@ def map_mcp_server_tool(tool: MCPServerTool) -> BetaRequestMCPServerURLDefinitio
             enabled=bool(tool.allowed_tools),
             allowed_tools=tool.allowed_tools,
         )
-    if tool.authorization_token:  # pragma: no cover
+    if tool.authorization_token:
         mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
     return mcp_server_url_definition_param
 

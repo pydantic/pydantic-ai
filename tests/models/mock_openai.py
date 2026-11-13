@@ -19,8 +19,9 @@ with try_import() as imports_successful:
     from openai.types.responses.response_output_item import ResponseOutputItem
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
+    from pydantic_ai.models._history_digest import history_hasher
     from pydantic_ai.models.openai import NOT_GIVEN, OMIT
-    from pydantic_ai.models.openai._history_digest import history_hasher, with_history_digest
+    from pydantic_ai.models.openai._history_digest import with_history_digest
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
