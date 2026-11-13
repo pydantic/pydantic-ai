@@ -11,7 +11,25 @@ description: Connect a Pydantic AI agent to PostHog's hosted MCP server to query
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.](../img/harness/posthog.svg)
+```mermaid
+flowchart TB
+    accTitle: PostHog: analytics, SQL and feature flags through PostHog's MCP server
+    accDescr: Inside your agent, the model calls tools of the PostHog capability, such as posthog_posthog, and gets their results. Your auth function gives the capability a key for each run. The capability calls the PostHog MCP server at mcp.posthog.com/mcp with a Bearer token, a ?features= query and x-posthog-read-only, and with read_only=True the server drops the tools that make changes.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        posthog["PostHog()<br/>posthog_posthog,<br/>posthog_&lt;tool&gt;"]:::capability
+    end
+    server["PostHog MCP server<br/>mcp.posthog.com/mcp"]:::external
+    dropped["tools that make<br/>changes, with<br/>read_only=True"]:::blocked
+    model <-->|"tool call, result"| posthog
+    auth -->|"key for each run"| posthog
+    posthog <-->|"Bearer token,<br/>?features= query,<br/>x-posthog-read-only"| server
+    server -.-x|"drops"| dropped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Before you start
 
@@ -122,13 +140,13 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` or `features` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. PostHog's default mode serves one `posthog` tool that is not marked read-only, so this filter leaves no PostHog tools and emits an `MCPReadOnlyNoToolsWarning`; have your client send the `x-posthog-read-only: true` header instead. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` or `features` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. PostHog's default mode serves one `posthog` tool that is not marked read-only, so this filter leaves no PostHog tools and emits an `MCPReadOnlyNoToolsWarning`; have your client send the `x-posthog-read-only: true` header instead. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
 ## Telemetry
 
-`PostHog` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each PostHog tool call as a tool span, and connecting makes no decision worth a span of its own.
+`PostHog` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each PostHog tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -153,8 +171,6 @@ from pydantic_ai_harness import PostHog
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[PostHog])
 ```
-
-Pass `custom_capability_types` so the loader can create `PostHog` from the file.
 
 ## API reference
 
