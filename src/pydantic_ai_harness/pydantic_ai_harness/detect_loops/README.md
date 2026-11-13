@@ -128,7 +128,7 @@ If the judge raises, or doesn't answer within `timeout` (default `5.0`) seconds,
 
 ### Your own detector
 
-Subclass `LoopDetector` to use another methodology. `detect` is given a `StreamSample`: the `channel`, the part's latest `text` (its last `sample_chars` characters, `8000` unless you override the property), how many characters it has had in total and since the last check, and the `tool_name` for tool call arguments. Return a `Repetition` with the passage that repeats and how many times, or `None`:
+Subclass `LoopDetector` to use another methodology. `detect` is given a `StreamSample`: the `channel`, the part's latest `text` (its last `sample_chars` characters, `8000` unless you override the property), how many characters it has had in total and since the last check, and the `tool_name` for tool call arguments. Return a `Repetition` with the passage that repeats and how many times, or `None`. One instance serves every run of the agent, concurrent ones included, so keep it stateless or key any state off the `RunContext`:
 
 ```python
 from dataclasses import dataclass

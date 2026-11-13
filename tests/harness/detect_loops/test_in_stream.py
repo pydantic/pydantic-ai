@@ -679,6 +679,16 @@ class TestDetectLoops:
 
         assert str(exc_info.value) == message
 
+    def test_rejects_a_judge_agent_with_output_validators(self):
+        judge = Agent(_judge([]))
+
+        @judge.output_validator
+        def validate_output(output: str) -> str:  # pragma: no cover - construction raises before any run
+            return output
+
+        with pytest.raises(ValueError, match='must not have output validators'):
+            LoopJudge[object](agent=judge)
+
 
 class TestLoopJudge:
     async def test_the_judge_confirms_a_suspected_loop(self):

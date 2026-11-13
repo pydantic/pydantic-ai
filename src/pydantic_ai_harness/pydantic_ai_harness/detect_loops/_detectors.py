@@ -67,7 +67,8 @@ class LoopDetector(ABC, Generic[AgentDepsT]):
     isn't streamed is checked the same way when it arrives, so it gets the same answers.
 
     Subclass it to plug in your own methodology. `RepetitionDetector` is the default, and `LoopJudge`
-    asks a model.
+    asks a model. One instance serves every run of the agent, concurrent ones included, so keep it
+    stateless or key any state off the `RunContext`.
     """
 
     @property
@@ -254,6 +255,12 @@ class LoopJudge(LoopDetector[AgentDepsT]):
         else:
             if self.model is not None:
                 raise ValueError('Provide either a judge `model` or a judge `agent`, not both.')
+            # Pydantic AI has no public validator-introspection API; this is the list its run
+            # boundary checks before accepting a custom `output_type`.
+            if self.agent._output_validators:  # pyright: ignore[reportPrivateUsage]
+                raise ValueError(
+                    'A judge `agent` must not have output validators because each check sets a custom `output_type`.'
+                )
             self._judge = self.agent
 
     @property
