@@ -18,7 +18,6 @@ from pydantic_ai.computer_use import (
     ComputerToolAction,
     CursorPosition,
     HoldKeys,
-    MoveMouse,
     Screenshot,
     Wait,
     Zoom,
@@ -72,13 +71,9 @@ class FakeComputer(AbstractCapability[Any]):
         outputs: list[str | BinaryImage] = []
         for action in actions:
             if isinstance(action, Zoom):
-                region = action.region
-                zoomed = png(region.right - region.left, region.bottom - region.top)
-                outputs.append(BinaryImage(data=zoomed, media_type='image/png'))
+                outputs.append(BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png'))
             elif isinstance(action, CursorPosition):
-                moves = [done for done in self.actions if isinstance(done, MoveMouse)]
-                x, y = (moves[-1].x, moves[-1].y) if moves else (640, 400)
-                outputs.append(f'The pointer is at ({x}, {y}).')
+                outputs.append('The pointer is at (640, 400).')
             elif not isinstance(action, _LOOKING):
                 if ctx.workspace.read_only:
                     result['error'] = 'This workspace is read-only.'

@@ -308,14 +308,19 @@ class TestLiveDaytonaDesktop:
             finally:
                 await backend.aclose()
 
+    async def test_display_contract(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = backend.display
+        assert display is not None
+        assert await display.display_size() == (1280, 800)
+        await check_display_contract(display)
+
     async def test_keys_and_text_reach_the_focused_window(self, backend: WorkspaceBackend) -> None:
         """Validates the key mapping the fake assumes: a shifted symbol is shift and its key on Daytona's display."""
         assert isinstance(backend, DaytonaSandboxBackend)
         display = backend.display
         assert display is not None
-        assert await display.display_size() == (1280, 800)
-        await display.screenshot()  # an action waits for a screenshot of a desktop that just started
-        await check_display_contract(display)
+        await display.display_size()  # starts the desktop, so the terminal opens on it
         await backend.run(
             'setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" >/dev/null 2>&1 &',
             shell=True,

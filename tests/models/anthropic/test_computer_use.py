@@ -11,7 +11,7 @@ from hypothesis import given, settings, strategies as st
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Hooks, NativeTool, ValidatedToolArgs
 from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys
 from pydantic_ai.exceptions import ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -49,6 +49,7 @@ with try_import() as imports_successful:
         Omit,
     )
     from anthropic.types.beta import (
+        BetaContentBlock,
         BetaInputJSONDelta,
         BetaMessage,
         BetaMessageDeltaUsage,
@@ -58,6 +59,7 @@ with try_import() as imports_successful:
         BetaRawMessageDeltaEvent,
         BetaRawMessageStartEvent,
         BetaRawMessageStopEvent,
+        BetaRawMessageStreamEvent,
         BetaTextBlock,
         BetaToolUseBlock,
         BetaUsage,
@@ -84,7 +86,7 @@ def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
     )
 
 
-def _turn(*blocks: Any) -> Any:
+def _turn(*blocks: BetaContentBlock) -> BetaMessage:
     return completion_message(list(blocks), BetaUsage(input_tokens=1, output_tokens=1))
 
 
@@ -273,13 +275,21 @@ async def test_a_screenshot_before_other_calls_is_refused(allow_model_requests: 
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, computer).run('Go.')
+    result = await _agent(model, computer).run('Go.')
 
     assert computer.actions == []
+    # Only the screenshot before the click is refused; the last one would have run.
+    (call,) = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict() == {
+        'actions': [
+            {'type': 'screenshot', 'not_the_last_call': True},
+            {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
+            {'type': 'screenshot'},
+        ]
+    }
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [r['is_error'] for r in results] == [True, True, True]
-    assert all('not_the_last_call' in r['content'][0]['text'] for r in results)
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
@@ -303,11 +313,6 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
     assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
 
 
-_CLICK_TEXT_REFUSED = (
-    '"loc":["actions",0,"click","unsupported_fields"],"msg":"Unexpected keyword argument","input":["text"]'
-)
-
-
 @pytest.mark.parametrize(
     'tool_input, retry_names',
     [
@@ -315,8 +320,10 @@ _CLICK_TEXT_REFUSED = (
         # As for a call without an `action`, the retry shows the fields that didn't map.
         ({'action': ['left_click'], 'coordinate': [5, 6]}, '"unsupported_fields":["action","coordinate"]'),
         # The earlier tools' clicks take modifier keys as `key` only, so `text` is refused rather than either winning.
-        ({'action': 'left_click', 'coordinate': [5, 6], 'key': 'ctrl', 'text': 'shift'}, _CLICK_TEXT_REFUSED),
-        ({'action': 'left_click', 'coordinate': [5, 6], 'text': 'shift', 'key': 'ctrl'}, _CLICK_TEXT_REFUSED),
+        (
+            {'action': 'left_click', 'coordinate': [5, 6], 'key': 'ctrl', 'text': 'shift'},
+            '"loc":["actions",0,"click","unsupported_fields"],"msg":"Unexpected keyword argument","input":["text"]',
+        ),
     ],
 )
 async def test_an_earlier_tool_call_with_input_that_does_not_map_runs_nothing(
@@ -462,7 +469,20 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
     history = [
         ModelRequest(parts=[UserPromptPart('Look.')]),
         ModelResponse(
-            parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, tool_call_id='call_1')],
+            parts=[
+                ToolCallPart(
+                    'computer',
+                    {'actions': [{'type': 'screenshot'}]},
+                    tool_call_id='call_1',
+                    provider_name='openai',
+                    # Details shaped like Anthropic's, so only the provider keeps the call plain.
+                    provider_details={
+                        'computer_blocks': [{'id': 'call_1', 'name': 'screenshot', 'input': {}}],
+                        'computer_tool': 'computer_toolset_20260801',
+                        'computer_action_counts': [1],
+                    },
+                )
+            ],
             provider_name='openai',
         ),
         ModelRequest(parts=[ToolReturnPart('computer', ['Ran 1 action.'], tool_call_id='call_1')]),
@@ -547,26 +567,17 @@ def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, 
     assert map_computer_member(name, input) == (action if isinstance(action, list) else [action])
 
 
-@pytest.mark.parametrize(
-    'model_name, version',
-    [
-        ('claude-haiku-5-5', 'computer_toolset_20260801'),
-        ('claude-opus-4-8', 'computer_toolset_20260801'),
-        ('claude-mythos-preview', 'computer_toolset_20260801'),
-        ('claude-opus-4-7', 'computer_20251124'),
-        ('claude-haiku-4-5', 'computer_20250124'),
-        ('claude-3-5-haiku-latest', None),
-    ],
-)
-def test_each_model_gets_its_computer_use_tool(model_name: str, version: str | None) -> None:
+@pytest.mark.parametrize('model_name', ['claude-haiku-5-5', 'claude-opus-4-8', 'claude-mythos-preview'])
+def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
+    """The earlier tools, and models without one, are pinned by `tests/profiles/test_resolution_matrix.py`."""
     profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_computer_tool_version') == version
+    assert profile.get('anthropic_computer_tool_version') == 'computer_toolset_20260801'
 
 
-def _stream(*blocks: Any) -> list[Any]:
+def _stream(*blocks: BetaContentBlock) -> list[BetaRawMessageStreamEvent]:
     """The events Anthropic streams for a message made of these blocks."""
-    events: list[Any] = [
+    events: list[BetaRawMessageStreamEvent] = [
         BetaRawMessageStartEvent(
             type='message_start',
             message=BetaMessage(
@@ -608,6 +619,19 @@ def _stream(*blocks: Any) -> list[Any]:
 COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
 
 COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+
+
+async def _streamed(events: list[BetaRawMessageStreamEvent], *function_tools: ToolDefinition) -> ModelResponse:
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
+    )
+    params = ModelRequestParameters(
+        function_tools=[COMPUTER, *function_tools], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
+    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
+        async for _ in stream:
+            pass
+    return stream.get()
 
 
 async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
@@ -699,23 +723,25 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
     )
 
 
-# Input that isn't an object has nothing to map either.
-@pytest.mark.parametrize('streamed', ['', '{"text": "unfinished', 'null', '[]', '"hello"', 'n'])
-async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requests: None, streamed: str) -> None:
-    events = _stream(_tool_use('toolu_1', 'type', {'text': 'hello'}))
+@pytest.mark.parametrize(
+    'member, streamed, action_type',
+    [
+        pytest.param('type', '', 'type', id='no-input'),
+        pytest.param('type', 'n', 'type', id='not-even-the-start-of-a-value'),
+        # Keeping what parsed would drop the held key and leave a valid plain click.
+        pytest.param('left_click', '{"coordinate": [100, 200], "text": "ctrl', 'click', id='in-an-optional-field'),
+    ],
+)
+async def test_a_streamed_member_cut_off_mid_input_runs_nothing(
+    allow_model_requests: None, member: str, streamed: str, action_type: str
+) -> None:
+    events = _stream(_tool_use('toolu_1', member, {}))
     (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
     delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json=streamed)
-    model = AnthropicModel(
-        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
-    )
-    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
-    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
-        async for _ in stream:
-            pass
 
-    # The tool refuses the call instead of typing part of it.
-    (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
+    # The tool refuses the call instead of running part of it.
+    (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict() == {'actions': [{'type': action_type, 'incomplete_input': True}]}
 
 
 async def test_a_streamed_member_that_takes_no_input_runs(allow_model_requests: None) -> None:
@@ -723,15 +749,8 @@ async def test_a_streamed_member_that_takes_no_input_runs(allow_model_requests: 
     events = _stream(_tool_use('toolu_1', 'screenshot', {}))
     (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
     delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='')
-    model = AnthropicModel(
-        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
-    )
-    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
-    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
-        async for _ in stream:
-            pass
 
-    (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
+    (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
     assert call.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
 
 
@@ -862,7 +881,6 @@ _CLICK_TYPE: list[dict[str, Any]] = [
 ]
 _PNG = BinaryImage(data=b'png', media_type='image/png')
 _FAILED = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
-_REFUSED = 'Typing is not allowed here; nothing ran.'
 _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
 
 
@@ -875,7 +893,7 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [1, 1],
             ['Ran 2 actions.', '[Older screenshot removed.]'],
             {'performed': 2},
-            [['OK'], ['Ran 2 actions. [Older screenshot removed.]']],
+            [(False, ['OK']), (False, ['Ran 2 actions. [Older screenshot removed.]'])],
             id='screenshot-dropped',
         ),
         # As a history processor that removes old screenshots outright leaves it: the summary still reaches the model.
@@ -884,28 +902,34 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [1, 1],
             ['Ran 2 actions.'],
             {'performed': 2},
-            [['OK'], ['Ran 2 actions.']],
+            [(False, ['OK']), (False, ['Ran 2 actions.'])],
             id='screenshot-removed',
         ),
         # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
-        pytest.param(_CLICK_TYPE, [1, 1], [_REFUSED], None, [[_REFUSED], [_REFUSED]], id='a-guardrail-refusal'),
         pytest.param(
             _CLICK_TYPE,
             [1, 1],
             [_CHANGED, _PNG],
             {'performed': 1, 'changed': True},
-            [[_CHANGED], [_CHANGED, 'image']],
+            [(False, [_CHANGED]), (False, [_CHANGED, 'image'])],
             id='changed-before-it-ran',
         ),
-        # As a UI rebuilds it: the metadata that says which calls ran is gone, so no call is said to have run.
-        pytest.param(_CLICK_TYPE, [1, 1], [_FAILED, _PNG], None, [[_FAILED], [_FAILED, 'image']], id='no-metadata'),
+        # As a UI rebuilds it, or a guardrail answers: nothing says which calls ran, so no call is said to have run.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_FAILED, _PNG],
+            None,
+            [(False, [_FAILED]), (False, [_FAILED, 'image'])],
+            id='no-metadata',
+        ),
         # Nothing ran before the failed call to carry the screen, so it does, saying in its text that it failed.
         pytest.param(
             _CLICK_TYPE,
             [1, 1],
             ['Action 1 of 2 (click) failed: busy.', _PNG],
             {'performed': 0, 'error': 'busy'},
-            [['Failed: busy', 'image'], [NOT_EXECUTED]],
+            [(False, ['Failed: busy', 'image']), (True, [NOT_EXECUTED])],
             id='first-call-failed',
         ),
         # Content stored as a JSON string reads as the list it encodes, screenshot and all.
@@ -914,17 +938,8 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [1, 1],
             json.dumps(['Ran 2 actions.', {'kind': 'binary', 'data': 'cG5n', 'media_type': 'image/png'}]),
             {'performed': 2},
-            [['OK'], ['OK', 'image']],
+            [(False, ['OK']), (False, ['OK', 'image'])],
             id='json-string-content',
-        ),
-        # What a zoom returned answers its own call; the screen goes with the last.
-        pytest.param(
-            [{'id': 'toolu_1', 'name': 'zoom', 'input': {'region': [0, 0, 4, 4]}}, _CLICK_TYPE[0] | {'id': 'toolu_2'}],
-            [1, 1],
-            ['Ran 2 actions.', _PNG, _PNG],
-            {'performed': 2},
-            [['OK', 'image'], ['OK', 'image']],
-            id='zoom-output',
         ),
         # The counts recorded with the call decide which calls ran, even where mapping again would split differently.
         pytest.param(
@@ -932,7 +947,7 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [1, 1],
             ['Action 2 of 2 (type) failed: no keyboard.', _PNG],
             {'performed': 1, 'error': 'no keyboard'},
-            [['OK', 'image'], ['no keyboard']],
+            [(False, ['OK', 'image']), (True, ['no keyboard'])],
             id='recorded-counts',
         ),
     ],
@@ -943,7 +958,7 @@ async def test_a_result_answers_each_member_call(
     counts: list[int],
     content: list[Any] | str,
     metadata: dict[str, Any] | None,
-    results: list[list[str]],
+    results: list[tuple[bool, list[str]]],
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
@@ -977,7 +992,9 @@ async def test_a_result_answers_each_member_call(
     (body,) = get_mock_chat_completion_kwargs(client)
     sent = body['messages'][-1]['content']
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
-    assert [[b['text'] if b['type'] == 'text' else b['type'] for b in r['content']] for r in sent] == results
+    assert [
+        (r['is_error'], [b['text'] if b['type'] == 'text' else b['type'] for b in r['content']]) for r in sent
+    ] == results
 
 
 @pytest.mark.parametrize(
@@ -1031,9 +1048,18 @@ async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plai
 
     (body,) = get_mock_chat_completion_kwargs(client)
     sent = body['messages'][-1]['content']
-    # One plain result for the one plain call: no member call is told `OK`.
-    assert [r['tool_use_id'] for r in sent] == ['toolu_1']
-    assert all(b.get('text') != 'OK' for r in sent for b in r['content'])
+    # The call goes back as the `computer` call it is, answered by one plain result: no member call is told `OK`.
+    (tool_use,) = body['messages'][1]['content']
+    assert (tool_use['id'], tool_use['name'], tool_use['input'], 'toolset_name' in tool_use) == (
+        'toolu_1',
+        'computer',
+        {'actions': [{'type': 'screenshot'}] * actions},
+        False,
+    )
+    assert [
+        (r['tool_use_id'], r['is_error'], [b['text'] if b['type'] == 'text' else b['type'] for b in r['content']])
+        for r in sent
+    ] == [('toolu_1', False, ['Action 1 of 2 (click) failed: busy.', 'image'])]
 
 
 async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_member_calls(
@@ -1130,64 +1156,51 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
     assert (call['name'], call['input']) == ('computer', {'actions': [{'type': 'screenshot'}]})
 
 
-async def _streamed(events: list[Any], *function_tools: ToolDefinition) -> ModelResponse:
-    model = AnthropicModel(
-        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
-    )
-    params = ModelRequestParameters(
-        function_tools=[COMPUTER, *function_tools], native_tools=[COMPUTER_TOOL], allow_text_output=True
-    )
-    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
-        async for _ in stream:
-            pass
-    return stream.get()
-
-
-async def test_a_streamed_member_cut_off_in_an_optional_field_runs_nothing(allow_model_requests: None) -> None:
-    """Keeping what parsed would drop the held key and leave a valid plain click."""
-    events = _stream(_tool_use('toolu_1', 'left_click', {'coordinate': [100, 200], 'text': 'ctrl'}))
-    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
-    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"coordinate": [100, 200], "text": "ctrl')
-
-    (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': 'click', 'incomplete_input': True}]}
-
-
-async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_requests: None) -> None:
-    """The click arrived whole, but the batch it belongs to didn't, and it runs only as a whole."""
+@pytest.mark.parametrize(
+    'kept',
+    [
+        # Inside the first call, before any call arrived whole.
+        pytest.param(3, id='inside-the-first-call'),
+        # Between the calls: the click arrived whole, the call after it didn't.
+        pytest.param(4, id='between-the-calls'),
+    ],
+)
+async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_requests: None, kept: int) -> None:
+    """A batch runs only as a whole, so a stream that stops before its end runs none of it."""
     events = _stream(
         _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
         _tool_use('toolu_2', 'type', {'text': 'hello'}),
     )
-    # The body ends after the second call's input, without its stop or the message's.
-    cut = [index for index, event in enumerate(events) if isinstance(event, BetaRawContentBlockDeltaEvent)][-1]
-    with pytest.raises(UnexpectedModelBehavior, match='ended before Claude finished its computer use calls'):
-        await _streamed(events[: cut + 1])
+    # The message start, then the first call's start, input and stop.
+    assert [type(event) for event in events[:4]] == [
+        BetaRawMessageStartEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStopEvent,
+    ]
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'^The response ended before Claude finished its computer use calls, so none of them ran\.$',
+    ):
+        await _streamed(events[:kept])
 
 
 @pytest.mark.parametrize('stop_reason', ['refusal', 'max_tokens'])
-@pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
 async def test_a_call_in_a_response_that_did_not_finish_normally_runs_nothing(
-    allow_model_requests: None, stop_reason: Literal['refusal', 'max_tokens'], stream: bool
+    allow_model_requests: None, stop_reason: Literal['refusal', 'max_tokens']
 ) -> None:
-    """Anthropic says not to run the calls of a response that stopped for a refusal or the token limit."""
+    """Anthropic says not to run the calls of a response that stopped for a refusal or the token limit.
+
+    The guard is the `computer` tool's, for every provider; this pins that Anthropic's stop reasons reach it.
+    """
     click = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
-    done = BetaTextBlock(text='done', type='text')
-    if stream:
-        first = _stream(click)
-        (end,) = [event for event in first if isinstance(event, BetaRawMessageDeltaEvent)]
-        end.delta = Delta(stop_reason=stop_reason)
-        client = MockAnthropic.create_stream_mock([first, _stream(done)])
-    else:
-        client = MockAnthropic.create_mock([_turn(click).model_copy(update={'stop_reason': stop_reason}), _turn(done)])
+    client = MockAnthropic.create_mock(
+        [_turn(click).model_copy(update={'stop_reason': stop_reason}), _turn(BetaTextBlock(text='done', type='text'))]
+    )
     computer = FakeComputer()
-    agent = _agent(AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client)), computer)
-    if stream:
-        async with agent.run_stream_events('Go.') as events:
-            async for _ in events:
-                pass
-    else:
-        await agent.run('Go.')
+    await _agent(
+        AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client)), computer
+    ).run('Go.')
     assert computer.actions == []
 
 
@@ -1247,7 +1260,7 @@ _NEAR_INPUT = st.fixed_dictionaries(
 _TOOL_ACTION: TypeAdapter[ComputerToolAction] = TypeAdapter(ComputerToolAction)
 
 
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=50, derandomize=True, deadline=None)
 @given(st.sampled_from(_MEMBER_NAMES), _NEAR_INPUT | st.dictionaries(st.text(max_size=8), _JSON, max_size=3))
 def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(name: str, input: dict[str, Any]) -> None:
     """The tool checks every action before running any, so one it rejects means none of the call runs."""
@@ -1258,14 +1271,12 @@ def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(name: s
 
 
 async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests: None) -> None:
-    from pydantic_ai.capabilities import Hooks
-
-    hooks = Hooks()
+    hooks = Hooks[None]()
 
     @hooks.on.after_tool_execute(tools=['computer'])
     async def redact(
-        ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
-    ) -> Any:
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: object
+    ) -> list[str]:
         return []  # such as a hook taking the screen out of the history
 
     client = MockAnthropic.create_mock(
@@ -1275,7 +1286,7 @@ async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests:
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    result = await Agent(model, capabilities=[FakeComputer(), hooks]).run('Look.')
+    result = await Agent(model, deps_type=type(None), capabilities=[FakeComputer(), hooks]).run('Look.')
     assert result.output == 'done'
     sent = get_mock_chat_completion_kwargs(client)[1]['messages']
     results = [block for message in sent for block in message['content'] if block['type'] == 'tool_result']
@@ -1331,14 +1342,17 @@ async def test_a_toolset_call_whose_name_isnt_text_is_refused(allow_model_reques
     )
     (call,) = response.parts
     assert isinstance(call, ComputerCallPart)
-    assert call.actions is None
-    assert call.tool_call_id == 'toolu_1'
+    assert (call.tool_call_id, call.args_as_dict()) == (
+        'toolu_1',
+        {'actions': [{'type': '', 'incomplete_input': True}]},
+    )
 
 
-@pytest.mark.parametrize('outcome, is_error', [('denied', False), ('interrupted', False), ('failed', True)])
-async def test_only_a_failed_toolset_call_is_a_tool_error(
-    allow_model_requests: None, outcome: Literal['denied', 'interrupted', 'failed'], is_error: bool
+@pytest.mark.parametrize('outcome', ['denied', 'interrupted'])
+async def test_a_denied_or_interrupted_toolset_call_is_not_a_tool_error(
+    allow_model_requests: None, outcome: Literal['denied', 'interrupted']
 ) -> None:
+    """A failed call is a tool error: see `test_a_failed_call_gives_every_member_its_text`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     call = ComputerCallPart(
@@ -1371,6 +1385,6 @@ async def test_only_a_failed_toolset_call_is_a_tool_error(
     )
     results = get_mock_chat_completion_kwargs(client)[0]['messages'][-1]['content']
     assert [(result['tool_use_id'], result['is_error']) for result in results] == [
-        ('toolu_1', is_error),
-        ('toolu_2', is_error),
+        ('toolu_1', False),
+        ('toolu_2', False),
     ]

@@ -118,8 +118,7 @@ class TestLiveE2BDesktop:  # pragma: lax no cover
 
             e2b.Sandbox.kill(backend.ref.id)
 
-    async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, E2BSandboxBackend)
+    async def test_typed_text_reaches_the_focused_window(self, backend: E2BSandboxBackend) -> None:
         display = backend.display
         assert display is not None
         await display.display_size()  # starts the display

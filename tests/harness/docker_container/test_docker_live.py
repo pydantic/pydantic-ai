@@ -165,9 +165,13 @@ class TestLiveDockerDesktop:
         if backend.ref is not None:
             await _destroy(backend)
 
+    async def test_display_contract(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DockerContainerBackend)
+        assert backend.display is not None
+        await check_display_contract(backend.display)
+
     async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
         display = await _focused_typing_window(backend)
-        await check_display_contract(display)
         await display.act(TypeText(text='hello, Desktop! @#?\t~'))
         await display.act(PressKeys(keys=('?',)))
         await display.act(PressKeys(keys=('enter',)))
@@ -188,7 +192,6 @@ async def _focused_typing_window(backend: WorkspaceBackend) -> Display:
     display = backend.display
     assert display is not None
     await display.display_size()  # starts the display
-    await display.screenshot()  # an action waits for a screenshot of a display that just started
     await backend.run(
         'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
         shell=True,
