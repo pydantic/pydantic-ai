@@ -3928,7 +3928,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
-            toolset = CombinedToolset([output_toolset, toolset])
+            toolset = _agent_graph.OutputToolsFirstToolset([output_toolset, toolset])
 
         return toolset
 

@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import time
+import weakref
 from collections import deque
 from collections.abc import (
     AsyncGenerator,
@@ -29,11 +30,12 @@ from copy import copy, deepcopy
 from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, NoReturn, TypeAlias, TypeGuard, assert_never, cast
 from weakref import WeakValueDictionary
 
 import anyio
 from opentelemetry.trace import Tracer
+from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from pydantic_ai._fallback import AttemptLog
@@ -163,6 +165,8 @@ from .toolsets._deferred_capability_loader import (
     resolve_loaded_capability_instructions,
 )
 from .toolsets._instruction_collection import collect_toolset_instructions
+from .toolsets.abstract import ToolsetTool
+from .toolsets.combined import CombinedToolset
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -1003,6 +1007,26 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Shared by reference and mutated in place, for the same reason as `durable_operations`.
     """
+
+    output_submissions: dict[str, _output.OutputSubmission] = dataclasses.field(
+        default_factory=dict[str, _output.OutputSubmission], repr=False
+    )
+    """`RunContext.submit_output` calls this step, keyed by the submitting tool call's ID.
+
+    Runtime-only: filled while a step's tool calls run and read by the step's tool call processor,
+    which makes an accepted submission that call's output (see `_tool_execution.py`)."""
+    run_submission: _output.OutputSubmission | None = dataclasses.field(default=None, repr=False)
+    """The `RunContext.submit_output` call made outside a tool call, such as from a capability hook.
+
+    Runtime-only: the run ends with it once accepted, before the next model request is sent or as the
+    first output of the response being handled (see `ModelRequestNode` and `CallToolsNode`)."""
+    final_result_reached: bool = dataclasses.field(default=False, repr=False)
+    """Whether the run has its final result, after which `RunContext.submit_output` is refused."""
+    prepared_output_tool_defs: list[ToolDefinition] | None = dataclasses.field(default=None, repr=False)
+    """The output tools as this step's `prepare_output_tools` hooks left them, recorded once they're prepared.
+
+    Runtime-only: read by `RunContext.output_tool_defs`, so a wrapper toolset building its tools after them
+    (like Code Mode's catalog) and the step's tools see what this step accepts. `None` before any step."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -2218,6 +2242,46 @@ def _record_carried_attempts(
         request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
 
 
+_RUN_SUBMISSION_TOOL_CALL_ID = 'pyd_ai_run_output_submission'
+"""The tool call ID output hooks see for a submission made outside a tool call.
+
+Fixed rather than generated, so workflow code that a durable engine replays makes the same submission."""
+
+
+class _OutputSubmitted(Exception):
+    """Raised before a model request is sent once the run's output was submitted outside a tool call.
+
+    `ModelRequestNode` catches it, like `SkipModelRequest`, and ends the run instead of sending the request.
+    """
+
+
+def _short_circuited_response(task: asyncio.Task[_messages.ModelResponse]) -> _messages.ModelResponse:
+    """The response of a `wrap_model_request` that returned without calling its handler, or skipped the request."""
+    try:
+        return task.result()
+    except exceptions.SkipModelRequest as e:
+        return e.response
+
+
+def _output_submitted(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> bool:
+    return (submission := ctx.deps.run_submission) is not None and submission.status == 'accepted'
+
+
+def _raise_if_output_submitted(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    if _output_submitted(ctx):
+        raise _OutputSubmitted
+
+
+def _discard_output_submitted_during_step(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Drop the output submitted outside a tool call while the request step was running, as it's being retried.
+
+    A submission made before the step ends it before its request hooks run, so an accepted one here came from a
+    hook during the step, like `after_model_request` building it from a response that a later hook rejected.
+    """
+    if _output_submitted(ctx):
+        ctx.deps.run_submission = None
+
+
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
     """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
 
@@ -2287,9 +2351,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     suspended tail on the request messages so the continuation loop in the innermost
     `model_request`/`model_request_stream` helpers can echo it back to complete the turn."""
 
-    _result: CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | None = field(
-        repr=False, init=False, default=None
-    )
+    _result: (
+        CallToolsNode[DepsT, NodeRunEndT]
+        | ModelRequestNode[DepsT, NodeRunEndT]
+        | SetFinalResult[DepsT, NodeRunEndT]
+        | None
+    ) = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
     _capability_load_records: list[_enqueue.CapabilityLoadRecord] = field(
         repr=False, init=False, default_factory=list[_enqueue.CapabilityLoadRecord]
@@ -2314,7 +2381,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | SetFinalResult[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
@@ -2351,6 +2418,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         request_context, run_context = await self._prepare_request(ctx, streaming=True)
+        if _output_submitted(ctx):
+            # Submitted before this step, from a run or node hook: the request isn't sent, so no request hook runs.
+            self._did_stream = True
+            self._end_with_submitted_output(ctx)
+            async with self._empty_agent_stream(ctx, request_context.model_request_parameters) as agent_stream:
+                yield agent_stream
+            return
 
         # Cooperative hand-off between this coroutine and the wrap_model_request task:
         # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
@@ -2397,6 +2471,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
             _handler_request_context = req_ctx
+            _raise_if_output_submitted(ctx)
             baseline = _AttemptBaseline.capture(
                 req_ctx,
                 self._step_model_settings,
@@ -2523,25 +2598,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if wrap.task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
-                try:
-                    model_response = wrap.task.result()
-                except exceptions.SkipModelRequest as e:
-                    model_response = e.response
-            except exceptions.ModelRetry as e:
+                model_response = _short_circuited_response(wrap.task)
+            except (_OutputSubmitted, exceptions.ModelRetry) as e:
                 self._did_stream = True
-                # No response is committed, so the step is not counted in `usage.requests`.
-                run_context = build_run_context(ctx)
-                await self._build_retry_node(ctx, e)
+                await self._end_step_without_response(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
-                dummy_sr = CompletedStreamedResponse(
-                    _messages.ModelResponse(parts=[]),
-                    model_request_parameters=wrap_request_context.model_request_parameters,
-                )
-                agent_stream = self._build_agent_stream(ctx, dummy_sr, wrap_request_context.model_request_parameters)
-                try:
+                async with self._empty_agent_stream(ctx, wrap_request_context.model_request_parameters) as agent_stream:
                     yield agent_stream
-                finally:
-                    await agent_stream.aclose_events()
                 return
             except Exception as error:
                 if error is not handoff.open_error:
@@ -2687,6 +2750,37 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _usage_attribution.record_request(ctx.state.usage)
         ctx.state.message_history.append(recorded)
 
+    async def _end_step_without_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        error: _OutputSubmitted | exceptions.ModelRetry,
+    ) -> None:
+        """End a streamed step whose request a model request hook stopped before it was sent.
+
+        A hook either submitted the run's output or raised `ModelRetry`. No response is committed, so the
+        step is not counted in `usage.requests`.
+        """
+        if isinstance(error, _OutputSubmitted):
+            self._end_with_submitted_output(ctx)
+        else:
+            await self._build_retry_node(ctx, error)
+
+    @asynccontextmanager
+    async def _empty_agent_stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+        model_request_parameters: models.ModelRequestParameters,
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
+        """An agent stream with no events, for a streamed step that ends without a response."""
+        empty_sr = CompletedStreamedResponse(
+            _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
+        )
+        agent_stream = self._build_agent_stream(ctx, empty_sr, model_request_parameters)
+        try:
+            yield agent_stream
+        finally:
+            await agent_stream.aclose_events()
+
     @staticmethod
     def _build_agent_stream(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
@@ -2714,11 +2808,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | SetFinalResult[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result  # pragma: no cover
 
         request_context, run_context = await self._prepare_request(ctx, streaming=False)
+        if _output_submitted(ctx):
+            # Submitted before this step, from a run or node hook: the request isn't sent, so no request hook runs.
+            return self._end_with_submitted_output(ctx)
 
         state = _HandlerState()
         _handler_called = False
@@ -2731,6 +2828,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx = await self._apply_before_model_request(
                 ctx, run_context, req_ctx, original_request_context=request_context
             )
+            _raise_if_output_submitted(ctx)
             return await self._request_attempts(ctx, run_context, req_ctx, state)
 
         root_capability = ctx.deps.root_capability
@@ -2748,6 +2846,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     model_response = await _outside_attempts(model_handler(request_context))
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
+            except _OutputSubmitted:
+                await _settle_pending(state.pending, None)
+                return self._end_with_submitted_output(ctx)
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
@@ -3296,6 +3397,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         root_capability = ctx.deps.root_capability
         processed_context = await root_capability.prepare_model_request(run_context, request_context)
+        _raise_if_output_submitted(ctx)
         # Like the before-chain, a hook may return a copy: keep the object outer wrappers hold.
         attempt_model = processed_context.model
         # After `prepare_model_request`, so capability model wrappers apply to the model serving this attempt, including
@@ -3548,6 +3650,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         In place because outer `wrap_model_request` wrappers hold this object: mutating it is how
         instrumentation and other wrappers observe which model actually served the request.
         """
+        _discard_output_submitted_during_step(ctx)
         if request_context.attempt >= MAX_MODEL_REQUEST_ATTEMPTS:
             raise exceptions.UserError(
                 f'Model request was attempted more than the maximum of {MAX_MODEL_REQUEST_ATTEMPTS} times: '
@@ -3771,6 +3874,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
+    def _end_with_submitted_output(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> SetFinalResult[DepsT, NodeRunEndT]:
+        """End the run with the output submitted outside a tool call, instead of sending this step's request.
+
+        The request stays in history, so the tool returns it carries still answer their calls.
+        """
+        submission = ctx.deps.run_submission
+        assert submission is not None and submission.status == 'accepted'
+        # No response will answer this step's request-scoped prompts.
+        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+        self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, submission.output)))
+        return self._result
+
     async def _build_retry_node(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -3781,6 +3898,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
         self._emit_capability_load_records(ctx)
+        _discard_output_submitted_during_step(ctx)
         m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
@@ -4062,7 +4180,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
-            async with aclosing(_run_stream()) as events:
+            async with aclosing(self._events_for_response(ctx, _run_stream)) as events:
                 async for event in events:
                     self.model_response.workspace_ref = ctx.deps.workspace_ref
                     yield event
@@ -4076,12 +4194,43 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
+    def _events_for_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        handle_response: Callable[[], AsyncGenerator[_messages.AgentStreamEvent, None]],
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
+        """Handle the response, unless output was submitted outside a tool call, which ends the run instead.
+
+        A suspended response is always left to `handle_response`, which ends the run on it or refuses it.
+        """
+        submission = ctx.deps.run_submission
+        if self.model_response.state == 'suspended' or submission is None or submission.status != 'accepted':
+            return handle_response()
+        return self._end_with_run_submission(ctx, submission.output)
+
+    async def _end_with_run_submission(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]], output: Any
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
+        """End the run with output submitted outside a tool call, such as from `after_model_request`.
+
+        It counts as an output tool call at the start of the response, so `end_strategy` decides what happens
+        to the response's tool calls, and none is left unanswered.
+        """
+        submitted = result.FinalResult(cast(NodeRunEndT, output))
+        if tool_calls := [part for part in self.model_response.parts if isinstance(part, _messages.ToolCallPart)]:
+            async with aclosing(self._handle_tool_calls(ctx, tool_calls, submitted=submitted)) as events:
+                async for event in events:
+                    yield event
+        else:
+            self._next_node = self._handle_final_result(ctx, submitted, [])
+
     async def _handle_tool_calls(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
+        submitted: result.FinalResult[NodeRunEndT] | None = None,
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
@@ -4139,10 +4288,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # supporting prose (it doesn't know we might treat that text as final), so text must not silently
         # cancel either. A co-emitted output tool call therefore still produces the final result, and a
         # co-emitted deferred call is still surfaced, rather than being preempted by the text.
-        final_result: result.FinalResult[NodeRunEndT] | None = None
-        if response_output is not None and all(
-            (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
-            for call in tool_calls
+        final_result: result.FinalResult[NodeRunEndT] | None = submitted
+        if (
+            final_result is None
+            and response_output is not None
+            and all(
+                (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
+                for call in tool_calls
+            )
         ):
             text, files = response_output
             final_result = await self._process_response_output(ctx, text=text, files=files)
@@ -4297,6 +4450,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
+        ctx.deps.final_result_reached = True
         messages = ctx.state.message_history
 
         # To allow this message history to be used in a future run without dangling tool calls,
@@ -4325,6 +4479,7 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
+        ctx.deps.final_result_reached = True
         return End(self.final_result)
 
 
@@ -4455,6 +4610,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        _output_submitter=_GraphOutputSubmitter(weakref.ref(ctx.state), weakref.ref(ctx.deps)),
         workspace=ctx.deps.workspace,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
@@ -4842,6 +4998,282 @@ def _build_output_run_context(
         retry=ctx.state.output_retries_used,
         max_retries=ctx.deps.max_output_retries,
     )
+
+
+@dataclasses.dataclass
+class OutputToolsFirstToolset(CombinedToolset[DepsT]):
+    """The output toolset combined with the other tools, preparing the output tools first.
+
+    The other tools then see them as this step's `prepare_output_tools` hooks left them, through
+    `RunContext.output_tool_defs`: Code Mode builds its sandbox's output functions from them.
+    """
+
+    async def get_tools(self, ctx: RunContext[DepsT]) -> dict[str, ToolsetTool[DepsT]]:
+        output_toolset, toolset = self.toolsets
+        output_tools = await output_toolset.get_tools(ctx)
+        # Only a `RunContext` built outside an agent run has no submitter.
+        if (submitter := ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+            submitter.record_prepared_tool_defs([tool.tool_def for tool in output_tools.values()])
+        return self._merge_tools([output_tools, await toolset.get_tools(ctx)])
+
+
+@dataclasses.dataclass
+class _GraphOutputSubmitter(Generic[DepsT]):
+    """Backs `RunContext.output_tool_defs` and `RunContext.submit_output` with the run's output pipeline."""
+
+    state: weakref.ref[GraphAgentState]
+    deps: weakref.ref[GraphAgentDeps[DepsT, Any]]
+    """Both weak, since the run's state holds run contexts: strong references would keep the run, and its
+    `deps`, alive until garbage collection. The run holds them as long as it can still submit."""
+
+    @property
+    def ctx(self) -> GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]:
+        state, deps = self.state(), self.deps()
+        if state is None or deps is None:
+            raise exceptions.UserError('The run this context belongs to has ended, so it has no output to submit.')
+        return GraphRunContext(state=state, deps=deps)
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        if (deps := self.deps()) is None:
+            return []
+        prepared = (
+            None if deps.prepared_output_tool_defs is None else {d.name: d for d in deps.prepared_output_tool_defs}
+        )
+        tool_defs: list[ToolDefinition] = []
+        for target in _output.output_submission_targets(deps.output_schema).values():
+            if target.route != 'tool' or prepared is None:
+                tool_defs.append(target.tool_def)
+            elif (prepared_def := prepared.get(target.tool_def.name)) is not None:
+                tool_defs.append(prepared_def)
+        return tool_defs
+
+    def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
+        self.ctx.deps.prepared_output_tool_defs = tool_defs
+
+    def discard_submission(self, tool_call_id: str) -> None:
+        # A hook like a guardrail refused the call, so what an earlier hook submitted for it doesn't count.
+        self.ctx.deps.output_submissions.pop(tool_call_id, None)
+
+    async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
+        if ctx._in_durable_unit:  # pyright: ignore[reportPrivateUsage]
+            # The engine records the tool's return value, and replaying it wouldn't submit again.
+            raise exceptions.UserError(
+                '`submit_output` cannot be called from a tool that runs as a durable step or task, '
+                "since replaying the tool's recorded result would not submit the output again."
+            )
+        if _output.in_output_pipeline():
+            raise exceptions.UserError(
+                '`submit_output` cannot be called while output is being validated or processed, '
+                'such as from an output function, output validator or output hook.'
+            )
+        tool_call_id = ctx.tool_call_id
+        if tool_call_id is None:
+            await self._submit_for_run(tool_name, args)
+            return
+        submissions = self.ctx.deps.output_submissions
+        if tool_call_id in submissions:
+            raise exceptions.UserError(f'Tool call {tool_call_id!r} already submitted an output with `submit_output`.')
+        # Recorded before processing, so a concurrent second submission from the same call is refused too.
+        submission = submissions[tool_call_id] = _output.OutputSubmission()
+
+        target = _output.output_submission_targets(self.ctx.deps.output_schema).get(tool_name)
+        try:
+            if target is None:
+                self._reject(f'Unknown output tool {tool_name!r}.')
+            elif target.route == 'tool':
+                output = await self._submit_to_output_tool(tool_name, args, tool_call_id=tool_call_id)
+            else:
+                output = await self._submit_as_text(target, args)
+        except ToolRetryError as e:
+            submission.status = 'rejected'
+            raise ToolRetryError(_bind_retry_to_tool_call(e.tool_retry, ctx)) from e
+        except exceptions.UnexpectedModelBehavior as e:
+            # Out of output retries. Answer the call like any rejection: the step's tool call processor
+            # raises this only if no other output in the response becomes the final result.
+            submission.status = 'rejected'
+            submission.exhausted = e
+            feedback = _messages.RetryFeedbackPart(content=str(e), retry=_messages.RetryInfo(cause='validation_error'))
+            raise ToolRetryError(_bind_retry_to_tool_call(feedback, ctx)) from e
+        submission.status = 'accepted'
+        submission.output = output
+
+    async def _submit_for_run(self, tool_name: str, args: dict[str, Any]) -> None:
+        """Submit the run's output from outside a tool call, such as from a capability hook.
+
+        There's no tool call to answer, so a rejection is raised as a `ModelRetry` to the caller, and
+        doesn't use up an output retry. The run ends with an accepted submission at the next point it
+        would otherwise continue: see `ModelRequestNode` and `CallToolsNode`.
+        """
+        deps = self.ctx.deps
+        if deps.final_result_reached:
+            raise exceptions.UserError('`submit_output` was called after the run already had its final result.')
+        if deps.run_submission is not None and deps.run_submission.status != 'rejected':
+            raise exceptions.UserError('This run already submitted an output with `submit_output` outside a tool call.')
+        # Recorded before processing, so a concurrent second submission is refused too.
+        submission = deps.run_submission = _output.OutputSubmission()
+
+        target = _output.output_submission_targets(deps.output_schema).get(tool_name)
+        try:
+            if target is None:
+                raise exceptions.ModelRetry(f'Unknown output tool {tool_name!r}.')
+            elif target.route == 'tool':
+                output = await self._submit_to_output_tool(
+                    tool_name, args, tool_call_id=_RUN_SUBMISSION_TOOL_CALL_ID, for_run=True
+                )
+            else:
+                output = await self._submit_as_text(target, args, for_run=True)
+        except (ValidationError, exceptions.ModelRetry) as e:
+            submission.status = 'rejected'
+            raise _run_submission_rejection(e) from e
+        submission.status = 'accepted'
+        submission.output = output
+
+    def _reject(self, message: str) -> NoReturn:
+        feedback = _messages.RetryFeedbackPart(content=message, retry=_messages.RetryInfo(cause='model_retry'))
+        error = ToolRetryError(feedback)
+        self.ctx.state.consume_output_retry(self.ctx.deps.max_output_retries, error=error, feedback=feedback)
+        raise error
+
+    async def _submit_to_output_tool(
+        self, tool_name: str, args: dict[str, Any], *, tool_call_id: str, for_run: bool = False
+    ) -> Any:
+        """Run the submission through the output tool of that name, like `_ToolCallProcessor._run_output_tool_call`.
+
+        With `for_run`, a rejection is raised as is, without using up a retry.
+        """
+        tool_manager = await self._output_tool_manager()
+        tool = (tool_manager.tools or {}).get(tool_name)
+        if tool is None or tool.tool_def.kind != 'output':
+            # A `prepare_output_tools` hook left it out of this step.
+            message = f'Output tool {tool_name!r} is not available right now.'
+            if for_run:
+                raise exceptions.ModelRetry(message)
+            self._reject(message)
+
+        schema = self.ctx.deps.output_schema
+        call = _messages.ToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id)
+        if for_run:
+            validated = await tool_manager.validate_output_tool_call(call, schema=schema, wrap_validation_errors=False)
+            return await tool_manager.execute_output_tool_call(validated, schema=schema, wrap_validation_errors=False)
+        try:
+            validated = await tool_manager.validate_output_tool_call(call, schema=schema)
+            if not validated.args_valid:
+                assert isinstance(validated.validation_error, ToolRetryError)
+                raise validated.validation_error
+            return await tool_manager.execute_output_tool_call(validated, schema=schema)
+        except ToolRetryError:
+            self.ctx.state.output_retries_used += 1
+            raise
+        except exceptions.UnexpectedModelBehavior as e:
+            wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({tool.max_retries})')
+            raise wrapped from e.__cause__ or e
+
+    async def _output_tool_manager(self) -> ToolManager[DepsT]:
+        """The run's tool manager, or before the run's first step, one for the output tools prepared on their own.
+
+        Unlike other toolsets, output tools need no entering, so code that runs before the first step, like
+        `before_run`, can submit to them as the `prepare_output_tools` hooks leave them.
+        """
+        tool_manager = self.ctx.deps.tool_manager
+        if tool_manager.tools is not None or not isinstance(tool_manager.toolset, OutputToolsFirstToolset):
+            return tool_manager
+        output_toolset = tool_manager.toolset.toolsets[0]
+        return await ToolManager[DepsT](output_toolset, root_capability=tool_manager.root_capability).for_run_step(
+            build_run_context(self.ctx)
+        )
+
+    async def _submit_as_text(
+        self, target: _output.OutputSubmissionTarget, args: dict[str, Any], *, for_run: bool = False
+    ) -> Any:
+        """Run the submission through the text processor, as if the model had written it as its output.
+
+        With `for_run`, a rejection is raised as is, without using up a retry.
+        """
+        schema = self.ctx.deps.output_schema
+        text_processor = schema.text_processor
+        assert text_processor is not None
+        run_context = _build_output_run_context(self.ctx)
+        if for_run:
+            return await _output.run_output_with_hooks(
+                text_processor,
+                text=target.raw_text(args),
+                run_context=run_context,
+                capability=self.ctx.deps.root_capability,
+                schema=schema,
+                wrap_validation_errors=False,
+                output_validators=self.ctx.deps.output_validators,
+            )
+        try:
+            try:
+                text = target.raw_text(args)
+            except (ValidationError, exceptions.ModelRetry) as e:
+                raise _output.make_retry_signal(e, run_context) from e
+            return await _output.run_output_with_hooks(
+                text_processor,
+                text=text,
+                run_context=run_context,
+                capability=self.ctx.deps.root_capability,
+                schema=schema,
+                output_validators=self.ctx.deps.output_validators,
+            )
+        except ToolRetryError as e:
+            self.ctx.state.consume_output_retry(self.ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
+            raise
+
+
+def _run_submission_rejection(error: ValidationError | exceptions.ModelRetry) -> exceptions.ModelRetry:
+    """The `ModelRetry` a rejected submission from outside a tool call raises, with validation errors as JSON."""
+    if isinstance(error, exceptions.ModelRetry):
+        return error
+    details = _messages._dump_error_details(  # pyright: ignore[reportPrivateUsage]
+        error.errors(include_url=False, include_context=False, include_input=False)
+    )
+    return exceptions.ModelRetry(_messages.tool_return_ta.dump_json(details, by_alias=True).decode())
+
+
+def _bind_retry_to_tool_call(
+    retry: _messages.RetryFeedbackPart | _messages.ToolReturnPart, ctx: RunContext[Any]
+) -> _messages.ToolReturnPart:
+    """The retry a rejected `submit_output` answers its calling tool call with."""
+    assert ctx.tool_name is not None and ctx.tool_call_id is not None
+    content: _messages.ToolReturnContent
+    if isinstance(retry, _messages.ToolReturnPart):
+        content, retry_info = retry.content, retry.retry
+    else:
+        # Text output's feedback: its causes other than `'model_retry'` mean the submission didn't validate.
+        content = retry.content
+        if not isinstance(content, str):
+            content = _messages._dump_error_details(content)  # pyright: ignore[reportPrivateUsage]
+        retry_info = _messages.RetryInfo[_messages.ToolRetryCause](
+            'model_retry' if retry.retry.cause == 'model_retry' else 'validation_error',
+            attempt=retry.retry.attempt,
+            max_retries=retry.retry.max_retries,
+        )
+    return _messages.ToolReturnPart(
+        tool_name=ctx.tool_name,
+        content=_without_submitted_values(content),
+        tool_call_id=ctx.tool_call_id,
+        outcome='retried',
+        retry=retry_info,
+    )
+
+
+def _without_submitted_values(content: _messages.ToolReturnContent) -> _messages.ToolReturnContent:
+    """Validation errors without the values that failed, which the tool submitted rather than the model wrote.
+
+    The field locations and messages are what the model needs to correct its call; the submitted values could
+    hold data the tool didn't otherwise return to the model.
+    """
+    if not isinstance(content, list):
+        return content
+    # Validation errors are dicts of JSON data, whatever else a tool return's list could hold.
+    details = cast(list[Any], content)
+    return [_without_input(cast(dict[str, Any], detail)) if isinstance(detail, dict) else detail for detail in details]
+
+
+def _without_input(detail: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in detail.items() if key != 'input'}
 
 
 @dataclasses.dataclass

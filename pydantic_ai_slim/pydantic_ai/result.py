@@ -24,6 +24,7 @@ from ._output import (
     OutputValidatorFunc,
     TextOutputSchema,
     is_incomplete_json,
+    output_pipeline_scope,
     run_image_process_hooks,
     run_output_with_hooks,
     truncated_output_message,
@@ -177,8 +178,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
-                for validator in self._output_validators:
-                    text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
+                with output_pipeline_scope():
+                    for validator in self._output_validators:
+                        text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
 
     async def cancel(self) -> None:
