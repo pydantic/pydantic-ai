@@ -163,9 +163,14 @@ def unattended_only(
 
 
 def _is_approval_handler(capability: AgentCapability[AgentDepsT]) -> bool:
-    while isinstance(capability, WrapperCapability):
-        capability = capability.wrapped
-    return isinstance(capability, ApprovalHandler)
+    candidate: AbstractCapability[AgentDepsT] | None = (
+        capability if isinstance(capability, AbstractCapability) else None
+    )
+    while candidate is not None:
+        if isinstance(candidate, ApprovalHandler):
+            return True
+        candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
+    return False
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
