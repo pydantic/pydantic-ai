@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -52,7 +53,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness._background_completion import make_background_result
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
 from pydantic_ai_harness.compaction._summary import summary_request
@@ -1253,7 +1254,12 @@ class TestCapabilityPartsAreSearchable:
     """What a capability told the model is conversation, so it is indexed, labeled with its kind rather than as the user's."""
 
     async def test_a_background_tool_result_is_indexed_and_labeled_with_its_kind(self) -> None:
-        result = make_background_result('fetch_report', 'call-1', 'the QUOKKA figures are in')
+        result = BackgroundToolResultPart(
+            content='the QUOKKA figures are in',
+            source=ToolResultSource(tool_name='fetch_report', tool_call_id='call-1'),
+            tool_name='fetch_report',
+            tool_call_id='call-1',
+        )
         history: list[ModelMessage] = [_user('start the report'), ModelRequest(parts=[result])]
         rendered = await _search(_StubSource({'r1': history}), 'QUOKKA')
         assert '[background_tools.tool_result]: the QUOKKA figures are in' in rendered
