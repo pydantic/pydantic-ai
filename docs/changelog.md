@@ -23,6 +23,14 @@ Functionality deprecated in a V2 release keeps working until V3, and using it ra
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.62.0 (2026-10-26)
+
+- See [#11111](https://github.com/pydantic/pydantic-ai/pull/11111) - A model request that names a `thinking` effort level emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent], which a durability `event_stream_handler=` receives in an event-handler activity or step of its own. This can break replay of durable workflows paused across the upgrade: see [Temporal](durable_execution/temporal.md#streaming) and [DBOS](durable_execution/dbos.md#streaming) for who is affected and how to upgrade.
+
+### v2.60.0 (2026-10-22)
+
+- See [#9405](https://github.com/pydantic/pydantic-ai/pull/9405) - A tool that joins the agent's tools mid-run emits a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent], which a durability `event_stream_handler=` receives in an event-handler activity or step of its own. This can break replay of durable workflows paused across the upgrade: see [Temporal](durable_execution/temporal.md#streaming) and [DBOS](durable_execution/dbos.md#streaming) for who is affected and how to upgrade.
+
 ### v2.0.0 (2026-06-23)
 
 The stable V2.0 release. There are no new breaking or behavior changes since the betas; the full breaking-change list and recommended upgrade path are in the [v2.0.0b1](#v200b1-2026-05-20) entry below. Install it with:
