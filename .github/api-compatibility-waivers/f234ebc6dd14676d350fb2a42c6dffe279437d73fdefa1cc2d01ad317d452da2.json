@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "KeyReference.name keeps the same pattern; it now reads it from the shared `KEY_NAME` constant, so the model settings `api_key` field cannot drift from `/keys` names.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13275"
+}
