@@ -6,11 +6,11 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from functools import partial
 from importlib import import_module
-from typing import Any, Self
+from typing import Annotated, Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Json, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue
 
 from pydantic_ai import (
     Agent,
@@ -138,6 +138,30 @@ def test_typed_tool_arguments_are_restored_from_json(durable_worker: 'InMemoryWo
         assert run_agent(durable_worker, agent, 'Hi', deps=7).output == 'done'
     assert observed == [42]
     assert validated == [42]
+
+
+def test_aliased_tool_arguments_are_restored_from_json(durable_worker: 'InMemoryWorker') -> None:
+    """The activity input carries validated arguments by Python name, nested models included."""
+
+    class Place(BaseModel):
+        city: str = Field(alias='cityName')
+
+    observed: list[tuple[str, Place]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        args = {'guestName': 'Ada', 'place': {'cityName': 'Paris'}}
+        return ModelResponse(parts=[ToolCallPart('book', args)] if len(messages) == 1 else [TextPart('done')])
+
+    agent = Agent(FunctionModel(model), name='aliased-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def book(guest: Annotated[str, Field(alias='guestName')], place: Place) -> str:
+        observed.append((guest, place))
+        return 'booked'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [('Ada', Place(cityName='Paris'))]
 
 
 def test_choice_action_output_and_partial_output(durable_worker: 'InMemoryWorker') -> None:

@@ -9,12 +9,13 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -1261,6 +1262,78 @@ async def test_single_model_arg_named_like_its_field_keeps_its_arguments(client:
 
     assert output == 'Done.'
     assert _received_jobs == [Job(data={'path': '/reports'}, dry_run=True)]
+
+
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+class Place(BaseModel):
+    city: str = Field(alias='cityName')
+
+
+_received_bookings: list[tuple[str, Venue, Place]] = []
+"""The arguments `book` ran with, recorded in the activity."""
+
+
+def book(guest: Annotated[str, Field(alias='guestName')], venue: Venue, place: Place) -> str:
+    """Book a venue."""
+    _received_bookings.append((guest, venue, place))
+    return 'Booked.'
+
+
+def _book_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        args = {'guestName': 'Ada', 'venue': {'roomName': 'A1'}, 'place': {'cityName': 'Paris'}}
+        return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='c1')])
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_book_durable_agent = Agent(
+    FunctionModel(_book_model),
+    name='aliased_args_durable',
+    tools=[book],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_book_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_book_model), name='aliased_args_wrapped', tools=[book]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BookWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _book_durable_agent if path == 'durability' else _book_wrapped_agent
+        result = await agent.run('Book room A1 in Paris for Ada.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_aliased_args_reach_the_activity(client: Client, path: str):
+    """A tool's aliased arguments run in the activity with the values the workflow validated.
+
+    Validated arguments are keyed by Python name, `{'guest': 'Ada', 'venue': {'room': 'A1'}, ...}`, while the
+    tool's schema reads `guestName` and `roomName`. The nested `Place` reaches the activity by alias, as
+    Temporal's converter serializes it.
+    """
+    _received_bookings.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BookWorkflow],
+        plugins=[AgentPlugin(_book_durable_agent if path == 'durability' else _book_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            BookWorkflow.run,
+            args=[path],
+            id=f'{BookWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert _received_bookings == [('Ada', {'room': 'A1'}, Place(cityName='Paris'))]
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -4,9 +4,10 @@ import dataclasses
 import inspect
 from dataclasses import dataclass
 from datetime import date
+from typing import Annotated
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
@@ -155,6 +156,48 @@ async def test_function_arguments_are_revalidated_after_the_json_boundary() -> N
         )
     ]
     assert 'typed-arguments__function_toolset__<agent>.call_tool' in context.task_names
+
+
+class AliasedPlace(BaseModel):
+    city: str = Field(alias='cityName')
+
+
+def aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('aliased arguments arrived')])
+    args = {'guestName': 'Ada', 'place': {'cityName': 'Paris'}}
+    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
+
+
+async def test_aliased_function_arguments_are_revalidated_after_the_json_boundary() -> None:
+    """Render's JSON codec ships validated arguments by Python name, nested models included."""
+    seen: list[tuple[str, AliasedPlace]] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(aliased_argument_model),
+        name='aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def book(guest: Annotated[str, Field(alias='guestName')], place: AliasedPlace) -> str:
+        seen.append((guest, place))
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book Paris for Ada')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    context = RecordingTaskContext()
+    pending = run_agent.func(context)
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'aliased arguments arrived'
+    assert seen == [('Ada', AliasedPlace(cityName='Paris'))]
+    assert 'aliased-arguments__function_toolset__<agent>.call_tool' in context.task_names
 
 
 async def test_invalid_typed_arguments_follow_normal_model_retry_control_flow() -> None:

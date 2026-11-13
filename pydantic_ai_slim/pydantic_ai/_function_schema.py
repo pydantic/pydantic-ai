@@ -80,10 +80,17 @@ class FunctionSchema:
         For a single model-like argument they're the `{name: value}` envelope, which `validator` reads as
         unwrapped input when the model also has a field called `name` that accepts a dict. Here the
         envelope's content is validated as the model's input, which is what the first validation produced.
+
+        The arguments are keyed by Python name, and so are nested values an engine serializes by name, while
+        `validator` reads aliases. When that reading fails, they're validated again by name.
         """
-        if self.single_arg_name is None:
-            return self.validator.validate_python(args_dict, context=context)
-        return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
+        value = args_dict if self.single_arg_name is None else _Revalidated(args_dict[self.single_arg_name])
+        try:
+            return self.validator.validate_python(value, context=context)
+        except ValidationError:
+            # Not `by_name=True` up front: where an alias is missing but another field ships under its
+            # Python name, reading by name would change arguments the alias reading gets right.
+            return self.validator.validate_python(value, context=context, by_name=True)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)

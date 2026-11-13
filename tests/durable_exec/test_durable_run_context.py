@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter
+from pydantic_core import to_jsonable_python
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.durable_exec import (
@@ -176,6 +179,146 @@ async def test_revalidate_function_call_reads_a_single_model_argument_as_it_was_
         toolset, ToolsetCallToolParams('run_job', tool_args=transported, ctx=ctx, tool=foreign), engine_spec=SPEC
     )
     assert params.tool_args == transported
+
+
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+@dataclass
+class Seat:
+    row: Annotated[int, Field(alias='rowNumber')]
+
+
+class Place(BaseModel):
+    city: str = Field(alias='cityName')
+
+
+class Revision(BaseModel):
+    draft: int = Field(0, alias='draftNumber', exclude=True)
+    number: int = Field(alias='draft')
+
+
+def alias(city: Annotated[str, Field(alias='cityName')]) -> None:
+    pass
+
+
+def alias_choices(city: Annotated[str, Field(validation_alias=AliasChoices('cityName', 'town'))]) -> None:
+    pass
+
+
+def alias_path(city: Annotated[str, Field(validation_alias=AliasPath('place', 'city'))]) -> None:
+    pass
+
+
+def alias_default(city: Annotated[str, Field(alias='cityName')] = 'Paris') -> None:
+    pass
+
+
+def alias_kwargs(city: Annotated[str, Field(alias='cityName')], **counts: int) -> None:
+    pass
+
+
+def typed_dict(venue: Venue, guests: int) -> None:
+    pass
+
+
+def single_typed_dict(venue: Venue) -> None:
+    pass
+
+
+def stdlib_dataclass(seat: Seat, guests: int) -> None:
+    pass
+
+
+def model(place: Place, guests: int) -> None:
+    pass
+
+
+def excluded_field(revision: Revision, guests: int) -> None:
+    pass
+
+
+@dataclass(frozen=True)
+class RevalidationCase:
+    id: str
+    function: Callable[..., None]
+    model_args: dict[str, Any]
+    wire: Literal['by_name', 'by_alias']
+    """How the engine writes nested models: Render and Azure Durable Task by Python name, Temporal by alias."""
+    shipped: dict[str, Any]
+
+
+REVALIDATION_CASES = [
+    RevalidationCase('alias', alias, {'cityName': 'Paris'}, 'by_name', {'city': 'Paris'}),
+    RevalidationCase('alias-choices', alias_choices, {'town': 'Paris'}, 'by_name', {'city': 'Paris'}),
+    RevalidationCase('alias-path', alias_path, {'place': {'city': 'Paris'}}, 'by_name', {'city': 'Paris'}),
+    RevalidationCase('alias-default', alias_default, {}, 'by_name', {'city': 'Paris'}),
+    RevalidationCase(
+        'alias-kwargs', alias_kwargs, {'cityName': 'Paris', 'nights': 2}, 'by_name', {'city': 'Paris', 'nights': 2}
+    ),
+    RevalidationCase(
+        'typed-dict',
+        typed_dict,
+        {'venue': {'roomName': 'A1'}, 'guests': 2},
+        'by_alias',
+        {'venue': {'room': 'A1'}, 'guests': 2},
+    ),
+    RevalidationCase('single-typed-dict', single_typed_dict, {'roomName': 'A1'}, 'by_alias', {'venue': {'room': 'A1'}}),
+    RevalidationCase(
+        'stdlib-dataclass',
+        stdlib_dataclass,
+        {'seat': {'rowNumber': 3}, 'guests': 2},
+        'by_alias',
+        {'seat': {'row': 3}, 'guests': 2},
+    ),
+    RevalidationCase(
+        'model-by-name',
+        model,
+        {'place': {'cityName': 'Paris'}, 'guests': 2},
+        'by_name',
+        {'place': {'city': 'Paris'}, 'guests': 2},
+    ),
+    RevalidationCase(
+        'model-by-alias',
+        model,
+        {'place': {'cityName': 'Paris'}, 'guests': 2},
+        'by_alias',
+        {'place': {'cityName': 'Paris'}, 'guests': 2},
+    ),
+    RevalidationCase(
+        'excluded-field',
+        excluded_field,
+        {'revision': {'draft': 7}, 'guests': 2},
+        'by_alias',
+        {'revision': {'draft': 7}, 'guests': 2},
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REVALIDATION_CASES])
+async def test_revalidate_function_call_reads_aliased_arguments_as_they_were_validated(case: RevalidationCase):
+    """Arguments keyed by Python name come back as they were validated, even where the model's schema reads an alias.
+
+    Validated arguments are keyed by Python name. Each engine ships them as its serializer writes them, and
+    the model-facing validator reads aliases only. Arguments it already reads correctly, like a nested model
+    shipped by alias, keep that reading: for `excluded-field`, reading by name would give `Revision.draft`
+    the value of `number`, which ships under the key `draft`. Not a VCR test: no model request is involved.
+    """
+    toolset = FunctionToolset[None]([case.function])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    name = case.function.__name__
+    tool = (await toolset.get_tools(ctx))[name]
+    validated = tool.args_validator.validate_python(case.model_args)
+    if case.wire == 'by_name':
+        assert JSON_CODEC.load(dict[str, Any], JSON_CODEC.dump(dict[str, Any], validated)) == case.shipped
+    else:
+        assert to_jsonable_python(validated, by_alias=True) == case.shipped
+
+    params = await revalidate_function_call(
+        toolset, ToolsetCallToolParams(name, tool_args=case.shipped, ctx=ctx, tool=tool), engine_spec=SPEC
+    )
+    assert params.tool_args == validated
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():
