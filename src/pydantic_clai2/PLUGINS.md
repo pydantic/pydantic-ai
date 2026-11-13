@@ -1454,8 +1454,8 @@ The same picker asks about the calls [`/permissions`](docs/reference.md#permissi
 `approval_ask`, which puts each held call to the answerer as a question with `Approve`, `Approve for this session`,
 and `Deny`; a typed answer denies the call with it as the reason. The held command is printed in full above the
 picker first, since the picker cuts its question to the rows it has (`TerminalAnswerer.ask_approval`); a
-replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds `approval_handler` with its
-own approver; without one, held calls are denied.
+replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds
+`approval_handler` with its own approver; without one, held calls are denied.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
