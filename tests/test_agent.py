@@ -2470,7 +2470,8 @@ def test_output_type_text_output_function_alias_named_like_hidden_arg():
     """`TextOutput` sends the text to a hidden arg named like the str arg's alias, a known gap.
 
     The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
-    after a parameter's Python name keeps naming that parameter.
+    after a parameter's Python name keeps naming that parameter. https://github.com/pydantic/pydantic-ai/issues/13438
+    tracks the gap.
     Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
     """
 
