@@ -7686,6 +7686,7 @@ def test_load_messages_file_part_ignores_non_dict_vendor_metadata() -> None:
     assert file_parts[0].content.vendor_metadata is None
 
 
+@requires_ag_ui('0.1.11')
 def test_load_messages_ignores_non_dict_provider_details() -> None:
     """A client can send anything as `provider_details`, and models read it as a dict, so a non-dict is dropped.
 
