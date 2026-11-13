@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import warnings
 from copy import copy
-from types import ModuleType
 from typing import Literal, TypeVar
 
 from typing_extensions import TypedDict
@@ -60,16 +59,6 @@ def warn_module_renamed(old: str, new: str, *, reason: str = '') -> None:
         category=HarnessDeprecationWarning,
         stacklevel=2,
     )
-
-
-def forward_renamed(module: ModuleType, name: str) -> object:
-    """`getattr(module, name)` for a renamed module's shim, re-pointing any deprecation it warns at the shim's caller."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        value = getattr(module, name)
-    for warning in caught:
-        warnings.warn(warning.message, category=warning.category, stacklevel=3)
-    return value
 
 
 def warn_default_changed(

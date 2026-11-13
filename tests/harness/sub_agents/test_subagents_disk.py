@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -20,7 +21,7 @@ from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import HarnessDeprecationWarning, sub_agents
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.sub_agents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.sub_agents._disk import ParsedAgent, parse_agent_markdown
 
@@ -66,6 +67,9 @@ def _user_warnings(record: pytest.WarningsRecorder) -> list[warnings.WarningMess
 
 class TestClampEffort:
     def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', HarnessDeprecationWarning)
+            sub_agents = importlib.import_module('pydantic_ai_harness.subagents')
         with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
             floor = sub_agents.MINIMUM_EFFORT_FLOOR
             clamp = sub_agents.clamp_effort

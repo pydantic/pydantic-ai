@@ -4,8 +4,7 @@ Renamed to the snake_case of its capability, `FileSystem`. Importing from here s
 `HarnessDeprecationWarning`. Import from `pydantic_ai_harness.file_system` instead.
 """
 
-from pydantic_ai_harness import file_system as _file_system
-from pydantic_ai_harness._warn import forward_renamed, warn_module_renamed
+from pydantic_ai_harness._warn import warn_class_renamed, warn_module_renamed
 from pydantic_ai_harness.file_system import (
     CREATE_DIRECTORY_KIND,
     DEFAULT_TOOL_NAMES,
@@ -118,4 +117,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    return forward_renamed(_file_system, name)
+    if name == 'FileChangeRequestEvent':
+        warn_class_renamed(name, 'FileChangeRequestedEvent', __name__)
+        return FileChangeRequestedEvent
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

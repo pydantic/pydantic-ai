@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
@@ -3758,11 +3759,15 @@ class TestDurableClock:
 
 def test_spend_composition_warning_is_a_deprecated_alias() -> None:
     """`SpendCompositionWarning` is no longer emitted, but importing it keeps working with a deprecation warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', HarnessDeprecationWarning)
+        spend = importlib.import_module('pydantic_ai_harness.spend')
     with pytest.warns(
-        HarnessDeprecationWarning, match='`pydantic_ai_harness.spend_limits.SpendCompositionWarning` is deprecated'
+        HarnessDeprecationWarning, match='`pydantic_ai_harness.spend.SpendCompositionWarning` is deprecated'
     ):
-        alias = spend_limits.SpendCompositionWarning
+        alias = spend.SpendCompositionWarning
     assert alias is SpendCompositionWarning
+    assert 'SpendCompositionWarning' not in spend_limits.__all__
 
     with pytest.raises(AttributeError, match='has no attribute'):
-        _ = spend_limits.NotAnExport
+        _ = spend.NotAnExport

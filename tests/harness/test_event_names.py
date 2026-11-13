@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import re
+import warnings
 from types import ModuleType
 
 import pytest
@@ -29,23 +31,34 @@ from pydantic_ai_harness.planning import (
 )
 
 
+def _renamed_module(name: str) -> ModuleType:
+    """The deprecated shim at `pydantic_ai_harness.<name>`, which keeps the old event names."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', HarnessDeprecationWarning)
+        return importlib.import_module(f'pydantic_ai_harness.{name}')
+
+
+old_filesystem = _renamed_module('filesystem')
+old_subagents = _renamed_module('subagents')
+
+
 @pytest.mark.parametrize(
     ('module', 'old_name', 'new_name', 'kind'),
     [
-        (filesystem, 'FileChangeRequestEvent', 'FileChangeRequestedEvent', 'file_system.file_change_request'),
+        (old_filesystem, 'FileChangeRequestEvent', 'FileChangeRequestedEvent', 'file_system.file_change_request'),
         (step_persistence, 'SnapshotSaved', 'SnapshotSavedEvent', 'step_persistence.snapshot_saved'),
-        (subagents, 'DelegationStartEvent', 'DelegationStartedEvent', 'sub_agents.delegation_start'),
-        (subagents, 'DelegationEndEvent', 'DelegationFinishedEvent', 'sub_agents.delegation_end'),
-        (subagents, 'SubAgentMessage', 'SubAgentMessageEvent', ''),
-        (subagents, 'ParentMessage', 'ParentMessageEvent', ''),
-        (subagents, 'ChildMessage', 'ChildMessageEvent', ''),
-        (subagents, 'TaskFollowUpEvent', 'TaskResumedEvent', 'sub_agents.task_follow_up'),
-        (subagents, 'TaskMessageEvent', 'TaskSteeredEvent', 'sub_agents.task_message'),
-        (subagents, 'TaskAnswerEvent', 'TaskAnsweredEvent', 'sub_agents.task_answer'),
-        (subagents, 'TaskCancelRequestEvent', 'TaskCancelRequestedEvent', 'sub_agents.task_cancel_request'),
-        (subagents, 'TaskForceCancelEvent', 'TaskForceCancelRequestedEvent', 'sub_agents.task_force_cancel'),
-        (subagents, 'TaskQuestionEvent', 'TaskQuestionAskedEvent', 'sub_agents.task_question'),
-        (subagents, 'TaskRetryEvent', 'TaskRetriedEvent', 'sub_agents.task_retry'),
+        (old_subagents, 'DelegationStartEvent', 'DelegationStartedEvent', 'sub_agents.delegation_start'),
+        (old_subagents, 'DelegationEndEvent', 'DelegationFinishedEvent', 'sub_agents.delegation_end'),
+        (old_subagents, 'SubAgentMessage', 'SubAgentMessageEvent', ''),
+        (old_subagents, 'ParentMessage', 'ParentMessageEvent', ''),
+        (old_subagents, 'ChildMessage', 'ChildMessageEvent', ''),
+        (old_subagents, 'TaskFollowUpEvent', 'TaskResumedEvent', 'sub_agents.task_follow_up'),
+        (old_subagents, 'TaskMessageEvent', 'TaskSteeredEvent', 'sub_agents.task_message'),
+        (old_subagents, 'TaskAnswerEvent', 'TaskAnsweredEvent', 'sub_agents.task_answer'),
+        (old_subagents, 'TaskCancelRequestEvent', 'TaskCancelRequestedEvent', 'sub_agents.task_cancel_request'),
+        (old_subagents, 'TaskForceCancelEvent', 'TaskForceCancelRequestedEvent', 'sub_agents.task_force_cancel'),
+        (old_subagents, 'TaskQuestionEvent', 'TaskQuestionAskedEvent', 'sub_agents.task_question'),
+        (old_subagents, 'TaskRetryEvent', 'TaskRetriedEvent', 'sub_agents.task_retry'),
     ],
 )
 def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:

@@ -4,10 +4,10 @@ Renamed to the snake_case of its capability, `SpendLimits`. Importing from here 
 `HarnessDeprecationWarning`. Import from `pydantic_ai_harness.spend_limits` instead.
 """
 
+import warnings
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness import spend_limits as _spend_limits
-from pydantic_ai_harness._warn import forward_renamed, warn_module_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_module_renamed
 from pydantic_ai_harness.spend_limits import (
     SPEND_LIMITS_EVENTS,
     BatchSpendStore,
@@ -34,7 +34,7 @@ from pydantic_ai_harness.spend_limits import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai_harness.spend_limits import SpendCompositionWarning
+    from pydantic_ai_harness.spend_limits._exceptions import SpendCompositionWarning
 
 warn_module_renamed('spend', 'spend_limits')
 
@@ -66,4 +66,15 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    return forward_renamed(_spend_limits, name)
+    if name == 'SpendCompositionWarning':
+        from pydantic_ai_harness.spend_limits import _exceptions
+
+        warnings.warn(
+            '`pydantic_ai_harness.spend.SpendCompositionWarning` is deprecated and no longer emitted: '
+            '`SpendLimits` now counts every billed response whatever order capabilities are listed in. '
+            'Remove references to it; this deprecated alias will be removed in a future release.',
+            category=HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+        return _exceptions.SpendCompositionWarning
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
