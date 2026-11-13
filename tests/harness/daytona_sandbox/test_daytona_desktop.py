@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 
 import anyio
+import anyio.lowlevel
 import pytest
 from daytona import DaytonaInternalServerError, DaytonaRateLimitError, DaytonaTimeoutError
 
@@ -32,6 +32,16 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 
 from ..display_fakes import screen
 from .fake_daytona import FakeDaytona, FakeSandbox
+
+
+@pytest.fixture
+def no_pauses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drags and holds pause between steps; the tests don't wait for real."""
+
+    async def checkpoint(seconds: float) -> None:
+        await anyio.lowlevel.checkpoint()
+
+    monkeypatch.setattr(anyio, 'sleep', checkpoint)
 
 
 async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, FakeSandbox]:
@@ -80,6 +90,12 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         ),
         pytest.param(TypeText(text='héllo'), ['type héllo'], id='type'),
         pytest.param(
+            TypeText(text='a\tb\t\tc'),
+            ['type a', 'press tab modifiers=None', 'type b', 'press tab modifiers=None', 'press tab modifiers=None']
+            + ['type c'],
+            id='type-tabs',
+        ),
+        pytest.param(
             TypeText(text='a' * 4_001), [f'type {"a" * 2_000}', f'type {"a" * 2_000}', 'type a'], id='type-in-parts'
         ),
         pytest.param(
@@ -109,7 +125,7 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
     ],
 )
 async def test_each_action_maps_onto_daytona_calls(
-    fake_daytona: FakeDaytona, action: DisplayAction, calls: list[str]
+    fake_daytona: FakeDaytona, no_pauses: None, action: DisplayAction, calls: list[str]
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
 
@@ -151,16 +167,47 @@ async def test_a_cancelled_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDay
     assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keyup a', 'keyup ctrl']
 
 
+async def test_a_cancelled_type_waits_for_the_part_daytona_accepted(fake_daytona: FakeDaytona) -> None:
+    """Daytona types a part it accepted even when the caller stops waiting, so the next action can't overtake it."""
+    backend, sandbox = await _started(fake_daytona)
+    type_part = sandbox.computer_use.type
+    accepted, release = anyio.Event(), anyio.Event()
+
+    async def slow_type(text: str, delay: int | None = None, request_timeout: float | None = None) -> None:
+        accepted.set()
+        await release.wait()
+        await type_part(text, delay, request_timeout)
+
+    sandbox.computer_use.type = slow_type
+    typing = anyio.CancelScope()
+
+    async def type_text() -> None:
+        with typing:
+            await screen(backend).act(TypeText(text='a' * 4_001))
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(type_text)
+        await accepted.wait()
+        typing.cancel()
+        await anyio.wait_all_tasks_blocked()
+        assert not typing.cancelled_caught  # still waiting for the part Daytona accepted
+        release.set()
+
+    assert typing.cancelled_caught
+    # The rest was never sent.
+    assert sandbox.desktop_calls == [f'type {"a" * 2_000}']
+
+
 async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
     up = sandbox.computer_use.up
     failed: list[str] = []
 
     async def up_failing_once(
-        x: Any = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
+        x: int | str | None = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
     ) -> None:
         if x == 'b' and not failed:
-            failed.append(x)
+            failed.append('b')
             raise DaytonaInternalServerError('unexpected EOF', status_code=500)
         await up(x, y, button, request_timeout)
 
@@ -179,7 +226,7 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
     ]
 
 
-async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona) -> None:
+async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona, no_pauses: None) -> None:
     backend, sandbox = await _started(fake_daytona)
 
     async def fail_on_move(x: int, y: int, request_timeout: float | None = None) -> None:
@@ -251,6 +298,27 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
 
 
+async def test_a_failed_start_of_a_running_desktop_starts_it_again_on_the_next_action(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    computer_use = sandbox.computer_use
+    start = computer_use.start
+    computer_use.stop_with_sandbox()
+
+    async def failing_start(request_timeout: float | None = None) -> None:
+        monkeypatch.setattr(computer_use, 'start', start)
+        raise DaytonaInternalServerError('the X server did not start', status_code=500)
+
+    monkeypatch.setattr(computer_use, 'start', failing_start)
+    # The live view link starts the desktop even when it last ran.
+    with pytest.raises(WorkspaceError, match='did not start'):
+        await backend.live_view_url()
+    await screen(backend).act(Click(x=1, y=1))
+
+    assert sandbox.desktop_calls == ['start', 'click 1 1 left clicks=1 modifiers=[]']
+
+
 async def test_after_aclose_the_desktop_is_started_again_before_any_input(fake_daytona: FakeDaytona) -> None:
     """The sandbox may stop and start before a later run attaches to it again."""
     backend, sandbox = await _started(fake_daytona)
@@ -287,9 +355,11 @@ async def test_the_live_view_starts_a_desktop_that_stopped_with_the_sandbox(fake
 
 async def test_a_public_sandbox_desktop_is_refused_before_it_starts(fake_daytona: FakeDaytona) -> None:
     """Daytona serves a public sandbox's preview links without a token, so its desktop would be open to anyone."""
-    backend, sandbox = await _started(fake_daytona)
-    sandbox.computer_use.stop_with_sandbox()
-    sandbox.public = True
+    backend = DaytonaSandboxBackend(desktop=True)
+    await backend.get_sandbox()
+    (sandbox,) = fake_daytona.sandboxes
+    # Made public elsewhere, after this backend fetched it as private.
+    sandbox.server_public = True
 
     with pytest.raises(UserError, match='is public'):
         await screen(backend).screenshot()
@@ -330,7 +400,7 @@ async def test_a_scroll_the_desktop_reports_as_failed_is_an_error(
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    async def refused(*args: Any, **kwargs: Any) -> bool:
+    async def refused(*args: object, **kwargs: object) -> bool:
         return False
 
     monkeypatch.setattr(sandbox.computer_use, 'scroll', refused)

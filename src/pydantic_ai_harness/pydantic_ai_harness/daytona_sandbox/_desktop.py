@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
 import anyio
+import anyio.lowlevel
 from daytona import ScreenshotRegion
 
 from pydantic_ai.computer_use import (
@@ -217,12 +218,19 @@ class DaytonaDesktop:
                 raise WorkspaceError("Daytona's desktop did not scroll.")
 
     async def _type(self, text: str) -> None:
-        """Type `text`, `_TYPED_PER_REQUEST` characters at a time."""
+        """Type `text`, `_TYPED_PER_REQUEST` characters at a time, pressing Tab for each tab, which `type` refuses."""
         if any(ord(character) > 0xFFFF for character in text):
             raise UnsupportedActionError("Daytona's desktop cannot type emoji or other characters beyond U+FFFF.")
-        for start in range(0, len(text), _TYPED_PER_REQUEST):
-            part = text[start : start + _TYPED_PER_REQUEST]
-            await self._computer_use.keyboard.type(part, request_timeout=_TYPE_TIMEOUT)
+        keyboard = self._computer_use.keyboard
+        for index, segment in enumerate(text.split('\t')):
+            if index:
+                await keyboard.press('tab', request_timeout=_REQUEST_TIMEOUT)
+            for start in range(0, len(segment), _TYPED_PER_REQUEST):
+                await anyio.lowlevel.checkpoint_if_cancelled()  # a cancel stops here, before the next part is sent
+                # Daytona types a part it accepted even if we stop waiting, so a cancel waits for it: the next action
+                # must not reach the screen before this text does.
+                with anyio.CancelScope(shield=True):
+                    await keyboard.type(segment[start : start + _TYPED_PER_REQUEST], request_timeout=_TYPE_TIMEOUT)
 
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()

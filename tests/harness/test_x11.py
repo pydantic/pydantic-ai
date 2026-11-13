@@ -1,10 +1,12 @@
-"""Tests for `X11Computer`, which drives an X server with `xdotool` and `scrot`."""
+"""Tests for the desktop display's input and capture: `xdotool` and `scrot` commands, run through a backend's commands.
+
+`ScriptedDesktop` is a desktop `DockerContainerBackend` whose commands answer from a script instead of a container.
+"""
 
 from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
-from typing import Any
 
 import anyio
 import pytest
@@ -22,9 +24,15 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceError
-from pydantic_ai_harness._x11 import X11Computer
-from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
+from pydantic_ai.workspaces import (
+    CommandResult,
+    WorkspaceCommand,
+    WorkspaceError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
+from pydantic_ai_harness.computer_use import Display, DisplayAction, SupportsZoom, UnsupportedActionError
+from pydantic_ai_harness.docker_container import DockerContainerBackend
 
 from .display_fakes import FAKE_SCREENSHOT
 
@@ -40,7 +48,7 @@ def stops_then(*releases: list[str]) -> list[list[str]]:
     return [['sh', '-c', STOP_INPUT_PREFIX], *releases]
 
 
-def recovery(argvs: list[Any]) -> list[list[str]]:
+def recovery(argvs: list[WorkspaceCommand]) -> list[WorkspaceCommand]:
     """`argvs` after the input command, with the stop script cut to its start for comparing."""
     return [
         ['sh', '-c', STOP_INPUT_PREFIX] if argv[:2] == ['sh', '-c'] and argv[2].startswith(STOP_INPUT_PREFIX) else argv
@@ -54,14 +62,27 @@ RELEASE_MODIFIERS = [
 ]
 """What every acting `xdotool` chain starts with: letting go of modifiers an earlier action may have left down."""
 
+PNG_OUTPUT = CommandResult(exit_code=0, stdout=base64.encodebytes(FAKE_SCREENSHOT).decode(), stderr='')
+"""A capture's output: the screenshot in wrapped base64 lines, as `base64` prints it."""
 
-class ScriptedCommands:
-    """Records each command and answers with the next scripted result (exit 0 and no output by default)."""
 
-    def __init__(self, *results: CommandResult) -> None:
+class ScriptedDesktop(DockerContainerBackend):
+    """Records each display command and answers with the next scripted result (exit 0 and no output by default).
+
+    Starting the display always succeeds and is only counted. With `block_first`, the first command blocks until
+    cancelled.
+    """
+
+    def __init__(self, *results: CommandResult | Exception, block_first: bool = False) -> None:
+        super().__init__(image='my-desktop', desktop=True)
         self.results = list(results)
         self.calls: list[tuple[WorkspaceCommand, bool, Mapping[str, str] | None]] = []
         self.timeouts: list[float | None] = []
+        self.starts = 0
+        self.block_first = block_first
+        self.started = anyio.Event()
+        assert self.display is not None
+        self.screen: Display = self.display
 
     async def run(
         self,
@@ -71,28 +92,23 @@ class ScriptedCommands:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        if 'Xvfb' in str(command):
+            self.starts += 1
+            await anyio.sleep(0)  # a start takes a moment, so concurrent first uses overlap
+            return CommandResult(exit_code=0, stdout='', stderr='')
         self.calls.append((command, shell, env))
         self.timeouts.append(timeout)
-        return self.results.pop(0) if self.results else CommandResult(exit_code=0, stdout='', stderr='')
+        if self.block_first and len(self.calls) == 1:
+            self.started.set()
+            await anyio.sleep_forever()
+        result = self.results.pop(0) if self.results else CommandResult(exit_code=0, stdout='', stderr='')
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     @property
     def argvs(self) -> list[WorkspaceCommand]:
         return [command for command, _, _ in self.calls]
-
-
-class BlockingCommands(ScriptedCommands):
-    """Blocks the first command until cancelled, then records the rest."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.started = anyio.Event()
-
-    async def run(self, command: WorkspaceCommand, **kwargs: Any) -> CommandResult:
-        if not self.calls:
-            self.calls.append((command, False, None))
-            self.started.set()
-            await anyio.sleep_forever()
-        return await super().run(command, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -145,9 +161,9 @@ class BlockingCommands(ScriptedCommands):
     ],
 )
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayAction, argv: list[str]) -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(action)
-    assert commands.calls == [
+    desktop = ScriptedDesktop()
+    await desktop.screen.act(action)
+    assert desktop.calls == [
         (['sh', '-c', INPUT, 'sh', 'xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1'})
     ]
 
@@ -159,12 +175,12 @@ def fits_the_providers(argv: WorkspaceCommand) -> bool:
 
 
 async def test_x11_computer_types_long_text_in_commands_the_providers_take() -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='a' * 10_909))
-    typed = [argv[argv.index('--') + 1 :] for argv in commands.argvs]
+    desktop = ScriptedDesktop()
+    await desktop.screen.act(TypeText(text='a' * 10_909))
+    typed = [argv[argv.index('--') + 1 :] for argv in desktop.argvs]
     assert [len(keysyms) for keysyms in typed] == [5_454, 5_454, 1]
     assert {keysym for keysyms in typed for keysym in keysyms} == {'U0061'}
-    assert all(fits_the_providers(argv) for argv in commands.argvs)
+    assert all(fits_the_providers(argv) for argv in desktop.argvs)
 
 
 LONG_DRAG = Drag(path=tuple(Point(x=100 + i % 2 * 300, y=100 + i) for i in range(1_500)), modifiers=('alt',))
@@ -172,12 +188,12 @@ LONG_DRAG = Drag(path=tuple(Point(x=100 + i % 2 * 300, y=100 + i) for i in range
 
 
 async def test_x11_computer_drags_a_long_path_in_commands_the_providers_take_holding_on_between_them() -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(LONG_DRAG)
-    chains = [argv[argv.index('xdotool') + 1 :] for argv in commands.argvs]
+    desktop = ScriptedDesktop()
+    await desktop.screen.act(LONG_DRAG)
+    chains = [argv[argv.index('xdotool') + 1 :] for argv in desktop.argvs]
     assert len(chains) > 1
-    assert all(fits_the_providers(argv) for argv in commands.argvs)
-    # Pressed in the first, let go in the last: X keeps the button and the key down between commands.
+    assert all(fits_the_providers(argv) for argv in desktop.argvs)
+    # Pressed in the first, let go in the last: X keeps the button and the key down between desktop.
     pressed = ['keydown', 'alt', 'mousemove', '100', '100', 'mousedown', '1']
     assert chains[0][: len(RELEASE_MODIFIERS) + len(pressed)] == [*RELEASE_MODIFIERS, *pressed]
     assert chains[-1][-6:] == ['sleep', '0.1', 'mouseup', '1', 'keyup', 'alt']
@@ -190,12 +206,12 @@ async def test_x11_computer_drags_a_long_path_in_commands_the_providers_take_hol
 
 
 async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() -> None:
-    commands = ScriptedCommands(
+    desktop = ScriptedDesktop(
         CommandResult(exit_code=0, stdout='', stderr=''), CommandResult(exit_code=1, stdout='', stderr='BadValue')
     )
     with pytest.raises(WorkspaceError, match='BadValue'):
-        await X11Computer(commands).act(LONG_DRAG)
-    assert recovery(commands.argvs[1:]) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'alt'])
+        await desktop.screen.act(LONG_DRAG)
+    assert recovery(desktop.argvs[1:]) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'alt'])
 
 
 @pytest.mark.parametrize(
@@ -212,9 +228,9 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
     ],
 )
 async def test_x11_computer_allows_for_the_pauses_an_action_asks_for(action: DisplayAction, timeout: float) -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(action)
-    assert commands.timeouts == [pytest.approx(timeout)]
+    desktop = ScriptedDesktop()
+    await desktop.screen.act(action)
+    assert desktop.timeouts == [pytest.approx(timeout)]
 
 
 @pytest.mark.parametrize(
@@ -224,10 +240,10 @@ async def test_x11_computer_allows_for_the_pauses_an_action_asks_for(action: Dis
 )
 async def test_x11_computer_refuses_characters_outside_ascii(action: DisplayAction) -> None:
     # `xdotool` types them by remapping a key per keystroke, which Chrome reads too late; nothing is sent.
-    commands = ScriptedCommands()
+    desktop = ScriptedDesktop()
     with pytest.raises(UnsupportedActionError, match='can only type ASCII characters'):
-        await X11Computer(commands).act(action)
-    assert commands.calls == []
+        await desktop.screen.act(action)
+    assert desktop.calls == []
 
 
 @pytest.mark.parametrize(
@@ -236,10 +252,10 @@ async def test_x11_computer_refuses_characters_outside_ascii(action: DisplayActi
     ids=['scroll', 'keypress'],
 )
 async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayAction) -> None:
-    commands = ScriptedCommands()
+    desktop = ScriptedDesktop()
     with pytest.raises(UnsupportedActionError, match='at most 2147483647 times'):
-        await X11Computer(commands).act(action)
-    assert commands.calls == []
+        await desktop.screen.act(action)
+    assert desktop.calls == []
 
 
 @pytest.mark.parametrize(
@@ -255,10 +271,10 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key
     # already refuses these names; the display refuses them too, for an action built without it.
     unvalidated = PressKeys(keys=('a',))
     object.__setattr__(unvalidated, 'keys', (key,))
-    commands = ScriptedCommands()
+    desktop = ScriptedDesktop()
     with pytest.raises(UnsupportedActionError, match='cannot press the key'):
-        await X11Computer(commands).act(unvalidated)
-    assert commands.calls == []
+        await desktop.screen.act(unvalidated)
+    assert desktop.calls == []
 
 
 @pytest.mark.parametrize(
@@ -287,19 +303,19 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key
 async def test_x11_computer_releases_what_a_failed_action_held(
     action: DisplayAction, releases: list[list[str]]
 ) -> None:
-    commands = ScriptedCommands(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
+    desktop = ScriptedDesktop(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
     with pytest.raises(WorkspaceError, match='BadValue'):
-        await X11Computer(commands).act(action)
-    assert recovery(commands.argvs) == releases
+        await desktop.screen.act(action)
+    assert recovery(desktop.argvs) == releases
 
 
 async def test_x11_computer_tries_every_release_when_one_fails() -> None:
     failed = CommandResult(exit_code=1, stdout='', stderr='BadValue')
     # The action fails, then stopping it, then letting go of the button.
-    commands = ScriptedCommands(failed, failed, failed)
+    desktop = ScriptedDesktop(failed, failed, failed)
     with pytest.raises(WorkspaceError, match='BadValue'):
-        await X11Computer(commands).act(Click(x=1, y=2, modifiers=('ctrl',)))
-    assert recovery(commands.argvs) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'ctrl'])
+        await desktop.screen.act(Click(x=1, y=2, modifiers=('ctrl',)))
+    assert recovery(desktop.argvs) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'ctrl'])
 
 
 @pytest.mark.parametrize(
@@ -310,39 +326,21 @@ async def test_x11_computer_tries_every_release_when_one_fails() -> None:
     ],
 )
 async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: DisplayAction, release: list[str]) -> None:
-    commands = BlockingCommands()
+    desktop = ScriptedDesktop(block_first=True)
     async with anyio.create_task_group() as tg:
-        tg.start_soon(X11Computer(commands).act, action)
-        await commands.started.wait()
+        tg.start_soon(desktop.screen.act, action)
+        await desktop.started.wait()
         tg.cancel_scope.cancel()
     # The cancelled command is stopped first, so it can't press again what was released.
-    assert recovery(commands.argvs) == stops_then(release)
+    assert recovery(desktop.argvs) == stops_then(release)
 
 
-async def test_x11_computer_looks_return_the_png_and_pass_a_region_as_an_argument() -> None:
-    encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()  # wrapped lines, as `base64` prints
-    png = CommandResult(exit_code=0, stdout=encoded, stderr='')
-    pointer = CommandResult(exit_code=0, stdout='X=12\nY=34\nSCREEN=0\nWINDOW=65\n', stderr='')
-    size = CommandResult(exit_code=0, stdout='  Width: 1280\n  Height: 800\n', stderr='')
-    commands = ScriptedCommands(size, png, png, pointer)
-    computer = X11Computer(commands)
-
-    assert await computer.display_size() == (1280, 800)
-    assert await computer.screenshot() == FAKE_SCREENSHOT
-    assert await computer.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
-    assert await computer.cursor_position() == Point(x=12, y=34)
+async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
+    desktop = ScriptedDesktop(PNG_OUTPUT)
+    assert isinstance(desktop.screen, SupportsZoom)
+    assert await desktop.screen.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
     # The region goes in as an argument, never into the script.
-    assert commands.argvs[2][-1] == '10,20,100,50'
-    assert all(env == {'DISPLAY': ':1'} for _, _, env in commands.calls)
-
-
-async def test_x11_display_size_is_the_root_window_spanning_every_monitor() -> None:
-    # Two 1920x1080 monitors side by side: a screenshot is 3840x1080, and so must the reported size be.
-    xwininfo = (
-        'xwininfo: Window id: 0x3c5 (the root window) (has no name)\n\n  Width: 3840\n  Height: 1080\n  Depth: 24\n'
-    )
-    commands = ScriptedCommands(CommandResult(exit_code=0, stdout=xwininfo, stderr=''))
-    assert await X11Computer(commands).display_size() == (3840, 1080)
+    assert desktop.argvs[0][-1] == '10,20,100,50'
 
 
 @pytest.mark.parametrize(
@@ -354,36 +352,53 @@ async def test_x11_display_size_is_the_root_window_spanning_every_monitor() -> N
             "exit code 1 on display :1: Can't open display: :1",
         ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'display_size', "output: 'garbage'"),
-        (CommandResult(exit_code=127, stdout='', stderr='sh: scrot: not found'), 'screenshot', 'scrot: not found'),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'cursor_position', 'getmouselocation'),
+        (CommandResult(exit_code=0, stdout='bm90IGEgcG5n', stderr=''), 'screenshot', 'did not return a PNG'),
+        (CommandResult(exit_code=0, stdout='abc', stderr=''), 'screenshot', 'did not return a PNG'),
     ],
+    ids=['display-size-fails', 'display-size-garbage', 'pointer-garbage', 'not-a-png', 'not-base64'],
 )
 async def test_x11_computer_failures_raise_workspace_error(result: CommandResult, call: str, message: str) -> None:
-    computer = X11Computer(ScriptedCommands(result))
+    # A failed look starts the display again and looks once more, so it fails twice.
+    desktop = ScriptedDesktop(result, result)
     with pytest.raises(WorkspaceError, match=message):
-        await getattr(computer, call)()
+        await getattr(desktop.screen, call)()
+    assert desktop.starts == 2
+
+
+async def test_a_failed_look_starts_the_display_again_and_looks_again() -> None:
+    desktop = ScriptedDesktop(CommandResult(exit_code=1, stdout='', stderr='BadWindow'), PNG_OUTPUT)
+    assert await desktop.screen.screenshot() == FAKE_SCREENSHOT
+    assert desktop.starts == 2
 
 
 @pytest.mark.parametrize(
-    'output',
-    [
-        pytest.param('bm90IGEgcG5n', id='not-a-png'),
-        pytest.param('abc', id='not-base64'),
-    ],
+    'error', [WorkspaceUnavailableError('the sandbox is gone'), WorkspaceTimeoutError('the display is stuck')]
 )
-async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) -> None:
-    computer = X11Computer(ScriptedCommands(CommandResult(exit_code=0, stdout=output, stderr='')))
-    with pytest.raises(WorkspaceError, match='did not return a PNG screenshot'):
-        await computer.screenshot()
+async def test_an_unavailable_or_stuck_environment_is_not_retried(error: WorkspaceError) -> None:
+    desktop = ScriptedDesktop(error)
+    with pytest.raises(type(error)):
+        await desktop.screen.screenshot()
+    assert desktop.starts == 1
 
 
-async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> None:
+async def test_concurrent_first_uses_start_one_display() -> None:
+    desktop = ScriptedDesktop()
+    async with anyio.create_task_group() as tg:
+        for _ in range(3):
+            tg.start_soon(desktop.screen.act, MouseUp())
+    assert desktop.starts == 1
+
+
+async def test_x11_computer_refuses_a_key_name_the_display_does_not_know_and_keeps_the_display() -> None:
     warning = "(symbol) No such key name 'CAPSLOCK'. Ignoring it."
-    commands = ScriptedCommands(CommandResult(exit_code=0, stdout='', stderr=warning))
+    desktop = ScriptedDesktop(CommandResult(exit_code=0, stdout='', stderr=warning))
     with pytest.raises(UnsupportedActionError, match="No such key name 'CAPSLOCK'"):
-        await X11Computer(commands).act(PressKeys(keys=('CAPSLOCK',)))
+        await desktop.screen.act(PressKeys(keys=('CAPSLOCK',)))
+    await desktop.screen.act(MouseUp())
+    assert desktop.starts == 1
 
 
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(UnsupportedActionError):
-        await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
+        await ScriptedDesktop().screen.act(object())  # pyright: ignore[reportArgumentType]

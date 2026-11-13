@@ -891,6 +891,8 @@ class DaytonaSandboxBackend(
     async def _start_display(self) -> None:
         """Start the desktop unless it's running."""
         sandbox = await self.get_sandbox()
+        # It may have been made public since it was fetched.
+        await sandbox.refresh_data(request_timeout=_REQUEST_TIMEOUT)
         if sandbox.public:
             # Daytona serves a public sandbox's preview links without a token, so the desktop could be used by anyone.
             raise UserError(
@@ -911,9 +913,10 @@ class DaytonaSandboxBackend(
             ) from error
 
     async def live_view_url(self, *, expires_in: int = 3600) -> str:
-        """A link to watch the desktop, and use it, in a browser, valid for `expires_in` seconds.
+        """A link to watch the desktop, and use it, in a browser. The link works for `expires_in` seconds.
 
-        Anyone with the link can see and use the desktop until it expires.
+        Anyone with the link can see and use the desktop. Daytona's proxy keeps a browser that opened it signed in for
+        up to an hour, even after the link expires.
         """
         if self._display is None:
             raise UserError('This Daytona workspace has no display: create it with `desktop=True`.')

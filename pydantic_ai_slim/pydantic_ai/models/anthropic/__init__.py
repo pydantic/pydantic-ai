@@ -421,17 +421,10 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# These platforms serve computer use only through the earlier beta tool versions; Claude Models on Google Cloud serves
-# the toolset like the Claude API. https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool
-_COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
-_CLAUDE_5_5_MODELS = (
-    'claude-fable-5-5',
-    'claude-mythos-5-5',
-    'claude-opus-5-5',
-    'claude-sonnet-5-5',
-    'claude-haiku-5-5',
-)
-"""The Claude 5.5 models, which Foundry doesn't serve with a computer use tool."""
+# Bedrock gets the earlier beta tool, which Anthropic documents its toolset models also accept there (and which ran
+# live there). The other platforms serve the toolset like the Claude API.
+# https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+_COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1193,7 +1186,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
         computer_tool_version = _computer_tool_version_for_client(
-            _profile.get('anthropic_computer_tool_version'), client, self.model_name
+            _profile.get('anthropic_computer_tool_version'), client
         )
         if computer_tool_version is None:
             supported_native_tools = supported_native_tools - {ComputerTool}
@@ -4511,14 +4504,11 @@ def _support_tool_forcing(
 
 
 def _computer_tool_version_for_client(
-    version: AnthropicComputerToolVersion | None, client: AsyncAnthropicClient, model_name: str
+    version: AnthropicComputerToolVersion | None, client: AsyncAnthropicClient
 ) -> AnthropicComputerToolVersion | None:
-    """The computer use tool a client serves for this model: Bedrock and Foundry have only the earlier beta tools."""
+    """The computer use tool a client serves for this model: Bedrock gets the earlier beta tool."""
     if version != 'computer_toolset_20260801' or not isinstance(client, _COMPUTER_BETA_TOOLS_ONLY_CLIENTS):
         return version
-    # The toolset models take `computer_20251124` there, but the Claude 5.5 models only on Bedrock.
-    if model_name.startswith(_CLAUDE_5_5_MODELS) and isinstance(client, AsyncAnthropicFoundry):
-        return None
     return 'computer_20251124'
 
 

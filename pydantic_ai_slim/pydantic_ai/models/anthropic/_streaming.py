@@ -105,8 +105,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
-    # A response's computer toolset calls are one batch: one `computer` call at the first one's place, updated as each
-    # completes and started once when the response ends, since the batch runs only then.
+    # A response's computer toolset calls are one batch: one `computer` call at the first one's place, mapped and
+    # started once when the response ends, since the batch runs only then.
     _computer_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
     _computer_input: list[str] = field(default_factory=list[str], init=False)
     # Calls whose input didn't arrive whole, and the other tools called between the batch's calls.
@@ -446,16 +446,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                 computer_args = {}
         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
         if native_computer.is_toolset:
+            if not self._computer_blocks:
+                # Holds the batch's place among the parts; the whole batch replaces it when the response ends.
+                self._parts_manager.handle_part(
+                    vendor_part_id=block['id'],
+                    part=native_computer.call_part([block], self.provider_name, incomplete=self._computer_incomplete),
+                )
             self._computer_blocks.append(block)
-            self._parts_manager.handle_part(
-                vendor_part_id=self._computer_blocks[0]['id'],
-                part=native_computer.call_part(
-                    list(self._computer_blocks),
-                    self.provider_name,
-                    incomplete=self._computer_incomplete,
-                    split=self._computer_split,
-                ),
-            )
         else:
             yield self._parts_manager.handle_part(
                 vendor_part_id=block['id'],
