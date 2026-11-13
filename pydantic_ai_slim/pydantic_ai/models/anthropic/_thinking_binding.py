@@ -32,12 +32,12 @@ _ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY = 'anthropic_cou
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind each thinking block to the
-    conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
-    [instructions][pydantic_ai.Agent.instructions] function and a
-    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
-    check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
-    and acts on it only if the request asks it to.
+    Claude Fable 5.1 and 5.2, Claude Mythos 5.2, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind each
+    thinking block to the conversation prefix that produced it and reject a replay once that prefix changes — which a
+    dynamic [instructions][pydantic_ai.Agent.instructions] function and a
+    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Fable 5.2 and Mythos 5.2 enforce the check
+    on every account; the other models enforce it for accounts created on or after 2026-08-31, and for older accounts
+    record the mismatch and act on it only if the request asks it to.
 
     Pydantic AI therefore asks for nothing by default, so an older account keeps replaying its
     reasoning untouched. Where the check is enforced, the rejected request is retried once with
@@ -168,8 +168,8 @@ def thinking_with_stale_block_history(
 
 def warn_stale_thinking_block_recovery(model_name: str) -> None:
     warnings.warn(
-        f'{model_name!r} rejected a replayed thinking block: the conversation prefix changed '
-        'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+        f'{model_name!r} rejected a replayed thinking block: Anthropic binds each thinking block '
+        'to the conversation prefix that produced it, and that prefix changed between requests. '
         "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
         "without that turn's reasoning. The cause is something earlier in the request that is not "
         'byte-stable between turns — commonly instructions carrying a per-request value such as a '

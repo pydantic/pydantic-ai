@@ -339,8 +339,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     """Thinking levels the Live model accepts. Default: unset.
 
     Same meaning as [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
-    on a standard model: unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
-    scale, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
+    on a standard model: unset means [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS],
+    every level but `XHIGH`, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
     nearest level in the set.
     """
 
@@ -922,14 +922,15 @@ def _map_usage(usage: genai_types.UsageMetadata, *, provider_name: str, provider
 
 @contextmanager
 def _single_ws_user_agent(client: Client) -> Generator[None]:
-    """Drop a duplicate `User-Agent` header for the duration of a Gemini Live WebSocket handshake.
+    """Drop a duplicate user-agent header for the duration of a Gemini Live WebSocket handshake.
 
     `google-genai` forwards the client's HTTP headers verbatim as the Live WebSocket's
-    `additional_headers`. The `GoogleProvider` adds a capitalized `User-Agent` (for HTTP, where `httpx`
-    folds it together with the SDK's own lowercase `user-agent`), but the `websockets` library stores
-    headers case-insensitively and rejects the two as a duplicate, failing the handshake. We remove our
-    capitalized variant just for the connect and restore it after, so a single user-agent reaches the
-    socket while HTTP requests keep pydantic-ai's user-agent.
+    `additional_headers`, and adds its own label under a lowercase `user-agent` key. The clients the
+    `GoogleProvider` builds use that key, but a client the user builds with another casing, such as
+    `HttpOptions(headers={'User-Agent': 'my-app'})`, ends up holding both. The `websockets` library stores
+    headers case-insensitively and rejects the pair as a duplicate, failing the handshake. We remove the
+    extra keys just for the connect and restore them after, so a single user-agent reaches the socket and
+    the client's HTTP headers are left as they were.
     """
     headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None

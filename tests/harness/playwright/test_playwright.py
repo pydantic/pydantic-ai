@@ -14,6 +14,7 @@ import socket
 import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Protocol, get_args
 
 import anyio
@@ -668,7 +669,7 @@ class _FakeChromium:
         close_error: Exception | None = None,
     ) -> None:
         self._page = page
-        # An existing path so the real `os.path.exists` pre-check takes the launch
+        # An existing path so the real existence pre-check takes the launch
         # branch; a bogus path models a missing Chromium binary.
         self._executable_path = '/nonexistent/chromium-binary' if executable_missing else sys.executable
         self._launch_error = launch_error
@@ -1461,6 +1462,72 @@ class TestNameResolutionBlocking:
         result = await _toolset(_FakePage(), block_private_addresses=False).navigate('http://internal.example/')
         assert isinstance(result, str) and not result.startswith('Error:')
         assert looked_up == []
+
+    async def test_a_host_outside_the_allowlist_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The allowlist answers this by name alone, so it is refused for that reason
+        # without a lookup, even though the name points at a private address.
+        looked_up = self._pointing_at(monkeypatch, '169.254.169.254')
+        page = _FakePage()
+        result = await _toolset(page, allowed_domains=['example.com']).navigate('https://other.example/')
+        assert result == 'Error: domain not in allowed_domains: https://other.example/'
+        assert looked_up == []
+        assert page.goto_calls == []
+
+    async def test_the_route_guard_does_not_resolve_a_blocked_domain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        looked_up = self._pointing_at(monkeypatch, '93.184.216.34')
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        browser = PlaywrightBrowser[object](policy=toolset_module.EgressPolicy(blocked_domains=['ads.example']))
+        await Agent(TestModel(call_tools=['screenshot']), capabilities=[browser]).run('use the browser')
+        host_page = _FakeRequestPage()
+        route = await page.context.dispatch(
+            _FakeRequest(
+                'http://cdn.ads.example/x.png',
+                navigation=False,
+                resource_type='image',
+                frame=host_page.main_frame,
+            )
+        )
+        assert route.aborted is True
+        assert looked_up == []
+
+    async def test_an_override_is_asked_once_with_the_resolved_addresses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Skipping the lookup for a refused name happens inside the policy, so an
+        # override still gets one call per request, carrying the lookup's result.
+        self._pointing_at(monkeypatch, '93.184.216.34')
+        asked: list[toolset_module.EgressRequest] = []
+
+        class AddressAware(toolset_module.EgressPolicy):
+            def refuse(self, request: toolset_module.EgressRequest) -> str | None:
+                asked.append(request)
+                return None if request.resolved_addresses else 'no addresses'
+
+        session = PlaywrightBrowserSession(policy=AddressAware(allowed_domains=['example.com']))
+        request = toolset_module.EgressRequest(url='https://example.com/', kind='navigation')
+        assert await session.decide(request) is None
+        assert [r.resolved_addresses for r in asked] == [('93.184.216.34',)]
+
+    async def test_an_override_permitting_a_listed_out_host_still_gets_the_address_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An override can permit what the lists refuse while deferring to the base
+        # class for the private-address block, which needs the lookup to see the name.
+        looked_up = self._pointing_at(monkeypatch, '10.0.0.1')
+
+        class FontsFromAnywhere(toolset_module.EgressPolicy):
+            def refuse(self, request: toolset_module.EgressRequest) -> str | None:
+                relaxed = replace(self, allowed_domains=None) if request.resource_type == 'font' else self
+                return toolset_module.EgressPolicy.refuse(relaxed, request)
+
+        policy = FontsFromAnywhere(
+            allowed_domains=['example.com'], allowlist_reach=frozenset(get_args(toolset_module.RequestKind))
+        )
+        session = PlaywrightBrowserSession(policy=policy)
+        request = toolset_module.EgressRequest(
+            url='https://fonts.other.example/x.woff2', kind='subresource', resource_type='font', top_level=False
+        )
+        assert await session.decide(request) == 'blocked private or link-local address'
+        assert looked_up == ['fonts.other.example']
 
     async def test_an_address_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The literal already answers the question; a lookup would be wasted.
