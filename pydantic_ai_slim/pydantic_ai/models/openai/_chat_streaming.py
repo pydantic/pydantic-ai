@@ -12,7 +12,7 @@ from typing import Any, Literal, cast
 from openai import AsyncStream
 from openai.types import chat
 from openai.types.chat import ChatCompletionChunk, chat_completion_chunk
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from ... import ModelAPIError, _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
@@ -29,7 +29,12 @@ from ._chat_completions import (
     split_content_parts,
     unmapped_choice_data,
 )
-from ._citations import chat_annotation_ta, chat_citations_provider_details, map_chat_citations
+from ._citations import (
+    chat_annotation_ta,
+    chat_citations_provider_details,
+    jsonable_annotation,
+    map_chat_citations,
+)
 from ._errors import map_api_errors
 from ._model_names import OpenAIModelName
 from ._response_fields import map_usage
@@ -66,70 +71,10 @@ class OpenAIStreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         await self._response.source.close()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
             async for chunk in MapStreamDecodeErrors(self._validate_response(), self._model_name):
-                if self._provider_timestamp is None and chunk.created:
-                    self._provider_timestamp = number_to_datetime(chunk.created)
-                    self.provider_details = {
-                        **(self.provider_details or {}),
-                        'timestamp': self._provider_timestamp,
-                    }
-
-                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                # so we replace rather than increment to avoid double-counting.
-                cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
-                if chunk.usage is not None or not cumulative:
-                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
-
-                if chunk.id:  # pragma: no branch
-                    self.provider_response_id = chunk.id
-
-                if chunk.model:
-                    self._model_name = chunk.model
-
-                # The moderation chunk carries no choices, so this has to happen before the guard below.
-                if chunk.moderation:
-                    self.provider_details = {
-                        **(self.provider_details or {}),
-                        'moderation': chunk.moderation.model_dump(),
-                    }
-                if chunk.service_tier:
-                    self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
-                if chunk_provider_details := self._map_chunk_provider_details(chunk):
-                    self.provider_details = {**(self.provider_details or {}), **chunk_provider_details}
-                self._record_unmapped_chunk_data(chunk)
-
-                # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
-                # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                raw_finish_reason = choice.finish_reason
-                self._has_finish_reason = self._has_finish_reason or bool(raw_finish_reason)
-
-                # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
-                if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
-                    continue
-
-                # Handle refusal responses (structured output safety filter).
-                # Note: OpenAI sends refusal instead of content (not alongside it), so in practice
-                # text parts won't have been yielded before _has_refusal is set.
-                if choice.delta.refusal:
-                    self._has_refusal = True
-                    self.finish_reason = 'content_filter'
-                    self._refusal_text += choice.delta.refusal
-                    continue
-
-                if raw_finish_reason and not self._has_refusal:
-                    self.finish_reason = self._map_finish_reason(raw_finish_reason)
-
-                if provider_details := self._map_provider_details(chunk):  # pragma: no branch
-                    if self._has_refusal:
-                        provider_details.pop('finish_reason', None)
-                    self.provider_details = {**(self.provider_details or {}), **provider_details}
-
-                for event in self._map_part_delta(choice):
+                for event in self._map_chunk(chunk):
                     yield event
 
             if self._refusal_text:
@@ -152,6 +97,73 @@ class OpenAIStreamedResponse(StreamedResponse):
             for event in self._flush_pending_chat_annotations():
                 yield event
 
+    def _map_chunk(self, chunk: ChatCompletionChunk) -> Iterator[ModelResponseStreamEvent]:
+        self._map_top_level_fields(chunk)
+
+        # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
+        # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
+        if not chunk.choices:
+            return
+        choice = chunk.choices[0]
+        raw_finish_reason = choice.finish_reason
+        self._has_finish_reason = self._has_finish_reason or bool(raw_finish_reason)
+
+        # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
+        if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
+            return
+
+        # Handle refusal responses (structured output safety filter).
+        # Note: OpenAI sends refusal instead of content (not alongside it), so in practice
+        # text parts won't have been yielded before _has_refusal is set.
+        if choice.delta.refusal:
+            self._has_refusal = True
+            self.finish_reason = 'content_filter'
+            self._refusal_text += choice.delta.refusal
+            return
+
+        if raw_finish_reason and not self._has_refusal:
+            self.finish_reason = self._map_finish_reason(raw_finish_reason)
+
+        if provider_details := self._map_provider_details(chunk):  # pragma: no branch
+            if self._has_refusal:
+                provider_details.pop('finish_reason', None)
+            self.provider_details = {**(self.provider_details or {}), **provider_details}
+
+        yield from self._map_part_delta(choice)
+
+    def _map_top_level_fields(self, chunk: ChatCompletionChunk) -> None:
+        """Map the fields of `chunk` outside its choices, which chunks without choices carry too."""
+        if self._provider_timestamp is None and chunk.created:
+            self._provider_timestamp = number_to_datetime(chunk.created)
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'timestamp': self._provider_timestamp,
+            }
+
+        # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+        # so we replace rather than increment to avoid double-counting.
+        cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+        if chunk.usage is not None or not cumulative:
+            self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
+
+        if chunk.id:  # pragma: no branch
+            self.provider_response_id = chunk.id
+
+        if chunk.model:
+            self._model_name = chunk.model
+
+        # The moderation chunk carries no choices.
+        if chunk.moderation:
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'moderation': chunk.moderation.model_dump(),
+            }
+        if chunk.service_tier:
+            self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
+        if chunk_provider_details := self._map_chunk_provider_details(chunk):
+            self.provider_details = {**(self.provider_details or {}), **chunk_provider_details}
+        self._record_unmapped_chunk_data(chunk)
+
     def _flush_pending_chat_annotations(self) -> Iterator[ModelResponseStreamEvent]:
         if not self._pending_raw_annotations:
             return
@@ -173,9 +185,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 annotation = chat_annotation_ta.validate_python(raw_annotation)
             except ValidationError:
                 # OpenRouter's stream parses its own annotation types, such as `file`, into models.
-                serialized_annotations.append(
-                    raw_annotation.model_dump(mode='json') if isinstance(raw_annotation, BaseModel) else raw_annotation
-                )
+                serialized_annotations.append(jsonable_annotation(raw_annotation))
             else:
                 annotations.append(annotation)
                 serialized_annotations.append(chat_annotation_ta.dump_python(annotation, warnings=False))
@@ -293,13 +303,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             ):
                 emitted = True
                 if isinstance(event, PartStartEvent):
-                    self._advance_part_boundary('content')
-                    if isinstance(event.part, ThinkingPart):
-                        event.part.id = 'content'
-                        event.part.provider_name = self.provider_name
-                    elif isinstance(event.part, TextPart) and self._held_text_whitespace:
-                        event.part.content = self._held_text_whitespace + event.part.content
-                        self._held_text_whitespace = ''
+                    self._start_content_part(event)
                 yield event
             if not emitted and content.isspace() and self._awaiting_text_after_reasoning:
                 # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text right after reasoning
@@ -312,6 +316,16 @@ class OpenAIStreamedResponse(StreamedResponse):
         raw_annotations = getattr(choice.delta, 'annotations', None)
         if isinstance(raw_annotations, list):
             self._pending_raw_annotations.extend(cast(list[object], raw_annotations))
+
+    def _start_content_part(self, event: PartStartEvent) -> None:
+        """Set up a part the `content` field starts, before its `PartStartEvent` is yielded."""
+        self._advance_part_boundary('content')
+        if isinstance(event.part, ThinkingPart):
+            event.part.id = 'content'
+            event.part.provider_name = self.provider_name
+        elif isinstance(event.part, TextPart) and self._held_text_whitespace:
+            event.part.content = self._held_text_whitespace + event.part.content
+            self._held_text_whitespace = ''
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
