@@ -33,7 +33,7 @@ class CapabilityStorage(AbstractCapability[AgentDepsT]):
         from pydantic_ai_harness import CapabilityStorage, ToolOutputLimits
 
         agent = Agent(
-            'anthropic:claude-fable-5',
+            'anthropic:claude-opus-5-5',
             capabilities=[
                 CapabilityStorage(LocalWorkspaceBackend('/var/lib/myapp/agent-files')),
                 ToolOutputLimits(),
