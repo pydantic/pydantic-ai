@@ -55,6 +55,7 @@ from pydantic_ai_harness.repo_context._loader import (
     find_dir_context_file,
     render_context_files,
 )
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 
@@ -1807,6 +1808,20 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
             ['<context_file path="../../AGENTS.md">repo rules</context_file>']
         )
 
+    async def test_an_operator_workspace_can_lower_its_own_file(self, tmp_path: Path) -> None:
+        # The docs case: an `'operator'` workspace whose `path_authority` lowers the working directory's own file.
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator', 'AGENTS.md': 'none'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace, nested_traversal=True)
+        assert 'repo rules' in instructions and parts == []
+        assert 'package rules' not in instructions
+        assert "isn't from the operator: `AGENTS.md`" in instructions
+        assert 'takes precedence' not in instructions
+
     async def test_a_lowered_subdirectory_leaves_out_the_precedence_sentence(self, tmp_path: Path) -> None:
         # Every walk-up file is the operator's, but nested traversal can surface `vendor/AGENTS.md` below it.
         working_dir = self._repo(tmp_path)
@@ -1871,6 +1886,7 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         assert 'repo rules' not in instructions
         assert [part.content for part in parts] == ['repo rules']
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_a_compaction_during_the_run_puts_an_ancestor_back(self, tmp_path: Path) -> None:
         working_dir = self._repo(tmp_path)
         workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
