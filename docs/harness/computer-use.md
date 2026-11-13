@@ -182,8 +182,8 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
   repeat a finished call. A call cut off before its step was recorded can run again under the engine's retry settings
   for capability steps. On Temporal those are `TemporalDurability`'s `activity_config`, which defaults to a 60-second
   timeout and unlimited retries: raise `start_to_close_timeout` above your longest call, and set
-  `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`,
-  `PrefectDurability` or `DBOSDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
+  `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`
+  or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](../durable_execution/temporal.md#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen.

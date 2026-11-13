@@ -384,7 +384,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def run_command(
         self, ctx: RunContext[AgentDepsT], command: str, *, timeout_seconds: float | None = None
     ) -> str:
-        """Execute a shell command on the computer you work on and return its output.
+        """Execute a shell command and return its output.
 
         Args:
             ctx: The current agent run context.
@@ -433,7 +433,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         mode: CommandMode = 'foreground',
         timeout: float | None = None,
     ) -> str:
-        """Run a shell command on the computer you work on and return its output.
+        """Run a shell command and return its output.
 
         Foreground (the default) waits up to `timeout` seconds (at most 270) and
         returns the command's combined stdout/stderr inline (the last ~16 KB; any
@@ -468,7 +468,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
     @recoverable
     async def start_command(self, ctx: RunContext[AgentDepsT], command: str) -> str:
-        """Start a long-running command in the background on the computer you work on (e.g. a server or watcher).
+        """Start a long-running command in the background (e.g. a server or watcher).
 
         The command keeps running, after this run too, until it exits or
         `stop_command(command_id)` stops it; call `stop_command` when done to
