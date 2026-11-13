@@ -429,8 +429,8 @@ def for_tool_result_text(
 ) -> Callable[[ToolResultInfo], GuardrailResult]:
     """Adapt a text detector to the result object `ToolGuardrail` supplies.
 
-    Plain string results are passed to `detector`. A list of content parts, such
-    as text beside an image, has its text checked and its images kept, whether
+    Plain string results are passed to `detector`. A list of strings and media, such
+    as text beside an image, has its strings checked and its images kept, whether
     it is the result or a `ToolReturn`'s `return_value`. For a `ToolReturn` with a
     string or list `return_value`, the detector also checks the text in its
     model-directed `content`, both part by part and over each stretch of

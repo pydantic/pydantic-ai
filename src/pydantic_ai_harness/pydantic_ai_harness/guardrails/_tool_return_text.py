@@ -17,13 +17,13 @@ from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
 def _is_content_list(value: object) -> TypeGuard[list[UserContent]]:
-    """Whether `value` is a list of content parts, such as text beside a screenshot, as a tool can return."""
+    """Whether `value` is a list of strings and media, such as text beside a screenshot, as a tool can return.
+
+    `TextContent` is left out: the model also sees its `metadata`, which a detector does not read.
+    """
     if not isinstance(value, list):
         return False
-    return all(
-        isinstance(part, str | TextContent | CachePoint) or is_multi_modal_content(part)
-        for part in cast(list[Any], value)
-    )
+    return all(isinstance(part, str | CachePoint) or is_multi_modal_content(part) for part in cast(list[Any], value))
 
 
 def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailResult | None, str | None]:
