@@ -219,10 +219,12 @@ class _CapabilityAuthority:
     than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
     and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
     authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
-    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose content you don't
-    fully control, such as one built from a plugin or another team's code: as a class attribute of a subclass, or as a
-    field of the capability's own. To lower one instance, use
-    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority].
+    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose mid-conversation
+    content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
+    a subclass, or as a field of the capability's own. To lower one instance, use
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
+    capability sends mid-conversation, including its tools' `ToolReturn.content`. It doesn't cap the capability's
+    instructions, its tool names and descriptions, or its tools' return values: review or leave those out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
     default authority of the workspace's files. A file another capability reads through a workspace carries the
@@ -576,9 +578,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """Return a copy of this capability whose enqueued parts carry no more than `authority`.
 
         Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
-        class attribute lowers every instance of a class: for example, one MCP server you don't control at `'none'`
-        while the others keep `'operator'`. It only ever lowers: asking for more authority than the capability
-        already has leaves it where it is.
+        class attribute lowers every instance of a class: for example, one plugin's capability at `'none'` while
+        another instance of its class keeps `'operator'`. It only ever lowers: asking for more authority than the
+        capability already has leaves it where it is. Like the class attribute, it covers what the capability sends
+        mid-conversation, not its instructions or tool definitions: for an MCP server you don't trust, also pass
+        `include_instructions=False`.
         """
         return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
 
