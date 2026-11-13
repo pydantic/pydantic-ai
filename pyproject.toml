@@ -411,6 +411,7 @@ include = [
     ".github/scripts/douwebot_opencode_result.py",
     ".github/scripts/test_douwebot_opencode_run.py",
     ".github/scripts/test_douwebot_opencode_result.py",
+    ".github/scripts/category_classify_opencode.py",
 ]
 
 [tool.ruff.lint]

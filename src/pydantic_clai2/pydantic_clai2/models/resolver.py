@@ -11,7 +11,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model
+from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, with_profile
 from pydantic_clai2.plugins import (
     ModelProvider,
     PluginLogin,
@@ -30,6 +30,12 @@ def _parse(name: str) -> ModelRef:
         return parse_model(name)
     except ValueError as exc:
         raise UserError(f'{name}: {exc}') from None
+
+
+def _no_endpoint(name: str) -> UserError:
+    from pydantic_clai2.models.key_profiles import no_endpoint
+
+    return no_endpoint(name)
 
 
 @dataclass(kw_only=True)
@@ -106,6 +112,8 @@ class ModelResolver:
         from pydantic_clai2.models.chains import chain_name
 
         if (chain := chain_name(name)) is not None:
+            if await self._saved_base_url(name) is not None:
+                raise _no_endpoint(name)
             return [member for model in self._chain(chain) for member in await self.expand(model)]
         ref = _parse(name)
         members = await self._accounts(ref)
@@ -132,6 +140,8 @@ class ModelResolver:
     async def _one_account(self, name: str) -> Model | str:
         """Build a model on the one account it names, the default one when it names none or `@default`."""
         ref = _parse(name)
+        base_url = await self._base_url(name)
+        endpoint = {} if base_url is None else {'base_url': base_url}
         if ref.profile == DEFAULT:
             name = base_model(name)
             ref = _parse(name)
@@ -139,10 +149,12 @@ class ModelResolver:
             from pydantic_clai2.models import github_copilot, openrouter, vllm
 
             build = {'openrouter': openrouter.model, 'vllm': vllm.model, 'github-copilot': github_copilot.model}
-            return await to_thread.run_sync(build[ref.provider], name, abandon_on_cancel=True)
+            return await to_thread.run_sync(partial(build[ref.provider], name, **endpoint), abandon_on_cancel=True)
         if ref.provider == 'openai-codex':
-            return self.codex_auth().model(name)
+            return self.codex_auth().model(name, **endpoint)
         if (provider := self.plugins().get(ref.provider)) is not None:
+            if endpoint:
+                raise _no_endpoint(ref.provider)
             if ref.profile is None:
                 resolve = partial(provider.resolve, ref.name)
             elif provider.resolve_profile is not None:
@@ -155,11 +167,26 @@ class ModelResolver:
 
                 limit_retry_after(model=model)
             return model
-        if ref.profile is not None:
+        if ref.profile is not None or endpoint:
             from pydantic_clai2.models import key_profiles
 
-            return await to_thread.run_sync(key_profiles.model, name, abandon_on_cancel=True)
+            return await to_thread.run_sync(partial(key_profiles.model, name, **endpoint), abandon_on_cancel=True)
         return name
+
+    async def _base_url(self, name: str) -> str | None:
+        """The endpoint saved for `name`, or else for its pooled `PROVIDER@*:NAME` or plain `PROVIDER:NAME`."""
+        plain = base_model(name)
+        for candidate in dict.fromkeys((name, with_profile(plain, ALL), plain)):
+            if (base_url := await self._saved_base_url(candidate)) is not None:
+                return base_url
+        return None
+
+    async def _saved_base_url(self, name: str) -> str | None:
+        """The endpoint `/model settings` saved for `name` itself."""
+        if (store := self.store) is None:
+            return None
+        base_url = await to_thread.run_sync(lambda: store.model_settings(name).get('base_url'), abandon_on_cancel=True)
+        return base_url if isinstance(base_url, str) else None
 
     async def _pool(self, provider: str) -> 'list[Account]':
         """The provider's signed-in accounts, in `/accounts` order; none without a settings store."""
