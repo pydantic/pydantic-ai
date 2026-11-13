@@ -1,4 +1,4 @@
-"""Settled gather batches expose the same failure for every pending-ID order."""
+"""Settled gather batches deliver results in call order for every pending-ID order."""
 
 from itertools import permutations
 from typing import Literal
@@ -12,17 +12,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import CodeMode
 
 
+@pytest.mark.parametrize('pending_order', list(permutations(range(3))))
 class TestCodeModeGatherResultOrdering:
-    @pytest.mark.parametrize('pending_order', list(permutations(range(3))))
-    @pytest.mark.parametrize('barrier', [False, True], ids=['parallel', 'pre-resolved'])
-    @pytest.mark.parametrize('outcomes', ['errors', 'mixed', 'successes'])
-    async def test_settled_batch_uses_call_order(
+    @pytest.fixture
+    def pending_batches(
         self,
         monkeypatch: pytest.MonkeyPatch,
         pending_order: tuple[int, ...],
-        barrier: bool,
-        outcomes: Literal['errors', 'mixed', 'successes'],
-    ) -> None:
+    ) -> list[list[int]]:
         # Force the real snapshot's unordered input, as in the sequential gather regressions.
         original = AsyncFutureSnapshot.pending_call_ids
         pending_batches: list[list[int]] = []
@@ -35,6 +32,16 @@ class TestCodeModeGatherResultOrdering:
             return reordered
 
         monkeypatch.setattr(AsyncFutureSnapshot, 'pending_call_ids', property(pending_ids))
+        return pending_batches
+
+    @pytest.mark.parametrize('barrier', [False, True], ids=['parallel', 'pre-resolved'])
+    @pytest.mark.parametrize('outcomes', ['errors', 'mixed', 'successes'])
+    async def test_settled_batch_uses_call_order(
+        self,
+        pending_batches: list[list[int]],
+        barrier: bool,
+        outcomes: Literal['errors', 'mixed', 'successes'],
+    ) -> None:
         started: list[int | str] = []
 
         async def call(index: int) -> int:
@@ -85,3 +92,46 @@ class TestCodeModeGatherResultOrdering:
         if outcomes == 'successes':
             expected_starts += [3, 4, 5]
         assert started == expected_starts
+
+    async def test_successful_batch_wakes_continuations_in_call_order(self, pending_batches: list[list[int]]) -> None:
+        started: list[tuple[str, int]] = []
+
+        async def call(index: int) -> int:
+            started.append(('call', index))
+            return index
+
+        async def continued(index: int) -> int:
+            started.append(('continued', index))
+            return index
+
+        code = """\
+import asyncio
+async def branch(index):
+    value = await call(index=index)
+    return await continued(index=value)
+await asyncio.gather(branch(0), branch(1), branch(2))
+"""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), tools=[call, continued], capabilities=[CodeMode()])
+        result = await agent.run('go')
+        returns = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        ]
+        assert returns == [[0, 1, 2]]
+        assert len(pending_batches) == 2
+        assert started == [
+            ('call', 0),
+            ('call', 1),
+            ('call', 2),
+            ('continued', 0),
+            ('continued', 1),
+            ('continued', 2),
+        ]
