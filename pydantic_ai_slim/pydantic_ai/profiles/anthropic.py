@@ -296,11 +296,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     [data residency](https://platform.claude.com/docs/en/manage-claude/data-residency). Default: `False`.
 
     When False, [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]
-    is ignored with a `UserWarning`. `AnthropicModel` turns it on for the `AsyncAnthropic` client, which also serves
-    Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), and leaves it off for the Bedrock, Vertex AI
-    and Foundry clients, where the endpoint or deployment decides the inference region. Set it with `profile=` for a
-    client that forwards the parameter to the Claude API. It doesn't depend on the model: models that don't support
-    data residency reject the parameter with a 400.
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and leaves it off for the Bedrock, Vertex AI and Foundry clients, where the endpoint or deployment decides the
+    inference region. Set it in the provider's profile or with `profile=` for a client that forwards the parameter to
+    the Claude API. It doesn't depend on the model: models that don't support data residency reject the parameter
+    with a 400.
     """
 
 

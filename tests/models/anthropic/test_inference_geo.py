@@ -15,6 +15,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelResponse
+from pydantic_ai.profiles import ModelProfile
 
 from ...conftest import try_import
 
@@ -231,6 +232,44 @@ async def test_inference_geo_not_reported_when_ignored_streamed(allow_model_requ
     assert body['stream'] is True
     assert 'inference_geo' not in body
     assert _last_response(streamed.all_messages()).provider_details == {'finish_reason': 'end_turn'}
+
+
+@pytest.mark.parametrize(
+    ('client_name', 'supports_inference_geo'),
+    [pytest.param('api', False, id='api-off'), pytest.param('foundry', True, id='foundry-on')],
+)
+async def test_inference_geo_provider_profile_wins(
+    allow_model_requests: None, client_name: str, supports_inference_geo: bool
+):
+    """A provider whose profile sets the flag wins over the client-class default."""
+
+    class InferenceGeoProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return AnthropicModelProfile(anthropic_supports_inference_geo=supports_inference_geo)
+
+    bodies: list[dict[str, Any]] = []
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
+        clients = {
+            'api': lambda: AsyncAnthropic(api_key='x', http_client=http_client),
+            'foundry': lambda: AsyncAnthropicFoundry(
+                api_key='x', base_url='https://example.com/anthropic', http_client=http_client
+            ),
+        }
+        model = AnthropicModel(
+            'claude-sonnet-5-5', provider=InferenceGeoProvider(anthropic_client=clients[client_name]())
+        )
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
+        )
+        if supports_inference_geo:
+            await agent.run('Reply with exactly: OK')
+        else:
+            with pytest.warns(UserWarning, match='`anthropic_inference_geo` is not supported on this client'):
+                await agent.run('Reply with exactly: OK')
+
+    [body] = bodies
+    assert body.get('inference_geo') == ('us' if supports_inference_geo else None)
 
 
 async def test_inference_geo_profile_override(allow_model_requests: None):
