@@ -218,7 +218,7 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
     'action, timeout',
     [
         (HoldKeys(keys=('shift',), seconds=200), 350),
-        (Scroll(direction='down', amount=1_000), 170),
+        (Scroll(direction='down', amount=1_000), 182),
         (PressKeys(keys=('a',), repeat=1_000), 162),
         (PressKeys(keys=('ctrl', 'shift', 'a'), repeat=1_000), 186),
         (TypeText(text='a' * 1_000), 162),

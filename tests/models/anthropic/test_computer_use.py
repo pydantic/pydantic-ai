@@ -302,17 +302,27 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
     assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
 
 
-async def test_an_earlier_tool_call_naming_its_action_with_something_other_than_text_runs_nothing(
-    allow_model_requests: None,
+_CLICK_TEXT_REFUSED = (
+    '"loc":["actions",0,"click","unsupported_fields"],"msg":"Unexpected keyword argument","input":["text"]'
+)
+
+
+@pytest.mark.parametrize(
+    'tool_input, retry_names',
+    [
+        # The SDK takes any JSON as the input, so a malformed `action` gets a retry rather than ending the run.
+        # As for a call without an `action`, the retry shows the fields that didn't map.
+        ({'action': ['left_click'], 'coordinate': [5, 6]}, '"unsupported_fields":["action","coordinate"]'),
+        # The earlier tools' clicks take modifier keys as `key` only, so `text` is refused rather than either winning.
+        ({'action': 'left_click', 'coordinate': [5, 6], 'key': 'ctrl', 'text': 'shift'}, _CLICK_TEXT_REFUSED),
+        ({'action': 'left_click', 'coordinate': [5, 6], 'text': 'shift', 'key': 'ctrl'}, _CLICK_TEXT_REFUSED),
+    ],
+)
+async def test_an_earlier_tool_call_with_input_that_does_not_map_runs_nothing(
+    allow_model_requests: None, tool_input: dict[str, Any], retry_names: str
 ) -> None:
-    # The SDK takes any JSON as the input, so a malformed `action` gets a retry rather than ending the run.
     block = BetaToolUseBlock.model_validate(
-        {
-            'id': 'toolu_1',
-            'type': 'tool_use',
-            'name': 'computer',
-            'input': {'action': ['left_click'], 'coordinate': [5, 6]},
-        }
+        {'id': 'toolu_1', 'type': 'tool_use', 'name': 'computer', 'input': tool_input}
     )
     client = MockAnthropic.create_mock([_turn(block), _turn(BetaTextBlock(text='done', type='text'))])
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
@@ -323,8 +333,7 @@ async def test_an_earlier_tool_call_naming_its_action_with_something_other_than_
     assert computer.actions == []
     (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
     assert retry.outcome == 'retried'
-    # As for a call without an `action`, the retry shows the fields that didn't map.
-    assert '"unsupported_fields":["action","coordinate"]' in retry.model_response_str()
+    assert retry_names in retry.model_response_str()
 
 
 async def test_an_earlier_tool_result_stored_as_a_json_string_keeps_its_screenshot(allow_model_requests: None) -> None:
