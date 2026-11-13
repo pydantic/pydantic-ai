@@ -53,6 +53,9 @@ DISPLAY = ':100'
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing the mouse button after a failed or cancelled drag."""
 
+_LONGEST_HOLD_SECONDS = 300
+"""Longest time boxd holds keys down in one call."""
+
 _TYPED_PER_CALL = 2_000
 """Characters typed by one call: boxd takes at most 10,000, and 2,000 take about 9 seconds."""
 
@@ -154,12 +157,11 @@ class BoxdDesktop:
                 await computer.mouse_up(machine_id, button=button)
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 sign = -1 if direction in ('up', 'left') else 1
+                vertical = direction in ('up', 'down')
                 for start in range(0, amount, _SCROLLED_PER_CALL):
                     clicks = sign * min(_SCROLLED_PER_CALL, amount - start)
-                    if direction in ('up', 'down'):
-                        await computer.scroll(machine_id, x, y, dy=clicks, modifiers=modifiers)
-                    else:
-                        await computer.scroll(machine_id, x, y, dx=clicks, modifiers=modifiers)
+                    dx, dy = (0, clicks) if vertical else (clicks, 0)
+                    await computer.scroll(machine_id, x, y, dx=dx, dy=dy, modifiers=modifiers)
             case TypeText(text=text):
                 for start in range(0, len(text), _TYPED_PER_CALL):
                     await computer.type(machine_id, text[start : start + _TYPED_PER_CALL])
@@ -167,6 +169,11 @@ class BoxdDesktop:
                 combination = _combination(keys)
                 for start in range(0, repeat, _REPEATS_PER_CALL):
                     await computer.key(machine_id, combination, repeat=min(_REPEATS_PER_CALL, repeat - start))
+            # https://docs.boxd.sh/guides/computer-use.md#limits: `hold_ms` up to 5 minutes.
+            case HoldKeys(seconds=seconds) if seconds > _LONGEST_HOLD_SECONDS:
+                raise UnsupportedActionError(
+                    f"boxd's desktop can hold keys for at most {_LONGEST_HOLD_SECONDS} seconds."
+                )
             case HoldKeys(keys=keys, seconds=seconds):
                 await computer.key(machine_id, _combination(keys), hold_ms=max(1, round(seconds * 1000)))
             case _:
@@ -191,7 +198,13 @@ class BoxdDesktop:
             for point in path[1:]:
                 await computer.move(machine_id, point.x, point.y)
             await computer.mouse_up(machine_id, end.x, end.y)
-        except BaseException:
+        except BaseException as error:
+            released = False
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await computer.mouse_up(machine_id)
-            raise
+                released = True
+            if released or not isinstance(error, Exception):
+                raise
+            raise WorkspaceError(
+                f'{error}. Releasing the left mouse button failed too, so it may still be held.'
+            ) from error

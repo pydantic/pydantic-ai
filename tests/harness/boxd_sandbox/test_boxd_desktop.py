@@ -118,6 +118,7 @@ async def test_each_action_maps_onto_boxd_calls(host: FakeBoxd, action: DisplayA
     [
         pytest.param(MoveMouse(x=1, y=1, modifiers=('alt',)), id='move-holding-a-key'),
         pytest.param(Drag(path=_path(101), modifiers=('shift',)), id='long-drag-holding-a-key'),
+        pytest.param(HoldKeys(keys=('a',), seconds=300.5), id='hold-longer-than-boxd-allows'),
         pytest.param(object(), id='unknown-action-type'),
     ],
 )
@@ -155,6 +156,23 @@ async def test_a_failed_long_drag_releases_the_button(host: FakeBoxd) -> None:
     host.desktop.errors = [None, APIStatusError('the desktop went away', code='internal', grpc_code=13)]
 
     with pytest.raises(APIStatusError, match='the desktop went away'):
+        await screen(backend).act(Drag(path=_path(101)))
+
+    assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 1', 'mouse_up pointer left']
+
+
+async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held(host: FakeBoxd) -> None:
+    backend = await _started(host)
+    # The press goes through; the first move fails, and so does the release after it.
+    host.desktop.errors = [
+        None,
+        APIStatusError('move refused', code='invalid_argument', grpc_code=3),
+        APIStatusError('release connection lost', code='unavailable', grpc_code=14),
+    ]
+
+    with pytest.raises(
+        WorkspaceError, match=r'move refused\. Releasing the left mouse button failed too, so it may still be held\.'
+    ):
         await screen(backend).act(Drag(path=_path(101)))
 
     assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 1', 'mouse_up pointer left']
