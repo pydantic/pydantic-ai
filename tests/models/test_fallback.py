@@ -29,6 +29,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    RetryModelRequest,
     TextPart,
     ToolCallPart,
     ToolDefinition,
@@ -2244,12 +2245,12 @@ async def test_rejected_usage_counts_towards_token_limits() -> None:
         await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
 
 
-@pytest.mark.parametrize('inner_outcome', ['answered', 'failed'])
+@pytest.mark.parametrize('inner_outcome', ['answered', 'failed', 'unhandled'])
 async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> None:
     """An outer `FallbackModel` keeps the attempts an inner one made, so their billed usage still counts.
 
-    The inner model's rejected response is on the response the outer one then rejects, or on the
-    `FallbackExceptionGroup` the outer one falls back on.
+    The inner model's rejected response is on the response the outer one then rejects, on the
+    `FallbackExceptionGroup` the outer one falls back on, or on the error the inner one doesn't fall back on.
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2264,19 +2265,122 @@ async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> N
     inner = FallbackModel(
         FunctionModel(respond, model_name='inner_a'),
         FunctionModel(respond if inner_outcome == 'answered' else failure_response, model_name='inner_b'),
-        fallback_on=[ModelHTTPError, reject_inner_a],
+        fallback_on=[reject_inner_a] if inner_outcome == 'unhandled' else [ModelHTTPError, reject_inner_a],
     )
     outer = FallbackModel(
-        inner, FunctionModel(respond, model_name='outer'), fallback_on=[FallbackExceptionGroup, reject_inner]
+        inner,
+        FunctionModel(respond, model_name='outer'),
+        fallback_on=[ModelHTTPError, FallbackExceptionGroup, reject_inner],
     )
     result = await Agent(outer).run('test')
 
     expected = {
         'answered': ([('inner_a', 'rejected'), ('inner_b', 'rejected')], 30),
         'failed': ([('inner_a', 'rejected'), ('inner_b', 'error'), ('fallback:inner_a,inner_b', 'error')], 20),
+        'unhandled': ([('inner_a', 'rejected'), ('fallback:inner_a,inner_b', 'error')], 20),
     }
     attempts = [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []]
     assert (attempts, result.usage.input_tokens) == expected[inner_outcome]
+
+
+def _rejects_then_raises() -> FallbackModel:
+    """A `FallbackModel` that rejects a billed response, then raises an error it doesn't fall back on."""
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=120, cost=Decimal('0.012')))
+
+    return FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(failure_response, model_name='failing'),
+        fallback_on=_rejected_primary,
+    )
+
+
+@pytest.mark.parametrize('via', ['FallbackModel', 'ModelFallback', 'RetryModelRequest'])
+@pytest.mark.parametrize('limit', ['within', 'tokens', 'cost'])
+async def test_rejected_usage_on_an_error_another_fallback_recovers_from_counts_once(via: str, limit: str) -> None:
+    """A `FallbackModel`'s rejected response counts once when something outside it recovers from the error it raised.
+
+    The rejected response rides on that error, which an outer `FallbackModel`, the `ModelFallback` capability,
+    or a hook raising `RetryModelRequest` moves on from to the model that answers.
+    """
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('accepted')], usage=RequestUsage(input_tokens=45, cost=Decimal('0.0045')))
+
+    final = FunctionModel(backup, model_name='backup')
+
+    class RetryOnBackup(AbstractCapability[None]):
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise RetryModelRequest(final)
+
+    agents: dict[str, Agent[None, str]] = {
+        'FallbackModel': Agent(FallbackModel(_rejects_then_raises(), final, fallback_on=ModelHTTPError)),
+        'ModelFallback': Agent(_rejects_then_raises(), capabilities=[ModelFallback(final, fallback_on=ModelHTTPError)]),
+        'RetryModelRequest': Agent(_rejects_then_raises(), deps_type=type(None), capabilities=[RetryOnBackup()]),
+    }
+    # Counting the rejected response twice would exceed the `within` limits.
+    limits: dict[str, tuple[UsageLimits, str | None]] = {
+        'within': (UsageLimits(input_tokens_limit=200, cost_limit=Decimal('0.02')), None),
+        'tokens': (UsageLimits(input_tokens_limit=150), 'input_tokens_limit'),
+        'cost': (UsageLimits(cost_limit=Decimal('0.015')), 'cost_limit'),
+    }
+    usage_limits, exceeded = limits[limit]
+    usage = RunUsage()
+    if exceeded is None:
+        result = await agents[via].run('test', usage=usage, usage_limits=usage_limits)
+        assert result.output == 'accepted'
+        assert result.response.usage == RequestUsage(input_tokens=45, cost=Decimal('0.0045'))
+        attempts = [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []]
+        assert attempts == [('primary', 'rejected'), ('fallback:primary,failing', 'error')]
+    else:
+        with pytest.raises(UsageLimitExceeded, match=exceeded):
+            await agents[via].run('test', usage=usage, usage_limits=usage_limits)
+    assert (usage.input_tokens, usage.cost) == (165, Decimal('0.0165'))
+
+
+@pytest.mark.parametrize('outer_outcome', ['unhandled', 'exhausted'])
+async def test_rejected_usage_on_an_error_an_outer_fallback_recovers_from_survives_its_failure(
+    outer_outcome: str,
+) -> None:
+    """The inner model's rejected response still counts when the outer `FallbackModel` falls back from its error and fails.
+
+    The outer one either raises an error it doesn't fall back on, or a `FallbackExceptionGroup` once every model failed.
+    """
+
+    def last(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if outer_outcome == 'exhausted':
+            raise ModelHTTPError(status_code=503, model_name='last')
+        raise ValueError('not a fallback error')
+
+    outer = FallbackModel(_rejects_then_raises(), FunctionModel(last, model_name='last'), fallback_on=ModelHTTPError)
+    usage = RunUsage()
+    with pytest.raises(FallbackExceptionGroup if outer_outcome == 'exhausted' else ValueError):
+        await Agent(outer).run('test', usage=usage)
+    assert usage == snapshot(RunUsage(input_tokens=120, cost=Decimal('0.012')))
+
+
+async def test_nested_fallback_stream_keeps_the_inner_attempts() -> None:
+    """An outer `FallbackModel` that streams after an inner one raised keeps the attempts the inner one made first."""
+
+    async def unavailable(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ValueError('unavailable')
+        yield ''
+
+    inner = FallbackModel(
+        FunctionModel(stream_function=unavailable, model_name='inner_a'),
+        FunctionModel(stream_function=failure_response_stream, model_name='inner_b'),
+        fallback_on=ValueError,
+    )
+    outer = FallbackModel(inner, success_model_stream, fallback_on=ModelHTTPError)
+    async with Agent(outer).run_stream('test') as result:
+        assert await result.get_output() == 'hello world'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    attempts = [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []]
+    assert attempts == [('inner_a', 'error'), ('fallback:inner_a,inner_b', 'error')]
 
 
 class _UsageAttemptsSpy(AbstractCapability[Any]):
