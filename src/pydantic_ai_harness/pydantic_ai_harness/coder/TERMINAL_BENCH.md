@@ -83,6 +83,17 @@ different composition. The pinned adapter has no option for `Coder(sub_agents=Fa
 so it cannot reproduce the six-tool generation on those releases; record the composition
 with the score.
 
+Benchmark-only guidance (self-contained deliverables checked from a clean
+directory, using every field of the provided data) is not in `Coder`'s
+defaults; a run opts in by binding `BenchmarkInstructions()` next to `Coder()`
+(see [Benchmarking](README.md#benchmarking)). Releases that predate
+`BenchmarkInstructions` include it in the defaults. The pinned adapter's runner
+loads the exported `coder_agent`, which does not bind it, and has no option to
+add a capability. To opt in, change the runner's `_build_agent` in the Harbor
+checkout to return
+`Agent(name='coder', capabilities=[LocalWorkspace('.'), Coder(), BenchmarkInstructions()])`.
+Record whether a score used it.
+
 Install the matching `[coder]` extra via `pip_packages` so the agent venv also
 gets ripgrep. Omit `allowed_commands`: current Coder has no command allowlist,
 and the older adapter's override path rebuilds the agent with legacy options.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -14,7 +14,12 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import Autonomy, coder_instructions, project_instructions
+from pydantic_ai_harness.coder._instructions import (
+    BENCHMARK_INSTRUCTIONS,
+    Autonomy,
+    coder_instructions,
+    project_instructions,
+)
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -147,6 +152,22 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
         if delegation_depth() <= 1:
             return self
         return replace(self, delegate=True)
+
+
+@dataclass
+class BenchmarkInstructions(AbstractCapability[AgentDepsT]):
+    """Benchmark-only guidance, bound next to `Coder` for runs a verifier grades.
+
+    It says deliverables are checked in a clean directory with only the requested files, and that
+    every field of the provided data matters. Neither holds for everyday work in a project, so
+    `Coder` leaves both out. `delegate_task`'s `self` delegate re-runs the same agent, so it gets it too.
+    """
+
+    _: KW_ONLY
+    id: str | None = 'benchmark_instructions'
+
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
+        return BENCHMARK_INSTRUCTIONS
 
 
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:

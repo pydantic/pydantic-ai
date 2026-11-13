@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import re
@@ -20,7 +19,7 @@ from typing import Literal, TextIO
 from urllib.parse import quote
 
 from douwebot_opencode_result import final_text, rejection_reason, unfenced
-from douwebot_opencode_run import Attempt, check_symlinks, logfire_endpoint, run_with_fallback
+from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -275,46 +274,6 @@ def report_privately(webhook: str, check: str, pr_number: int, repository: str, 
         pass
 
 
-def export_span(
-    endpoint: str, token: str, check: str, attributes: Mapping[str, str | int | bool], started: int, *, failed: bool
-) -> None:
-    """Send one span per review to Logfire: OpenCode's own spans carry no model, token or step counts."""
-    span = {
-        'traceId': secrets.token_hex(16),
-        'spanId': secrets.token_hex(8),
-        'name': f'PR Review Check {check}',
-        'kind': 1,
-        'startTimeUnixNano': str(started),
-        'endTimeUnixNano': str(time.time_ns()),
-        'attributes': [
-            {
-                'key': key,
-                'value': {'boolValue': value}
-                if isinstance(value, bool)
-                else {'intValue': str(value)}
-                if isinstance(value, int)
-                else {'stringValue': value},
-            }
-            for key, value in attributes.items()
-        ],
-        # OTLP's `STATUS_CODE_ERROR`.
-        **({'status': {'code': 2}} if failed else {}),
-    }
-    resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'pr-review-checks'}}]}
-    body = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'scope': {'name': __name__}, 'spans': [span]}]}]}
-    request = urllib.request.Request(
-        f'{endpoint}/v1/traces',
-        data=json.dumps(body).encode(),
-        headers={'Content-Type': 'application/json', 'Authorization': token},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30):
-            pass
-    # `main` exports while a failed review's own exception propagates, so a failed export must not replace it.
-    except (OSError, ValueError, http.client.HTTPException) as error:
-        print(f'::warning::Could not export the review span: {error}')
-
-
 def main() -> None:
     """Review one check and write its publishable result for the publisher job."""
     env = os.environ
@@ -332,6 +291,8 @@ def main() -> None:
         'github.run_attempt': env['GITHUB_RUN_ATTEMPT'],
     }
     started = time.time_ns()
+    # The review's span, which each OpenCode run's span names as its parent.
+    trace_id, span_id = secrets.token_hex(16), secrets.token_hex(8)
     attempts: list[Attempt] = []
     values: dict[str, str | int | bool] = {}
     try:
@@ -359,6 +320,8 @@ def main() -> None:
             # The `detect` job builds the matrix in `select` order.
             matrix_index=list(selected).index(check.name),
             attempts=attempts,
+            trace_id=trace_id,
+            parent_id=span_id,
         )
         values = {
             'pr_review_checks.steps': usage.steps,
@@ -368,7 +331,7 @@ def main() -> None:
         changed = {change.path: change.positions for change in changes}
         result, private_report = check_result(check, files, stream, usage, changed=changed)
         values |= {'pr_review_checks.outcome': result.outcome, 'pr_review_checks.findings': len(result.findings)}
-    # A failed, rejected or cancelled review is exported too, under the exception's class name: its message can
+    # A failed, rejected or interrupted review is exported too, under the exception's class name: its message can
     # repeat model or provider text.
     except BaseException as error:
         values |= {'pr_review_checks.outcome': 'FAILED', 'pr_review_checks.exception': type(error).__name__}
@@ -388,8 +351,17 @@ def main() -> None:
                 **({'pr_review_checks.restarted': True} if any(run.finished for run in attempts[:-1]) else {}),
             }
         if token := env.get('LOGFIRE_TOKEN', ''):
-            failed = 'pr_review_checks.exception' in values
-            export_span(logfire_endpoint(), token, check.name, {**attributes, **values}, started, failed=failed)
+            # OpenCode's own spans carry no model, token or step counts.
+            span = otlp_span(
+                f'PR Review Check {check.name}',
+                {**attributes, **values},
+                started,
+                time.time_ns(),
+                trace_id=trace_id,
+                span_id=span_id,
+                failed='pr_review_checks.exception' in values,
+            )
+            export_spans(token, 'pr-review-checks', [span])
         else:
             print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:

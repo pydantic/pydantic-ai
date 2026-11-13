@@ -137,6 +137,12 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
 
+### BenchmarkInstructions
+
+For benchmark runs, bind `BenchmarkInstructions()` next to `Coder()`: it adds the benchmark-only guidance
+(self-contained deliverables checked from a clean directory, using every field of the provided data)
+that `Coder`'s defaults leave out.
+
 ### Sharing a workspace across runs and agents
 
 ```python {test="skip" lint="skip"}
