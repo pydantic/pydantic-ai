@@ -38,7 +38,7 @@ from pydantic_ai_harness.permissions import (
     denial_message,
     permission_requests,
 )
-from pydantic_ai_harness.subagents import SELF_AGENT_NAME, SubAgents
+from pydantic_ai_harness.sub_agents import SELF_AGENT_NAME, SubAgents
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as SETTING
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool

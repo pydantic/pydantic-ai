@@ -26,7 +26,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     DelegationStartedEvent,
     DelegationTask,

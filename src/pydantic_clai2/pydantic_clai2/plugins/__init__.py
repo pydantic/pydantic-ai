@@ -28,7 +28,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
-from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_ai_harness.sub_agents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
@@ -390,7 +390,7 @@ class LiveSession(Protocol):
         ...
 
     def steer(self, text: str, /) -> bool:
-        """Send `text` to the running turn now, as Alt+Enter at the prompt does; its model reads it at its next request.
+        """Send `text` to the running turn now, as steering at the prompt does; its model reads it at its next request.
 
         Returns `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line, which never steer.
         """
