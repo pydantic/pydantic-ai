@@ -1132,7 +1132,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if self._is_cancelled_straggler(event_type, data):
             # A start boundary for a response cancelled on barge-in: don't mark playback active or
             # report the model as speaking. Its matching stop/cleared boundary is still processed
-            # below (it is never a straggler) so any playback state is cleaned up.
+            # by `_decode_output_speech_end` (it is never a straggler) so any playback state is cleaned up.
             return _DecodedFrame()
         self._output_audio_playing = True
         return _DecodedFrame([] if self._observes_output_audio else [RealtimeOutputSpeechStartEvent()])
@@ -1427,7 +1427,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # No more calls can join the response: its tool results are answered once all are in.
         batch.done = True
         if barged_in and not batch.unanswered:
-            # As for a deferred request above: the user barged in, and the response their speech
+            # As for a deferred request in `_settle_response`: the user barged in, and the response their speech
             # starts answers the results already sent, rather than one talking over them.
             del self._tool_call_batches[response_id]
             self._lifecycle.requests_dropped(batch.inputs)

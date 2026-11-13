@@ -1325,7 +1325,7 @@ class OpenAILiveConnection(RealtimeConnection):
                         pass
                     case frame:
                         yield frame
-                        closed = await self._send_due_continuations_unless_closed()
+                        closed = await self._try_send_due_continuations()
             if closed is not None:
                 frame, reconnected = await self._handle_close(closed)
                 yield frame
@@ -1379,7 +1379,8 @@ class OpenAILiveConnection(RealtimeConnection):
                 self._hand_over(event)
         return frame
 
-    async def _send_due_continuations_unless_closed(self) -> _SocketClosed | None:
+    async def _try_send_due_continuations(self) -> _SocketClosed | None:
+        """Send the continuations now due, returning how the socket closed if a send found it closed."""
         try:
             await self._send_due_continuations()
         except self.transport_errors as e:

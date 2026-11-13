@@ -2038,7 +2038,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         state_resumed = self._resumption_handle is not None
         # Likewise the typed turns no handle has covered yet, on a server that withholds handles
         # mid-turn (or without any handle). Those still awaiting their reply are released, unless
-        # the reply had already started (it took the response, and is closed as interrupted below).
+        # the reply had already started (it took the response, and `_reconnected_frame` closes it as interrupted).
         # A turn still on the wire is left out: its send fails, and the session takes it back.
         uncovered = [
             turn
@@ -2212,7 +2212,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # No code ran: native-audio models announce a Google Search with a bare
                     # `code_execution_result` ("Looking up information on Google Search.") and no
                     # `executable_code` before it (verified live). The search itself arrives as
-                    # grounding metadata, mapped below, so this status line has nothing to pair with.
+                    # grounding metadata, mapped in `_map_server_content`, so this status line has nothing to pair with.
                     continue
                 native_tool_parts.append(
                     _map_code_execution_result(
@@ -2226,15 +2226,16 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # Skip thinking parts: native-audio models stream their reasoning as `thought`
                 # text alongside the spoken answer, and it must not leak into the transcript. A
                 # model-turn text part is the model's plain text output (`response_modality='text'`),
-                # distinct from the spoken-audio transcription in `output_transcription` below, so it
+                # distinct from the spoken-audio transcription in `output_transcription`, which
+                # `_map_server_content` maps, so it
                 # becomes a `TextPart` rather than a `SpeechPart`.
                 events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
         return events, native_tool_parts
 
     def _map_server_content(self, content: genai_types.LiveServerContent) -> list[RealtimeCodecEvent]:
         """Translate a `server_content` message (audio/transcripts/native tools/turn boundary) to events."""
-        # Native tool call/return parts reconstructed for history (code execution here, web grounding
-        # below), folded into the turn's `ModelResponse` by the session rather than yielded live.
+        # Native tool call/return parts reconstructed for history (code execution in `_map_model_turn`,
+        # web grounding below), folded into the turn's `ModelResponse` by the session rather than yielded live.
         events, native_tool_parts = self._map_model_turn(content.model_turn)
         # Gemini 3.x models transcribe the user's speech even when the setup asks for no input
         # transcription (verified live), so honor the setting here: with it off, the user's words must

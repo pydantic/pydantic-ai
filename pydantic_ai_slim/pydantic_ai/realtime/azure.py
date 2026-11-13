@@ -445,7 +445,7 @@ def _voice_live_times_speech(settings: AzureRealtimeModelSettings, *, cascade: b
 def _voice_live_response_config(
     tools: list[ToolDefinition] | None, settings: AzureRealtimeModelSettings
 ) -> dict[str, Any]:
-    """The Voice Live session's tools, tool choice and output token limit, when set."""
+    """The Voice Live session's tools, tool choice, parallel tool calls and output token limit, when set."""
     config: dict[str, Any] = {}
     advertised_tools, tool_choice = resolve_advertised_tools(list(tools or []), settings.get('tool_choice'))
     if advertised_tools:
