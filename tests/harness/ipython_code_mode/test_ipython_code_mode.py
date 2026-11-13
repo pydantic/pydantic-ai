@@ -265,7 +265,7 @@ class TestIPythonCodeMode:
                 returns = await _run(
                     IPythonCodeMode(kernel=kernel, timeout=0.5),
                     "survives_timeout = 'yes'",
-                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\ntime.sleep(30)",
+                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\nfor _ in range(300):\n    time.sleep(0.1)",
                     'survives_timeout',
                 )
             finally:
