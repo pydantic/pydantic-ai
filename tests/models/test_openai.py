@@ -5849,6 +5849,23 @@ async def test_invalid_response(allow_model_requests: None):
         'Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion'
     )
     assert isinstance(exc_info.value, UnexpectedModelBehavior)
+    assert exc_info.value.body == snapshot(
+        {
+            'id': None,
+            'choices': None,
+            'created': 0,
+            'model': None,
+            'object': None,
+            'metadata': None,
+            'moderation': None,
+            'service_tier': None,
+            'system_fingerprint': None,
+            'usage': None,
+            'contentType': 'application/json',
+            'method': 'POST',
+            'pathname': '/bin/content-type/application/json/chat/completions',
+        }
+    )
 
 
 async def test_text_response(allow_model_requests: None):
