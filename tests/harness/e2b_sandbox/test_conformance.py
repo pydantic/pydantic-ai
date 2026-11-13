@@ -122,7 +122,6 @@ class TestLiveE2BDesktop:  # pragma: lax no cover
         display = backend.display
         assert display is not None
         await display.display_size()  # starts the display
-        await display.screenshot()  # an action waits for a screenshot of a display that just started
         await check_display_contract(display)
         typed = f'/tmp/typed-{uuid.uuid4().hex}.txt'
         await backend.run(
