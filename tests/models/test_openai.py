@@ -7588,31 +7588,24 @@ def test_openai_chat_audio_uri_encoding(allow_model_requests: None):
     assert audio_part['input_audio']['format'] == 'wav'
 
 
-def test_openai_chat_audio_unsupported_format(allow_model_requests: None):
-    """Chat Completions `input_audio` only takes WAV and MP3, so other audio is rejected before any request is sent."""
+@pytest.mark.parametrize('media_type', ['audio/flac', 'audio/mp4a-latm'])
+async def test_openai_chat_audio_unsupported_format(allow_model_requests: None, media_type: str):
+    """Chat Completions `input_audio` only takes WAV and MP3, so other audio is rejected before any request is sent.
+
+    `audio/flac` has a known format OpenAI doesn't accept; `audio/mp4a-latm` has no known format at all.
+    """
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
     model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model)
+    message = re.escape(f'only supports WAV and MP3 audio input, got {media_type!r}')
 
-    with pytest.raises(UserError, match=re.escape("only supports WAV and MP3 audio input, got 'audio/flac'")):
-        agent.run_sync(['Process this audio', BinaryContent(b'fake_audio_data', media_type='audio/flac')])
-
-    assert get_mock_chat_completion_kwargs(mock_client) == []
-
-
-async def test_openai_chat_audio_url_unsupported_format(allow_model_requests: None):
-    """Same as above for `AudioUrl`, where the format comes from the downloaded file."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
-    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
+    with pytest.raises(UserError, match=message):
+        await agent.run(['Process this audio', BinaryContent(b'fake_audio_data', media_type=media_type)])
 
     with patch('pydantic_ai.models.openai._chat_model.download_item') as mock_download:
-        mock_download.return_value = {'data': 'ZmFrZQ==', 'data_type': 'flac'}
-
-        with pytest.raises(UserError, match=re.escape("only supports WAV and MP3 audio input, got 'audio/flac'")):
-            await agent.run(
-                ['Process this audio url', AudioUrl('https://example.com/audio.flac', media_type='audio/flac')]
-            )
+        with pytest.raises(UserError, match=message):
+            await agent.run(['Process this audio url', AudioUrl('https://example.com/audio', media_type=media_type)])
+        mock_download.assert_not_called()
 
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
