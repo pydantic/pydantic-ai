@@ -775,6 +775,8 @@ The local tool is found by its kind, not its name (see [`executed_by`][pydantic_
 
 A call the provider attaches safety checks to, such as OpenAI's `pending_safety_checks`, waits for [approval](deferred-tools.md#human-in-the-loop-tool-approval) before the local tool runs. The checks are on [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks]. [`ApprovalReviewer`](harness/approval-reviewer.md) (Harness) is shown only the call's arguments, not the checks, so leave the `computer` tool out of its `tools` if the checks should reach a person.
 
+A call of the `computer` kind runs only when the response it came in finished normally: a response cut off at the token limit, filtered or failed makes it a [retry](tools-advanced.md#tool-retries) telling the model the computer did nothing.
+
 `ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
 
 ## Memory Tool
