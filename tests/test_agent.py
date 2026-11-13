@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVa
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, field_validator
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, field_validator
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
 
@@ -2291,6 +2291,26 @@ def text_alias_positional_only_with_hidden_arg(
     return f'text={text}'
 
 
+def text_alias_path_with_hidden_arg(
+    text: Annotated[str, Field(validation_alias=AliasPath('payload', 'text'))], b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_shared_with_hidden_arg(
+    text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_shared_with_hidden_arg_and_var_kwargs(
+    text: Annotated[str, Field(alias='theText')] = 'default',
+    b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1,
+    **kwargs: int,
+) -> str:
+    return f'text={text}'
+
+
 @pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize(
     'output_function',
@@ -2303,6 +2323,9 @@ def text_alias_positional_only_with_hidden_arg(
         text_alias_choices_with_hidden_arg,
         text_alias_with_var_kwargs,
         text_alias_positional_only_with_hidden_arg,
+        text_alias_path_with_hidden_arg,
+        text_alias_shared_with_hidden_arg,
+        text_alias_shared_with_hidden_arg_and_var_kwargs,
     ],
 )
 async def test_output_type_text_output_function_str_arg(output_function: Callable[..., str], stream: bool):

@@ -74,8 +74,9 @@ class FunctionSchema:
     parameter_names: dict[str, str] = field(default_factory=dict[str, str])
     """Maps each JSON schema property named after a parameter's validation alias to that parameter's Python name.
 
-    A property named after a parameter's Python name is left out. Empty for a model-like single arg
-    (`single_arg_name`), whose JSON schema properties are the model's fields.
+    Only parameters the JSON schema shows are mapped, so a `SkipJsonSchema` parameter never is, and a property
+    named after a parameter's Python name is left out. Empty for a model-like single arg (`single_arg_name`),
+    whose JSON schema properties are the model's fields.
     """
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
@@ -247,7 +248,7 @@ def function_schema(
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
         single_field_name=single_field_name,
-        parameter_names=_parameter_names(schema_context.fields, single_arg_name),
+        parameter_names=_parameter_names(schema_context.fields, schema, single_arg_name, schema_generator),
         positional_fields=schema_context.positional_fields,
         var_positional_field=schema_context.var_positional_field,
         takes_ctx=bool(takes_ctx),
@@ -257,22 +258,29 @@ def function_schema(
     )
 
 
-def _parameter_names(fields: dict[str, core_schema.TypedDictField], single_arg_name: str | None) -> dict[str, str]:
-    """Map each field's JSON schema property name to its Python name, for `FunctionSchema.parameter_names`.
+def _parameter_names(
+    fields: dict[str, core_schema.TypedDictField],
+    schema: core_schema.CoreSchema,
+    single_arg_name: str | None,
+    schema_generator: type[GenerateJsonSchema],
+) -> dict[str, str]:
+    """Build `FunctionSchema.parameter_names` from the parameters' fields and the cleaned schema's definitions.
 
-    Pydantic names the property after the field's validation alias: the alias itself, or the first path of an
-    `AliasChoices` that is a single string.
+    Each aliased field's JSON schema is generated on its own, so Pydantic both names its property and leaves out a
+    field the JSON schema hides.
     """
     if single_arg_name is not None:
         return {}
+    definitions = schema['definitions'] if schema['type'] == 'definitions' else []
     parameter_names: dict[str, str] = {}
     for name, td_field in fields.items():
-        alias = td_field.get('validation_alias', name)
-        if not isinstance(alias, str):
-            alias = next((p[0] for p in alias if isinstance(p, list) and len(p) == 1 and isinstance(p[0], str)), name)
-        # A property named after a parameter's Python name keeps naming that parameter, even if another's alias matches.
-        if alias not in fields:
-            parameter_names[alias] = name
+        if 'validation_alias' not in td_field:
+            continue
+        field_schema = core_schema.definitions_schema(core_schema.typed_dict_schema({name: td_field}), definitions)
+        for alias in schema_generator().generate(field_schema).get('properties', {}):
+            # A property named after a parameter's Python name keeps naming that parameter.
+            if alias not in fields:
+                parameter_names[alias] = name
     return parameter_names
 
 
