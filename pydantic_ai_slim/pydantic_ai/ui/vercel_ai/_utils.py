@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui._utils import (
     INTERNAL_METADATA_KEY,
     MCP_APPS_UI_TYPE,
+    load_provider_details,
     mcp_app_ui_payload,
     without_internal_text_metadata,
 )
@@ -250,13 +251,11 @@ def dump_text_metadata(
 
 def load_text_part(text: str, provider_meta: dict[str, Any]) -> TextPart:
     """Load the text part a UI text part holds, from its text and provider metadata."""
-    # The client sends the metadata, and requests read `provider_details` as a dict.
-    provider_details = provider_meta.get('provider_details')
     return TextPart(
         content=text,
         id=provider_meta.get('id'),
         provider_name=provider_meta.get('provider_name'),
-        provider_details=cast(dict[str, Any], provider_details) if isinstance(provider_details, dict) else None,
+        provider_details=load_provider_details(provider_meta.get('provider_details')),
         citations=load_citations(provider_meta.get('citations'), text),
     )
 

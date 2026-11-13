@@ -88,7 +88,14 @@ from .._adapter import (
     tool_availability_delta_payload,
     warn_dropped_tool_results,
 )
-from .._utils import MCP_APPS_UI_TYPE, client_error_text, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
+from .._utils import (
+    MCP_APPS_UI_TYPE,
+    client_error_text,
+    get_ui_message_id,
+    load_provider_details,
+    mcp_app_ui_payload,
+    set_ui_message_id,
+)
 
 try:
     from ag_ui.core import (
@@ -1072,7 +1079,7 @@ def _load_reasoning_message(reasoning_msg: ReasoningMessage, builder: MessagesBu
             id=metadata.get('id'),
             signature=metadata.get('signature'),
             provider_name=metadata.get('provider_name'),
-            provider_details=metadata.get('provider_details'),
+            provider_details=load_provider_details(metadata.get('provider_details')),
         )
     )
     restore_canonical_system(builder, metadata.get('provider_name'), metadata.get('canonical_system'))
@@ -1117,7 +1124,7 @@ def _load_file_activity(activity_msg: ActivityMessage, builder: MessagesBuilder)
             content=binary_content,
             id=activity_content.get('id'),
             provider_name=activity_content.get('provider_name'),
-            provider_details=activity_content.get('provider_details'),
+            provider_details=load_provider_details(activity_content.get('provider_details')),
         )
     )
     restore_canonical_system(builder, activity_content.get('provider_name'), activity_content.get('canonical_system'))

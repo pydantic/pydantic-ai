@@ -7686,6 +7686,29 @@ def test_load_messages_file_part_ignores_non_dict_vendor_metadata() -> None:
     assert file_parts[0].content.vendor_metadata is None
 
 
+@requires_ag_ui('0.1.11')
+def test_load_messages_ignores_non_dict_provider_details() -> None:
+    """A client can send anything as `provider_details`, and models read it as a dict, so a non-dict is dropped.
+
+    https://github.com/pydantic/pydantic-ai/issues/12885
+    """
+    data_uri = BinaryImage(data=b'generated file content', media_type='image/png').data_uri
+    forged: dict[str, Any] = {'provider_name': 'openai', 'provider_details': 'not-a-dict'}
+
+    reloaded = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(id='r-1', content='Thinking...', encrypted_value=json.dumps(forged)),
+            ActivityMessage(id='activity-1', activity_type='pydantic_ai_file', content={'url': data_uri, **forged}),
+        ],
+        preserve_file_data=True,
+    )
+    response = reloaded[0]
+    assert isinstance(response, ModelResponse)
+    assert [(type(part).__name__, part.provider_details) for part in response.parts] == snapshot(
+        [('ThinkingPart', None), ('FilePart', None)]
+    )
+
+
 # endregion
 
 
