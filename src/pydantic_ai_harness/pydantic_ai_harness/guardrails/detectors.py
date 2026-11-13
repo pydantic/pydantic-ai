@@ -22,23 +22,10 @@ not text, and replacing one with a scrubbed string would change its type, so
 reach for [`for_text`][pydantic_ai_harness.guardrails.detectors.for_text] to
 say what should happen there.
 
-What these cannot do is worth stating. A regex finds a credential because
-credentials have a shape; it does not find a prompt injection, which is
-ordinary language, and it does not understand context.
-
-That last point has a concrete cost for `email`, which matches anything shaped
-like an address because that is all an address is:
-
-```python
-redact_personal_data('git clone git@github.com:pydantic/pydantic-ai.git')
-# -> replaces `git@github.com`, leaving a command that no longer runs
-```
-
-An input guard rewrites the prompt in place, so the model receives the broken
-version. On an agent that handles code or paths, reach for
-`personal_data(only=['us_ssn', 'credit_card', 'iban'])`, or apply the detector
-to the output rather than the prompt. Treat all of these as one cheap layer,
-not as the answer.
+A regex finds a credential because credentials have a shape; it does not find a
+prompt injection, which is ordinary language, and it does not understand context,
+so `email` also matches `git@github.com` in a clone URL. See the guardrails docs
+for narrowing the defaults.
 """
 
 from __future__ import annotations
@@ -67,6 +54,12 @@ a backslash and an `n` where the file had a newline. Requiring a real one left t
 private key arrives in a support chat unredacted.
 """
 
+_PEM_BODY = (
+    rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
+    rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+)'
+)
+"""What follows a PEM block's BEGIN line and any header lines: its body when it runs straight to an END marker, or else its body lines alone."""
+
 DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # Vendor key bodies are base64url, whose alphabet includes `_`. A class that
     # stops at `_` redacts half a key and leaves the rest under a label saying it
@@ -84,8 +77,9 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     'google_api_key': r'\bAIza[A-Za-z0-9_-]{35}',
     'google_oauth_secret': r'\bGOCSPX-[A-Za-z0-9_-]{20,}',
     'jwt': r'\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
-    # A PEM block, terminated or not. The newline after the header is required
-    # so prose naming both markers in one sentence is not swallowed as a key.
+    # A PEM block, terminated or not. The newline after the BEGIN line is
+    # required so prose naming both markers in one sentence is not swallowed as
+    # a key.
     # The optional header lines are RFC 1421 fields (`Proc-Type`, `DEK-Info`),
     # which an encrypted key carries and whose `:` and `,` the body class stops
     # at.
@@ -94,16 +88,39 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # `only` selects by name: a caller narrowing to private keys would pick the
     # terminated shape, and a key pasted without its END marker -- the usual way
     # one reaches a chat window -- would then pass through unredacted under a
-    # setting that says it is covered. Alternation is ordered, so a complete
-    # block is claimed by the first tail and the second is reached only when no
-    # END marker follows. That tail stops at the first line that is not body,
-    # since running to the end of the input would delete whatever the user wrote
-    # after the key.
+    # setting that says it is covered. Alternation is ordered, so a body that
+    # runs straight to an END marker is claimed by the first tail, and the
+    # second takes the body alone otherwise. That tail stops at the first
+    # character that is not body, since running to the end of the input would
+    # delete whatever the user wrote after the key; it starts past any blank
+    # lines, as the terminated tail does.
+    #
+    # The lines after BEGIN are read one of three ways, in order:
+    #
+    # - With real line breaks and a header line first, the header section --
+    #   every line up to the first blank one -- is taken whole, so a line in it
+    #   that is not a header, or a value quoting an END marker or holding the
+    #   two characters `\n` as a path does, does not end the block. A section
+    #   with no blank line after it, a line in it that starts with an END
+    #   marker, or a BEGIN marker anywhere in it, sends the block to the next
+    #   reading instead.
+    # - Otherwise, each header line runs to the end of its line, or, when no
+    #   real line break follows, to the last escaped one: a key pasted with
+    #   escaped newlines is a single line, so its header lines take everything
+    #   up to that last escaped line break, END marker included. The body after
+    #   them may be empty.
+    # - With no header line, the body follows the BEGIN line.
+    #
+    # A header section stops at every BEGIN marker, so sections read from
+    # different markers never overlap; a header value is read in runs, a
+    # backslash run in one step; and a header line is never split again once
+    # read. So the pattern runs in time linear in its input.
     'private_key': (
-        rf'-----BEGIN[^-\n]*PRIVATE KEY(?: BLOCK)?-----[ \t]*{_NEWLINE}'
-        rf'(?:[A-Za-z-]+: [^\n]*{_NEWLINE})*'
-        rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
-        rf'|\s*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+)'
+        rf'-----BEGIN[^-\n]*PRIVATE KEY(?: BLOCK)?-----[ \t]*'
+        rf'(?:\r?\n(?=[A-Za-z-]+: )'
+        rf'(?:(?!-----(?:BEGIN|END))(?:(?!-----BEGIN)[^\r\n]|\r(?!\n))+\r?\n)++(?=\r?\n){_PEM_BODY}'
+        rf'|{_NEWLINE}(?:[A-Za-z-]+: (?>(?:[^\n\\]|\\++(?!n)|\\++n)*(?:\r?\n|(?<=\\n))))+(?:{_PEM_BODY})?'
+        rf'|{_NEWLINE}{_PEM_BODY})'
     ),
 }
 """Credential shapes worth redacting, in the order they are applied.
@@ -214,18 +231,7 @@ def _compile(
     `only` has dropped that built-in -- would otherwise be judged by a check
     written for different text and silently never match.
     """
-    if only is None:
-        selected = dict(patterns)
-    else:
-        # `only` filters, it does not reorder. Both mappings document an application order
-        # that other patterns depend on -- `iban` before `credit_card` is what stops a spaced
-        # account number being labelled a card -- and building the dict by iterating `only`
-        # handed that order to the caller's argument order instead.
-        requested = set(only)
-        for name in requested:
-            if name not in patterns:
-                raise UserError(f'Unknown pattern {name!r}; available: {sorted(patterns)}.')
-        selected = {name: pattern for name, pattern in patterns.items() if name in requested}
+    selected = dict(patterns) if only is None else _select_only(patterns, only)
     if extra:
         clashes = sorted(set(extra) & set(selected))
         if clashes:
@@ -241,6 +247,19 @@ def _compile(
         (name, re.compile(pattern), None if name in overridden else _VALIDATORS.get(name))
         for name, pattern in selected.items()
     )
+
+
+def _select_only(patterns: Mapping[str, str], only: Iterable[str]) -> dict[str, str]:
+    """The `patterns` named in `only`, in the order of `patterns`; raises on a name it does not have."""
+    # `only` filters, it does not reorder. Both mappings document an application order
+    # that other patterns depend on -- `iban` before `credit_card` is what stops a spaced
+    # account number being labelled a card -- and building the dict by iterating `only`
+    # handed that order to the caller's argument order instead.
+    requested = set(only)
+    for name in requested:
+        if name not in patterns:
+            raise UserError(f'Unknown pattern {name!r}; available: {sorted(patterns)}.')
+    return {name: pattern for name, pattern in patterns.items() if name in requested}
 
 
 def _require_text(value: object) -> str:
@@ -291,9 +310,9 @@ def secret_data(
 ) -> TextDetector:
     """Build a detector that rewrites credentials out of text.
 
-    Redacting rather than refusing is the useful default here: an agent that
-    quotes a key back has still done the work, and blocking the answer loses it
-    while leaving the key in the message history either way.
+    It redacts rather than refuses: an agent that quotes a key back has still
+    done the work, and blocking the answer would lose it while leaving the key
+    in the message history.
 
     Args:
         only: Restrict to these names from `DEFAULT_SECRET_PATTERNS`.
