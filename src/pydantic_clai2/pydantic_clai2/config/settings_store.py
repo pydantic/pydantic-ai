@@ -392,7 +392,11 @@ class SettingsStore:
             self._save_plugin_requirements(connection, plugin.id, row)
 
     def update_plugin_requirements(self, plugin: PluginSettings, *, requires: Requirements) -> None:
-        """Attach learned tags to the current declaration without restoring a removed or replaced plugin."""
+        """Attach learned tags to the current declaration without restoring a removed or replaced plugin.
+
+        The existence and identity checks and the write are one immediate transaction, so a store that removes or
+        replaces the plugin between them cannot win.
+        """
         plugin_id = _stored_plugin_id(plugin.id)
         with self._connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
