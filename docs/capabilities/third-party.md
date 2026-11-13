@@ -26,6 +26,12 @@ Pydantic AI demonstrates the retrieval pattern in the [RAG example](../examples/
 
 * [`haiku.rag`](https://github.com/ggozad/haiku.rag) - Local-first document RAG for Pydantic AI agents, backed by embedded [LanceDB](https://lancedb.com/) with no database server required. `RAGCapability` provides hybrid vector and full-text search, optional reranking, structure-aware context expansion, and citations to page numbers and section headings. Each document's [`DoclingDocument`](https://docling-project.github.io/docling/concepts/docling_document/) structure is preserved, which is what the context expansion and the page and section citations resolve against. Retrieved figures are passed to vision-capable models as images, and with a multimodal embedder they share the text vector space, so a text query can retrieve a figure and an image can be the query. For questions requiring computation across a corpus, `AnalysisCapability` combines search and citations with model-written Python executed in a [Monty](https://github.com/pydantic/monty) sandbox over a virtual document filesystem. `EvidenceCompactionCapability` keeps multi-turn requests smaller by retaining previously cited evidence while replacing uncited earlier search results, and `CitationPolicyCapability` requires answers to explicitly declare whether, and by what, they are grounded. The retrieval and analysis capabilities support deferred loading. The package also exposes lower-level [toolsets](../toolsets.md) through `create_search_toolset()` and `create_document_toolset()`.
 
+## Cloud Workspaces {#cloud-workspaces}
+
+Community workspace providers can supply remote execution and files for Pydantic AI Harness's [Shell](../harness/shell.md) and [FileSystem](../harness/filesystem.md) capabilities:
+
+* [`pydantic-ai-lizard`](https://github.com/lizard-build/integrations/tree/main/packages/pydantic-ai-lizard) - `LizardSandbox` supplies a cloud workspace from Lizard (lizard.build) for Harness's `Shell` and `FileSystem` capabilities. Supports commands, binary files, and reconnecting to a saved workspace. Also exposes `LizardSandboxBackend` for direct workspace use. Requires a Lizard account and API key.
+
 To add your package to this page, open a pull request.
 
 To publish your own capability package, see [Publishing capabilities](custom.md#publishing-capabilities) and [Extensibility](../extensibility.md).
