@@ -1,10 +1,10 @@
 # Code Puppy
 
 The startup pyramid and splash behavior are adapted from
-https://github.com/code-puppy/code_puppy/blob/main/code_puppy/splash.py.
+https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/splash.py.
 The command registry and completion design also reference Code Puppy.
 The project/session browser and background naming design reference:
-https://github.com/code-puppy/code_puppy/blob/main/code_puppy/command_line/session_browser.py
+https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/command_line/session_browser.py
 and `session_namer` in the companion `code_puppy_core_plugins` repository.
 These use a CLAI-specific implementation with Harness persistence and task ownership.
 
