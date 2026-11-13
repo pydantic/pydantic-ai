@@ -1293,6 +1293,7 @@ async def test_a_failed_run_s_error_gets_its_conversation_once_it_leaves_the_run
     def look_up() -> str:
         return 'found'
 
+    messages: list[ModelMessage] = []
     with pytest.raises(UsageLimitExceeded) as exc_info:
         async with agent.iter('Look it up', usage_limits=UsageLimits(request_limit=1)) as run:
             try:
@@ -1300,11 +1301,12 @@ async def test_a_failed_run_s_error_gets_its_conversation_once_it_leaves_the_run
                     pass
             except UsageLimitExceeded as error:
                 assert error.conversation is None
+                messages = run.all_messages()
                 raise
 
     failed = exc_info.value.conversation
     assert failed is not None
-    assert failed.messages == run.all_messages()
+    assert failed.messages == messages != []
 
 
 async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
