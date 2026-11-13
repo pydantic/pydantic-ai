@@ -2934,8 +2934,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
         declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
-        native_computer = self._native_computer(model_request_parameters)
-        computer_sent = native_computer is not None and native_computer.name in declared_tools
+        sent_computer = self._sent_computer(model_settings, model_request_parameters)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
             include_citations=citations_included(model_settings, model_request_parameters),
@@ -2981,11 +2980,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # one of those would be just as unknown as one naming a tool that's gone.
             # The computer use tool sent in the `computer` tool's place can't be referenced: the API refuses a
             # `tool_addition` naming a toolset entry, as a loaded deferred `ComputerUse` would leave in history.
-            declared_tool_names=set(declared_tools)
-            - ({native_computer.name} if native_computer and computer_sent else set()),
+            declared_tool_names=set(declared_tools) - ({sent_computer.name} if sent_computer else set()),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
-            # The same test `_prepare_tools_and_tool_choice` uses to send it.
-            computer_tool_sent=native_computer.version if native_computer and computer_sent else None,
+            computer_tool_sent=sent_computer.version if sent_computer else None,
         )
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
