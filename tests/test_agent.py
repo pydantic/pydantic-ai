@@ -14952,7 +14952,10 @@ def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
 
 
 async def test_image_output_from_plain_binary_content():
-    """A custom model returning image `BinaryContent` (not `BinaryImage`) in a `FilePart` produces image output."""
+    """A custom model returning image `BinaryContent` (not `BinaryImage`) in a `FilePart` produces image output.
+
+    Unit test rather than VCR: built-in providers build `BinaryImage` themselves, so only a custom model produces this.
+    """
 
     def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[FilePart(content=BinaryContent(data=b'image', media_type='image/png'))])
