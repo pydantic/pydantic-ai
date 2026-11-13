@@ -5,7 +5,7 @@ Renamed to the snake_case of its capability, `FileSystem`. Importing from here s
 """
 
 from pydantic_ai_harness import file_system as _file_system
-from pydantic_ai_harness._warn import warn_module_renamed
+from pydantic_ai_harness._warn import forward_renamed, warn_module_renamed
 from pydantic_ai_harness.file_system import (
     CREATE_DIRECTORY_KIND,
     DEFAULT_TOOL_NAMES,
@@ -118,4 +118,4 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    return getattr(_file_system, name)
+    return forward_renamed(_file_system, name)

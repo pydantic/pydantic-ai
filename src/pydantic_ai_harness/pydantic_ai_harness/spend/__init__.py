@@ -7,7 +7,7 @@ Renamed to the snake_case of its capability, `SpendLimits`. Importing from here 
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness import spend_limits as _spend_limits
-from pydantic_ai_harness._warn import warn_module_renamed
+from pydantic_ai_harness._warn import forward_renamed, warn_module_renamed
 from pydantic_ai_harness.spend_limits import (
     SPEND_LIMITS_EVENTS,
     BatchSpendStore,
@@ -66,4 +66,4 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    return getattr(_spend_limits, name)
+    return forward_renamed(_spend_limits, name)

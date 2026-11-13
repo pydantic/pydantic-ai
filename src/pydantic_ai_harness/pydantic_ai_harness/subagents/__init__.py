@@ -7,7 +7,7 @@ Renamed to the snake_case of its capability, `SubAgents`. Importing from here st
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness import sub_agents as _sub_agents
-from pydantic_ai_harness._warn import warn_module_renamed
+from pydantic_ai_harness._warn import forward_renamed, warn_module_renamed
 from pydantic_ai_harness.sub_agents import (
     MAX_EVENT_TEXT_CHARS,
     SELF_AGENT_NAME,
@@ -129,4 +129,4 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    return getattr(_sub_agents, name)
+    return forward_renamed(_sub_agents, name)

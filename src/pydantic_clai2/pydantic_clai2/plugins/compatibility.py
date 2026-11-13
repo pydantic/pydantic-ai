@@ -30,7 +30,6 @@ INCLUDED: Mapping[str, Mapping[str, Binds]] = {
     'pydantic_clai2.builtin_plugins.coder': {
         'pydantic_clai2.builtin_plugins.compaction': HISTORY_COMPACTION,
         'pydantic_ai_harness.sub_agents:SubAgents': SubAgents,
-        'pydantic_ai_harness.subagents:SubAgents': SubAgents,
     },
     # `web` answers questions in the browser and the terminal at once while its `ask_user` setting is on.
     'pydantic_clai2.builtin_plugins.web': {'pydantic_clai2.builtin_plugins.ask_user_menu': AskUser},
@@ -42,7 +41,7 @@ Each included factory names the capability classes the plugin must bind for that
 available, and it binds no history compaction, so `compaction` runs alongside it. While a plugin
 includes another, the included one stays off and `/plugins` greys it out, so a second chain is
 never registered. Keyed by factory, not id, so a user's own id for the same plugin, or a row saved
-from the former harness catalog under the old `subagents` module path, matches too.
+from the former harness catalog, matches too.
 """
 
 
