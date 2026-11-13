@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 from opentelemetry.trace import NoOpTracer
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, PydanticCustomError
 
 from pydantic_ai import RetryFeedbackPart
@@ -44,7 +45,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput
+from pydantic_ai.output import NativeOutput, OutputContext, OutputSpec, PromptedOutput, TextOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
@@ -3947,6 +3948,46 @@ class TestAutoModeOutputWithHooks:
         assert log == [('before_validate', 'tool'), ('after_execute', 'tool')]
 
 
+def city_alias(city: Annotated[str, Field(alias='cityName')]) -> str:
+    return f'city={city}'
+
+
+def city_validation_alias(city: Annotated[str, Field(validation_alias='cityName')]) -> str:
+    return f'city={city}'
+
+
+def city_alias_choices(city: Annotated[str, Field(validation_alias=AliasChoices('cityName', 'city_name'))]) -> str:
+    return f'city={city}'
+
+
+def city_alias_default(city: str = Field(alias='cityName')) -> str:
+    return f'city={city}'
+
+
+def city_alias_with_ctx(ctx: RunContext[Any], city: Annotated[str, Field(alias='cityName')]) -> str:
+    return f'city={city}'
+
+
+def count(n: int) -> str:
+    return f'n={n}'  # pragma: no cover
+
+
+def var_kwargs(a: int, **kwargs: int) -> dict[str, int]:
+    return {'a': a, **kwargs}
+
+
+def hidden_second(a: int, b: SkipJsonSchema[int] = 1) -> dict[str, int]:
+    return {'a': a, 'b': b}
+
+
+def hidden_first(a: SkipJsonSchema[int] = 1, b: int = 2) -> dict[str, int]:
+    return {'a': a, 'b': b}
+
+
+def only_hidden(a: SkipJsonSchema[int] = 1) -> dict[str, int]:
+    return {'a': a}
+
+
 class TestHookSemanticValue:
     """Output hooks see the **semantic value** (what the model was asked to produce), not the
     internal dict-wrapped form used by the validator pipeline.
@@ -4164,6 +4205,109 @@ class TestHookSemanticValue:
         # Final output is the full inner dict — NOT just "yes" (which would happen if re-wrap
         # was skipped due to the buggy "already wrapped" check)
         assert output == {'response': 'yes', 'other': 'stuff'}
+
+    @pytest.mark.parametrize(
+        'output_function',
+        [city_alias, city_validation_alias, city_alias_choices, city_alias_default, city_alias_with_ctx],
+    )
+    async def test_function_aliased_arg(self, output_function: Callable[..., str]):
+        """A single aliased arg is advertised under its alias, and hooks see its value.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool = info.output_tools[0]
+            assert tool.parameters_json_schema['properties'] == {'cityName': {'type': 'string'}}
+            return ModelResponse(parts=[ToolCallPart(tool.name, {'cityName': 'Paris'})])
+
+        output, log = await self._run_and_capture(output_type=output_function, model_fn=model_fn)
+        assert output == 'city=Paris'
+        assert log == [('after_validate', 'Paris'), ('before_process', 'Paris')]
+
+    @pytest.mark.parametrize(
+        'output_type,response',
+        [
+            pytest.param(
+                [city_alias, count], ToolCallPart('final_result_city_alias', {'cityName': 'Paris'}), id='tools'
+            ),
+            pytest.param(NativeOutput(city_alias), TextPart('{"cityName": "Paris"}'), id='native'),
+            pytest.param(PromptedOutput(city_alias), TextPart('{"cityName": "Paris"}'), id='prompted'),
+            pytest.param(
+                NativeOutput([city_alias, count]),
+                TextPart('{"result": {"kind": "city_alias", "data": {"cityName": "Paris"}}}'),
+                id='native-union',
+            ),
+        ],
+    )
+    async def test_function_aliased_arg_output_modes(
+        self, output_type: OutputSpec[str], response: TextPart | ToolCallPart
+    ):
+        """A single aliased arg works in every output mode, including a union of output functions.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[response])
+
+        output, log = await self._run_and_capture(output_type=output_type, model_fn=model_fn)
+        assert output == 'city=Paris'
+        assert log == [('after_validate', 'Paris'), ('before_process', 'Paris')]
+
+    async def test_function_aliased_arg_stream(self):
+        """A single aliased arg works when the output tool call is streamed.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"cityName": "Paris"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_fn), output_type=city_alias)
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == 'city=Paris'
+
+    async def test_function_aliased_basemodel_arg(self):
+        """An aliased `BaseModel` arg is wrapped under its alias, and hooks see the model instance.
+
+        Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+        """
+
+        def double(data: Annotated[MyOutput, Field(alias='payload')]) -> int:
+            return data.value * 2
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'payload': {'value': 21}})])
+
+        output, log = await self._run_and_capture(output_type=double, model_fn=model_fn)
+        assert output == 42
+        assert log == [('after_validate', MyOutput(value=21)), ('before_process', MyOutput(value=21))]
+
+    @pytest.mark.parametrize(
+        'output_function,args,expected',
+        [
+            pytest.param(var_kwargs, {'a': 1, 'x': 2}, {'a': 1, 'x': 2}, id='var-kwargs'),
+            pytest.param(hidden_second, {'a': 1, 'b': 5}, {'a': 1, 'b': 5}, id='hidden-second'),
+            pytest.param(hidden_first, {'b': 5}, {'a': 1, 'b': 5}, id='hidden-first'),
+            pytest.param(only_hidden, {}, {'a': 1}, id='only-hidden'),
+        ],
+    )
+    async def test_function_args_outside_json_schema(
+        self, output_function: Callable[..., dict[str, int]], args: dict[str, int], expected: dict[str, int]
+    ):
+        """Args the JSON schema leaves out (`**kwargs`, `SkipJsonSchema`) keep the validated args whole.
+
+        Hooks see the dict, and every value the model sends reaches the function.
+        Not a VCR test: which arguments the JSON schema leaves out is in-memory framework behavior.
+        """
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+        output, log = await self._run_and_capture(output_type=output_function, model_fn=model_fn)
+        assert output == expected
+        assert log == [('after_validate', expected), ('before_process', expected)]
 
 
 class TestHookExceptionHandling:
