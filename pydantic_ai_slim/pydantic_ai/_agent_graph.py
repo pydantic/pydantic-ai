@@ -2369,7 +2369,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
-        _handler_request_context: ModelRequestContext | None = None
+        # The context the stream is requested with: the one `wrap_model_request` passes the handler, once it does.
+        _handler_request_context = request_context
         _handler_called = False
         _handler_usage_recorded = False
         _stream_cut_short = False
@@ -2509,8 +2510,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # a stream stopped after it was handed over, there's no job left to cancel here.
                 partial = primed.get()
                 recorded = _interrupted_stream_response(exc, partial)
-                request_messages = (_handler_request_context or wrap_request_context).messages
-                self._commit_interrupted_response(ctx, partial, recorded, request_messages)
+                self._commit_interrupted_response(ctx, partial, recorded, _handler_request_context)
             raise
         else:
             # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
@@ -2611,9 +2611,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         if partial.state == 'suspended' and recorded.state == 'interrupted':
                             # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
                             await _cancel_interrupted_job(wrap_request_context, partial)
-                        self._commit_interrupted_response(
-                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
-                        )
+                        self._commit_interrupted_response(ctx, partial, recorded, _handler_request_context)
                 else:
                     try:
                         try:
@@ -2670,19 +2668,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
-        request_messages: Sequence[_messages.ModelMessage],
+        request_context: ModelRequestContext,
     ) -> None:
         """Commit the response an interrupted stream produced so far, without checking usage limits.
 
         `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
-        `request_messages` are the messages the stream was requested with, which end in the suspended response it
-        resumed, if any.
+        `request_context` is the context the stream was requested with, whose messages end in the suspended response
+        it resumed, if any. Its computer calls get the labels a completed stream's get, as a resumed run executes them.
         """
+        _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, recorded)
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
-        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
+        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_context.messages))
         if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
-from daytona import ScreenshotRegion
+from daytona import DaytonaConnectionError, DaytonaTimeoutError, ScreenshotRegion
 
 from pydantic_ai.computer_use import (
     Click,
@@ -43,7 +43,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness._workspace_provider import run_to_completion
@@ -122,10 +122,16 @@ async def _send_input(request: Callable[[], Awaitable[object]]) -> object:
     """Send one input request to Daytona, which carries out a request it accepted even if we stop waiting.
 
     So a cancel stops before the request is sent, or waits for it to finish: the next action, perhaps another run's,
-    must not reach the screen before it. Every input request goes through here.
+    must not reach the screen before it. Every input request goes through here. For the same reason, a request whose
+    outcome is unknown ends the run: a timeout doesn't stop Daytona carrying it out, nor does a dropped connection.
     """
     await anyio.lowlevel.checkpoint_if_cancelled()
-    return await run_to_completion(request)
+    try:
+        return await run_to_completion(request)
+    except (DaytonaTimeoutError, DaytonaConnectionError) as error:
+        raise WorkspaceUnavailableError(
+            f"Daytona didn't confirm the input, which may still be running on its desktop: {error}"
+        ) from error
 
 
 async def _let_go(error: BaseException, held: list[str], release: Callable[[str], Awaitable[object]]) -> None:
@@ -138,7 +144,8 @@ async def _let_go(error: BaseException, held: list[str], release: Callable[[str]
             with suppress(Exception):
                 await _send_input(partial(release, name))
                 held.remove(name)
-    if held and isinstance(error, Exception):
+    # An input that may still be running ends the run, so the model won't act with these held.
+    if held and isinstance(error, Exception) and not isinstance(error, WorkspaceUnavailableError):
         raise WorkspaceError(
             f'{error}; releasing {" and ".join(held)} failed too, so {"it" if len(held) == 1 else "they"} '
             'may still be held'

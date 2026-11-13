@@ -77,7 +77,7 @@ _OUTPUT_LIMIT_MESSAGE = (
 _REQUEST_TIMEOUT = 30
 
 _VNC_PORT = 6080
-"""Where the desktop's noVNC viewer listens, once `computer_use.start()` has started it."""
+"""Where the desktop's noVNC viewer listens, once `computer_use.start()` has started it, unless `NO_VNC_PORT` is set."""
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.
@@ -933,8 +933,10 @@ class DaytonaSandboxBackend(
         async with self._operation():
             sandbox = await self.get_sandbox()
             async with _mapped_errors('Could not create a live view link', sandbox=sandbox):
+                # Daytona's desktop serves its viewer on the port the sandbox's `NO_VNC_PORT` names.
+                port = int((sandbox.env or {}).get('NO_VNC_PORT', _VNC_PORT))
                 signed = await sandbox.create_signed_preview_url(
-                    _VNC_PORT, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT
+                    port, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT
                 )
         return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=true&resize=scale'
 

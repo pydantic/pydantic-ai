@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable, Sequence
-from contextlib import suppress
 
 import anyio
 
@@ -271,7 +270,9 @@ def start_x_server(log: str, *, then: str = '') -> str:
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
         # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
         # running: the pointer goes back to the middle and held buttons are let go.
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} 9>&- & '
+        # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
+        # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + f'{then} fi; '
     )
@@ -351,15 +352,22 @@ class X11Computer:
         try:
             for command in commands:
                 stderr += (await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)).stderr
-        except BaseException:
+        except BaseException as error:
+            failures: list[str] = []
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
-                # Before letting go, or the command could press again what was just released.
-                with suppress(Exception):
-                    await self._run(['sh', '-c', _STOP_INPUT])
-                for release in releases:
-                    if release:
-                        with suppress(Exception):
-                            await self._run(['xdotool', *release])
+                # Stopping comes before letting go, or the command could press again what was just released.
+                for cleanup in [['sh', '-c', _STOP_INPUT], *(['xdotool', *release] for release in releases if release)]:
+                    try:
+                        await self._run(cleanup)
+                    except WorkspaceUnavailableError:
+                        raise
+                    except Exception as e:
+                        failures.append(str(e))
+            if failures and isinstance(error, WorkspaceError) and not isinstance(error, WorkspaceUnavailableError):
+                raise WorkspaceError(
+                    f'{error}. Releasing what it pressed failed too, so a mouse button or key may still be held: '
+                    + '; '.join(failures)
+                ) from error
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in stderr:
