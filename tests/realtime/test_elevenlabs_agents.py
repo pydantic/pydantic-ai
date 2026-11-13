@@ -16,6 +16,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -453,10 +454,18 @@ async def test_an_agent_without_context_usage_reports_warns_once() -> None:
     agent = agent_json()
     del agent['conversation_config']['conversation']
     model = _model(RestRecorder(agent))
-    with pytest.warns(UserWarning, match=r"doesn't send `context_usage` reports"):
+    with pytest.warns(UserWarning) as record:
         with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
             async with _connect(model):
                 pass
+    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
+        [
+            (
+                "The ElevenLabs agent 'agent_0101test' doesn't send `context_usage` reports, so the session has no context usage, and a spoken reply is taken to end after a second without audio rather than with its last audio. Add `context_usage` to the agent's `conversation.client_events` (Advanced > Client events in the agent's settings in the ElevenLabs dashboard) for both.",
+                'test_elevenlabs_agents.py',
+            )
+        ]
+    )
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
@@ -684,11 +693,14 @@ async def test_tool_mismatch_errors_by_default() -> None:
     with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL, local_only]):
             pass  # pragma: no cover
-    message = str(exc_info.value)
-    assert "tool 'local_only' is not configured on the agent" in message
-    assert "agent client tool 'close_widget' is not defined by this agent run" in message
-    assert "tool 'get_weather' differs in description" in message
-    assert "tool 'get_weather' differs in parameters schema" in message
+    assert str(exc_info.value) == snapshot("""\
+The tools of the ElevenLabs agent 'agent_0101test' do not match this agent run:
+- tool 'local_only' is not configured on the agent
+- agent client tool 'close_widget' is not defined by this agent run
+- tool 'get_weather' differs in description
+- tool 'get_weather' differs in parameters schema
+Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent.\
+""")
 
 
 async def test_matching_tools_pass_the_default_check() -> None:
@@ -761,9 +773,14 @@ async def test_error_mode_matches_nested_and_optional_parameters() -> None:
 async def test_expects_response_disabled_on_the_agent_is_a_mismatch() -> None:
     remote = dict(WEATHER_TOOL_REMOTE, expects_response=False)
     model = _model(RestRecorder(agent_json(tools=[remote])))
-    with pytest.raises(UserError, match='has `expects_response` disabled'):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL]):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot("""\
+The tools of the ElevenLabs agent 'agent_0101test' do not match this agent run:
+- agent client tool 'get_weather' has `expects_response` disabled, but Pydantic AI tools always return a result
+Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent.\
+""")
 
 
 async def test_server_side_tools_do_not_participate_in_the_check() -> None:
@@ -1336,9 +1353,12 @@ async def test_tool_sync_requires_parameter_descriptions() -> None:
     recorder = RestRecorder(agent_json())
     model = _model(recorder)
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
-    with pytest.raises(UserError, match=r"requires a description for every tool parameter, and 'city' has none"):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[bare], model_settings=settings):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot(
+        "Cannot sync tool 'get_weather': ElevenLabs requires a description for every tool parameter, and 'city' has none. Add parameter descriptions (e.g. in the function docstring) or simplify the parameter types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`."
+    )
     assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
 
 
@@ -1370,13 +1390,10 @@ async def test_tool_sync_validation_reports_every_offender_and_writes_nothing() 
     with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL, bare, unexpressable], model_settings=settings):
             pass  # pragma: no cover
-    message = str(exc_info.value)
-    assert "Cannot sync tool 'set_language'" in message
-    assert "'language' has none" in message
-    assert "'region' has none" in message
-    assert "Cannot sync tool 'add_items'" in message
-    assert "'items' uses a JSON Schema feature" in message
-    assert 'get_weather' not in message
+    assert str(exc_info.value) == snapshot("""\
+Cannot sync tool 'set_language': ElevenLabs requires a description for every tool parameter, and 'language' has none; ElevenLabs requires a description for every tool parameter, and 'region' has none. Add parameter descriptions (e.g. in the function docstring) or simplify the parameter types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`.
+Cannot sync tool 'add_items': parameter 'items' uses a JSON Schema feature the ElevenLabs tool dialect cannot express (a union of types, or a recursive reference). Add parameter descriptions (e.g. in the function docstring) or simplify the parameter types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`.\
+""")
     # Only the preflight ran: no tool listing, no creates, no agent re-point.
     assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
 
@@ -1727,8 +1744,12 @@ async def test_preflight_resolves_attached_tools_when_the_inline_list_is_empty()
             pass  # pragma: no cover
     # Both directions of the mismatch must be reported: the `other_tool` line can only appear if the
     # per-id fetch's config was retained into the check, not merely requested and discarded.
-    assert "tool 'get_weather' is not configured on the agent" in str(exc_info.value)
-    assert "agent client tool 'other_tool' is not defined by this agent run" in str(exc_info.value)
+    assert str(exc_info.value) == snapshot("""\
+The tools of the ElevenLabs agent 'agent_0101test' do not match this agent run:
+- tool 'get_weather' is not configured on the agent
+- agent client tool 'other_tool' is not defined by this agent run
+Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent.\
+""")
     assert recorder.request_summaries() == [
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools/tool_1',
@@ -3793,8 +3814,16 @@ async def test_an_mcp_call_awaiting_approval_is_denied(reported: bool) -> None:
     # response it belongs to.
     connection, ws = _connection()
     frames = connection.frames()
-    with pytest.warns(UserWarning, match='cannot do, so the call was denied'):
+    with pytest.warns(UserWarning) as record:
         first = await _next_frames(frames, ws, [_mcp_call('awaiting_approval', approval_timeout_secs=300)])
+    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
+        [
+            (
+                'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval off for the tool on the ElevenLabs side.',
+                'elevenlabs_agents.py',
+            )
+        ]
+    )
     assert ws.sent_frames() == [{'type': 'mcp_tool_approval_result', 'tool_call_id': 'mcp_1', 'is_approved': False}]
     outcome = [_mcp_call('failure', error_message='Rejected by the user.')] if reported else []
     rest = await _next_frames(frames, ws, [*outcome, _agent_response('I cannot look that up.'), _VOICED])
