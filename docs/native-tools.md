@@ -773,7 +773,7 @@ The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the 
 
 The local tool is found by its kind, not its name (see [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]). If the request has no non-deferred tool of that kind, the native tool is left out when it is `optional`, and the request is refused when it isn't.
 
-A call the provider attaches safety checks to, such as OpenAI's `pending_safety_checks`, waits for [approval](deferred-tools.md#human-in-the-loop-tool-approval) before the local tool runs. The checks are on [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks].
+A call the provider attaches safety checks to, such as OpenAI's `pending_safety_checks`, waits for [approval](deferred-tools.md#human-in-the-loop-tool-approval) before the local tool runs. The checks are on [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks]. [`ApprovalReviewer`](harness/approval-reviewer.md) (Harness) is shown only the call's arguments, not the checks, so leave the `computer` tool out of its `tools` if the checks should reach a person.
 
 `ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
 

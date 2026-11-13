@@ -504,14 +504,14 @@ class ComputerResult(TypedDict):
 
 @dataclass(frozen=True, kw_only=True)
 class SafetyCheck:
-    """A check a provider asks a person to make before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
+    """A check a provider asks for before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
 
     A call with safety checks waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), whichever
     tool runs it. If that tool is external or deferred, the call raises a `UserError`, since approval can't reach it.
     """
 
     message: str | None = None
-    """What the person should check, in the provider's words."""
+    """What whoever approves the call should check, in the provider's words."""
 
     code: str | None = None
     """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
@@ -579,7 +579,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
 
     @property
     def safety_checks(self) -> list[SafetyCheck]:
-        """The checks the provider asks a person to make before this call runs; empty when there are none."""
+        """The checks the provider asks for before this call runs; empty when there are none."""
         return _safety_checks(self.provider_details)
 
     @property
