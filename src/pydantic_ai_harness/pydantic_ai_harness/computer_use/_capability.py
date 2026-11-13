@@ -106,8 +106,6 @@ loop, so calls on separate loops don't take turns. A lock goes once no call hold
 _RELEASE_TIMEOUT = 5
 """Maximum time spent releasing each mouse button a failed or cancelled call left pressed."""
 
-_ACTIONS = TypeAdapter(list[ComputerToolAction])
-
 _Limit: TypeAlias = tuple[int | None, int | None] | None
 """The largest screenshot a model takes, as `(longest side, pixel count)`, either of which may be unlimited."""
 
@@ -136,8 +134,8 @@ class _Plan:
     """The grid the model pointed on, if any."""
     seen: tuple[int, int] | None
     """The size of the screenshot the model pointed on, if it saw one."""
-    changed: list[ComputerToolAction] | None
-    """The actions to run, when they differ from the ones the model asked for."""
+    changed: bool
+    """Whether the actions to run differ from the ones the model asked for."""
     limit: _Limit
     """The largest screenshot both that model and the run's model take; a larger screen is refused."""
     model_name: str
@@ -616,7 +614,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             grid=grid,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
-            changed=actions if call and _changed(call, actions) else None,
+            changed=call is not None and _changed(call, actions),
             # The next request goes to the run's model, or with a sticky `ModelFallback` to the one that made the call,
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_min_limit(made_limit, _model_limit(ctx.model)),
@@ -666,18 +664,18 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         display = _display(ctx)
         if display is None:
             raise UserError(_NO_DISPLAY)
-        # Also starts a display that stopped, before anything acts.
-        size = await _display_size(display)
-        # The call ends with a screenshot, so a screen the model can't see ends the run before anything acts.
-        _check_fits(plan, size)
-        # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size since.
-        call = _Call(space=(plan.grid, plan.grid) if plan.grid else plan.seen or size, display=size)
-        # The backend would move a position outside the screen to its edge and act there.
-        if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
-            raise ToolFailed(refused)
-        pixels = actions if call.space == size else [_to_pixels(a, size, call.space) for a in actions]
-
+        # Measured while this call holds the screen, so a call that waited sees the size the one before it left.
         async with _taking_turns(ctx, display):
+            # Also starts a display that stopped, before anything acts.
+            size = await _display_size(display)
+            # The call ends with a screenshot, so a screen the model can't see ends the run before anything acts.
+            _check_fits(plan, size)
+            # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size since.
+            call = _Call(space=(plan.grid, plan.grid) if plan.grid else plan.seen or size, display=size)
+            # The backend would move a position outside the screen to its edge and act there.
+            if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
+                raise ToolFailed(refused)
+            pixels = actions if call.space == size else [_to_pixels(a, size, call.space) for a in actions]
             return await self._act_and_look(display, pixels, call, plan)
 
     async def _act_and_look(
@@ -687,9 +685,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
-        if plan.changed is not None:
+        if plan.changed:
             result['changed'] = True
-            summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(plan.changed).decode()}.')
+            summary.append('This call was changed before it ran.')
         if error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
         else:

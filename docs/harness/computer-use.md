@@ -120,7 +120,7 @@ To ask before every call that does more than look, raise `ApprovalRequired` from
 ```python {title="computer_use_ask_before_acting.py" test="skip" lint="skip"}
 from pydantic_ai import ApprovalRequired
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.computer_use import ComputerCallPart
+from pydantic_ai.computer_use import COMPUTER_KIND
 
 hooks = Hooks()
 
@@ -128,8 +128,8 @@ hooks = Hooks()
 @hooks.on.before_tool_execute
 async def ask_before_acting(ctx, *, call, tool_def, args):
     looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
-    if isinstance(call, ComputerCallPart) and not ctx.tool_call_approved:
-        if any(action.type not in looking for action in call.actions or []):
+    if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+        if any(action.type not in looking for action in args['actions']):
             raise ApprovalRequired
     return args
 ```

@@ -54,14 +54,13 @@ def _smallest_limit(
 
 
 def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
-    """Tell a model that points on a grid so in the `computer` tool's description."""
-    name = params.tool_name_for_kind(COMPUTER_KIND)
-    if name is None or (grid := shared_grid(model)) is None:
+    """Tell a model that points on a grid so in each `computer` tool's description."""
+    if (grid := shared_grid(model)) is None:
         return params
     hint = _grid_hint(grid)
     tools = [
         replace(tool, description=f'{tool.description} {hint}' if tool.description else hint)
-        if tool.name == name
+        if tool.tool_kind == COMPUTER_KIND.id
         else tool
         for tool in params.function_tools
     ]
@@ -70,8 +69,8 @@ def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestP
 
 def label_calls(model: Model, params: ModelRequestParameters, response: _messages.ModelResponse) -> None:
     """Record `model`'s grid and screenshot limits on the response's `computer` calls."""
-    name = params.tool_name_for_kind(COMPUTER_KIND)
-    if name is None:
+    names = {tool.name for tool in params.function_tools if tool.tool_kind == COMPUTER_KIND.id}
+    if not names:
         return
     models = _candidate_models(model)
     labels = {
@@ -83,6 +82,6 @@ def label_calls(model: Model, params: ModelRequestParameters, response: _message
     if not labels:
         return
     for part in response.parts:
-        if isinstance(part, _messages.ToolCallPart) and part.tool_name == name:
+        if isinstance(part, _messages.ToolCallPart) and part.tool_name in names:
             part.provider_name = part.provider_name or response.provider_name
             part.provider_details = {**(part.provider_details or {}), **labels}
