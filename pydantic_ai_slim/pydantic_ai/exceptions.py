@@ -347,8 +347,9 @@ class AgentRunError(RuntimeError):
         [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just what the run
         added. It's set once the error leaves the `run`, `iter` or `run_stream` call or `async with` block,
         so it's `None` when caught inside an `iter` or `run_stream` block, if the error didn't come out of
-        an [`Agent`][pydantic_ai.agent.Agent] run, or if it came out of a realtime session. To get the conversation there, or for an exception raised
-        by a tool's own code, use [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
+        an [`Agent`][pydantic_ai.agent.Agent] run, or if it came out of a realtime session. To get the
+        conversation there, or for an exception raised by a tool's own code, use
+        [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
         """
         return self._conversation
 
