@@ -261,10 +261,25 @@ class TestIPythonCodeMode:
         )
         assert after == 'yes'
 
-    async def test_timeout_interrupts_code_that_keeps_printing(self, kernel: IPythonKernel) -> None:
+    async def test_timeout_interrupts_code_that_keeps_printing(
+        self, kernel: IPythonKernel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The timeout counts from when the cell is sent, and an interrupt that reaches a slow kernel before the
+        # cell starts doesn't stop it. The timeout's clock stands still until the code reports it is running.
+        frozen = time.monotonic()
+        entered_at: list[float] = []
+
+        def monotonic() -> float:
+            return frozen + time.monotonic() - entered_at[0] if entered_at else frozen
+
+        def entered() -> None:
+            entered_at.append(time.monotonic())
+
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', SimpleNamespace(monotonic=monotonic))
         (retry,) = await _run(
             IPythonCodeMode(kernel=kernel, timeout=0.5),
-            "import time\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+            "import time\nentered()\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+            tools=[Tool(entered)],
         )
         assert 'KeyboardInterrupt' in retry
         assert 'The code ran longer than the 0.5-second timeout and was interrupted.' in retry
