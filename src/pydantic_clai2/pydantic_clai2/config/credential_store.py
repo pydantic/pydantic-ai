@@ -15,9 +15,7 @@ from functools import cache
 from pathlib import Path
 
 import keyring
-import keyring.backend
 from cryptography.fernet import Fernet, InvalidToken
-from keyring.backends import kwallet
 from keyring.errors import InitError, KeyringError, KeyringLocked, NoKeyringError, PasswordDeleteError, PasswordSetError
 
 from pydantic_ai.exceptions import UserError
@@ -40,17 +38,20 @@ _NO_KEYRING = (NoKeyringError, InitError, PasswordSetError)
 _logger = logging.getLogger(__name__)
 
 
-def _is_kwallet(backend: keyring.backend.KeyringBackend) -> bool:
-    return isinstance(backend, kwallet.DBusKeyring) or any(
-        isinstance(child, kwallet.DBusKeyring) for child in getattr(backend, 'backends', ())
-    )
+def _is_kwallet_locked(exc: KeyringLocked) -> bool:
+    tb = exc.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code.co_qualname.endswith('DBusKeyring.get_password'):
+            return True
+        tb = tb.tb_next
+    return False
 
 
 def _get_password(*, service: str, account: str) -> str | None:
     try:
         return keyring.get_password(service, account)
     except KeyringLocked as exc:
-        if _is_kwallet(keyring.get_keyring()):
+        if _is_kwallet_locked(exc):
             raise NoKeyringError(str(exc)) from exc
         raise
     except RuntimeError as exc:

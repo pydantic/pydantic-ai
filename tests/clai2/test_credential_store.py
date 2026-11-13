@@ -8,8 +8,9 @@ from pathlib import Path
 from uuid import UUID
 
 import keyring
+import keyring.backend
+import keyring.core
 import pytest
-from keyring.backends import kwallet
 from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordSetError
 from rich.console import Console
 
@@ -287,32 +288,69 @@ def test_file_fallback_with_kwallet_like_backend(
 ) -> None:
     """KWallet backends fall back to the 0600 file whether writes are discarded or the wallet fails to open."""
 
-    class NonRetainingKWalletBackend(kwallet.DBusKeyring):
+    class DBusKeyring(keyring.backend.KeyringBackend):
+        def connected(self, service: str) -> bool:
+            return True
+
         def get_password(self, service: str, username: str) -> str | None:
+            if not self.connected(service):
+                raise KeyringLocked('Failed to unlock the keyring!')
             return None
 
         def set_password(self, service: str, username: str, password: str) -> None:
             pass
 
         def delete_password(self, service: str, username: str) -> None:
-            pass
+            pass  # pragma: no cover
 
     monkeypatch.setattr(keyring, 'get_password', keyring.core.get_password)
     monkeypatch.setattr(keyring, 'set_password', keyring.core.set_password)
     monkeypatch.setattr(keyring, 'delete_password', keyring.core.delete_password)
-    monkeypatch.setattr(keyring.core, '_keyring_backend', NonRetainingKWalletBackend())
+    monkeypatch.setattr(keyring.core, '_keyring_backend', DBusKeyring())
     assert_plaintext_fallback_round_trip(fallback, caplog)
 
     fallback.unlink()
     caplog.clear()
     new_session()
 
-    class UnopenableKWalletBackend(kwallet.DBusKeyring):
+    class UnopenableKWalletBackend(DBusKeyring):
         def connected(self, service: str) -> bool:
             return False
 
     monkeypatch.setattr(keyring.core, '_keyring_backend', UnopenableKWalletBackend())
     assert_plaintext_fallback_round_trip(fallback, caplog)
+
+    class LockedSecretServiceBackend(keyring.backend.KeyringBackend):
+        def get_password(self, service: str, username: str) -> str | None:
+            raise KeyringLocked('Failed to unlock the collection!')
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            pass  # pragma: no cover
+
+        def delete_password(self, service: str, username: str) -> None:
+            pass  # pragma: no cover
+
+    class ChainedBackend(keyring.backend.KeyringBackend):
+        def __init__(self, backends: list[keyring.backend.KeyringBackend]) -> None:
+            self.backends = backends
+
+        def get_password(self, service: str, username: str) -> str | None:
+            for child in self.backends:  # pragma: no branch
+                return child.get_password(service, username)
+            return None  # pragma: no cover
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            pass  # pragma: no cover
+
+        def delete_password(self, service: str, username: str) -> None:
+            pass  # pragma: no cover
+
+    new_session()
+    monkeypatch.setattr(
+        keyring.core, '_keyring_backend', ChainedBackend([LockedSecretServiceBackend(), UnopenableKWalletBackend()])
+    )
+    with pytest.raises(KeyringLocked):
+        save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
 
 
 def test_planted_staging_symlink_is_not_followed(
