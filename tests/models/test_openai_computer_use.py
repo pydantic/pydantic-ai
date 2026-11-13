@@ -437,20 +437,28 @@ async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_re
             False,
             id='with-actions-too',
         ),
+        pytest.param({'pending_safety_checks': [], 'actions': None}, False, id='with-null-actions'),
+        pytest.param(
+            {
+                'pending_safety_checks': [],
+                'action': None,
+                'actions': [resp.response_computer_tool_call.ActionClick(type='click', x=7, y=8, button='left')],
+            },
+            False,
+            id='actions-with-a-null-action',
+        ),
     ],
 )
 async def test_a_call_with_a_single_action_runs_it_only_with_its_safety_checklist_and_no_actions(
     allow_model_requests: None, fields: dict[str, Any], runs: bool
 ) -> None:
-    # Built as the SDK builds a response, unvalidated: OpenAI's SDK refuses this shape without its checklist, or with
-    # `actions` too.
+    # Built as the SDK builds a response, unvalidated: OpenAI's SDK refuses this shape without its checklist, with
+    # `actions` too, or with either sent as `null`.
+    action: dict[str, Any] = {
+        'action': resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left')
+    }
     item = resp.ResponseComputerToolCall.model_construct(
-        id='cu_1',
-        call_id='call_1',
-        type='computer_call',
-        status='completed',
-        action=resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left'),
-        **fields,
+        id='cu_1', call_id='call_1', type='computer_call', status='completed', **{**action, **fields}
     )
     response = response_message([item])
     provider, computer = InMemoryProvider(), FakeComputer()

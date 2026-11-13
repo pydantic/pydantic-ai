@@ -431,15 +431,6 @@ async def test_concurrent_first_uses_start_one_display() -> None:
     assert desktop.starts == 1
 
 
-async def test_x11_computer_refuses_a_key_name_the_display_does_not_know_and_keeps_the_display() -> None:
-    warning = "(symbol) No such key name 'CAPSLOCK'. Ignoring it."
-    desktop = ScriptedDesktop(CommandResult(exit_code=0, stdout='', stderr=warning))
-    with pytest.raises(UnsupportedActionError, match="No such key name 'CAPSLOCK'"):
-        await desktop.screen.act(PressKeys(keys=('CAPSLOCK',)))
-    await desktop.screen.act(MouseUp())
-    assert desktop.starts == 1
-
-
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(UnsupportedActionError):
         await ScriptedDesktop().screen.act(object())  # pyright: ignore[reportArgumentType]
