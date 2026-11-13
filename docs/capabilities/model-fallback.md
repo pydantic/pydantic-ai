@@ -297,6 +297,8 @@ Under a [durability capability](../durable_execution/overview.md), each attempt 
 
 A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
 
+The exception and response handlers in `fallback_on` run in workflow code, not in the model's durable operation, as they decide which model is tried next. When Temporal replays a workflow, they run again over the recorded errors and responses, so keep them deterministic and free of I/O. To log from one on Temporal, use `workflow.logger`, which skips records while the workflow is replaying; move other I/O into a [durable capability operation](custom.md#durable-capability-operations).
+
 A model `ModelFallback` moves to is rebuilt for its activity like any model a run uses: a model name string is built on the worker, and a model instance must be registered with the durability capability's `models`, then given to `ModelFallback` by that name:
 
 ```python {title="model_fallback_temporal.py" test="skip"}
