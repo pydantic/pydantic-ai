@@ -277,8 +277,8 @@ duplicate_names='error', unknown_names='error', workspace=None)`. `directories` 
 directories (not individual skill folders), in precedence order.
 
 To layer project and personal libraries as coding agents do, pass
-`missing_directories='skip'` (absent folders are left out quietly; a file, a skill package, or an
-directory the workspace raises `PermissionError` for in their place is left out with a `UserWarning`) and `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
+`missing_directories='skip'` (absent folders are left out quietly; a file, a skill package, or a
+directory the workspace raises `PermissionError` for, in their place, is left out with a `UserWarning`) and `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
 a `UserWarning`).
 
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog

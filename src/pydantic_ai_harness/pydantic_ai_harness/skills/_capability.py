@@ -164,9 +164,10 @@ class Skills(AbstractCapability[AgentDepsT]):
             include: Exact names to expose. Omit to expose all discovered skills.
             exclude: Exact names to omit. Cannot be combined with `include`.
             missing_directories: `'error'` (the default) fails the run when a library path does not
-                exist, is not a directory, is itself a skill package, or raises `PermissionError`. `'skip'` leaves
-                such a path out, for conventional locations such as `.agents/skills` that a project may
-                not have: one that does not exist quietly, any other with a warning.
+                exist, is not a directory, is itself a skill package, or the workspace raises
+                `PermissionError` for it. `'skip'` leaves such a path out, for conventional locations
+                such as `.agents/skills` that a project may not have: one that does not exist quietly,
+                any other with a warning.
             duplicate_names: `'error'` (the default) fails the run when two different `SKILL.md` files
                 share a name. `'keep_first'` keeps the one from the earlier directory and skips the
                 other with a warning, the way coding agents layer project skills over personal ones.
