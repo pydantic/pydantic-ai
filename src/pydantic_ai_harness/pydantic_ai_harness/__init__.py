@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
+    from .peers import Peers
     from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .pixeltable import Pixeltable
@@ -158,6 +159,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Peers',
     'Permissions',
     'Pixeltable',
     'Planning',
@@ -263,6 +265,7 @@ _LAZY_EXPORTS = {
     'OutputGuardrail': 'guardrails',
     'OutputGuardrailFunc': 'guardrails',
     'PGTaskDurability': 'pgtask',
+    'Peers': 'peers',
     'Permissions': 'permissions',
     'Pixeltable': 'pixeltable',
     'Planning': 'planning',
