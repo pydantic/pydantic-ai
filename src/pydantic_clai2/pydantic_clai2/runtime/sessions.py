@@ -7,6 +7,7 @@ Claude Code and Codex sessions.
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
+from functools import partial
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -68,6 +69,7 @@ class Sessions(Generic[DepsT, OutputT]):
         `tasks` is the process's task owner, which an imported session's sub-agents are saved to, open or not.
         """
         self.session = session
+        session.on_resumed = self.show_resumed
         self.store = store
         self.tasks = tasks
         self.context = context
@@ -130,7 +132,6 @@ class Sessions(Generic[DepsT, OutputT]):
                 unarchive=unarchive,
                 continuation=continuation,
             )
-        await self.show_resumed()
         return notice
 
     async def show_resumed(self) -> None:
@@ -275,7 +276,7 @@ class Sessions(Generic[DepsT, OutputT]):
             messages = interrupted_history(messages)
         copy = await self.store.save(summary=fork_summary(saved.summary), messages=messages)
         if self.session.repl_states is not None:
-            self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
+            await run_sync(partial(self.session.repl_states.copy, source=saved.summary.id, target=copy.id))
         return copy
 
     async def archive(self, conversation_id: str) -> ConversationSummary:
@@ -379,7 +380,7 @@ class Sessions(Generic[DepsT, OutputT]):
         with self.session.claim(source.id):
             await self.store.delete(source=source)
         if self.session.repl_states is not None:
-            self.session.repl_states.delete(source.id)
+            await run_sync(self.session.repl_states.delete, source.id)
 
     async def _preview(self, conversation_id: str, *, imports: ImportCatalog) -> str:
         try:

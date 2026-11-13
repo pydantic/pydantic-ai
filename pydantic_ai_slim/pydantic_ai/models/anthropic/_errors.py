@@ -118,43 +118,60 @@ def api_error(
     """The error for an error response, stream `error` event, or errored Message Batches result with `body`."""
     error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
     error_type, error_message = error.get('type'), error.get('message')
-    category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
-    if error_type == 'invalid_request_error' and isinstance(error_message, str):
-        if 'prompt is too long' in error_message.lower():
-            category = ModelContextWindowExceededError
-        elif 'credit balance is too low' in error_message.lower():
-            # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
-            category = ModelQuotaExceededError
+    details = error.get('details')
+    error_code = details.get('error_code') if _utils.is_str_dict(details) else None
+    category = error_category(error_type, error_message, error_code)
     provider_error_type = error_type if isinstance(error_type, str) else None
-    if status_code >= 400:
-        suggested_model_id = None
-        if error_type == 'not_found_error' and error_message == f'model: {model_name}':
-            suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        reported = reported_error_body(body)
-        reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
-        provider_error_code = None
-        if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
-            # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
-            # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
-            provider_error_code = amzn_error_type.split(':', 1)[0]
-            category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
-        hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, reported_message),
-            status_code=status_code,
-            model_name=model_name,
-            body=body,
-            headers=headers,
-            suggested_model_id=suggested_model_id,
-            hint=hint,
-            provider_error_code=provider_error_code,
-            provider_error_type=provider_error_type,
-            in_stream=in_stream,
+    if status_code < 400:
+        # An `error` event inside a stream whose type has no known status.
+        return (category or ModelAPIError)(
+            model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
         )
-    # An `error` event inside a stream whose type has no known status.
-    return (category or ModelAPIError)(
-        model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
+    suggested_model_id = None
+    if error_type == 'not_found_error' and error_message == f'model: {model_name}':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    reported = reported_error_body(body)
+    reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
+    provider_error_code = None
+    if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
+        # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
+        # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
+        provider_error_code = amzn_error_type.split(':', 1)[0]
+        category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
+    hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, reported_message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        hint=hint,
+        provider_error_code=provider_error_code,
+        provider_error_type=provider_error_type,
+        in_stream=in_stream,
     )
+
+
+def error_category(
+    error_type: object, error_message: object, error_code: object
+) -> _model_errors.HTTPErrorCategory | None:
+    """The error category an error body's `type`, `message` and `details.error_code` name, if any."""
+    if error_code == 'enforced_spend_limit_reached':
+        # The tier spend cap is a `rate_limit_error` that lasts until the next month, see
+        # https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap.
+        return ModelQuotaExceededError
+    if error_type == 'invalid_request_error' and isinstance(error_message, str):
+        message = error_message.lower()
+        if 'prompt is too long' in message:
+            return ModelContextWindowExceededError
+        if 'credit balance is too low' in message or (
+            message.startswith('you have reached your specified') and 'api usage limits' in message
+        ):
+            # Anthropic reports an exhausted prepaid balance, and a spend limit the user set, as a 400 identifiable
+            # only by its message, see https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit.
+            return ModelQuotaExceededError
+    return _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
 
 
 _ERROR_TYPE_CATEGORIES: dict[str, _model_errors.HTTPErrorCategory] = {

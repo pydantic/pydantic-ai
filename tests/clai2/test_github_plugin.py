@@ -3,6 +3,7 @@
 import io
 from pathlib import Path
 
+import anyio
 import pytest
 from pydantic import JsonValue
 from rich.console import Console
@@ -159,7 +160,7 @@ async def test_declares_its_rows_and_the_sign_in_and_host_actions(tmp_path: Path
     async def declared(menu: SettingsMenu) -> list[str]:
         assert menu.source.title == 'GitHub' and menu.searchable
         assert set(menu.actions) == {'login', 'url'}
-        return [row.key for row in menu.source.rows()]
+        return [row.key for row in await anyio.to_thread.run_sync(menu.source.rows)]
 
     keys = await shell.loader.edit_settings('github', declared)
     assert keys == ['login', 'url', 'read_only', 'toolsets', 'include_instructions']

@@ -24,6 +24,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from importlib import metadata
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Annotated
@@ -279,7 +280,7 @@ async def tool_executable(uv: str) -> str | None:
     """The `clai2` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
     directory = await _tool_dir(uv, '--bin')
     path = None if directory is None else directory / 'clai2'
-    return str(path) if path is not None and path.is_file() else None
+    return str(path) if path is not None and await to_thread.run_sync(path.is_file) else None
 
 
 RUNNING = 'clai2-running'
@@ -345,7 +346,7 @@ def running_elsewhere(environment: Path) -> list[str]:
 async def sibling_processes(uv: str) -> list[str]:
     """The PIDs of other `clai2` processes running from the `uv tool` environment an install would replace."""
     directory = await _tool_dir(uv)
-    return [] if directory is None else running_elsewhere(directory / DISTRIBUTION)
+    return [] if directory is None else await to_thread.run_sync(running_elsewhere, directory / DISTRIBUTION)
 
 
 def _in_thread(work: Callable[[], None]) -> None:
@@ -513,10 +514,10 @@ class Updates:
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
             return f'CLAI {self.current.label} is the newest on the {channel} channel.'
-        uv = self.find_uv()
+        uv = await to_thread.run_sync(self.find_uv)
         if (refusal := await self._in_use(uv, update)) is not None:
             return refusal
-        overrides = _write_overrides(update.overrides()) if channel == 'main' else None
+        overrides = await to_thread.run_sync(_write_overrides, update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
             self.failed = True
@@ -554,7 +555,8 @@ class Updates:
                 code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
-                overrides.unlink(missing_ok=True)
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(partial(overrides.unlink, missing_ok=True))
             if code != 0:  # Also when uv could not run at all.
                 await tell('failed')
         if code != 0:
