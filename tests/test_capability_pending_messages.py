@@ -2063,6 +2063,8 @@ async def test_enqueue_asap_with_rich_message_history_tail():
                     UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='injected after rich tail', timestamp=IsDatetime())],
