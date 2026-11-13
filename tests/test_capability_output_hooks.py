@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput
+from pydantic_ai.output import NativeOutput, OutputContext, OutputSpec, PromptedOutput, TextOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
@@ -4233,7 +4233,9 @@ class TestHookSemanticValue:
             ),
         ],
     )
-    async def test_function_aliased_arg_output_modes(self, output_type: Any, response: TextPart | ToolCallPart):
+    async def test_function_aliased_arg_output_modes(
+        self, output_type: OutputSpec[str], response: TextPart | ToolCallPart
+    ):
         """A single aliased arg works in every output mode, including a union of output functions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
