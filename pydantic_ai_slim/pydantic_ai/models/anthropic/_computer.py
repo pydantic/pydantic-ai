@@ -129,7 +129,10 @@ class NativeComputer:
         malformed = [block['id'] for block in blocks if not _well_formed(block)]
         incomplete = {*incomplete, *malformed}
         checked = [_checked(block) for block in blocks]
-        member_actions = [self._member_actions(block, incomplete, split) for block in checked]
+        member_actions = [
+            self._member_actions(block, incomplete, split, last=index == len(checked) - 1)
+            for index, block in enumerate(checked)
+        ]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
             computer_blocks=checked,
@@ -146,7 +149,7 @@ class NativeComputer:
         )
 
     def _member_actions(
-        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]]
+        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]], *, last: bool
     ) -> list[dict[str, Any]]:
         """The `computer` tool actions one call becomes, or one the tool refuses if it can't run as asked."""
         name, args = computer_member(block, self.version)
@@ -154,6 +157,9 @@ class NativeComputer:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
         if block['id'] in split:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
+        if name == 'screenshot' and not last:
+            # The `computer` tool captures the screen once, after the batch, but each screenshot call needs its image.
+            return [{'type': 'screenshot', 'not_the_last_call': True}]
         return map_computer_member(name, args)
 
 
