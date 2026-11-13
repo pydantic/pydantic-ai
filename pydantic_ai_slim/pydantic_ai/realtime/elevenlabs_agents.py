@@ -899,11 +899,29 @@ def _convert_parameters(schema: dict[str, Any], *, path: str, root: bool, proble
     return result
 
 
+_ELEVENLABS_TOOL_SETTINGS = (
+    'response_timeout_secs',
+    'disable_interruptions',
+    'pre_tool_speech',
+    'tool_call_sound',
+    'tool_call_sound_behavior',
+    'execution_mode',
+    'tool_error_handling_mode',
+    'assignments',
+    'dynamic_variables',
+)
+"""The client-tool settings made on the ElevenLabs side, which a `ToolDefinition` has no counterpart for.
+
+An update replaces the whole tool config, resetting each one it leaves out to its default (verified live), so
+`_tool_config` carries them over from the tool being updated.
+"""
+
+
 def _tool_config(tool: ToolDefinition, remote: _AgentToolConfig | None = None) -> dict[str, Any]:
     """Render a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] as an ElevenLabs client-tool config.
 
-    An update replaces the whole config, which resets a timeout raised on the ElevenLabs side to the default
-    (verified live), so the `remote` tool being updated keeps its own.
+    The `remote` tool being updated keeps its own ElevenLabs-side settings (`_ELEVENLABS_TOOL_SETTINGS`), such as
+    a raised timeout or its pre-tool speech, which the update would otherwise reset to their defaults.
     """
     config: dict[str, Any] = {
         'type': 'client',
@@ -914,8 +932,9 @@ def _tool_config(tool: ToolDefinition, remote: _AgentToolConfig | None = None) -
         'expects_response': True,
         'parameters': _elevenlabs_parameters(tool.name, _prepared_parameters(tool.parameters_json_schema)),
     }
-    if remote is not None and remote.response_timeout_secs is not None:
-        config['response_timeout_secs'] = remote.response_timeout_secs
+    if remote is not None:
+        remote_config = remote.model_dump(exclude_none=True)
+        config.update((key, remote_config[key]) for key in _ELEVENLABS_TOOL_SETTINGS if key in remote_config)
     return config
 
 
