@@ -566,6 +566,11 @@ def test_first_displayed_banner_announces_the_check(monkeypatch: pytest.MonkeyPa
 async def test_async_agent_run_shows_cached_update_and_starts_due_check(
     monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, tmp_path: Path
 ):
+    """An agent run shows the cached update and starts the due check without blocking the loop.
+
+    Not a VCR test: the update notice is asserted on the rendered banner, which needs the endpoint's
+    answer held fixed, and a recording of the live endpoint changes with every release.
+    """
     monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
     # Where the cache lives on Windows, so that no platform's run reaches the real one.

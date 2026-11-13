@@ -1,3 +1,11 @@
+"""The version check, driven through its cache and a stubbed endpoint.
+
+Not VCR tests: most cases assert that no request is made at all (the announcing banner, the
+throttle, the opt-outs, an unrecordable attempt), and the rest depend on the endpoint's answer
+being held fixed (a newer release, a malformed or failing response), which a recording of the
+live endpoint can't guarantee from one release to the next.
+"""
+
 from __future__ import annotations
 
 import importlib.util
