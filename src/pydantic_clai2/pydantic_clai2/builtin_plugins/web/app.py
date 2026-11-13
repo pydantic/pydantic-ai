@@ -568,8 +568,8 @@ def _changes(app: FastAPI, service: WebService) -> None:
     async def changes(
         scope: ChangeScope = 'session', diffs: bool = True, conversation_id: str | None = None
     ) -> Changes:
-        session = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).session
-        return await session_changes(session.conversation.messages, session.workspace, scope=scope, diffs=diffs)
+        channel = _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+        return await session_changes(channel.messages, channel.session.workspace, scope=scope, diffs=diffs)
 
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.get(f'{prefix}/changes')(changes)
@@ -702,7 +702,7 @@ def _tasks(app: FastAPI, service: WebService) -> None:
 
     @app.get('/api/tasks/{task_id}')
     async def task(task_id: str) -> TaskTranscript:
-        return _run(lambda: service.task_transcript(task_id))
+        return await _wait(service.task_transcript(task_id))
 
     # Before the action route, which would otherwise take `steer` and `prompt` for actions.
     @app.post('/api/tasks/{task_id}/steer')

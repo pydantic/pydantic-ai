@@ -6,14 +6,14 @@ import pytest
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent
 
 from .test_tools import call
 
 
 class Listener(AbstractCapability[None]):
-    @on_event(FileChangeRequestEvent)
-    async def requested(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def requested(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         event.cancel('not approved')
 
 

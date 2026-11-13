@@ -2112,7 +2112,7 @@ class TestIdempotentAccrual:
         Read for presence rather than truth, every response from that provider names the
         same token and everything after the first is dropped as a replay of it -- the brake
         releasing late, which is the direction this capability exists to avoid. Core reads
-        the same field for truth (`models/_continuation.py`, `models/openai.py`).
+        the same field for truth (`models/_continuation.py`, `models/openai/_chat_model.py`).
         """
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
 
@@ -2342,6 +2342,31 @@ class TestFallbackAttempts:
 
         with pytest.raises(FallbackExceptionGroup):
             await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
+
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
+
+    async def test_a_nested_rejection_is_charged_when_an_outer_fallback_recovers_from_the_inner_error(self):
+        """The inner `FallbackModel`'s rejected response rides on the error it raises, which only the outer one falls back on."""
+
+        def reject(response: ModelResponse) -> bool:
+            return response.model_name == 'gpt-4o-mini'
+
+        def unavailable(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(status_code=503, model_name='down')
+
+        inner = FallbackModel(
+            FunctionModel(lambda messages, info: _usage_response(100, 10), model_name='gpt-4o-mini'),
+            FunctionModel(unavailable, model_name='down'),
+            fallback_on=reject,
+        )
+        model = FallbackModel(
+            inner,
+            FunctionModel(lambda messages, info: _usage_response(20, 2), model_name='gpt-4o'),
+            fallback_on=ModelHTTPError,
+        )
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
+
+        await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
 

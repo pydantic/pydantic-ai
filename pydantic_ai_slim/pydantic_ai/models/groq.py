@@ -206,6 +206,8 @@ class GroqModel(Model[AsyncGroq]):
 
     # Groq's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset({'service_tier', 'top_k'})
 
@@ -445,7 +447,12 @@ class GroqModel(Model[AsyncGroq]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        extra_headers = dict(model_settings.get('extra_headers', {}))
+        # The Groq SDK merges headers into its defaults case-sensitively, so a user-agent replaces its default
+        # `User-Agent` only under that spelling.
+        extra_headers = {
+            'User-Agent' if name.lower() == 'user-agent' else name: value
+            for name, value in dict(model_settings.get('extra_headers', {})).items()
+        }
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`

@@ -197,6 +197,11 @@ def test_public_engine_builder_exports() -> None:
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',
+        'ExternalEventError',
+        'ExternalEventWaiter',
+        'external_event_scope',
+        'record_durable_unit',
+        'replay_scope',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -661,6 +666,10 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_ToolReturn('ok'), {'result': 'ok', 'kind': 'tool_return'}),
         (_ApprovalRequired({'scope': 'write'}), {'metadata': {'scope': 'write'}, 'kind': 'approval_required'}),
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
+        (
+            _CallDeferred({'ticket': 7}, call_kind='question'),
+            {'metadata': {'ticket': 7}, 'call_kind': 'question', 'kind': 'call_deferred'},
+        ),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
         (
             _ValidationError(
@@ -892,6 +901,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'revealed_tool_names': [],
             'introduced_tool_names': [],
             'deferred_capability_ids': [],
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
