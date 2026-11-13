@@ -55,7 +55,7 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool on the Responses API; see
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
