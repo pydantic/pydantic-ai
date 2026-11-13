@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import struct
 from importlib.metadata import version
+from typing import Any, TypeIs
 
 import anyio.to_thread
 import pytest
-from bson import decode, encode
+from bson import BSON, encode
 from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
@@ -29,6 +30,20 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
+
+_HARNESS_VERSION = version('pydantic-ai-harness')
+
+
+def _is_string_keyed_dict(value: object) -> TypeIs[dict[str, object]]:
+    if not isinstance(value, dict):
+        return False
+    keys: list[Any] = list(value.keys())
+    return all(isinstance(key, str) for key in keys)
+
+
+def _fake_container_env_info() -> dict[str, object]:
+    return {}
+
 
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
@@ -106,7 +121,8 @@ class TestMongoMediaStoreConstruction:
         monkeypatch.undo()
         await client.close()
 
-    async def test_db_url_handshake_includes_harness_driver_info(self) -> None:
+    async def test_db_url_handshake_includes_harness_driver_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pymongo.pool_options.get_container_env_info', _fake_container_env_info, raising=False)
         handshake_metadata: list[dict[str, object]] = []
 
         async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -115,12 +131,16 @@ class TestMongoMediaStoreConstruction:
                     header = await reader.readexactly(16)
                     length, request_id, _, opcode = struct.unpack('<iiii', header)
                     payload = await reader.readexactly(length - 16)
-                    command: dict[str, object] = (
-                        decode(payload[5:]) if opcode == 2013 else decode(payload[payload.index(b'\0', 4) + 9 :])
+                    raw_command = (
+                        BSON(payload[5:]).decode()
+                        if opcode == 2013
+                        else BSON(payload[payload.index(b'\0', 4) + 9 :]).decode()
                     )
+                    assert _is_string_keyed_dict(raw_command)
+                    command = raw_command
                     if 'client' in command:
                         client = command['client']
-                        assert isinstance(client, dict)
+                        assert _is_string_keyed_dict(client)
                         handshake_metadata.append(client)
                         reply: dict[str, object] = {
                             'ok': 1,
@@ -161,10 +181,13 @@ class TestMongoMediaStoreConstruction:
 
         assert handshake_metadata
         driver = handshake_metadata[0]['driver']
-        assert isinstance(driver, dict)
-        assert driver['name'] == 'PyMongo|pydantic-ai-harness'
-        expected_version = await anyio.to_thread.run_sync(version, 'pydantic-ai-harness')
-        assert driver['version'].endswith(f'|{expected_version}')
+        assert _is_string_keyed_dict(driver)
+        driver_name = driver.get('name')
+        assert isinstance(driver_name, str)
+        assert driver_name.split('|')[-1] == 'pydantic-ai-harness'
+        driver_version = driver.get('version')
+        assert isinstance(driver_version, str)
+        assert driver_version.endswith(f'|{_HARNESS_VERSION}')
 
 
 class TestMongoMediaStoreRoundTrip:

@@ -74,6 +74,8 @@ from pydantic_ai_harness.step_persistence._types import (
     ToolEffectRecord,
 )
 
+_HARNESS_VERSION = version('pydantic-ai-harness')
+
 _MongoDocument = dict[str, object]
 
 _logger = logging.getLogger(__name__)
@@ -126,7 +128,7 @@ class MongoStepStore:
             assert db_url is not None
             self._client = AsyncMongoClient[_MongoDocument](
                 db_url,
-                driver=DriverInfo(name='pydantic-ai-harness', version=version('pydantic-ai-harness')),
+                driver=DriverInfo(name='pydantic-ai-harness', version=_HARNESS_VERSION),
             )
             self._own_client = True
 

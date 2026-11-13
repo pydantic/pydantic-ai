@@ -47,6 +47,8 @@ from pydantic_ai_harness.media._store import (
     resolve_public_url,
 )
 
+_HARNESS_VERSION = version('pydantic-ai-harness')
+
 _DEFAULT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024
 # 16MiB BSON document cap minus headroom for the chunk document's own framing
 # (`_id`, `files_id`, `n`, the `Binary` subtype/length prefix). A larger value
@@ -116,7 +118,7 @@ class MongoMediaStore:
             assert db_url is not None
             self._client = AsyncMongoClient[_MongoDocument](
                 db_url,
-                driver=DriverInfo(name='pydantic-ai-harness', version=version('pydantic-ai-harness')),
+                driver=DriverInfo(name='pydantic-ai-harness', version=_HARNESS_VERSION),
             )
             self._own_client = True
 
