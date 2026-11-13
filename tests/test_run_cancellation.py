@@ -67,11 +67,9 @@ from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .conftest import IsNow, IsStr, no_leaked_tasks
-
-READINESS_WAIT_TIMEOUT = 300
-"""Seconds a test waits for something that should happen at once: only a hang reaches it, however stalled the runner is."""
 
 
 def _fail_first_tool() -> None:
@@ -421,9 +419,16 @@ async def test_run_sync_token_cancel_from_another_thread():
         raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
-    run_thread = asyncio.create_task(
-        asyncio.to_thread(Agent(FunctionModel(model_function)).run_sync, 'hello', cancellation_token=token)
-    )
+
+    def run_sync_and_close_its_loop() -> None:
+        try:
+            Agent(FunctionModel(model_function)).run_sync('hello', cancellation_token=token)
+        finally:
+            # `run_sync` sets a new event loop on this worker thread that nothing else closes. Left open, it is
+            # finalized in a later test, where it can raise `ValueError: Invalid file descriptor: -1`.
+            asyncio.get_event_loop().close()
+
+    run_thread = asyncio.create_task(asyncio.to_thread(run_sync_and_close_its_loop))
     await asyncio.to_thread(started.wait)
     token.cancel()
 

@@ -9,13 +9,17 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from pydantic_clai2.ui.prompt import text_clipboard
 from pydantic_clai2.ui.prompt.image_input import clipboard_images, read_image
 from pydantic_clai2.ui.prompt.text_clipboard import copy_command, run_copy
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 @pytest.mark.skipif(os.environ.get('CLAI_TEST_CLIPBOARD') != '1', reason='requires an isolated desktop clipboard')
-def test_native_text_copy() -> None:
+def test_native_text_copy(monkeypatch: pytest.MonkeyPatch) -> None:
     """A drag-selection's copy reaches the clipboard through the platform's own command."""
+    # `run_copy` abandons a copy that takes longer, without an error, and PowerShell on a loaded Windows runner can.
+    monkeypatch.setattr(text_clipboard, 'COPY_TIMEOUT', READINESS_WAIT_TIMEOUT)
     command = copy_command()  # Imported before the suite's fixture replaces it.
     assert command is not None
     text = 'copied from CLAI \u2713\nsecond line'

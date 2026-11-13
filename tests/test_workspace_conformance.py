@@ -18,6 +18,7 @@ from pydantic_ai.workspaces import (
     local as local_module,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .workspace_fakes import (
     FakeWorkspace,
@@ -37,6 +38,17 @@ def short_output_drain_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     how long the backend keeps reading first.
     """
     monkeypatch.setattr(local_module, '_OUTPUT_DRAIN_GRACE', 0.05)
+
+
+@pytest.fixture(autouse=True)
+def spawn_grace_beyond_any_stall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep `LocalWorkspaceBackend`'s 5s startup grace from failing a rule when a runner stalls a process start.
+
+    No rule here is about how long a process takes to start, and a start that stalls past the grace fails with
+    `TimeoutError: local workspace subprocess operation exceeded its grace period` instead. The grace runs in a
+    shielded scope that no test timeout can cut short, so it is the hang guard's `READINESS_WAIT_TIMEOUT`, not longer.
+    """
+    monkeypatch.setattr(local_module, '_SPAWN_GRACE', READINESS_WAIT_TIMEOUT)
 
 
 def _local_destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:

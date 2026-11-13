@@ -14,6 +14,8 @@ from pathlib import Path
 import anyio
 import pytest
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -116,7 +118,13 @@ async def test_supervisor_reports_executable_startup_failure(
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 
-async def test_supervisor_output_bound_preserves_captured_prefix(workspace_harness: WorkspaceHarness) -> None:
+async def test_supervisor_output_bound_preserves_captured_prefix(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `head` exits with up to a pipe buffer of its output still unread, the byte over the limit last, and the
+    # supervisor drains that only for its grace. A grace far beyond any runner stall costs nothing here: the limit
+    # ends the drain, so a stall between seeing the exit and reading that byte cannot end it first.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', READINESS_WAIT_TIMEOUT)
     backend = workspace_harness.backend()
     with pytest.raises(WorkspaceOutputLimitError) as caught:
         await backend.run(['sh', '-c', 'head -c 10485761 /dev/zero'])
@@ -197,17 +205,20 @@ async def test_background_writer_on_inherited_pipe_does_not_hold_up_exit(
 async def test_output_limit_after_direct_exit_stops_the_background_writer(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # A long grace costs nothing here: the limit ends the drain, and a slow runner needs time to stream 10 MiB.
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
+    # A grace far beyond any runner stall costs nothing here: the limit ends the drain, so a stall after the shell
+    # exits cannot end it first.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', READINESS_WAIT_TIMEOUT)
     writer_pid = tmp_path / 'writer.pid'
     # The writer stays in the command's process group and starts flooding only once the direct shell is gone.
     script = 'sh -c \'while kill -0 "$1" 2>/dev/null; do :; done; exec cat /dev/zero\' sh $$ & echo $! > "$1"; exit 0'
     backend = workspace_harness.backend()
     try:
         with pytest.raises(WorkspaceOutputLimitError):
-            await asyncio.wait_for(backend.run(['sh', '-c', script, 'sh', str(writer_pid)]), timeout=10)
+            await asyncio.wait_for(
+                backend.run(['sh', '-c', script, 'sh', str(writer_pid)]), timeout=READINESS_WAIT_TIMEOUT
+            )
         pid = int(writer_pid.read_text())
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while True:
                 try:
                     os.kill(pid, 0)
@@ -224,11 +235,11 @@ async def test_background_output_within_the_drain_grace_is_captured(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The background child writes only once the direct shell is gone; the drain grace still captures it.
-    # A long grace costs nothing here: the child exits after writing, and EOF ends the drain.
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
+    # A grace far beyond any runner stall costs nothing here: the child exits after writing, and EOF ends the drain.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', READINESS_WAIT_TIMEOUT)
     backend = workspace_harness.backend()
     script = 'echo a; (while kill -0 $$ 2>/dev/null; do sleep 0.01; done; echo b) &'
-    result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=10)
+    result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=READINESS_WAIT_TIMEOUT)
     assert result.stdout == 'a\nb\n'
 
 
@@ -261,8 +272,8 @@ async def test_cancellation_during_drain_stops_the_background_writer(
     workspace_harness: WorkspaceHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The direct shell exits while a same-group child keeps the pipe open; cancelling during the drain kills it.
-    # A drain longer than any startup delay, so the cancel, not the grace, ends it.
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
+    # A grace far beyond any runner stall, so the cancel, not the grace, ends the drain.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', READINESS_WAIT_TIMEOUT)
     writer_pid = tmp_path / 'writer.pid'
     backend = workspace_harness.backend()
     await backend.working_dir()
@@ -271,13 +282,13 @@ async def test_cancellation_during_drain_stops_the_background_writer(
     script += 'echo $! > "$1"; exit 0'
     pending = asyncio.create_task(backend.run(['sh', '-c', script, 'sh', str(writer_pid)]))
     try:
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
             assert await workspace_harness.output.get() == b'started\n'
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending
         pid = int(writer_pid.read_text())
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while True:
                 try:
                     os.kill(pid, 0)
