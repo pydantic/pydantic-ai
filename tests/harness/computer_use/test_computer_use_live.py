@@ -10,11 +10,12 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import Click, PressKeys, TypeText
 from pydantic_ai_harness.computer_use import ComputerUse
-from tests.models.conftest import content_blocks
+from tests.models.conftest import content_blocks, json_objects
 
 from ...conftest import RequestCapture, try_import
 from ..display_fakes import ScreenProvider
@@ -87,6 +88,7 @@ async def test_gpt_drives_the_screen_after_loading_a_deferred_computer(
         assert not any(tool.get('name') == 'computer' for tool in declared)
 
 
+@needs_openai
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='the second request is from an agent without the computer tool')
 async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool(
@@ -143,11 +145,9 @@ def _claude(model_name: str, anthropic_api_key: str, capture: RequestCapture) ->
     return AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key, http_client=capture.client))
 
 
-def _tools(body: dict[str, Any]) -> list[dict[str, Any]]:
+def _tools(body: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
     """The request's tools, without the prompt-cache breakpoint that lands on the last of them."""
-    return [
-        {k: v for k, v in tool.items() if k != 'cache_control'} for tool in cast(list[dict[str, Any]], body['tools'])
-    ]
+    return [{k: v for k, v in tool.items() if k != 'cache_control'} for tool in json_objects(body['tools'])]
 
 
 @needs_anthropic
@@ -163,15 +163,16 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     first, *_, last = request_capture.bodies('/v1/messages')
     # The capability's `computer` tool went out as Claude's toolset, which has no name or schema of ours.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Every member call got its own result, in order and in the toolset: `OK` on each that ran, and the screenshot on
-    # the last of a turn's calls.
+    # Every member call got its own result, in order and in the toolset. Claude's first batch put a screenshot before
+    # its click, which was refused, as the screen is captured only after a batch; it then took the screenshot alone and
+    # clicked and typed in a second batch. Each call that ran got `OK`, and the last of a batch the screenshot.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
     assert all(result['toolset_name'] == 'computer' for result in results)
-    assert [
-        [cast(dict[str, Any], block)['type'] for block in cast(list[Any], result['content'])] for result in results
-    ] == snapshot([['text'], ['text'], ['text', 'image']])
+    assert [[block['type'] for block in json_objects(result['content'])] for result in results] == snapshot(
+        [['text'], ['text'], ['text'], ['text', 'image'], ['text'], ['text', 'image']]
+    )
 
 
 @needs_anthropic
