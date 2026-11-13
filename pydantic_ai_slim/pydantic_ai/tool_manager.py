@@ -338,8 +338,8 @@ def _refuse_unfinished_computer_call(tool: ToolsetTool[Any], ctx: RunContext[Any
     """Refuse a `computer` call, as a retry the model sees, when the response it came in didn't finish normally.
 
     A provider can return a finished call in a response it then cut off, filtered or failed (OpenAI and Anthropic both
-    say not to act on one), and a stream can end before saying how the response finished. The latest response is the
-    one whose calls run. A `None` finish reason passes: many models never report one.
+    say not to act on one). The latest response is the one whose calls run. A `None` finish reason passes: many models
+    never report one.
     """
     from .computer_use import COMPUTER_KIND
 
