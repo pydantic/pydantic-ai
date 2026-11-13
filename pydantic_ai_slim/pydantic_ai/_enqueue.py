@@ -44,6 +44,8 @@ from .messages import (
     _CapabilityInstructionPart,  # pyright: ignore[reportPrivateUsage]
     _client_safe_retry_feedback,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -189,7 +191,7 @@ def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authori
 
     An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice:
     a capability part is lowered when it's stamped, a system prompt becomes an instruction at `ceiling`, user text at
-    `'none'` becomes data, `'no_output'` retry feedback becomes user text, and a plain tool return is tool output
+    `'none'` becomes data, as does retry feedback (at `'user'`, only `'no_output'` feedback changes, to user text), and a plain tool return is tool output
     whatever its sender. Anything else is refused, such as the framework's records of the run's own state, which the
     model reads in the application's voice, a summary standing in for earlier history, a typed tool return the
     framework acts on, and speech below `'user'`.
@@ -197,10 +199,16 @@ def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authori
     if ceiling == 'operator':
         return part
     source = CapabilitySource(capability_id, authority=ceiling)
-    if isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+    if ceiling == 'user' and isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
         # `'no_output'` feedback is the one retry the model reads in the application's voice: below it, it's user text.
         part = _client_safe_retry_feedback(part)
     match part:
+        case RetryFeedbackPart() if ceiling == 'none':
+            # Any feedback says the application's validation failed, which a capability with no authority can't say.
+            return _CapabilityContentPart(content=_retry_feedback_text(part), source=source, timestamp=part.timestamp)
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart(tool_name=None) if ceiling == 'none':  # pyright: ignore[reportDeprecated]
+            return _within_ceiling(_translate_legacy_retry_part(part), capability_id, ceiling)
         case CapabilityPart() | RetryFeedbackPart() | RetryPromptPart():  # pyright: ignore[reportDeprecated]
             return part
         case SystemPromptPart():
