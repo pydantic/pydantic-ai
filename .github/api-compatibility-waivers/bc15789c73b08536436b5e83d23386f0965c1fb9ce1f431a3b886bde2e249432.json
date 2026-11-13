@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Adds `ComputerTool` to `NATIVE_TOOLS_REQUIRING_CONFIG`: it needs a `computer` tool to run its calls, so `clai --tool` can't offer it alone. Every other member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11006"
+}
