@@ -1070,12 +1070,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # Handle wrap_run short-circuit: result is already available
             if agent_run.result is not None:
                 graph_ctx = agent_run.ctx
-                async with StreamedRunResult(
+                yield StreamedRunResult(
                     graph_ctx.state.message_history,
                     graph_ctx.deps.new_message_index,
                     run_result=agent_run.result,
-                )._closing_streams() as streamed_result:  # pyright: ignore[reportPrivateUsage]
-                    yield streamed_result
+                )
                 yielded = True
 
             first_node = agent_run.next_node  # start with the first node
@@ -1175,13 +1174,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # this node finishes, so the stream still adds it on top of the refreshed snapshot.
                                 stream._refresh_initial_run_ctx_usage()  # pyright: ignore[reportPrivateUsage]
 
-                            async with StreamedRunResult(
+                            yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
                                 stream,
                                 on_complete,
-                            )._closing_streams() as streamed_result:  # pyright: ignore[reportPrivateUsage]
-                                yield streamed_result
+                            )
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
@@ -1210,12 +1208,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
                     # if a tool function raised CallDeferred or ApprovalRequired.
                     # In this case there's no response to stream, but we still let the user access the output etc as normal.
-                    async with StreamedRunResult(
+                    yield StreamedRunResult(
                         graph_ctx.state.message_history,
                         graph_ctx.deps.new_message_index,
                         run_result=agent_run.result,
-                    )._closing_streams() as streamed_result:  # pyright: ignore[reportPrivateUsage]
-                        yield streamed_result
+                    )
                     yielded = True
                     break
                 if not isinstance(next_node, _agent_graph.AgentNode):
@@ -1237,12 +1234,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # it suppresses the error.
             run_result = agent_run.result
             assert run_result is not None
-            async with StreamedRunResult(
+            yield StreamedRunResult(
                 agent_run.ctx.state.message_history,
                 agent_run.ctx.deps.new_message_index,
                 run_result=run_result,
-            )._closing_streams() as streamed_result:  # pyright: ignore[reportPrivateUsage]
-                yield streamed_result
+            )
 
     @overload
     def run_stream_sync(

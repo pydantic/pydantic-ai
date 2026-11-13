@@ -77,9 +77,6 @@ review rubric independently of any named hosted reviewer:
   Preserve meaningful conditions, safeguards, executable commands, and loading boundaries; reject shorter wording that makes behavior ambiguous.
 - Does any behavior, design decision, or trade-off require an explicit human decision?
 - Review in priority order: public API, concepts and behavior, documentation, tests, code quality.
-- For a changed test, test double, or flaky-test fix, check each wait and assertion against "Tests
-  that don't depend on timing" in `tests/AGENTS.md`, reading it as if the runner stalls right before
-  that line.
 - If a high-level problem may invalidate lower-level work, report it first and defer the lower-level
   pass until remediation.
 - Report only actionable concerns. Be concise, concrete, non-repetitive, and friendly without praise.

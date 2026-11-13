@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history, the fifth to every PR that touches a model adapter, the sixth to every PR that changes a core definition a durable engine depends on, the seventh to every PR that touches tests or test doubles:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history, the fifth to every PR that touches a model adapter, the sixth to every PR that changes a core definition a durable engine depends on:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -128,14 +128,6 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   `agents-md.txt`) asks. Without the file, skip this check. Rate a broken site
   with a concrete trigger **HIGH**; otherwise **MEDIUM**. Calibration is
   Example 8 in `.review-context/review-instructions.md`.
-- **Test determinism.** When the diff adds or changes a test, a test double
-  (any `fake_*.py`, stub server or fixture that runs work concurrently), or a
-  fix for a flaky test, check each wait and assertion against the numbered
-  rules in "Tests that don't depend on timing" in `tests/AGENTS.md`, reading it
-  as if the runner stalls, for any length of time, right before that line. Rate
-  a violation **HIGH** when you can name the interleaving that fails, **MEDIUM**
-  otherwise.
-  Calibration is Example 9 in `.review-context/review-instructions.md`.
 
 ## Review process
 

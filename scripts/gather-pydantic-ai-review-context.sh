@@ -918,42 +918,6 @@ don't flag an entry whose sites the diff already updates and tests, or a
 missing entry: the manifest is the contract this check reads, not something to
 second-guess.
 
-### Example 9 — test determinism
-
-Trigger: the diff adds or changes a test, a test double, or a fix for a flaky
-test. The rules are the six numbered ones in "Tests that don't depend on
-timing" in `tests/AGENTS.md`. Read each wait and assertion as if the runner
-stalls, for any length of time, right before it: CI runners do, and a flake
-fails `main` for whoever pushes next.
-
-**Flag this (HIGH):**
-```python
-async with anyio.create_task_group() as group:
-    group.start_soon(run_until_broken)
-    await _wait_for(started)  # the command touched this file
-    server.break_streams(backend.ref.id)
-```
-*Why:* The command touches `started` as soon as its process runs, but a fake
-that registers the command's stream only after the process starts can see the
-break before the stream exists. If the loop stalls in between, `break_streams`
-reaches no stream, the break is dropped, and the test hangs until the job's
-timeout. Don't flag it when the fake keeps an early break, as `_command` in
-`tests/harness/opensandbox_sandbox/fake_opensandbox.py` does by re-checking its
-`stream_breaks` count once the stream is registered. Otherwise ask for that
-re-check, for the stream to be registered before the process starts, or for
-the test to wait for the stream itself.
-
-**Don't flag this:**
-```python
-with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-    await backend_ready.wait()  # set by the code under test once it listens
-monkeypatch.setattr(module, '_GONE_SETTLE', 3600.0)
-```
-*Why:* The test waits for the state its next step needs, signalled by the
-code that owns it. The guard only stops a hang, and the patched timeout is far
-beyond any stall, so no runner speed changes the outcome. Also don't flag a
-test that breaks out of `async for` because early exit is its subject.
-
 ## Sub-agent finding format
 
 When a Task sub-agent returns findings, use this exact format (one block

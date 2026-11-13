@@ -101,12 +101,11 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part, no_leaked_tasks
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
 from .realtime.simulation._loop import SimulatedLoop
 
-READINESS_WAIT_TIMEOUT = 300
-"""Guards waits for something that should happen promptly against a hang, so it is far longer than any runner stall
-and never decides a test's outcome."""
+READINESS_WAIT_TIMEOUT = 5
+"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -6349,124 +6348,6 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
         await anext(result.stream_text(delta=delta, debounce_by=debounce_by))
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
-
-
-def _model_with_cleanup() -> tuple[FunctionModel, list[bool]]:
-    """A model that streams two chunks, then goes quiet; `cleaned_up` is set once its cleanup has run to the end."""
-    cleaned_up: list[bool] = []
-
-    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        try:
-            yield 'first'
-            yield 'second'
-            await asyncio.Event().wait()  # the debounced read for a third chunk stays pending
-            yield 'never'  # pragma: no cover
-        finally:
-            # A cleanup that takes many loop turns, so it is still running if anything cuts it off.
-            with anyio.CancelScope(shield=True):
-                for _ in range(1000):
-                    await anyio.lowlevel.checkpoint()
-            cleaned_up.append(True)
-
-    return FunctionModel(stream_function=stream_function), cleaned_up
-
-
-@pytest.mark.parametrize('method', ['stream_text', 'stream_output', 'stream_response'])
-async def test_run_stream_closes_a_stream_broken_out_of(method: str):
-    """A stream left suspended by a `break` is closed by the time `run_stream()` exits, not left to asyncio's
-    finalizer hook, which would close it later in a task nothing awaits."""
-    model, cleaned_up = _model_with_cleanup()
-    agent = Agent(model)
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-        async with agent.run_stream('hello') as result:
-            stream = getattr(result, method)(debounce_by=0.1)
-            async for item in stream:  # pragma: no branch
-                if 'second' in repr(item):
-                    break
-    assert stream.ag_frame is None, 'the stream is still suspended'
-    assert cleaned_up
-
-
-@pytest.mark.parametrize('method', ['stream_text', 'stream_output', 'stream_response'])
-async def test_breaking_out_of_a_run_stream_leaves_no_cleanup_running(method: str, monkeypatch: pytest.MonkeyPatch):
-    """Breaking out of a stream nobody keeps a reference to leaves no cleanup running once the `async with` exits.
-
-    Cancelling the pending debounced read is made to take many loop turns, as on a stalled runner. A generator in the
-    stream's chain that was dropped instead of closed would run that cleanup in a task asyncio's finalizer hook
-    schedules, which nothing awaits, so the model's cleanup would not have finished when the block exits.
-    """
-    cleanup_temporal_group = _utils._cleanup_temporal_group  # pyright: ignore[reportPrivateUsage]
-
-    async def slow_cleanup_temporal_group(*args: Any) -> None:
-        for _ in range(500):
-            await anyio.lowlevel.checkpoint()
-        await cleanup_temporal_group(*args)
-
-    monkeypatch.setattr(_utils, '_cleanup_temporal_group', slow_cleanup_temporal_group)
-    model, cleaned_up = _model_with_cleanup()
-    agent = Agent(model)
-    with no_leaked_tasks():
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            async with agent.run_stream('hello') as result:
-                async for item in getattr(result, method)(debounce_by=0.1):  # pragma: no branch
-                    if 'second' in repr(item):
-                        break
-        assert cleaned_up
-
-
-class _CleanupError(Exception):
-    pass
-
-
-def _model_whose_cleanup_fails() -> FunctionModel:
-    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        try:
-            yield 'first'
-            await asyncio.Event().wait()
-            yield 'never'  # pragma: no cover
-        finally:
-            raise _CleanupError
-
-    return FunctionModel(stream_function=stream_function)
-
-
-@pytest.mark.parametrize('debounce_by', [None, 0.1])
-@pytest.mark.parametrize('method', ['stream_text', 'stream_output', 'stream_response'])
-async def test_run_stream_raises_an_error_from_closing_a_stream_broken_out_of(method: str, debounce_by: float | None):
-    """A stream that fails as `run_stream()` closes it on a normal exit raises from the `async with`."""
-    agent = Agent(_model_whose_cleanup_fails())
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(_CleanupError):
-        async with agent.run_stream('hello') as result:
-            async for _ in getattr(result, method)(debounce_by=debounce_by):  # pragma: no branch
-                break
-
-
-@pytest.mark.parametrize('debounce_by', [None, 0.1])
-@pytest.mark.parametrize('method', ['stream_text', 'stream_output', 'stream_response'])
-async def test_run_stream_keeps_the_error_leaving_its_block_over_a_stream_failing_to_close(
-    method: str, debounce_by: float | None
-):
-    """An error already leaving the `async with` is the one raised, even when a stream fails as it is closed."""
-    agent = Agent(_model_whose_cleanup_fails())
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(ValueError, match='leaving the block'):
-        async with agent.run_stream('hello') as result:
-            async for _ in getattr(result, method)(debounce_by=debounce_by):  # pragma: no branch
-                break
-            raise ValueError('leaving the block')
-
-
-async def test_run_stream_does_not_keep_finished_streams():
-    """A stream iterated to its end is released before the run ends, so a long `run_stream()` block doesn't keep
-    every stream it made."""
-    agent = Agent(TestModel(custom_output_text='done'))
-    async with agent.run_stream('hello') as result:
-        stream = result.stream_text(debounce_by=None)
-        assert [text async for text in stream] == snapshot(['do', 'done'])
-        finished = weakref.ref(stream)
-        del stream
-        result.stream_text(debounce_by=None)  # holding a new stream releases the finished one
-        gc.collect()
-        assert finished() is None
 
 
 async def test_args_validator_failure_events():
