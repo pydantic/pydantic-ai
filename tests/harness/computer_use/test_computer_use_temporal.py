@@ -95,7 +95,7 @@ async def test_each_call_is_one_activity_and_replays_without_acting() -> None:
             )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
 
-    assert first.startswith('Ran 1 action.')
+    assert first == 'Ran 1 action. Screenshot attached (1280x800).'
     # The second call's worker was lost after its first click. With retries off, the model is told, and nothing ran
     # twice.
     assert lost == (

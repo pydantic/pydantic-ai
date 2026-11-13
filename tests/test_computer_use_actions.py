@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from collections.abc import Callable
 
 import pytest
 from inline_snapshot import snapshot
@@ -16,6 +17,7 @@ from pydantic_ai.computer_use import (
     Region,
     Scroll,
     TypeText,
+    Zoom,
 )
 
 
@@ -77,12 +79,16 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
             {'type': 'keypress', 'keys': ['CTRL', 'Return']},
             {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
             {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
+            {'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20},
+            {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 5, 'bottom': 5}},
         ]
     )
     assert actions == [
         PressKeys(keys=('ctrl', 'enter')),
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
         HoldKeys(keys=('escape',), seconds=1),
+        Scroll(direction='down', x=10, y=20),
+        Zoom(region=Region(left=0, top=0, right=5, bottom=5)),
     ]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
     invalid_actions: list[dict[str, object]] = [
@@ -100,29 +106,27 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
         PressKeys(keys=('Hyper_L',))
 
 
-def test_a_scroll_at_a_position_and_a_region_build() -> None:
-    assert Scroll(direction='down', x=10, y=20).x == 10
-    assert Region(left=0, top=0, right=5, bottom=5).right == 5
-
-
 @pytest.mark.parametrize(
-    'build',
+    'build, message',
     [
-        lambda: Scroll(direction='down', amount=0),
-        lambda: Region(left=5, top=0, right=5, bottom=10),
-        lambda: TypeText(text='a\x00b'),
-        lambda: PressKeys(keys=()),
-        lambda: HoldKeys(keys=('',), seconds=1),
+        pytest.param(lambda: Scroll(direction='down', amount=0), 'greater than or equal to 1', id='scroll-of-zero'),
+        pytest.param(
+            lambda: Region(left=5, top=0, right=5, bottom=10),
+            'a region needs `right` greater than `left` and `bottom` greater than `top`',
+            id='empty-region',
+        ),
+        pytest.param(lambda: PressKeys(keys=()), 'at least 1 item', id='no-keys'),
+        pytest.param(lambda: HoldKeys(keys=('',), seconds=1), 'a key name must not be empty', id='empty-key'),
         # Splitting a combination can leave an empty key between two `+`.
-        lambda: PressKeys(keys=('ctrl+++',)),
-        # Modifiers are checked before anything runs, so an unknown one can't be skipped mid-action.
-        lambda: Click(modifiers=('ctrl', 'exec')),
-        # A known key that isn't a modifier is refused too.
-        lambda: Click(modifiers=('ctrl', 'a')),
+        pytest.param(lambda: PressKeys(keys=('ctrl+++',)), 'a key name must not be empty', id='empty-key-in-combo'),
+        # Modifiers are checked before anything runs, so a key that isn't one can't be skipped mid-action.
+        pytest.param(
+            lambda: Click(modifiers=('ctrl', 'a')), 'modifiers must be ctrl, shift, alt or super', id='not-a-modifier'
+        ),
     ],
 )
-def test_actions_are_validated_when_built_in_python(build: Any) -> None:
-    with pytest.raises(ValidationError):
+def test_actions_are_validated_when_built_in_python(build: Callable[[], object], message: str) -> None:
+    with pytest.raises(ValidationError, match=re.escape(message)):
         build()
 
 
@@ -134,7 +138,7 @@ def test_typed_text_refuses_control_characters_other_than_newline_and_tab() -> N
             TypeText(text=text)
 
 
-def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields() -> None:
+def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares() -> None:
     schema = TypeAdapter(list[ComputerToolAction]).json_schema()['$defs']
     assert sorted(schema) == snapshot(
         [

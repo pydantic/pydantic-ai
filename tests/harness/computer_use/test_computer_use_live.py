@@ -114,8 +114,12 @@ async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool
     )
     assert '100' in answer.output and '200' in answer.output
 
-    # As function calls without their `cu_` ids, which the API refuses on a function call.
-    calls = _items(request_capture.bodies('/responses')[-1], 'function_call')
+    # As function calls without their `cu_` ids, which the API refuses on a function call, answered by function
+    # call outputs.
+    last = request_capture.bodies('/responses')[-1]
+    kinds = [item.get('type') for item in _objects(last, 'input')]
+    assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
+    calls = _items(last, 'function_call')
     assert calls and all(call['name'] == 'computer' and 'id' not in call for call in calls)
 
 
@@ -200,7 +204,7 @@ async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
     assert {'name': 'computer', 'defer_loading': True}.items() <= _tools(first)[-1].items()
     assert {'type': 'computer_toolset_20260801'} in _tools(second)
     for body in bodies:
-        assert "'name': 'computer'" not in str(content_blocks(body, 'tool_addition'))
+        assert content_blocks(body, 'tool_addition') == []
 
 
 @needs_anthropic
