@@ -8,7 +8,8 @@ from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import field
+from copy import copy
+from dataclasses import field, replace
 from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
@@ -970,6 +971,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         await dispatch_event_immediate(self, event)
         return event
 
+    def _attributed_to(self, capability: AbstractCapability[RunContextAgentDepsT]) -> RunContext[RunContextAgentDepsT]:
+        """This context as `capability`'s own, so what it enqueues is held to the capability's authority.
+
+        For code a capability runs outside its hooks, such as its `for_run` or a `DynamicCapability` factory.
+        """
+        if type(self) is RunContext:
+            ctx = copy(self)
+            ctx._capability = capability
+            return ctx
+        # Subclasses can rely on reconstruction, e.g. TemporalRunContext's field availability guards.
+        return replace(self, _capability=capability)
+
     def _calling_capability_id(self) -> str | None:
         """The run id of the capability whose hook or tool is using this context, or `None` outside one."""
         capability = self._capability
@@ -1071,6 +1084,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # is the application's, as `emit` treats their events.
         if owner is not None and owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
             capability_id = None
+        elif owner is not None and capability_id is None:
+            # A capability with no `id` of its own before the run has registered it, such as in its `for_run`: still
+            # held to its authority, and named by its class.
+            capability_id = type(owner).__name__
         # Read before stamping, which converts what a capability below operator authority built by hand.
         hand_built = None if capability_id is None else hand_built_capability_speech(pending.messages)
         if capability_id is not None:

@@ -385,25 +385,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if cap_settings is None:
                 continue
 
-            if capability.defer_loading is True:
-                # Request-only settings can be lazy without changing prompt/tool schemas.
-                # Keep them in place so loaded capabilities preserve merge order.
-                def deferred_settings(
-                    ctx: RunContext[AgentDepsT],
-                    *,
-                    capability: AbstractCapability[AgentDepsT] = capability,
-                    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
-                ) -> ModelSettings:
-                    cap_ctx = _ctx_for_active_cap(capability, ctx)
-                    if cap_ctx is None:
-                        return ModelSettings()
-                    if callable(cap_settings):
-                        return cap_settings(cap_ctx)
-                    return cap_settings
-
-                settings_chain.append(deferred_settings)
-            else:
-                settings_chain.append(cap_settings)
+            settings_chain.append(_settings_entry(capability, cap_settings))
 
         if not settings_chain:
             return None
@@ -1281,6 +1263,32 @@ class _GroupMember(WrapperCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)
+
+
+def _settings_entry(
+    capability: AbstractCapability[AgentDepsT],
+    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings],
+) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]:
+    """A child's settings as an entry in the merge chain, evaluated against the child's own context."""
+    if capability.defer_loading is True:
+        # Request-only settings can be lazy without changing prompt/tool schemas.
+        # Keep them in place so loaded capabilities preserve merge order.
+        def deferred_settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
+            if cap_ctx is None:
+                return ModelSettings()
+            if callable(cap_settings):
+                return cap_settings(cap_ctx)
+            return cap_settings
+
+        return deferred_settings
+    if callable(cap_settings):
+        # The settings function is the capability's code, held to its authority if it enqueues.
+        def attributed_settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            return cap_settings(_ctx_for_cap(capability, ctx))
+
+        return attributed_settings
+    return cap_settings
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

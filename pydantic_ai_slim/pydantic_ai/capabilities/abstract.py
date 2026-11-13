@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Self, TypeAlias, get_args
@@ -608,8 +608,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         return resolved.with_authority(ceiling)
 
     async def _for_run_keeping_authority(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        """`for_run`, keeping the authority `with_authority` lowered this instance to."""
-        return self._keep_authority(await self.for_run(ctx))
+        """`for_run`, keeping the authority `with_authority` lowered this instance to.
+
+        `for_run` gets a context attributed to this capability, so what it enqueues is held to the same authority.
+        """
+        return self._keep_authority(await self.for_run(ctx._attributed_to(self)))  # pyright: ignore[reportPrivateUsage]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -682,7 +685,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
     def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
         """Attribute one instruction recipe to this capability."""
-        return sourced_instruction(instruction, CapabilityInstructionSource(self.id) if self.id is not None else None)
+        sourced = sourced_instruction(
+            instruction, CapabilityInstructionSource(self.id) if self.id is not None else None
+        )
+        return replace(sourced, owner=self)
 
     def _attribute_container_instructions(
         self,

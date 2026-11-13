@@ -102,7 +102,10 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
                 continue
             description = capability.get_description()
             if description is not None and not isinstance(description, str):
-                description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
+                # The description function is the capability's code, held to its authority if it enqueues.
+                description = await SystemPromptRunner[AgentDepsT](description).run(
+                    ctx._attributed_to(capability)  # pyright: ignore[reportPrivateUsage]
+                )
             catalog.append(
                 DeferredCapabilityEntry(id=capability_id, description=description, active=capability_id in active)
             )
