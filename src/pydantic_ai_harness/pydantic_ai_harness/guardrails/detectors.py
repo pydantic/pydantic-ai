@@ -33,17 +33,19 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ToolReturn, UserContent
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
+    checked_value as _checked_value,
+    content_list as _content_list,
     detect_content_list_result as _detect_content_list_result,
     detect_return_value as _detect_return_value,
     detect_tool_return_content as _detect_tool_return_content,
-    is_checked_tool_return as _is_checked_tool_return,
+    is_tool_return as _is_tool_return,
 )
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
@@ -455,10 +457,10 @@ def for_tool_result_text(
                     'A text detector used with for_tool_result_text() must replace a tool result with text.'
                 )
             return verdict
-        if (verdict := _detect_content_list_result(detector, result)) is not None:
-            return verdict
-        if _is_checked_tool_return(result):
-            return _tool_return_verdict(detector, result)
+        if (parts := _content_list(result)) is not None:
+            return _detect_content_list_result(detector, parts)
+        if _is_tool_return(result) and (value := _checked_value(result.return_value)) is not None:
+            return _tool_return_verdict(detector, result, value)
         if on_other == 'allow':
             return GuardrailResult.allow()
         raise UserError(
@@ -469,13 +471,13 @@ def for_tool_result_text(
     return guard
 
 
-def _tool_return_verdict(detector: TextDetector, result: ToolReturn[object]) -> GuardrailResult:
-    """Run `detector` over a `ToolReturn`'s `return_value` and its `content`.
+def _tool_return_verdict(
+    detector: TextDetector, result: ToolReturn[object], value: str | list[UserContent]
+) -> GuardrailResult:
+    """Run `detector` over a `ToolReturn`'s `return_value`, given as `value`, and its `content`.
 
     The `ToolReturn` is rebuilt when either changed.
     """
-    # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
-    value = cast('str | list[UserContent]', result.return_value)
     value_verdict, return_value = _detect_return_value(detector, value)
     if value_verdict is not None:
         return value_verdict
