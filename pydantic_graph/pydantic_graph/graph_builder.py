@@ -632,7 +632,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         Returns:
             The next execution item, or the initial task if none is set
         """
-        return self._next or [self._first_task]
+        return [self._first_task] if self._next is None else self._next
 
     @property
     def output(self) -> OutputT | None:
