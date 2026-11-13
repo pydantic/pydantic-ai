@@ -649,6 +649,10 @@ async def test_interrupt_keeps_queued_commands_and_shell_lines_apart_from_prompt
         assert [await live.read() for _ in kept] == list(kept)
 
 
+@pytest.mark.parametrize(
+    ('queued', 'ups', 'expected'),
+    [(('b',), 1, 'b2\ndraft'), (('a', 'b'), 1, 'a\nb2\ndraft'), (('a', 'b', 'c'), 2, 'a\nb2\nc\ndraft')],
+)
 async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_the_draft(
     queued: tuple[str, ...], ups: int, expected: str
 ) -> None:
