@@ -1,33 +1,50 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Self
 
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import PrefixTools, Toolset
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, PrefixTools, Toolset
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset
+
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 
 def greet() -> str:
     return 'hello'
 
 
+def greet_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    return FunctionToolset([greet])
+
+
 @pytest.mark.parametrize('dynamic', [False, True])
-async def test_dynamic_capability_initializes_nested_toolset_factory(dynamic: bool):
-    """A public capability composition exposes the same tools when resolved dynamically."""
-    capability = PrefixTools(Toolset(lambda ctx: FunctionToolset([greet])), prefix='ns')
+@pytest.mark.parametrize(
+    ('make_capability', 'tool_name'),
+    [
+        pytest.param(lambda: PrefixTools(Toolset(greet_toolset), prefix='ns'), 'ns_greet', id='prefix-tools'),
+        pytest.param(lambda: Toolset(DynamicToolset(greet_toolset)), 'greet', id='dynamic-toolset'),
+    ],
+)
+async def test_dynamic_capability_initializes_nested_toolset_factory(
+    make_capability: Callable[[], AbstractCapability[None]], tool_name: str, dynamic: bool
+):
+    """A capability holding a nested dynamic toolset exposes the same tools when resolved dynamically."""
+    capability = make_capability()
     model = TestModel(custom_output_text='done')
-    agent = Agent(model, capabilities=[lambda ctx: capability] if dynamic else [capability])
+    capabilities: list[AgentCapability[None]] = [lambda ctx: capability] if dynamic else [capability]
+    agent = Agent(model, deps_type=type(None), capabilities=capabilities)
 
     result = await agent.run('hello')
 
     assert result.output == 'done'
     assert model.last_model_request_parameters is not None
-    assert [tool.name for tool in model.last_model_request_parameters.function_tools] == ['ns_greet']
+    assert [tool.name for tool in model.last_model_request_parameters.function_tools] == [tool_name]
 
 
 class LifecycleToolset(FunctionToolset[None]):
@@ -81,6 +98,7 @@ async def test_dynamic_toolset_prepares_stable_factory_result_once(per_run_step:
     assert not original.entered
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_prepares_replacements_and_removes_tools():
     """Changing a factory result exits its prepared copy before entering the next one."""
     events: list[str] = []
@@ -123,7 +141,10 @@ async def test_dynamic_toolset_preparation_failure_exits_only_active_copy():
     assert not replacement.entered
 
 
-@pytest.mark.parametrize('replace_factory_result', [False, True])
+@pytest.mark.parametrize(
+    'replace_factory_result',
+    [False, pytest.param(True, marks=pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN))],
+)
 async def test_dynamic_toolset_exits_entered_combined_after_step_replacement(replace_factory_result: bool):
     """Per-step operational replacements must not discard the entered container's cleanup."""
     events: list[str] = []
