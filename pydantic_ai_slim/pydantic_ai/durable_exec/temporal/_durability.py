@@ -534,7 +534,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
                 'child workflow because direct activity registration would omit required workflow definitions. '
                 'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
-                'the workflow via `__pydantic_ai_agents__`.'
+                'the workflow via `__pydantic_ai_agents__`. For an activity-only worker, use '
+                '`AgentPlugin(agent, register_workflows=False)`.'
             )
         return activities
 
