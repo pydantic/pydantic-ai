@@ -128,21 +128,21 @@ Other capabilities slot in the same way: [Memory](harness/memory.md) across sess
 
 ### Run it in a sandbox
 
-`LocalWorkspace` runs the model's commands on your machine. To isolate them, swap it for a sandbox capability; the tools stay the same and now run in the sandbox. A local [Docker](harness/docker-sandbox.md) container with your project mounted at `/workspace`, where commands start, and no network:
+`LocalWorkspace` runs the model's commands on your machine. To isolate them, swap it for a sandbox capability; the tools stay the same and now run in the sandbox. A local [Docker container](harness/docker-container.md) with your project mounted at `/workspace`, where commands start, and no network:
 
 ```python {test="skip" lint="skip"}
 from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.docker_sandbox import DockerSandbox
+from pydantic_ai_harness.docker_container import DockerContainer
 
-sandbox = DockerSandbox(
+container = DockerContainer(
     image='python:3.13-slim',
     docker_args=['--volume', f'{Path(".").resolve()}:/workspace'],
     allow_internet_access=False,
 )
-agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[sandbox, Coder()])
+agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[container, Coder()])
 ```
 
 The mount is writable, so the agent's edits land in your project while the rest of your files stay out of reach. With no network, the image needs your test dependencies already installed: build one from your project instead of using `python:3.13-slim` as is.
