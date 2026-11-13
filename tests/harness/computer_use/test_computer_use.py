@@ -316,6 +316,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
             'grid over the latest screenshot: (0, 0) is the top left, (999, 999) the bottom right.',
         ]
 
+    @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
     async def test_a_deferred_computer_is_described_until_the_model_loads_it(self) -> None:
         seen: list[tuple[list[ModelMessage], AgentInfo]] = []
 
