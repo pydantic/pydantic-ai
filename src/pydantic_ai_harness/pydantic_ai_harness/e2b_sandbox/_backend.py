@@ -138,7 +138,9 @@ _START_VIEWER = (
     # Under the display's lock, else two calls at once could each write a password or start a viewer.
     f'{START_LOCK}d=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
-    'if ! pgrep -x x11vnc >/dev/null; then '
+    # Only our own server and viewer count: one started without our password, such as `e2b_desktop`'s, holds the
+    # port, so ours fails to start and says so.
+    'if ! pgrep -f "[x]11vnc .*-rfbauth $d/passwd" >/dev/null; then '
     'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
     # Empty each log before its program starts: the redirect runs in the background child, so the check could read
     # an earlier run's line first.
@@ -148,9 +150,11 @@ _START_VIEWER = (
     # x11vnc writes its port once it listens, and exits without one if the port is taken. `-noipv6`: with the IPv4
     # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
     + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
-    + "fi; if ! pgrep -f '[w]ebsockify' >/dev/null; then "
+    + f"fi; if ! pgrep -f '[w]ebsockify .* {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & '
+    # `--web`, else novnc_proxy serves the working directory if it has a `vnc.html`.
+    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} --web /opt/noVNC '
+    '>"$d/novnc.log" 2>&1 9>&- & '
     + wait_until_ready(
         'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
     )

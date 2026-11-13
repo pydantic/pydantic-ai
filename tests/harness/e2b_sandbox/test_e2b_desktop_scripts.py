@@ -21,13 +21,14 @@ from .fake_e2b import FakeE2B
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
-    'pgrep': 'cat "$bin/pgrep-$2" 2>/dev/null',  # prints the PIDs the test listed for `-x NAME` or `-f PATTERN`
+    # `-x NAME` prints the PIDs the test listed; `-f PATTERN` matches the command lines in `starts`.
+    'pgrep': '[ "$1" = -f ] && exec grep -- "$2" "$bin/starts" 2>/dev/null; cat "$bin/pgrep-$2" 2>/dev/null',
     'startxfce4': 'touch "$bin/xfce-started"',
-    # The viewer's two programs: each lists its PID for `pgrep`, logs its start, prints its ready line and stays up.
+    # The viewer's two programs: each logs its command line, the one novnc_proxy runs websockify with, prints its
+    # ready line and stays up.
     'x11vnc': '[ "$1" = -storepasswd ] && { echo "$2" > "$3"; exit; }; '
-    'echo $$ > "$bin/pgrep-x11vnc"; echo x11vnc >> "$bin/starts"; echo PORT=5900; exec sleep 1',
-    'novnc_proxy': 'echo $$ > "$bin/pgrep-[w]ebsockify"; echo novnc >> "$bin/starts"; '
-    'echo Navigate to this URL; exec sleep 1',
+    'echo "x11vnc $*" >> "$bin/starts"; echo PORT=5900; exec sleep 1',
+    'novnc_proxy': 'echo "websockify --web $6 $4 $2" >> "$bin/starts"; echo Navigate to this URL; exec sleep 1',
 }
 
 
@@ -86,7 +87,24 @@ async def test_the_viewer_keeps_its_password_and_starts_once(fake_e2b: FakeE2B, 
     assert len(password) == 8 and password.isalnum()
     assert first.stdout == second.stdout == password
     assert (tmp_path / 'pydantic-ai-viewer' / 'passwd').read_text() == f'{password}\n'
-    assert (tmp_path / 'bin' / 'starts').read_text() == 'x11vnc\nnovnc\n'
+    x11vnc, websockify = (tmp_path / 'bin' / 'starts').read_text().splitlines()
+    assert x11vnc.startswith('x11vnc -display :1 ')
+    # `--web`, else novnc_proxy serves its working directory if that has a `vnc.html`.
+    assert websockify == 'websockify --web /opt/noVNC 6080 127.0.0.1:5900'
+
+
+async def test_the_viewer_starts_its_own_beside_a_foreign_one(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    """A VNC server without our password, such as one `e2b_desktop` started, and its viewer don't count as ours."""
+    _, viewer = await _scripts(fake_e2b)
+    _run('true', tmp_path)  # writes the stubs
+    foreign = 'x11vnc -display :0 -nopw -forever\nwebsockify --web /opt/noVNC 6080 localhost:5900\n'
+    (tmp_path / 'bin' / 'starts').write_text(foreign)
+
+    result = _run(viewer, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    started = (tmp_path / 'bin' / 'starts').read_text().removeprefix(foreign).splitlines()
+    assert [line.split()[0] for line in started] == ['x11vnc', 'websockify']
 
 
 @pytest.mark.parametrize(('session_display', 'starts'), [(':1', False), (':0', True)])
