@@ -724,7 +724,7 @@ async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Pat
 
 
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
-class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
+class TestRealBubblewrap:  # pragma: lax no cover - CI hosts may not have bubblewrap
     @pytest.fixture
     def host_dir(self) -> Iterator[Path]:
         """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
