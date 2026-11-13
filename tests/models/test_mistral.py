@@ -4381,6 +4381,16 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
     with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response choices from Mistral') as exc_info:
         await Agent(model).run('hello')
     assert exc_info.value.model_name == 'mistral-large-latest'
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'object': 'chat.completion',
+            'model': 'mistral-large-123',
+            'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 1},
+            'created': 1704067200,
+            'choices': [],
+        }
+    )
 
 
 async def test_choice_without_message_raises_model_empty_response_error(allow_model_requests: None):
@@ -4391,8 +4401,18 @@ async def test_choice_without_message_raises_model_empty_response_error(allow_mo
         'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
     )
 
-    with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response message from Mistral'):
+    with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response message from Mistral') as exc_info:
         await Agent(model).run('hello')
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'object': 'chat.completion',
+            'model': 'mistral-large-123',
+            'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 1},
+            'created': 1704067200,
+            'choices': [{'index': 0, 'finish_reason': 'stop'}],
+        }
+    )
 
 
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):

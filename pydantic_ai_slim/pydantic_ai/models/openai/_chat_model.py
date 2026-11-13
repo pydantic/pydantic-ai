@@ -585,7 +585,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """The completion's first choice, or a `ModelEmptyResponseError` if it has none."""
         if not response.choices:
             raise ModelEmptyResponseError(
-                self.model_name, f'Empty response from {self.system} chat completions endpoint: no choices'
+                self.model_name,
+                f'Empty response from {self.system} chat completions endpoint: no choices',
+                body=response.model_dump(warnings=False),
             )
         return response.choices[0]
 

@@ -1385,6 +1385,17 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
     with pytest.raises(ModelEmptyResponseError, match='Empty response from huggingface: no choices') as exc_info:
         await Agent(model).run('hello')
     assert exc_info.value.model_name == 'hf-model'
+    assert exc_info.value.body == snapshot(
+        {
+            'choices': [],
+            'created': 1704067200,
+            'id': '123',
+            'model': 'hf-model',
+            'system_fingerprint': None,
+            'usage': None,
+            'object': 'chat.completion',
+        }
+    )
 
 
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):

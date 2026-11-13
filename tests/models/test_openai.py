@@ -5895,8 +5895,24 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
     response.choices = []
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(response)))
 
-    with pytest.raises(ModelEmptyResponseError, match='Empty response from openai chat completions endpoint'):
+    with pytest.raises(
+        ModelEmptyResponseError, match='Empty response from openai chat completions endpoint'
+    ) as exc_info:
         await Agent(m).run('hello')
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'choices': [],
+            'created': 1704067200,
+            'model': 'gpt-4o-123',
+            'object': 'chat.completion',
+            'metadata': None,
+            'moderation': None,
+            'service_tier': None,
+            'system_fingerprint': None,
+            'usage': None,
+        }
+    )
 
 
 async def test_empty_choices_fall_back(allow_model_requests: None):

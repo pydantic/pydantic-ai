@@ -483,11 +483,15 @@ class MistralModel(Model[Mistral]):
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         if not response.choices:
-            raise ModelEmptyResponseError(self.model_name, 'Unexpected empty response choices from Mistral')
+            raise ModelEmptyResponseError(
+                self.model_name, 'Unexpected empty response choices from Mistral', body=response.model_dump()
+            )
 
         choice = response.choices[0]
         if choice.message is None:
-            raise ModelEmptyResponseError(self.model_name, 'Unexpected empty response message from Mistral')
+            raise ModelEmptyResponseError(
+                self.model_name, 'Unexpected empty response message from Mistral', body=response.model_dump()
+            )
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 

@@ -6430,6 +6430,18 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
     with pytest.raises(ModelEmptyResponseError, match='Empty response from groq: no choices') as exc_info:
         await Agent(model).run('hello')
     assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'choices': [],
+            'created': 1704067200,
+            'model': 'llama-3.3-70b-versatile-123',
+            'object': 'chat.completion',
+            'system_fingerprint': None,
+            'usage': None,
+            'usage_breakdown': None,
+        }
+    )
 
 
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
