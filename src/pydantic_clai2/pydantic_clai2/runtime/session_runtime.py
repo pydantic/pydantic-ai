@@ -31,7 +31,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionEvent
+from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -75,9 +75,11 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.live_runtimes import Served
 from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
+from pydantic_clai2.runtime.question_status import QuestionStatus
 from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
@@ -87,6 +89,7 @@ from pydantic_clai2.runtime.session import (
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
@@ -98,7 +101,7 @@ from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, system_prompt_menu
-from pydantic_clai2.ui.menus.task_menu import open_tasks
+from pydantic_clai2.ui.menus.task_view import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
@@ -157,6 +160,31 @@ def _process(
     )
 
 
+def _fast_command(
+    args: list[str],
+    *,
+    session: Session[DepsT, OutputT],
+    agent: AbstractAgent[DepsT, OutputT],
+    context: CommandContext,
+    store: SettingsStore,
+) -> str:
+    """`/fast [on|off]`: set the session model's `service_tier` to `priority` or `default`; no argument toggles it."""
+    if args not in ([], ['on'], ['off']):
+        raise ValueError('Usage: /fast [on|off]')
+    model = session.model or _model_label(agent)
+    current = context.model_settings(model) or {}
+    saved = store.model_settings(model)
+    custom = saved.get('custom_params')
+    if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
+        raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
+    enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
+    tier = 'priority' if enabled else 'default'
+    store.save_model_settings(model, {**saved, 'service_tier': tier})
+    return f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.' + (
+        ' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else ''
+    )
+
+
 def create_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -210,6 +238,7 @@ def create_shell(
     session.instructions = settings.instructions
     models = ModelResolver(console=console, store=store, codex_providers=process.codex_providers)
     session.resolve_model = models.resolve
+    session.expand_model = models.expand
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))
 
@@ -231,23 +260,7 @@ def create_shell(
     )
     session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
-
-    def fast(args: list[str]) -> str:
-        if args not in ([], ['on'], ['off']):
-            raise ValueError('Usage: /fast [on|off]')
-        model = session.model or _model_label(agent)
-        current = context.model_settings(model) or {}
-        saved = store.model_settings(model)
-        custom = saved.get('custom_params')
-        if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
-        enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
-        tier = 'priority' if enabled else 'default'
-        store.save_model_settings(model, {**saved, 'service_tier': tier})
-        return (
-            f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.'
-            + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
-        )
+    models.select_default = partial(_select_default, context)
 
     def effort_menu() -> SettingsMenu:
         # Model settings load provider SDKs; keep them off the startup path.
@@ -279,7 +292,7 @@ def create_shell(
         Command(
             name='fast',
             description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
-            handler=fast,
+            handler=partial(_fast_command, session=session, agent=agent, context=context, store=store),
             complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
             available=lambda: (
                 provider_of(context.settings_model(session.model or _model_label(agent))) == 'openai-codex'
@@ -462,8 +475,9 @@ def create_shell(
             menu=lambda: update_menu(
                 context,
                 updates,
-                run=lambda text: shell.send_input(text),
-                refusal=lambda: shell.restart_refusal(),
+                # Whichever session's page asks, the install runs in the session CLAI restarts from.
+                run=lambda text: shell.restarter().send_input(text),
+                refusal=lambda: shell.restarter().restart_refusal(),
                 # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
                 raise_refusal=True,
             ),
@@ -712,6 +726,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _question_status: QuestionStatus[DepsT] = field(init=False, repr=False)
     _measured_model: str | None = field(default=None, init=False, repr=False)
     """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
@@ -867,6 +882,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self._question_status = QuestionStatus(self.live_session)
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -890,13 +906,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.permissions = session_permissions(lambda: self.context.settings.permissions)
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
-        """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
+        """Capabilities bound to the next run: supplied, plugin-registered (guarded), strict mode off, then speculation.
 
         Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
-        mount stays within every `FileSystem` and `ToolGuardrail` the run has.
+        mount stays within every `FileSystem`, `ToolGuardrail`, `ToolCallJudge`, `Hooks` and `Permissions`
+        the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
-        bound = (*self.plugins, *self.loader.run_capabilities(), *self.permissions)
+        bound = (
+            *self.plugins,
+            *self.loader.run_capabilities(),
+            *self.permissions,
+            self._question_status,
+            NON_STRICT_SCHEMAS,
+        )
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
@@ -908,7 +931,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Report that a failing settings-built capability is left out of later turns."""
         self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
-    def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
+    async def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""
         child = Session(
             self.agent,
@@ -924,11 +947,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.instructions = self.session.instructions
         child.resolve_model = self.session.resolve_model
+        child.expand_model = self.session.expand_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         if child.repl_states is not None:
-            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
+            await to_thread.run_sync(
+                partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
+            )
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -1041,10 +1067,19 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if (refusal := self.restart_refusal()) is not None:
             raise ValueError(refusal)
 
+    def restarts_clai(self) -> bool:
+        """Whether CLAI restarts from this session: the one the terminal shows, or with no terminal, the one it started with."""
+        return self.terminal is not None or (
+            not self.served and self.process.live.focused in (None, self.live_session.id)
+        )
+
+    def restarter(self) -> Served:
+        """The live session CLAI restarts from, as the web UI's About installs in it; this one when none is."""
+        return self.process.live.restarter() or self
+
     def restart_refusal(self) -> str | None:
         """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
-        if self.terminal is None and (self.served or self.process.live.focused not in (None, self.live_session.id)):
-            # Only the session the terminal shows, or with no terminal the one CLAI started with, restarts it.
+        if not self.restarts_clai():
             return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:
@@ -1292,33 +1327,49 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self._rewind()
                 continue
             except PromptWakeup:
-                if not self.tasks.waiting(self.session.summary.id):
-                    continue
-                with self._handling_input():
-                    async with self.forks.busy():
-                        if await self._turn(None):
-                            return 'exit'
-                continue
+                reason = await self._automated_turn()
             except KeyboardInterrupt:
-                if self.interrupts.press():
-                    return 'exit'
-                self.console.print(
-                    'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
-                )
-                continue
+                reason = self._input_interrupted()
             except EOFError:
                 return 'eof'
-            self.images.notice = ''
-            if not text:
-                continue
-            # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
-            if self.prompt is None:
-                print_prompt(self.console, text)
             else:
-                self.console.print()
-            with self._handling_input():
-                if await self._dispatch_input(text):
+                reason = await self._handle_submission(text)
+            if reason is not None:
+                return reason
+
+    async def _automated_turn(self) -> SessionEndReason | None:
+        """Run the turn a waiting task's report starts, if this session still waits on a task; `'exit'` ends it."""
+        if not self.tasks.waiting(self.session.summary.id):
+            return None
+        with self._handling_input():
+            async with self.forks.busy():
+                if await self._turn(None):
                     return 'exit'
+        return None
+
+    def _input_interrupted(self) -> SessionEndReason | None:
+        """Ctrl-C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
+        if self.interrupts.press():
+            return 'exit'
+        self.console.print(
+            'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+        )
+        return None
+
+    async def _handle_submission(self, text: str) -> SessionEndReason | None:
+        """Echo and run a line submitted at the prompt, skipping an empty one; `'exit'` ends the session."""
+        self.images.notice = ''
+        if not text:
+            return None
+        # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
+        if self.prompt is None:
+            print_prompt(self.console, text)
+        else:
+            self.console.print()
+        with self._handling_input():
+            if await self._dispatch_input(text):
+                return 'exit'
+        return None
 
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
@@ -1389,12 +1440,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
 
         That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
-        started from a script: a menu would read EOF and close as cancelled.
+        started from a script: a menu would read EOF and close as cancelled. What can ask through a
+        remote UI's dialogs asks there instead.
         """
         stdin = sys.stdin
         if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
             return nullcontext()
-        return without_terminal(text, instead=self._page_menu(text))
+        return without_terminal(text, instead=self._page_menu(text), dialogs=self.process.live.dialogs)
 
     def _page_menu(self, text: str) -> str | None:
         """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
@@ -1576,6 +1628,14 @@ async def _execute_command(commands: Commands, text: str, *, console: Console) -
     return ended
 
 
+def _select_default(context: CommandContext, model: str) -> bool:
+    """Select `model` unless a model was chosen for this session; whether it did."""
+    if 'model' in context.settings.model_fields_set:
+        return False
+    context.set_setting(['model', model])
+    return True
+
+
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
     model = agent.model
     if isinstance(model, str):  # pragma: no cover -- concrete Agent resolves string models before chat.
@@ -1646,7 +1706,7 @@ def _run_events(
         return observe
 
     async def observe_run(event: AgentStreamEvent) -> None:
-        if not isinstance(event, TaskQuestionEvent):
+        if not isinstance(event, TaskQuestionAskedEvent):
             await observe(event)
 
     return observe_run

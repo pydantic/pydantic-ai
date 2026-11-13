@@ -3,16 +3,17 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
@@ -43,6 +44,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputTokenLimitExceeded,
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
@@ -2019,7 +2021,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=80, output_tokens=5),
+                usage=RequestUsage(input_tokens=82, output_tokens=5),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -2251,6 +2253,32 @@ def test_output_type_text_output_function():
             ),
         ]
     )
+
+
+def text_alias(text: Annotated[str, Field(alias='theText')]) -> str:
+    return f'text={text}'
+
+
+def text_with_hidden_arg(text: str, b: SkipJsonSchema[int] = 1) -> str:
+    return f'text={text}'
+
+
+def text_with_var_kwargs(text: str, **kwargs: int) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('output_function', [text_alias, text_with_hidden_arg, text_with_var_kwargs])
+def test_output_type_text_output_function_str_arg(output_function: Callable[..., str]):
+    """`TextOutput` calls the function with the text under the str arg's Python name, not its alias.
+
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
+    assert agent.run_sync('hi').output == 'text=hello'
 
 
 def test_output_type_handoff_to_agent():
@@ -3182,7 +3210,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=91, output_tokens=12),
+                usage=RequestUsage(input_tokens=93, output_tokens=12),
                 model_name='function:return_city_location:',
                 model_id='function:function:return_city_location:',
                 timestamp=IsDatetime(),
@@ -3264,7 +3292,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=82, output_tokens=11),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -4503,6 +4531,103 @@ async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
     assert result.metadata == {'env': 'override', 'override_only': True}
 
 
+@dataclass
+class AgentMetadataCompatibilityCase:
+    name: str
+    base: dict[str, object] | None
+    run: dict[str, object] | None
+    expected: dict[str, object] | None
+    identity: Literal['base', 'run', 'new', 'none']
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        AgentMetadataCompatibilityCase('no metadata', None, None, None, 'none'),
+        AgentMetadataCompatibilityCase('empty base', {}, None, {}, 'base'),
+        AgentMetadataCompatibilityCase('empty run', None, {}, None, 'none'),
+        AgentMetadataCompatibilityCase('truthy base and empty run', {'base': True}, {}, {'base': True}, 'base'),
+        AgentMetadataCompatibilityCase('truthy run only', None, {'run': True}, {'run': True}, 'run'),
+        AgentMetadataCompatibilityCase(
+            'two truthy dicts',
+            {'shared': 'base', 'base': True},
+            {'shared': 'run', 'run': True},
+            {'shared': 'run', 'base': True, 'run': True},
+            'new',
+        ),
+    ],
+    ids=lambda case: case.name,
+)
+async def test_agent_metadata_resolution(case: AgentMetadataCompatibilityCase) -> None:
+    agent = Agent(TestModel(), metadata=case.base)
+
+    result = await agent.run('hello', metadata=case.run)
+
+    assert result.metadata == case.expected
+    if case.identity == 'base':
+        assert result.metadata is case.base
+    elif case.identity == 'run':
+        assert result.metadata is case.run
+    elif case.identity == 'new':
+        assert result.metadata is not case.base
+        assert result.metadata is not case.run
+    else:
+        assert result.metadata is None
+
+
+async def test_agent_metadata_factories_resolve_in_order_and_override_skips_them() -> None:
+    calls: list[str] = []
+    spec_metadata: dict[str, object] = {'shared': 'spec', 'spec': True}
+
+    def base_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('base')
+        return {'shared': 'base', 'base': True}
+
+    def run_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('run')
+        return {'shared': 'run', 'run': True}
+
+    agent = Agent(TestModel(), metadata=base_factory)
+    result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert calls[:2] == ['base', 'run']
+    assert result.metadata == {'shared': 'run', 'spec': True, 'base': True, 'run': True}
+
+    calls.clear()
+    override: dict[str, object] = {}
+    with agent.override(metadata=override):
+        result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert result.metadata is override
+    assert calls == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_default_run_id_does_not_add_history_traversals(legacy: bool) -> None:
+    class CountingHistory(list[ModelMessage]):
+        iterations: int = 0
+
+        def __iter__(self) -> Iterator[ModelMessage]:
+            self.iterations += 1
+            return super().__iter__()
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'legacy-run-id'
+
+    capabilities: list[AbstractCapability[object]] = [LegacyCapability()] if legacy else []
+    agent = Agent(TestModel(), capabilities=capabilities)
+    history = CountingHistory(
+        [
+            ModelRequest(parts=[UserPromptPart('previous question')], run_id='previous-run'),
+            ModelResponse(parts=[TextPart('previous answer')], run_id='previous-run'),
+        ]
+    )
+    await agent.run('hello', message_history=history)
+    # Legacy IDs need a collision scan; keep each path within its established traversal budget.
+    assert history.iterations <= (4 if legacy else 3)
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
@@ -4774,8 +4899,9 @@ def test_tool_exceeds_token_limit_error():
     with pytest.raises(
         IncompleteToolCall,
         match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
-    ):
+    ) as exc_info:
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert isinstance(exc_info.value, OutputTokenLimitExceeded)
 
     with pytest.raises(
         IncompleteToolCall,
@@ -4811,13 +4937,13 @@ def test_empty_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_empty_response), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4832,13 +4958,13 @@ def test_thinking_only_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_thinking_only), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4862,13 +4988,13 @@ def test_truncated_structured_output_raises_without_retry(output_type: NativeOut
     agent = Agent(FunctionModel(truncated), output_type=output_type, retries=3)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
     assert calls == 1
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Model token limit \(provider default\) exceeded'):
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded'):
         agent.run_sync('Hello')
 
 
@@ -13790,7 +13916,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=75, output_tokens=1),
+                usage=RequestUsage(input_tokens=77, output_tokens=1),
                 model_name='function:model_then_text:',
                 model_id='function:function:model_then_text:',
                 timestamp=IsNow(tz=UTC),

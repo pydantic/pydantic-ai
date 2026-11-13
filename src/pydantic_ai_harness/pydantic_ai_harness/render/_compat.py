@@ -73,7 +73,7 @@ __all__ = (
     'ModelCompactMessagesParams',
     'ModelRequestContextProjection',
     'ModelRequestParams',
-    'RenderJsonTransport',
+    'RenderJSONTransport',
     'RenderRunContext',
     'RenderRunContextCodec',
     'ToolsetCallToolParams',
@@ -120,7 +120,7 @@ _TUPLE_ADAPTER: TypeAdapter[tuple[object, ...]] = TypeAdapter(tuple[object, ...]
 _ANY_OBJECT_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
 
-class RenderJsonTransport(ParameterTransport[ParamsT, JSONObject], ABC):
+class RenderJSONTransport(ParameterTransport[ParamsT, JSONObject], ABC):
     """Nominal base for every parameter transport this integration installs.
 
     The framework's transport contract is generic over its wire type. Every
@@ -228,9 +228,9 @@ def load_operation_params(
     Reject an incompatible transport rather than asserting its wire type.
     """
     transport = operation.parameter_transport
-    if not isinstance(transport, RenderJsonTransport):  # pragma: no cover - installed by this adapter
+    if not isinstance(transport, RenderJSONTransport):  # pragma: no cover - installed by this adapter
         raise TypeError(f'{type(transport).__name__} does not accept the Render JSON-object wire.')
-    json_transport: RenderJsonTransport[ParamsT] = transport
+    json_transport: RenderJSONTransport[ParamsT] = transport
     return json_transport.load(payload, runtime=runtime)
 
 

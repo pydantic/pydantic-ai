@@ -1,9 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
+import httpx2
+
+from pydantic_ai._model_errors import (
+    connection_error,
+    google_retry_after,
+    google_status_category,
+    http_status_category,
+    transport_status_error,
+)
 from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -15,6 +24,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 
 from ._google_geometry import resolve_google_geometry
@@ -44,6 +54,7 @@ try:
         _GEMINI_API_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
         _GOOGLE_CLOUD_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+        _move_caller_user_agent,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -53,7 +64,6 @@ except ImportError as _import_error:
 
 
 LatestGoogleImageGenerationModelNames = Literal[
-    'gemini-2.5-flash-image',
     'gemini-3-pro-image',
     'gemini-3.1-flash-image',
     'gemini-3.1-flash-lite-image',
@@ -214,7 +224,11 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         check_allow_model_requests()
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         google_settings = cast(GoogleImageGenerationSettings, settings)
-        resolved = _resolve_google_settings(google_settings, model_name=self.model_name)
+        resolved = _resolve_google_settings(
+            google_settings,
+            model_name=self.model_name,
+            client_headers=self._client._api_client._http_options.headers or {},  # pyright: ignore[reportPrivateUsage]
+        )
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         contents = await self._map_contents(prompt, images)
 
@@ -227,14 +241,28 @@ class GoogleImageGenerationModel(ImageGenerationModel):
                 )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
+                status = e.status if isinstance(e.status, str) else None
                 body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
-                raise ModelHTTPError(
+                error = ModelHTTPError.for_category(
+                    google_status_category(status, e.message, body) or http_status_category(status_code, e.message),
                     status_code=status_code,
                     model_name=self.model_name,
                     body=body,
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
+                    provider_error_code=status,
+                )
+                error.retry_after = google_retry_after(error)
+                raise error from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+            error = transport_status_error(self.model_name, e.response)
+            error.retry_after = google_retry_after(error)
+            raise error from e
+        except httpx2.TransportError as e:
+            # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+            timeout = isinstance(e, httpx2.TimeoutException)
+            raise connection_error(self.model_name, transport_error_message(e), e, timeout=timeout) from e
 
         return self._map_response(prompt, response)
 
@@ -376,7 +404,9 @@ class _GoogleResolvedSettings:
     conflicts: list[str]
 
 
-def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_name: str) -> _GoogleResolvedSettings:
+def _resolve_google_settings(
+    settings: GoogleImageGenerationSettings, *, model_name: str, client_headers: Mapping[str, str]
+) -> _GoogleResolvedSettings:
     image_config = ImageConfigDict(**(settings.get('google_image_config') or {}))
 
     geometry = resolve_google_geometry(
@@ -394,7 +424,9 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
     ignored: list[str] = []
     http_options: HttpOptionsDict = {}
     if extra_headers := settings.get('extra_headers'):
-        http_options['headers'] = dict(extra_headers)
+        headers = dict(extra_headers)
+        _move_caller_user_agent(headers, client_headers)
+        http_options['headers'] = headers
     # `extra_body` is typed `object`, and only a string-keyed mapping can be merged into a JSON body.
     if extra_body := settings.get('extra_body'):
         if is_str_dict(extra_body):

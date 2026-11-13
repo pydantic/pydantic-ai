@@ -27,6 +27,7 @@ CURATED = {
     'ask_user',
     'repo_context',
     'compaction',
+    'refinement',
     'persistence',
     'observability',
     'notifications',
@@ -215,7 +216,7 @@ async def test_coder_without_sub_agents_leaves_subagents_available(
 ) -> None:
     """`coder` binds no `SubAgents` with `sub_agents` off, so a separate one still delegates."""
     store = SettingsStore(tmp_path / 'settings.db')
-    store.save_plugin(PluginSettings(id='subagents', factory='pydantic_ai_harness.subagents:SubAgents'))
+    store.save_plugin(PluginSettings(id='subagents', factory='pydantic_ai_harness.sub_agents:SubAgents'))
     coder = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'coder')
     plugins = _loader(store, (coder.model_copy(update={'settings': {**coder.settings, 'sub_agents': False}}),))
 
@@ -247,7 +248,7 @@ async def test_coder_without_sub_agents_leaves_subagents_available(
 async def test_failed_coder_reload_brings_back_what_it_included(tmp_path: Path) -> None:
     """A `coder` that no longer loads includes nothing, so a separate `SubAgents` runs again."""
     store = SettingsStore(tmp_path / 'settings.db')
-    store.save_plugin(PluginSettings(id='subagents', factory='pydantic_ai_harness.subagents:SubAgents'))
+    store.save_plugin(PluginSettings(id='subagents', factory='pydantic_ai_harness.sub_agents:SubAgents'))
     coder = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'coder')
     delegating = coder.model_copy(update={'settings': {**coder.settings, 'sub_agents': True}})
     plugins = _loader(store, (delegating,))
@@ -265,7 +266,7 @@ async def test_failed_coder_reload_brings_back_what_it_included(tmp_path: Path) 
 async def test_disabling_coder_loads_the_rest_when_one_it_included_fails(tmp_path: Path) -> None:
     """A released plugin that fails to load is reported without stopping the others."""
     store = SettingsStore(tmp_path / 'settings.db')
-    factory = 'pydantic_ai_harness.subagents:SubAgents'
+    factory = 'pydantic_ai_harness.sub_agents:SubAgents'
     store.save_plugin(PluginSettings(id='broken_subagents', factory=factory, settings={'nonsense': True}))
     store.save_plugin(PluginSettings(id='subagents', factory=factory))
     coder = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'coder')

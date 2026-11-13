@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -266,6 +267,19 @@ def strip_logfire_metrics(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return spans
 
 
+_GOOGLE_GENAI_USER_AGENT_LABEL = re.compile(r'google-genai-sdk/\S+ gl-python/\S+')
+
+
+def google_user_agents(request: httpx2.Request) -> list[str]:
+    """The request's user-agent lines, with google-genai's version label as `google-genai` and ours as `pydantic-ai`."""
+    return [
+        _GOOGLE_GENAI_USER_AGENT_LABEL.sub('google-genai', value).replace(
+            pydantic_ai.models.get_user_agent(), 'pydantic-ai'
+        )
+        for value in request.headers.get_list('user-agent')
+    ]
+
+
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
 
 
@@ -443,11 +457,13 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
-    # example printing from inside a running event loop trips the detector on the harness's own
-    # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
-    # code detectable.
+    # pytest-examples finds the caller of a captured `print()` with `inspect.stack()`, which resolves
+    # each frame's file with `os.path.abspath`, and matches it to the example with `Path.samefile`,
+    # which calls `os.stat`. An example printing from inside a running event loop trips the detector
+    # on the harness's own calls. Exempting the capture entry point leaves these calls from example
+    # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
@@ -508,9 +524,13 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
-    # durable capability operations persist their results through them.
-    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    # durable capability operations persist their results through them. Its `_resolve_path` builds each result's
+    # storage path with `Path(basepath).resolve()`. Before Python 3.13 that calls `os.path.abspath` and stats the
+    # result; on Windows, `ntpath.realpath` also reads the current directory, even for an absolute path.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path', '_resolve_path')),
     ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    ('os.path.abspath', 'prefect/filesystems.py', '_resolve_path'),
+    ('os.getcwd', 'prefect/filesystems.py', '_resolve_path'),
     # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
@@ -526,7 +546,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
-        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
         for func in ('os.stat', 'os.access', 'os.path.abspath')
         for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
     ),
@@ -596,6 +616,100 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
+    # pydantic-clai2 reads keys once the event loop reports the terminal readable, and writes output straight to it.
+    ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
+    ('os.read', 'pydantic_clai2/cli/shell_terminal.py', '_key'),
+    ('os.write', 'pydantic_clai2/cli/shell_terminal.py', 'pass_through'),
+    ('os.write', 'pydantic_clai2/cli/self_update.py', '_print_line'),
+    # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
+    ('socket.socket.accept', 'pydantic_clai2/ui/prompt/interrupts.py', '_wake'),
+    # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
+    ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
+    ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
+    # `logging` handlers write each record synchronously, to a stream or to CLAI's telemetry log file.
+    ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
+    ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
+    # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
+    *(
+        (func, 'prompt_toolkit/history.py', ('load_history_strings', 'store_string'))
+        for func in ('os.stat', 'io.BufferedReader.read', 'io.BufferedWriter.write')
+    ),
+    # Pygments looks plugin lexers up in installed packages' metadata when a code block names a language it doesn't ship.
+    *((func, 'pygments/plugin.py', 'iter_entry_points') for func in ('os.stat', 'os.listdir', 'io.TextIOWrapper.read')),
+    # FastAPI finds an endpoint's source file the first time it serves the route, and caches it.
+    ('os.stat', 'fastapi/routing.py', '_extract_endpoint_context'),
+    # beartype's import hook writes a module's bytecode cache the first time it imports it.
+    ('io.BufferedWriter.write', 'beartype/claw/_importlib/_clawimpfileloader.py', 'get_code'),
+    # Whether a process still runs is read from `/proc`, which the kernel serves from memory.
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
+    # Configuring logfire at session start waits for the instance it replaces to shut down.
+    ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
+    # for the module's lock while another thread, such as CLAI's import warm-up, imports it. The frames belong to
+    # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/clai2`.
+    ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # A session, and a plugin host built outside the shell, work in the current directory unless given one.
+    ('os.getcwd', 'pydantic_clai2/runtime/session.py', '__init__'),
+    ('os.getcwd', 'pydantic_clai2/plugins/__init__.py', 'workspace'),
+    # The test's model holds another writer's lock on the session database open on purpose, on its own connection.
+    ('sqlite3.Connection.execute', 'tests/clai2/test_sessions.py', 'model'),
+]
+
+
+# pydantic-clai2 keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
+# commands, menus, and startup read and write synchronously. These modules hold nothing but such stores. Every file and
+# database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O. They are
+# exempt even where async code calls them on the event loop, as making the stores async is a separate redesign.
+BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
+    'src/pydantic_clai2/pydantic_clai2/config/credential_store.py',
+    'src/pydantic_clai2/pydantic_clai2/config/settings_store.py',
+    'src/pydantic_clai2/pydantic_clai2/mcp/store.py',
+    'src/pydantic_clai2/pydantic_clai2/builtin_plugins/workspaces/registry.py',
+    'src/pydantic_clai2/pydantic_clai2/ui/prompt/input_history.py',
+    'src/pydantic_clai2/pydantic_clai2/ui/telemetry_log.py',
+)
+
+
+# Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
+# database call beneath them is exempt too, so never list an async function, nor a function an async function calls on
+# the event loop: offload that call instead. Most listed here have synchronous callers, such as menus that run in a
+# thread and tests that set up state. The deliberate exceptions, which async code still calls on the event loop, are
+# shell construction and plugin loading at startup and in `/plugins`, with the welcome banner and version they show,
+# since making them async is the same separate redesign as for the stores, and the status row's `spinners.json` read.
+BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
+    # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
+    ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
+    ('pydantic_clai2/config/project_settings.py', ('_present', 'load_project_settings')),
+    ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
+    ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
+    ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
+    ('pydantic_clai2/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
+    # The status row reads `spinners.json` on each repaint, so an edit shows on the next frame.
+    ('pydantic_clai2/ui/rendering/spinners.py', '_user_text'),
+    # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
+    ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
+    # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
+    (
+        'pydantic_clai2/plugins/process_plugins.py',
+        ('_discover', 'project_files', 'import_module'),
+    ),
+    ('pydantic_clai2/plugins/factories.py', 'import_file'),
+    ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
+    # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session,
+    # and logfire records a plugin that fails to load with its traceback, which reads the source files it quotes.
+    ('pydantic_clai2/cli/self_update.py', 'installed'),
+    ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
+    ('pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    ('pydantic_clai2/ui/telemetry.py', 'log_error'),
+    ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
+    # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
+    ('tests/clai2/test_live_runtimes.py', 'folder'),
+    ('tests/clai2/test_shell_passthrough.py', 'hold'),
+    ('tests/clai2/test_plugin_git_cleanup.py', 'readonly_pack'),
+    ('/lifecycle_probe.py', 'record'),
+    ('/cwd_probe.py', 'get_capabilities'),
 ]
 
 
@@ -619,6 +733,16 @@ def _function_names(path: str) -> tuple[str, ...]:
     return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
+def _blockbuster_packages() -> list[str]:
+    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
+    optional = [
+        package
+        for package in ('pydantic_ai_harness', 'pydantic_clai2')
+        if importlib.util.find_spec(package) is not None
+    ]
+    return ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai']
+
+
 def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
@@ -627,18 +751,18 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
-    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
-    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
-    bb = BlockBuster(
-        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
-        excluded_modules=excluded_modules or None,
-    )
+    bb = BlockBuster(_blockbuster_packages(), excluded_modules=excluded_modules or None)
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
     for path in BLOCKBUSTER_TEST_DOUBLES:
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
+    local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
+    for filename, functions in local_files:
+        for function in local_io:
+            function.can_block_in(filename, functions)
     return bb
 
 
@@ -777,6 +901,16 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         return module
 
     return run
+
+
+def with_native_system_role(profile: ModelProfile) -> ModelProfile:
+    """A `profile=` that gives a model the native mid-conversation `system` role its default profile leaves off.
+
+    Claude Haiku 5.5 honors the role but defaults to the sealed `<system>` rendering
+    (`needs_sealed_system_blocks`), which measured better. Tests of the native machinery that were recorded on
+    it keep it this way, as an application that opts back into the role would.
+    """
+    return {**profile, 'supports_inline_system_prompts': True, 'needs_sealed_system_blocks': False}
 
 
 @contextmanager

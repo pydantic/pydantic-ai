@@ -7,7 +7,28 @@ Guardrails run a callable you supply at three points of a run: the user prompt b
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/)
 
-![Guardrails run your guard functions at the edges of a run. InputGuardrail checks the prompt in wrap_model_request before the model sees it. ToolGuardrail checks tool arguments in before_tool_execute and tool results in after_tool_execute. OutputGuardrail checks the final output in after_output_process before the caller gets it. A table shows what allow, block, replace, retry and approve do at each point.](https://pydantic.dev/docs/ai/img/harness/guardrails.svg)
+```mermaid
+flowchart TB
+    accTitle: Guardrails: check the prompt, the tool calls and the output
+    accDescr: The user prompt passes InputGuardrail(guard=...) in wrap_model_request before the model. A tool call from the model passes ToolGuardrail(guard=...) in before_tool_execute before your tool, and the result passes ToolGuardrail(result_guard=...) in after_tool_execute before the model. The final output passes OutputGuardrail(guard=...) in after_output_process before the caller.
+    prompt["user prompt"]
+    input["InputGuardrail(guard=...)<br/>wrap_model_request"]:::capability
+    model(["model"])
+    toolguard["ToolGuardrail(guard=...)<br/>before_tool_execute"]:::capability
+    tool["your tool"]
+    resultguard["ToolGuardrail(result_guard=...)<br/>after_tool_execute"]:::capability
+    output["OutputGuardrail(guard=...)<br/>after_output_process"]:::capability
+    caller["caller"]
+    prompt --> input
+    input --> model
+    model -->|"tool call"| toolguard
+    toolguard --> tool
+    tool -->|"result"| resultguard
+    resultguard --> model
+    model -->|"final output"| output
+    output --> caller
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## How it works
 
@@ -55,7 +76,7 @@ A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple c
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
-`InputGuardrail` checks the run's prompt. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, and skips the background-task reports `SubAgents` delivers there, which it recognizes by their metadata. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/), which never puts client metadata on message content. `sanitize_messages` is a safe path too: it resets `TextContent.metadata` on user prompts.
+`InputGuardrail` checks the run's user prompt, not arbitrary peer data. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, skipping host-provenance peer messages and background-task reports `SubAgents` delivers, which it recognizes by their metadata. This is prompt identification, not a general peer-data injection filter; do not treat peer messages as screened user input. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/), which never puts client metadata on message content. `sanitize_messages` is a safe path too: it resets `TextContent.metadata` on user prompts.
 
 ## Several guards at once
 
@@ -334,7 +355,7 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 import re
 from pathlib import Path
 
-import httpx
+import httpx2
 from pydantic_ai import Agent
 from pydantic_ai_harness import GuardrailResult, ToolGuardrail
 from pydantic_ai_harness.guardrails import ToolCallInfo, ToolResultInfo
@@ -377,7 +398,7 @@ def write_file(path: str, content: str) -> str:
 
 @agent.tool_plain
 def fetch_page(url: str) -> str:
-    return httpx.get(url).text
+    return httpx2.get(url).text
 ```
 
 The outcomes map onto Pydantic AI control flow:
