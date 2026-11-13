@@ -469,8 +469,8 @@ def for_tool_result_text(
     return guard
 
 
-def _tool_return_verdict(detector: TextDetector, result: ToolReturn[Any]) -> GuardrailResult:
-    """Run `detector` over a `ToolReturn`'s string or content-list `return_value` and its `content`.
+def _tool_return_verdict(detector: TextDetector, result: ToolReturn[object]) -> GuardrailResult:
+    """Run `detector` over a `ToolReturn`'s `return_value` and its `content`.
 
     The `ToolReturn` is rebuilt when either changed.
     """
