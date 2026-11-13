@@ -156,9 +156,10 @@ _START_VIEWER = (
     # without the password, so ours starts instead and fails while that one holds the port.
     + f"fi; if ! pgrep -f '[w]ebsockify --web /opt/noVNC {_VIEWER_PORT} 127.0.0.1:5900' >/dev/null; then "
     ': >"$d/novnc.log"; '
-    # `--web`, else novnc_proxy serves the working directory if it has a `vnc.html`.
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} --web /opt/noVNC '
-    '>"$d/novnc.log" 2>&1 9>&- & '
+    # Run from its own directory, as `e2b_desktop` does: novnc_proxy takes a `self.pem` in its working directory as
+    # its certificate. `--web`, else it serves its working directory's files.
+    '(cd /opt/noVNC/utils/ && exec setsid ./novnc_proxy --vnc 127.0.0.1:5900 '
+    f'--listen {_VIEWER_PORT} --web /opt/noVNC) >"$d/novnc.log" 2>&1 9>&- & '
     + wait_until_ready(
         'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
     )
