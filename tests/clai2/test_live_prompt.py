@@ -905,8 +905,10 @@ async def test_ctrl_enter_enters_outside_windows() -> None:
         live.ctrl_enter_steers = False
         live.buffer.replace('queued')
         live.feed('ctrl-enter')
+        live.buffer.replace('steered')
+        live.feed('alt-enter')
         assert await live.read() == 'queued'
-    assert steered == []
+    assert steered == ['steered']
 
 
 @pytest.mark.parametrize(
