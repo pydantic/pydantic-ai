@@ -42,6 +42,15 @@ async def main():
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the agent can take screenshots but not act.
 
+## What the model is told
+
+The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
+it starts from the shell opens on the screen. They tell it to prefer those tools unless the work needs the screen:
+using a program's window, checking what the screen shows, or doing what the user asked to be done on the screen.
+
+With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
+the same three cases. Pass `description=` to change when the model loads it.
+
 ## Models
 
 The model must accept images.

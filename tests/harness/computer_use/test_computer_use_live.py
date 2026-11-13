@@ -67,6 +67,27 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
 
 @needs_openai
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
+async def test_gpt_drives_the_screen_after_loading_a_deferred_computer(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    capabilities = [provider.capability(), ComputerUse(defer_loading=True)]
+    await Agent(_gpt(openai_api_key, request_capture), capabilities=capabilities).run(TASK)
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
+    first, second, *_ = bodies = request_capture.bodies('/responses')
+    # Before loading, the model has only `load_capability`; after it, the native computer tool. The API refuses a
+    # function named `computer`, in `tools` or in an `additional_tools` item.
+    assert {'type': 'computer'} not in cast(list[Any], first['tools'])
+    assert {'type': 'computer'} in cast(list[Any], second['tools'])
+    for body in bodies:
+        declared = [*cast(list[dict[str, Any]], body['tools'])]
+        declared += [tool for item in _items(body, 'additional_tools') for tool in item['tools']]
+        assert not any(tool.get('name') == 'computer' for tool in declared)
+
+
+@pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='the second request is from an agent without the computer tool')
 async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture

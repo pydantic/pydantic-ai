@@ -2232,6 +2232,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for t in model_request_parameters.declared_tool_defs.values()
             if not (client_tool_search and t.tool_kind == 'tool-search')
         ]
+        # A `computer` tool revealed through history, as a loaded capability's is, isn't in `tools`, but the API only
+        # takes the computer tool there: `additional_tools` can't declare it, and a function can't be named `computer`.
+        if computer_name and computer_name not in model_request_parameters.declared_tool_defs:
+            tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
 
     @staticmethod
@@ -3284,6 +3288,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         dedupe.
         """
         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
+        # The `computer` tool is declared in `tools` instead, as the native computer tool.
+        if computer_name := self._native_computer_name(model_request_parameters):
+            rendered.add(computer_name)
         renderable: list[str] = []
         for name in tool_names:
             # Marking `rendered` per accepted name (like the Anthropic loop) also dedupes a name
