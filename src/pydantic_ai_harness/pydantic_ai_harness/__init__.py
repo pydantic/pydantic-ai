@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
-    from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+    from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
     from .coder import Coder
@@ -37,7 +37,10 @@ if TYPE_CHECKING:
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
-    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
+    from .docker_container import DockerContainer, DockerContainerBackend
+
+    # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
+    from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -106,7 +109,7 @@ __all__ = [
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
-    'BubblewrapSandbox',
+    'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
     'ClampOversizedMessages',
@@ -123,8 +126,8 @@ __all__ = [
     'DeduplicateFileReads',
     'DenyUnanswered',
     'DetectLoops',
-    'DockerSandbox',
-    'DockerSandboxBackend',
+    'DockerContainer',
+    'DockerContainerBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -213,7 +216,7 @@ _LAZY_EXPORTS = {
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
-    'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
@@ -230,8 +233,8 @@ _LAZY_EXPORTS = {
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DenyUnanswered': 'deny_unanswered',
     'DetectLoops': 'detect_loops',
-    'DockerSandbox': 'docker_sandbox',
-    'DockerSandboxBackend': 'docker_sandbox',
+    'DockerContainer': 'docker_container',
+    'DockerContainerBackend': 'docker_container',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
@@ -303,13 +306,18 @@ _LAZY_EXPORTS = {
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
-    # Pre-rename names; `pydantic_ai_harness.guardrails.__getattr__` emits the
+    # Pre-rename names; the target module's `__getattr__` emits the
     # deprecation warning when these resolve.
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
     'GuardResult': 'guardrails',
     'InputGuard': 'guardrails',
     'InputGuardFunc': 'guardrails',
     'OutputGuard': 'guardrails',
     'OutputGuardFunc': 'guardrails',
+    # Pre-rename names; importing the `pydantic_ai_harness.docker_sandbox` shim emits
+    # the deprecation warning.
+    'DockerSandbox': 'docker_sandbox',
+    'DockerSandboxBackend': 'docker_sandbox',
 }
 
 

@@ -11,7 +11,23 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](../img/harness/pydantic-ai-docs.svg)
+```mermaid
+flowchart TB
+    accTitle: Pydantic AI Docs: read the current docs page on demand
+    accDescr: The model calls read_pyai_docs(topic) on the PydanticAIDocs capability and gets the full page, with model aliases replaced. The capability first reads the workspace checkout at local_docs_path, when the page exists there, and otherwise the pydantic-ai main branch on GitHub. If neither has the page, the capability returns an error naming the path and URL it tried.
+    model(["model"])
+    docs["PydanticAIDocs()<br/>read_pyai_docs(topic)<br/>replaces model aliases"]:::capability
+    checkout["workspace<br/>checkout at<br/>local_docs_path"]
+    github["pydantic-ai main<br/>branch on GitHub"]:::external
+    error["error naming<br/>the path and URL<br/>it tried"]:::blocked
+    model <-->|"topic, full page"| docs
+    docs -->|"first, when<br/>the page exists"| checkout
+    docs -->|"otherwise"| github
+    docs -.-x|"neither has the page"| error
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 

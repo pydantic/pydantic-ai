@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons and status, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, logprobs, compaction items and response-scoped tool call IDs."""
 
 from __future__ import annotations as _annotations
 
@@ -36,6 +36,18 @@ def response_status_to_state(status: ResponseStatus | None, *, background: bool)
     if status in ('queued', 'in_progress'):
         return 'suspended' if background else 'incomplete'
     return 'complete'
+
+
+def response_refusal(response: responses.Response) -> str | None:
+    """The text of the last refusal in a Responses API response's output messages, if any."""
+    refusals = [
+        content.refusal
+        for item in response.output
+        if isinstance(item, responses.ResponseOutputMessage)
+        for content in item.content
+        if isinstance(content, responses.ResponseOutputRefusal)
+    ]
+    return refusals[-1] if refusals else None
 
 
 # Convert logprobs to a serializable format
@@ -93,21 +105,24 @@ def billed_web_searches(
 
     OpenAI bills native web search per search action (see
     <https://developers.openai.com/api/docs/guides/tools-web-search>) but doesn't report the count in `usage`.
-    Newer responses carry it as `tool_usage.web_search.num_requests`, which the SDK doesn't type yet; older ones
-    don't, so fall back to counting `search` actions. Reasoning models also emit `open_page` and `find_in_page`
-    actions, which aren't billed as searches. A streamed `in_progress` or `queued` snapshot returns 0: its
-    searches are counted again from the terminal event's response.
+    Newer responses carry it as `tool_usage.web_search.num_requests`, an extra field on older SDKs and a typed one on
+    newer SDKs, so it's read through `model_dump`. Older responses don't carry it, so fall back to counting `search`
+    actions. Reasoning models also emit `open_page` and `find_in_page` actions, which aren't billed as searches, and
+    OpenAI can return a `web_search_call` item without any action, which isn't counted either. A streamed
+    `in_progress` or `queued` snapshot returns 0: its searches are counted again from the terminal event's response.
     """
     if not isinstance(response, responses.Response) or response.status in ('in_progress', 'queued'):
         return 0
-    match (response.model_extra or {}).get('tool_usage'):
+    match response.model_dump(include={'tool_usage'}).get('tool_usage'):
         case {'web_search': {'num_requests': int() as num_requests}}:
             return num_requests
         case _:
             return sum(
                 1
                 for item in response.output
-                if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
+                if isinstance(item, responses.ResponseFunctionWebSearch)
+                and (action := item.action)
+                and action.type == 'search'
             )
 
 
@@ -139,14 +154,7 @@ def map_usage(
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
         input_tokens_details = usage_data.get('input_tokens_details')
-
-        if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
-        else:
-            details['reasoning_tokens'] = 0
-
-        if web_search_requests:
-            details['web_search_requests'] = web_search_requests
+        details.update(responses_usage_details(response_usage, web_search_requests))
     else:
         api_flavor = 'chat'
         input_tokens_details = usage_data.get('prompt_tokens_details')
@@ -176,6 +184,19 @@ def map_usage(
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
     return request_usage
+
+
+def responses_usage_details(response_usage: responses.ResponseUsage, web_search_requests: int) -> dict[str, int]:
+    """The usage details only the Responses API reports: reasoning tokens, and the web searches billed."""
+    details: dict[str, int] = {}
+    if getattr(response_usage, 'output_tokens_details', None) is not None:
+        details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
+    else:
+        details['reasoning_tokens'] = 0
+
+    if web_search_requests:
+        details['web_search_requests'] = web_search_requests
+    return details
 
 
 def response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
