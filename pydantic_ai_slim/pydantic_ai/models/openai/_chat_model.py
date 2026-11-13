@@ -1113,7 +1113,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
             text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and item.content:
                 self.texts.append(text)
             elif item.content:
                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.

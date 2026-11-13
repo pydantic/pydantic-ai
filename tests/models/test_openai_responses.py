@@ -6147,6 +6147,44 @@ async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_
     assert 'previous_response_id' not in other_key
 
 
+def test_replay_empty_thinking_part_not_sent_as_assistant_text(allow_model_requests: None) -> None:
+    from openai.types.responses.response_output_message import ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
+
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    mock_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_1',
+                content=[ResponseOutputText(annotations=[], text='done', type='output_text')],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    Agent(model=model).run_sync(
+        'continue',
+        message_history=[
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', provider_name='anthropic'),
+                    TextPart(content='hi'),
+                ]
+            )
+        ],
+    )
+
+    assistant_messages = [
+        message for message in get_mock_responses_kwargs(mock_client)[0]['input'] if message.get('role') == 'assistant'
+    ]
+    assert assistant_messages == [{'content': 'hi', 'role': 'assistant'}]
+
+
 async def test_openai_previous_response_id_concrete_seed_is_not_used_past_a_changed_history(
     allow_model_requests: None,
 ):

@@ -5858,6 +5858,34 @@ async def test_text_response(allow_model_requests: None):
     )
 
 
+def test_replay_empty_thinking_part_not_sent_as_assistant_text(allow_model_requests: None) -> None:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    Agent(model=model).run_sync(
+        'continue',
+        message_history=[
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', provider_name='anthropic'),
+                    TextPart(content='hi'),
+                ]
+            )
+        ],
+    )
+
+    assistant_messages = [
+        message
+        for message in get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+        if message['role'] == 'assistant'
+    ]
+    assert assistant_messages == [{'content': 'hi', 'role': 'assistant'}]
+
+
 async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
