@@ -685,7 +685,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-5-5',
+    '{{ anthropic:medium }}',
     model_settings=AnthropicModelSettings(anthropic_inference_geo='us'),
 )
 ...
