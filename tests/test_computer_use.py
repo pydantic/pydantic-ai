@@ -69,8 +69,8 @@ def test_a_computer_call_without_complete_actions_or_safety_checks() -> None:
 
 @pytest.mark.parametrize(
     'checks',
-    ['flagged', ['flagged'], [{'id': 5}], {}, '', 0, False],
-    ids=['text', 'list-of-text', 'bad-id', 'empty-dict', 'empty-text', 'zero', 'false'],
+    ['flagged', ['flagged'], [{'id': 5}], {}, '', 0, False, None],
+    ids=['text', 'list-of-text', 'bad-id', 'empty-dict', 'empty-text', 'zero', 'false', 'null'],
 )
 def test_safety_checks_a_history_garbled_still_flag_the_call(checks: object) -> None:
     # A history can come back from storage or a UI: what it kept for the checks can't be read, but the call was flagged.
