@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HandleDeferredToolCalls, WrapperCapability
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import (
@@ -149,15 +149,23 @@ def approval_handler(approve: Approver) -> ApprovalHandler[AgentDepsT]:
 
 
 def unattended_only(
-    permissions: Sequence[AgentCapability[AgentDepsT]], bound: Sequence[AgentCapability[AgentDepsT]]
+    permissions: Sequence[AgentCapability[AgentDepsT]], supplied: Sequence[AgentCapability[AgentDepsT]]
 ) -> tuple[AgentCapability[AgentDepsT], ...]:
-    """`permissions` without the session's `DenyUnanswered` when `bound` has an `ApprovalHandler` to ask someone.
+    """`permissions` without the session's `DenyUnanswered` when `supplied` has an `ApprovalHandler` to ask someone.
 
-    An attended session leaves calls nobody handles, and questions, as they were, instead of denying them.
+    An `ApprovalHandler` inside a `WrapperCapability`, such as the `PluginGuard` around a settings-built plugin
+    capability, counts too. An attended session leaves calls nobody handles, and questions, as they were,
+    instead of denying them.
     """
-    if not any(isinstance(capability, ApprovalHandler) for capability in bound):
+    if not any(_is_approval_handler(capability) for capability in supplied):
         return tuple(permissions)
     return tuple(capability for capability in permissions if not isinstance(capability, DenyUnansweredInSession))
+
+
+def _is_approval_handler(capability: AgentCapability[AgentDepsT]) -> bool:
+    while isinstance(capability, WrapperCapability):
+        capability = capability.wrapped
+    return isinstance(capability, ApprovalHandler)
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:

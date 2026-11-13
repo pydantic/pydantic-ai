@@ -35,6 +35,7 @@ from pydantic_clai2.config import PermissionMode, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, bare_screen
+from pydantic_clai2.runtime.capability_guard import PluginGuard
 from pydantic_clai2.runtime.permissions import (
     APPROVE,
     APPROVE_SESSION,
@@ -127,11 +128,21 @@ async def test_a_session_no_one_can_be_asked_in_denies_held_calls(tmp_path: Path
         assert f'Tool said: {UNANSWERED}' in output.getvalue()
 
 
-@pytest.mark.parametrize('attended', [False, True])
-async def test_only_a_session_no_one_can_be_asked_in_denies_other_approvals(tmp_path: Path, attended: bool) -> None:
+@pytest.mark.parametrize(
+    ('attended', 'guarded'),
+    [
+        pytest.param(False, False, id='unattended'),
+        pytest.param(True, False, id='attended'),
+        pytest.param(True, True, id='attended-through-plugin-guard'),
+    ],
+)
+async def test_only_a_session_no_one_can_be_asked_in_denies_other_approvals(
+    tmp_path: Path, attended: bool, guarded: bool
+) -> None:
     """A call needing approval that `Permissions` didn't hold is denied only when nobody can be asked.
 
     With an approval handler bound, someone is there, so `DenyUnanswered` is not bound and the call isn't denied.
+    That holds for a handler inside the `PluginGuard` a settings-built plugin capability gets too.
     """
     ran: list[str] = []
     asked: list[PermissionRequest] = []
@@ -144,7 +155,10 @@ async def test_only_a_session_no_one_can_be_asked_in_denies_other_approvals(tmp_
 
     publish = Tool(lambda: ran.append('publish') or 'published', name='publish', requires_approval=True)
     agent = Agent(streamed(respond), deps_type=type(None), tools=[publish])
-    shell, output = runtime(tmp_path, agent, plugins=(approval_handler(recording_approver(asked)),) if attended else ())
+    handler: AgentCapability[None] = approval_handler(recording_approver(asked))
+    if guarded:
+        handler = PluginGuard[None](handler, plugin='approvals')
+    shell, output = runtime(tmp_path, agent, plugins=(handler,) if attended else ())
     shell.send_input('publish it')
     shell.send_input('/exit')
     assert await shell.run() == 'exit'
