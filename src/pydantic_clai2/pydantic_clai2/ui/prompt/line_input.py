@@ -10,7 +10,7 @@ from rich.console import Console
 from termflow.tui.layout import truncate
 from termflow.tui.terminal import raw_mode
 
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.menu_worker import remote_dialogs, require_terminal, run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
@@ -27,12 +27,17 @@ async def read_line(prompt: str, *, console: Console, hidden: bool = False) -> s
     shows its questions, so what the command printed just before (a sign-in URL, say) stays on screen
     above them. `hidden` shows how many characters were typed instead of the text, for a value such
     as a URL carrying an authorization code. Without the live editor this is a plain terminal prompt.
+    Under `without_terminal`, a remote UI's dialogs ask instead, and without those it raises
+    `require_terminal`'s error.
 
     Slash commands can call it directly. A tool or hook that asks mid-run takes the screen first,
     with `async with host.full_screen()`.
     """
+    if (dialogs := remote_dialogs()) is not None:
+        return await dialogs.text(title=prompt.strip().removesuffix(':'), secret=hidden)
     surface = console.file
     if not isinstance(surface, PromptSurface):
+        require_terminal()
         try:
             with patch_stdout():
                 return await PromptSession[str]().prompt_async(prompt, is_password=hidden)

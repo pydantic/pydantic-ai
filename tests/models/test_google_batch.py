@@ -80,7 +80,10 @@ async def test_gemini_batch_request_is_the_generate_content_request_without_secr
     assert json.loads(encoded.body) == snapshot(
         {
             'contents': [{'parts': [{'text': 'Hello'}], 'role': 'user'}],
-            'systemInstruction': {'parts': [{'text': 'Be brief.'}], 'role': 'user'},
+            'systemInstruction': {
+                'parts': [{'text': 'Be brief.'}],
+                'role': 'user',
+            },
             'generationConfig': {
                 'maxOutputTokens': 100,
                 'stopSequences': ['END'],
@@ -388,14 +391,28 @@ def test_gemini_batch_error_raises_the_error_of_its_rpc_code(
         assert exc_info.value.body == body
 
 
+def test_gemini_batch_error_sets_retry_after_from_retry_info() -> None:
+    """An errored item whose `google.rpc.Status` carries a `RetryInfo` keeps the wait the provider asked for."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    status = {
+        'code': 8,
+        'message': 'Quota exceeded.',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+    }
+    result = BatchResult(custom_id='item', status='errored', body=json.dumps(status))
+    with pytest.raises(ModelRateLimitError) as exc_info:
+        model.batch_decode(result, _request())
+    assert exc_info.value.retry_after == 14.0
+
+
 def test_gemini_batch_error_suggests_a_known_model_for_an_unknown_one() -> None:
-    model = GoogleModel('gemini-2.5-flash-lit', provider=GoogleProvider(api_key='test-key'))
-    message = 'models/gemini-2.5-flash-lit is not found for API version v1beta, or is not supported.'
+    model = GoogleModel('gemini-3.5-flash-lit', provider=GoogleProvider(api_key='test-key'))
+    message = 'models/gemini-3.5-flash-lit is not found for API version v1beta, or is not supported.'
     result = BatchResult(custom_id='item', status='errored', body=json.dumps({'code': 5, 'message': message}))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, _request())
     assert (exc_info.value.status_code, exc_info.value.provider_error_code) == (404, 'NOT_FOUND')
-    assert exc_info.value.suggested_model_id == 'google:gemini-2.5-flash-lite'
+    assert exc_info.value.suggested_model_id == 'google:gemini-3.5-flash-lite'
 
 
 _OK_RESPONSE = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hi!'}]}, 'finishReason': 'STOP'}]}

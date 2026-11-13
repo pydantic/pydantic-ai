@@ -302,7 +302,9 @@ async def test_a_computer_call_with_safety_checks_refuses_an_external_executor(h
         capabilities=[hooks] if hook_asks else [],
         output_type=[str, DeferredToolRequests],
     )
-    with pytest.raises(UserError, match='approval cannot reach'):
+    # With a hook asking, core refuses first: no external call can wait for approval in the run.
+    message = 'so the run cannot approve it' if hook_asks else 'approval cannot reach'
+    with pytest.raises(UserError, match=message):
         await agent.run('Click.')
 
 

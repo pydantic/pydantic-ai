@@ -45,6 +45,7 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.permissions import PermissionMode, Permissions
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
@@ -574,6 +575,35 @@ class TestWorkspaceMount:
         assert returned == ['original PermissionError']
         assert secret.read_text() == 'original'
 
+    @pytest.mark.parametrize(('mode', 'seen'), [('read-only', 'original PermissionError'), ('auto', 'original')])
+    async def test_read_only_permissions_mount_read_only(self, tmp_path: Path, mode: PermissionMode, seen: str) -> None:
+        """`/permissions read-only` asks before file writes, so `pathlib` in the sandbox must not make them unasked."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object](mode)
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system, permissions))
+        capabilities = [file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]
+        await Agent(streamed(respond), capabilities=capabilities).run('go')
+        assert returned == [seen]
+        mounted = 'read-only' if mode == 'read-only' else 'read-write'
+        assert all(f'mounted {mounted}' in (text or '') for text in instructions)
+        assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
+
     async def test_sandbox_workspace_is_not_mounted(self, tmp_path: Path) -> None:
         """A sandbox plugin's workspace is elsewhere, so the host directory stays out of the sandbox."""
         secret = tmp_path.resolve() / '.env'
@@ -644,7 +674,9 @@ class TestSpeculativeExecution:
         for event in (
             claimed(ready=True, elapsed_ms=250),
             claimed(ready=False, elapsed_ms=900),
-            SpeculativeCallMissedEvent(sandbox_function='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'),
+            SpeculativeCallMissedEvent(
+                sandbox_function_name='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'
+            ),
             SpeculativeCallEvictedEvent(launch_id='l2', wrapped_tool_name='grep', state='ready'),
             EagerExecutionCompletedEvent(saved_ms=1_000),
             PartStartEvent(index=0, part=TextPart('ignored')),
