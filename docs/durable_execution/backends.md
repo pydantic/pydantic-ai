@@ -111,7 +111,9 @@ The public [`DurabilityEngineSpec`][pydantic_ai.durable_exec.DurabilityEngineSpe
 declarative engine surface in one immutable object. Its required fields name the engine, durable
 unit, and durable container. Its optional fields select the codec, wrapped toolset kinds, lifecycle
 policy, upgrade compatibility, durable discovery, sequential tool execution, unsupported runtime
-toolsets, and per-tool configuration key. The default lifecycle policy enters function and MCP
+toolsets, per-tool configuration key, and whether a run inside the container may take a
+[`CancellationToken`][pydantic_ai.CancellationToken] (only safe on a container loop that rejects
+delivery from other threads; see the field's docs). The default lifecycle policy enters function and MCP
 toolsets for every run and never enters dynamic toolsets.
 
 Define every field whose engine behavior differs from the defaults. The spec validates non-empty
@@ -262,8 +264,9 @@ capability authors contribute decorated methods that arrive through the same bac
 
 [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event] waits until
 something outside the run resolves a token the run handed out, unless the `ask` function it hands
-the token to answers right away, and returns the JSON payload. [`RequestInput`](../capabilities/request-input.md)
-uses it to ask for an answer on deferred tool calls without ending the run. Outside a durable run it
+the token to answers right away, and returns the JSON payload. A
+[`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler that takes a resume
+token uses it to ask for an answer on deferred tool calls without ending the run. Outside a durable run it
 waits in process, and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]
 ends the wait. In a durable run, an in-process wait would not be recorded: a replay would ask again,
 could get a different answer than the one the run already acted on and diverge from the recorded

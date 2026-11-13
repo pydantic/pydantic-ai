@@ -179,6 +179,7 @@ async def test_changes_panel_opened_during_a_turn_loads_at_once(page: Page, chan
         )
         await panel.get_by_role('tab', name='This session').click()
         await expect(panel.locator('.changes-body')).not_to_have_text('Loading…', timeout=2_000)
+        await expect(panel.get_by_role('button', name='Refresh')).to_be_enabled()
         await expect(activity).not_to_have_text('ready')
     finally:
         changes_ui.released.set()

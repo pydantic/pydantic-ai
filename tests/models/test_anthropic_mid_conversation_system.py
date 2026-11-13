@@ -42,13 +42,14 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import request_json, single_request_body
-from ..conftest import try_import
+from ..conftest import try_import, with_native_system_role
 
 if TYPE_CHECKING:
     from cassetter import Cassette
@@ -202,8 +203,8 @@ CASES = [
     Case(
         id='inline-system-unsupported',
         model='claude-sonnet-5',
-        # The standing prompt also says what the `<system>` tag means, on every request from the first.
-        expected_system=f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nYou are a code reviewer.',
+        # The system prompt also says what the `<system>` tag means, from the request with the first `<system>` block.
+        expected_system=f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -716,7 +717,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nYou are a code reviewer.'
+    assert call_kwargs['system'] == f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.'
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -868,9 +869,11 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
         )
 
 
-def _map(history: list[ModelMessage], model_name: str = 'claude-opus-4-8') -> list[dict[str, Any]]:
+def _map(
+    history: list[ModelMessage], model_name: str = 'claude-opus-4-8', profile: ModelProfileSpec | None = None
+) -> list[dict[str, Any]]:
     """The `messages` array `model_name` renders for `history`."""
-    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key='not-used'))
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key='not-used'), profile=profile)
     _, anthropic_messages = asyncio.run(
         model._map_message(history, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     )
@@ -1247,7 +1250,7 @@ _TOOL_RESULT = {
     [('claude-haiku-5-5', True), ('claude-sonnet-5-5', False), ('claude-opus-5-5', False)],
 )
 def test_tool_results_end_before_a_system_entry(model_name: str, ends_tool_results: bool):
-    """On Claude Haiku 5.5, a text block ends the tool results that a `system` entry follows.
+    """On Claude Haiku 5.5 with the native role, a text block ends the tool results that a `system` entry follows.
 
     Haiku 5.5 can read an entry right after a `tool_result` as part of the tool output and ignore it, which is
     where a loaded capability's instructions and an instruction change during a tool loop land. The block puts
@@ -1256,7 +1259,8 @@ def test_tool_results_end_before_a_system_entry(model_name: str, ends_tool_resul
     The rendering is asserted offline because the cassette matcher ignores request bodies; the recorded
     `test_haiku_follows_a_withdrawn_instruction_after_a_tool_result` below covers the API and the model.
     """
-    assert _map(_tool_loop(SystemPromptPart('S')), model_name)[-2:] == (
+    profile = with_native_system_role if model_name in ('claude-haiku-5-5', 'claude-sonnet-5-5') else None
+    assert _map(_tool_loop(SystemPromptPart('S')), model_name, profile)[-2:] == (
         [
             {'role': 'user', 'content': [_TOOL_RESULT, {'text': END_OF_TOOL_RESULTS_TEXT, 'type': 'text'}]},
             {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
@@ -1274,9 +1278,11 @@ def test_tool_results_followed_by_user_text_need_no_end():
 
     Offline, like `test_tool_results_end_before_a_system_entry`: the property is where the block goes.
     """
-    assert _map(_tool_loop(UserPromptPart('Also check the docs.'), SystemPromptPart('S')), 'claude-haiku-5-5')[
-        -2:
-    ] == snapshot(
+    assert _map(
+        _tool_loop(UserPromptPart('Also check the docs.'), SystemPromptPart('S')),
+        'claude-haiku-5-5',
+        with_native_system_role,
+    )[-2:] == snapshot(
         [
             {
                 'role': 'user',
@@ -1310,6 +1316,7 @@ def test_tool_results_end_before_an_entry_that_slid_behind_them():
             ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1')]),
         ],
         'claude-haiku-5-5',
+        with_native_system_role,
     )[-2:] == snapshot(
         [
             {
@@ -1379,7 +1386,7 @@ async def test_tool_results_need_no_end_before_a_tool_availability_change(allow_
 async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
 ):
-    """Claude Haiku 5.5 drops a sign-off whose instruction is withdrawn during a tool loop.
+    """Claude Haiku 5.5 with the native role drops a sign-off whose instruction is withdrawn during a tool loop.
 
     The tool flips the state the instruction reads, so the withdrawal arrives in a `system` entry right after the
     tool result. Without the block ending the tool results, Haiku 5.5 followed the withdrawal in 31 of 64 live runs,
@@ -1387,7 +1394,9 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
     """
     withdrawn = False
     agent = Agent(
-        AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        AnthropicModel(
+            'claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key), profile=with_native_system_role
+        ),
         instructions='You are a concise assistant.',
     )
 
@@ -1420,12 +1429,46 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
             'content': [
                 {
                     'text': """\
-<context id="agent:sign_off">
+<pyai:context id="agent:sign_off">
 This context has been withdrawn.
-</context>\
+</pyai:context>\
 """,
                     'type': 'text',
                 }
             ],
         }
     )
+
+
+async def test_a_system_prompt_ahead_of_tool_returns_follows_them(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """A request that holds a system prompt before its tool returns still sends the `tool_result` blocks first.
+
+    Anthropic rejects a turn whose text comes before the results of the previous turn's tool calls ("tool_use ids
+    were found without tool_result blocks immediately after"). On Claude Sonnet 4.6, which takes no mid-conversation
+    system messages, the prompt becomes sealed `<system>` text in that turn, so it goes after the results.
+    """
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key)))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='toolu_01')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('Answer in French.'),
+                ToolReturnPart('get_weather', 'sunny', tool_call_id='toolu_01'),
+            ]
+        ),
+    ]
+
+    result = await agent.run(message_history=history)
+
+    assert result.output
+    body = single_request_body(vcr)
+    assert [block['type'] for block in body['messages'][-1]['content']] == ['tool_result', 'text']
+    assert body['messages'][-1]['content'][-1]['text'] == '<system verified>Answer in French.</system>'

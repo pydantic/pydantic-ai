@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from logfire.testing import CaptureLogfire
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 from opentelemetry.sdk.trace import TracerProvider
@@ -18,6 +19,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, PydanticAIDeprecationWarning, RunContext
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
@@ -615,6 +617,26 @@ async def test_deadline_reports_time_limit_without_waiting(
         + '\n'
     )
     assert health.parse_run_result(canonical) == result
+
+
+async def test_workflow_finished_names_the_provider_failure(capfire: CaptureLogfire) -> None:
+    """A Z.AI plan limit ends the run with its failure kind, HTTP status and Z.AI error code in `Workflow finished`."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages, info
+        raise ModelHTTPError(429, 'glm-5.3-flash', {'error': {'code': '1310', 'message': 'Weekly limit reached'}})
+
+    agent = workflow.build_agent()
+    with agent.override(model=streaming_model(respond)), pytest.raises(ModelHTTPError):
+        await agent.run('Review', usage_limits=UsageLimits(request_limit=400))
+    [finished] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'Workflow finished']
+    fields = ('outcome', 'failure_kind', 'http_status', 'zai_error_code')
+    assert {field: finished['attributes'][field] for field in fields} == {
+        'outcome': 'error',
+        'failure_kind': 'plan_limit',
+        'http_status': 429,
+        'zai_error_code': '1310',
+    }
 
 
 @pytest.fixture

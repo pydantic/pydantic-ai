@@ -607,11 +607,13 @@ def mcp_telemetry_history_ids(messages: Iterable[ModelMessage], known_ids: froze
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
-    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
-    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
-    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
-    structure rather than message content, and `include_model_request_parameters=False` drops the
-    whole attribute for anyone who wants them gone as well.
+    Three fields here are that text: the instructions, whose dynamic parts can be built from deps, the
+    prompted-output template, and the descriptions in the deferred capability catalog, which the catalog
+    in the instructions repeats. Instruction parts keep their origin and ids, and catalog entries their
+    ids and whether they're active, so what the parts are and how they cache stays visible. Tool and
+    output *schemas* stay too -- they are the request's structure rather than message content, and
+    `include_model_request_parameters=False` drops the whole attribute for anyone who wants them gone
+    as well.
 
     `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
     walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
@@ -628,6 +630,9 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
+    for entry in cast('list[dict[str, Any]]', parameters.get('deferred_capabilities', [])):
+        # The deferred capability catalog's descriptions, the same text as the catalog instruction part.
+        entry.pop('description', None)
     return parameters
 
 
@@ -1184,10 +1189,10 @@ def get_instructions(
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
     from pydantic_ai.messages import InstructionPart
-    from pydantic_ai.models import Model
+    from pydantic_ai.models import _instruction_parts_of  # pyright: ignore[reportPrivateUsage]
 
     if model_request_parameters:
-        parts = Model._get_instruction_parts(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        parts = _instruction_parts_of(messages, model_request_parameters)
         return InstructionPart.join(parts) if parts else None
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)

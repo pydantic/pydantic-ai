@@ -389,7 +389,7 @@ reports; they do not fail the agent turn.
 ## Agent of Empires integration
 
 The built-in `aoe` plugin (`pydantic_clai2.builtin_plugins.aoe`) starts disabled. Run
-`clai2 plugins enable aoe` (or `/plugins enable aoe`) to let
+`/plugins enable aoe` in a CLAI session to let
 [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires) (AoE)
 track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
 
@@ -1070,10 +1070,10 @@ Three ways to install one:
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
    Its name is the file name without `.py`. CLAI creates the folder at startup, so it
    is there to copy into after the first run.
-2. Point CLAI at anything importable, from the shell or from inside CLAI:
+2. Point CLAI at anything importable, from inside CLAI:
 
-   ```sh
-   clai2 plugins add notify my_package.notify
+   ```text
+   /plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
 3. From inside CLAI, clone a trusted Git repository:
@@ -1114,8 +1114,9 @@ Three ways to install one:
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
-prompt. From the shell, `clai2 plugins ...` only saves; it loads on the next
-start. Plugins in the folder and the ones you added by name are managed the
+prompt. From the shell, `clai2 plugins` only lists declarations: the agent can
+run `clai2` too, and turning off a plugin such as `hooks` can let it do more, so only
+`/plugins` adds, enables, disables, or removes one. Plugins in the folder and the ones you added by name are managed the
 same way. Explicit module declarations take precedence over a same-named drop-in
 file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
 modules are compiled from current source. Installed modules use `importlib.reload`,
@@ -1267,7 +1268,8 @@ tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
-`description`, and optional `settings` (the fields of `ModelSettingsForm`). For example,
+`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url`, which is
+set in `/model settings`). For example,
 `{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
 Models, accounts, saved chains, and saved settings
 resolve through the session's model services. An empty mapping preserves inheritance and the
@@ -2533,9 +2535,10 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command. The standalone `clai2 plugins ...`
-commands edit saved declarations without loading plugin code. Git installation,
-configuration menus, and live reloading are available only inside a CLAI session:
+With arguments `/plugins` is a plain command. The standalone `clai2 plugins list`
+reads saved declarations without loading plugin code. Adding, enabling, disabling,
+removing, configuring, and reloading plugins are
+available only inside a CLAI session, since the agent can run `clai2` from its shell:
 
 | Command | Does |
 |---|---|
@@ -2832,6 +2835,14 @@ The ones people reach for:
 
 The full list and every signature are in the
 [hooks reference](https://pydantic.dev/docs/ai/core-concepts/hooks/).
+
+Which tools a `Hooks` checks can't be read before the run, so with any `Hooks`
+bound, [code mode](docs/reference.md#code-mode-and-speculative-execution) does
+not mount the workspace: `pathlib` in `run_code` can't read or write files a
+`before_tool_execute` hook would have stopped, and file access goes through the
+file tools. A plugin that only observes keeps the mount by returning its own
+`AbstractCapability` subclass, with `@on_event` or the hook method, instead of a
+`Hooks`.
 
 ### React to a typed event: `hooks.on.event(EventClass)`
 
@@ -3308,8 +3319,6 @@ The contract:
 
 A capability class declared as `module:Class` has no `Plugin` subclass; CLAI lists its
 tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
-`clai2 plugins add` from the command line imports nothing, so it attaches only
-those; a plugin's own tags are attached the next time it saves or is enabled.
 
 If an untagged setting still makes a capability that CLAI built from a
 `module:Class` declaration (such as `coder`) raise `UserError` while a run is

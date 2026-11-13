@@ -3,12 +3,13 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from functools import cached_property
+from math import isfinite
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
@@ -18,6 +19,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import deprecated
 
 from .. import _utils, usage
+from .._deferred_capabilities import DEFERRED_CAPABILITY_CATALOG_ID
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
 from .._json_schema import InlinedValues
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
@@ -25,14 +27,18 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     BaseToolReturnPart,
     BinaryContent,
     CachePoint,
+    CapabilityInstructionSource,
     CompactionPart,
     FilePart,
     ImageUrl,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    InstructionId,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -52,8 +58,10 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _tool_return_items_json,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
+    tool_return_ta,
 )
 from ..profiles import ModelProfile, merge_profile
 from ..profiles.decision import DecisionModelProfile
@@ -62,6 +70,7 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import (
+    DeferredCapabilityEntry,
     Model,
     ModelRequestParameters,
     StreamedResponse,
@@ -251,6 +260,11 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
+def _text(value: JsonValue) -> str:  # pyright: ignore[reportUnusedFunction]
+    """A protocol value as the text an API takes: a string as it is, anything else as JSON."""
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
 def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
     """How far a displayed value may be from the one it stands for.
 
@@ -261,7 +275,7 @@ def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
     return max(Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2, float_tolerance)
 
 
-def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
+def _probability_bounds(
     probabilities: Collection[float], *, float_tolerance: Decimal = Decimal(0)
 ) -> tuple[list[Decimal], list[Decimal]]:
     """The bounded rounding intervals of the displayed probabilities, using at least two decimal places.
@@ -276,7 +290,7 @@ def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
     return lower, upper
 
 
-def _score_fits(  # pyright: ignore[reportUnusedFunction]
+def _score_fits(
     lower: Sequence[Decimal], upper: Sequence[Decimal], score: float, *, float_tolerance: Decimal = Decimal(0)
 ) -> bool:
     """Whether rounded probabilities can sum to one and produce the displayed score.
@@ -300,6 +314,64 @@ def _score_fits(  # pyright: ignore[reportUnusedFunction]
         score_half_unit = _half_unit(displayed_score, float_tolerance)
         valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
     return valid
+
+
+# How far an unrounded probability or score may be from the exact value, on top of display rounding. Jev rounds
+# what it sends to two decimals, but a server such as vLLM, or Google's decisions API, sends a softmax and its
+# expected level unrounded, with all their float digits, and computed in float32 or float64: their sum is one, and
+# the score their mean, only within that arithmetic's error, which float32 puts near 1e-7. A wrong answer is off by
+# far more than this.
+_FLOAT_TOLERANCE = Decimal('1e-6')
+
+
+def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether `answer` is a valid answer to `question`, from a backend that may round or send unrounded floats."""
+    match question:
+        case NoulQuestion():
+            return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
+        case ChoiceQuestion():
+            return (
+                isinstance(answer, ChoiceAnswer)
+                and answer.choice in question.criteria
+                and answer.probabilities.keys() == question.criteria.keys()
+                and _probabilities_fit(answer)
+            )
+        case ScoreQuestion():
+            return isinstance(answer, ScoreAnswer) and _score_answer_fits(question, answer)
+        case _:
+            assert_never(question)
+
+
+def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
+    """Whether an answer's confidence and probabilities are probabilities, and its probabilities sum to one."""
+    probabilities = answer.probabilities.values()
+    # Jev displays probabilities to two decimal places, so each may differ by half a unit, which also
+    # covers the float error of a backend that sends them unrounded.
+    return (
+        isfinite(answer.confidence)
+        and 0 <= answer.confidence <= 1
+        and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
+        and abs(sum(probabilities) - 1) <= float(_FLOAT_TOLERANCE) + len(answer.probabilities) * 0.005
+    )
+
+
+def _score_answer_fits(question: ScoreQuestion, answer: ScoreAnswer) -> bool:
+    """Whether a score answer rates the rubric's levels, and its score is one its probabilities could produce."""
+    levels = set(range(len(question.criteria)))
+    if not (
+        answer.probabilities.keys() == levels
+        and (not answer.legend or answer.legend.keys() == levels)
+        and isfinite(answer.score)
+        and 0 <= answer.score <= len(question.criteria) - 1
+        and _probabilities_fit(answer)
+    ):
+        return False
+    # A displayed score and its probabilities may each be rounded, or carry float error. Check
+    # whether any distribution within their intervals could produce that score, using at least
+    # Jev's two decimals and never less than the float tolerance.
+    probabilities_by_level: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
+    lower, upper = _probability_bounds(probabilities_by_level, float_tolerance=_FLOAT_TOLERANCE)
+    return _score_fits(lower, upper, answer.score, float_tolerance=_FLOAT_TOLERANCE)
 
 
 _UNSUPPORTED_FIELD_HINT = (
@@ -488,6 +560,9 @@ class DecisionModel(Model[InterfaceClient]):
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
       the same way.
+    - An [on-demand capability](https://pydantic.dev/docs/ai/capabilities/on-demand/) is a route of its own, under
+      its `id` and described by its `description`, and picking it loads it. The catalog that lists them for a
+      language model is left out of the framing.
     - Each field's confidence, the full distribution of each pick-one and rubric, and the route pick are reported
       in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details].
 
@@ -591,6 +666,21 @@ class DecisionModel(Model[InterfaceClient]):
             ),
         )
 
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
+        """Pre-process the history as [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages] does.
+
+        Changes to the deferred capability catalog are left out first: the capabilities are offered as routes of
+        their own, so a catalog that changed since the conversation began, such as one with a capability added
+        between runs, would otherwise reach the state as a system message repeating every description.
+        """
+        if model_request_parameters is not None and _loads_capabilities(model_request_parameters):
+            messages = _without_catalog_changes(messages)
+        return super().prepare_messages(messages, model_request_parameters)
+
     @abstractmethod
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the backend and return its answers.
@@ -682,11 +772,14 @@ class DecisionModel(Model[InterfaceClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tools, hand_offs = _output_tools(model_request_parameters)
         # A withheld tool is not on any wire; one revealed through the history is, and the model sees the history.
-        function_tools = [
-            tool
-            for tool in model_request_parameters.function_tools
-            if model_request_parameters.visibility_of(tool.name) != 'withheld'
-        ]
+        function_tools = _capability_routes(
+            [
+                tool
+                for tool in model_request_parameters.function_tools
+                if model_request_parameters.visibility_of(tool.name) != 'withheld'
+            ],
+            model_request_parameters.deferred_capabilities,
+        )
         offered = [*hand_offs, *function_tools]
         tools, done = _tools_left(messages, offered)
         routes = _route_labels(output_tools, tools, output_name)
@@ -786,7 +879,11 @@ class DecisionModel(Model[InterfaceClient]):
     ) -> str | None:
         """The agent's instructions as one text, which the questions carry, or `None` without any."""
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
-        return '\n\n'.join(part.content for part in instruction_parts) or None
+        loads_capabilities = _loads_capabilities(model_request_parameters)
+        return (
+            '\n\n'.join(part.content for part in instruction_parts if not (loads_capabilities and _catalog(part)))
+            or None
+        )
 
     def _unasked_route(
         self, route: ToolDefinition, label: str, probability: float, instructions: str | None, limits: _Limits
@@ -1399,7 +1496,10 @@ def _fillable_outputs(
     if (
         output_tools
         and not fillable
-        and not any(_none_route(tool) or _expressible(tool, instructions, limits) for tool in offered)
+        and not any(
+            _none_route(tool) or _capability_id(tool) is not None or _expressible(tool, instructions, limits)
+            for tool in offered
+        )
     ):
         # A route the model cannot fill is a hand-off, but only while some other route is a real alternative:
         # an output type it can fill, a route with nothing to fill, or a tool whose arguments it can. With
@@ -1419,8 +1519,14 @@ def _fillable_outputs(
 def _forced_tool(
     output_tools: list[ToolDefinition], tools: list[ToolDefinition], offered: list[ToolDefinition]
 ) -> ToolDefinition | None:
-    """The one tool left to take without a choice question, once every other route on offer has returned."""
-    return tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
+    """The one tool left to take without a choice question.
+
+    That is the route left once every other route on offer has returned, or a lone capability to load: loading it
+    is the only thing to do, and there is no other route to ask about.
+    """
+    if output_tools or len(tools) != 1:
+        return None
+    return tools[0] if len(offered) > 1 or _capability_id(tools[0]) is not None else None
 
 
 _REQUEST_TOKENS = 260
@@ -1576,13 +1682,104 @@ def _none_route(tool: ToolDefinition) -> bool:
 
 
 def _has_fields(tool: ToolDefinition) -> bool:
-    """Whether a route has fields for the model to fill: it is not the `None` route, and its schema has properties."""
-    return not _none_route(tool) and bool(_properties(tool.parameters_json_schema))
+    """Whether a route has fields for the model to fill.
+
+    It is not the `None` route or a capability to load, whose `id` `_capability_routes` fixed, and its schema has
+    properties.
+    """
+    return not _none_route(tool) and _capability_id(tool) is None and bool(_properties(tool.parameters_json_schema))
 
 
 def _route_args(tool: ToolDefinition) -> dict[str, Any]:
-    """The arguments to call a route with when nothing is filled: none, or the `None` a `None` route wraps."""
+    """The arguments to call a route with when nothing is filled.
+
+    None, the `None` a `None` route wraps, or the `id` of the capability a capability route loads.
+    """
+    if (capability_id := _capability_id(tool)) is not None:
+        return {'id': capability_id}
     return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
+
+
+def _capability_routes(tools: list[ToolDefinition], catalog: list[DeferredCapabilityEntry]) -> list[ToolDefinition]:
+    """The tools on offer, with `load_capability` as one route per capability it can still load.
+
+    `load_capability` takes a plain string `id`, which a decision model cannot fill, so offered as it is the tool
+    could only hand off. The step's catalog, in
+    [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities],
+    says which ids it can load and what each is for, and each becomes a route of its own, described by the
+    capability's description and taken on the pick alone. The route question then weighs each capability against
+    the tools and output types directly, instead of a generic "load a capability" followed by a second request
+    asking which. A capability already active, whether the model or code loaded it, is not offered again, since
+    loading it twice is refused. The loader is found by its `tool_kind`, whatever it is called. A language model's
+    `load_capability` is unchanged: the ids stay out of its schema so the tools it is sent, and the prompt cache
+    behind them, do not depend on what can be loaded.
+    """
+    if not catalog:
+        return tools
+    routes: list[ToolDefinition] = []
+    for tool in tools:
+        if tool.tool_kind != 'capability-load':
+            routes.append(tool)
+            continue
+        routes.extend(
+            replace(
+                tool,
+                description=entry.description,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'id': {'const': entry.id}},
+                    'required': ['id'],
+                },
+            )
+            for entry in catalog
+            if not entry.active
+        )
+    return routes
+
+
+def _capability_id(tool: ToolDefinition) -> str | None:
+    """The capability a route from `_capability_routes` loads, or `None` for any other route."""
+    if tool.tool_kind != 'capability-load':
+        return None
+    capability_id = _properties(tool.parameters_json_schema).get('id', {}).get('const')
+    return capability_id if isinstance(capability_id, str) else None
+
+
+def _loads_capabilities(model_request_parameters: ModelRequestParameters) -> bool:
+    """Whether the request offers a capability loader, the only thing that makes a part keyed like the catalog one.
+
+    A capability can have the id `deferred_capabilities` too, and its instructions are only told apart from the
+    catalog by the loader that comes with the catalog.
+    """
+    return any(tool.tool_kind == 'capability-load' for tool in model_request_parameters.function_tools)
+
+
+def _catalog(part: InstructionPart) -> bool:
+    """Whether an instruction part is the deferred capability catalog, which `_capability_routes` offers as routes.
+
+    Sent as shared framing, it would repeat every capability's description on every question, fields included,
+    whatever route is being asked about.
+    """
+    return part.id == _CATALOG_INSTRUCTION_ID
+
+
+def _without_catalog_changes(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without the catalog's appended changes, which `_catalog` leaves out of the framing likewise."""
+    result: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, InstructionDeltaPart) and part.id == _CATALOG_INSTRUCTION_ID for part in message.parts
+        ):
+            message = replace(
+                message,
+                parts=[
+                    part
+                    for part in message.parts
+                    if not (isinstance(part, InstructionDeltaPart) and part.id == _CATALOG_INSTRUCTION_ID)
+                ],
+            )
+        result.append(message)
+    return result
 
 
 def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
@@ -2239,6 +2436,11 @@ _OUTPUT_ROUTE_LABEL = 'output'
 
 _OUTPUT_LABEL_SUFFIX = ' (output)'
 
+_CAPABILITY_LABEL_SUFFIX = ' (capability)'
+
+_CATALOG_INSTRUCTION_ID = InstructionId(CapabilityInstructionSource(DEFERRED_CAPABILITY_CATALOG_ID))
+"""The id of the deferred capability catalog's instruction part, which the loader keys so its changes are appended."""
+
 
 def _output_route_label(tool: ToolDefinition, output_name: str | None) -> str:
     """The name an output route goes by on the route question, before collisions with other routes are settled.
@@ -2274,25 +2476,31 @@ def _route_labels(
     The label is the option key on the route question and the `chosen` of the fill that follows, so one route has
     one name across both requests. A function tool is labelled by its own name. An output route, including an
     output function that takes no arguments and the `None` member of a union, is labelled by
-    `_output_route_label`. Two routes can come out with the same label, as a tool named `Refund` beside an output
-    type `Refund` does: the function tool keeps its name, and the output route gets ` (output)` appended until the
-    label is free. Function tool names are unique among themselves, so only output routes are ever renamed, and
-    in the order they are offered, so the same routes always get the same labels.
+    `_output_route_label`, and a capability to load by its id. Two routes can come out with the same label, as a
+    tool named `Refund` beside an output type `Refund` does: the function tool keeps its name, and the output route
+    gets ` (output)` appended until the label is free, as a capability gets ` (capability)`. Function tool names are
+    unique among themselves, so only the other routes are ever renamed, and in the order they are offered, so the
+    same routes always get the same labels.
 
     The model's answer is read back through this mapping, never by parsing a label.
     """
     routes = [*output_tools, *tools]
-    labels = {tool.name: tool.name for tool in routes if tool.kind != 'output'}
-    taken = set(labels.values())
+    taken = {tool.name for tool in routes if tool.kind != 'output' and _capability_id(tool) is None}
+    labels: list[str] = []
     for tool in routes:
-        if tool.kind != 'output':
+        capability_id = _capability_id(tool)
+        if tool.kind == 'output':
+            label, suffix = _output_route_label(tool, output_name), _OUTPUT_LABEL_SUFFIX
+        elif capability_id is not None:
+            label, suffix = capability_id, _CAPABILITY_LABEL_SUFFIX
+        else:
+            labels.append(tool.name)
             continue
-        label = _output_route_label(tool, output_name)
         while label in taken:
-            label += _OUTPUT_LABEL_SUFFIX
+            label += suffix
         taken.add(label)
-        labels[tool.name] = label
-    return {labels[tool.name]: tool for tool in routes}
+        labels.append(label)
+    return dict(zip(labels, routes))
 
 
 def _described(tool: ToolDefinition) -> str | None:
@@ -2313,6 +2521,9 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     result asked for a retry (`outcome='retried'`) leaves the tool on offer. The turn is everything since the
     last user prompt, which is the nearest thing to a run boundary the history has: a result from an earlier turn does
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
+
+    A capability to load is exempt: `_capability_routes` already leaves out the active ones, and
+    loading one is no reason to withhold the others.
     """
     returned: set[str] = set()
     retried = False
@@ -2329,7 +2540,10 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 returned.add(part.tool_name)
             elif isinstance(part, ToolReturnPart | RetryFeedbackPart):
                 retried = True
-    return [tool for tool in tools if tool.name not in returned], bool(returned) or retried
+    return (
+        [tool for tool in tools if tool.name not in returned or _capability_id(tool) is not None],
+        bool(returned) or retried,
+    )
 
 
 _ROUTE_QUESTION = 'Which of these does this call for?'
@@ -2447,15 +2661,30 @@ def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | 
     return '\n\n'.join(texts)
 
 
+def _labelled_tool_return_text(part: BaseToolReturnPart, labelled: Iterable[object]) -> str:
+    """The text of `part` with its files replaced by the labels in `labelled`, each item serialized as it is alone.
+
+    An errored return is wrapped as `model_response_str` wraps a list: a retry's array as it is, a failed return's
+    array as a string. Calling `model_response_str()` on a relabelled copy instead would dump the list whole, a level
+    deeper, and put a retry's items through `dump_python`, which drops their own serializer settings.
+    """
+    text = _tool_return_items_json(labelled)
+    if part.outcome not in ERROR_OUTCOMES:
+        return text
+    error = text if part.outcome == 'retried' else tool_return_ta.dump_json(text).decode()
+    return f'{{"error":{error}}}'
+
+
 def _tool_return_entry(part: BaseToolReturnPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """A tool result as history, preserving file positions and failed-result wrapping."""
     if part.files:
         if images is None:
             raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
-        content: list[str] = []
-        for item in part.content_items(mode='str', wrap_if_error=False):
-            content.append(item if isinstance(item, str) else _image_label(item, images, 'A tool result'))
-        part = dataclasses.replace(part, content=content)
+        labelled = [
+            _image_label(item, images, 'A tool result') if is_multi_modal_content(item) else item
+            for item in part.content_items()
+        ]
+        return {'tool_return': {'name': part.tool_name, 'content': _labelled_tool_return_text(part, labelled)}}
     return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 
 

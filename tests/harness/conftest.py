@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -12,7 +13,12 @@ import pytest
 import pydantic_ai.models
 import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
 
 # `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
 # harness imports it lazily. A registration after any test has escaped framing text emits a
@@ -40,6 +46,7 @@ else:
     from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
 __all__ = (
+    'CountingModel',
     'IsDatetime',
     'IsInstance',
     'IsNow',
@@ -125,6 +132,33 @@ def instrument_all_agents() -> Iterator[None]:
         yield
     finally:
         Agent.instrument_all(False)
+
+
+@dataclass(init=False)
+class CountingModel(WrapperModel):
+    """Wraps a model that has no `count_tokens` (like `TestModel`) to report `input_tokens` for every request.
+
+    A run with `UsageLimits(count_tokens_before_request=True)` on the wrapped model alone fails with
+    `NotImplementedError`.
+    """
+
+    input_tokens: int
+
+    def __init__(self, wrapped: Model, *, input_tokens: int = 10) -> None:
+        super().__init__(wrapped)
+        self.input_tokens = input_tokens
+
+    @property
+    def provider(self) -> None:
+        return None
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=self.input_tokens)
 
 
 def agent_run_names(capfire: CaptureLogfire) -> list[str]:

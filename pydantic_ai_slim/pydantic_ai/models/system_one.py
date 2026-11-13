@@ -2,9 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from decimal import Decimal
-from math import isfinite
-from typing import Annotated, ClassVar, Literal, assert_never, cast
+from typing import Annotated, ClassVar, Literal, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
@@ -18,20 +16,13 @@ from ..providers.system_one import SystemOneProvider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
-    ChoiceAnswer,
-    ChoiceQuestion,
     DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
     DecisionRequest,
     DecisionResponse,
-    NoulAnswer,
-    NoulQuestion,
-    ScoreAnswer,
-    ScoreQuestion,
-    _probability_bounds,  # pyright: ignore[reportPrivateUsage]
-    _score_fits,  # pyright: ignore[reportPrivateUsage]
+    _answer_fits,  # pyright: ignore[reportPrivateUsage]
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -43,12 +34,6 @@ __all__ = (
 
 SystemOneModelName = str
 """The name the API serves a model under, such as `clm-latest`."""
-
-# How far an unrounded probability or score may be from the exact value, on top of display rounding. Jev rounds
-# what it sends to two decimals, but a server such as vLLM sends a softmax and its expected level unrounded, with
-# all their float digits, and computed in float32 or float64: their sum is one, and the score their mean, only
-# within that arithmetic's error, which float32 puts near 1e-7. A wrong answer is off by far more than this.
-_FLOAT_TOLERANCE = Decimal('1e-6')
 
 
 class SystemOneModelSettings(DecisionModelSettings, total=False):
@@ -223,56 +208,6 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         except (TypeError, ValueError) as e:
             # An `extra_body` that will not encode as JSON is the caller's to fix, not the model's.
             raise UserError(f'Could not send this request to the System One API: {e}') from e
-
-
-def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:
-    """Whether the API's `answer` is a valid answer to `question`."""
-    match question:
-        case NoulQuestion():
-            return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
-        case ChoiceQuestion():
-            return (
-                isinstance(answer, ChoiceAnswer)
-                and answer.choice in question.criteria
-                and answer.probabilities.keys() == question.criteria.keys()
-                and _probabilities_fit(answer)
-            )
-        case ScoreQuestion():
-            return isinstance(answer, ScoreAnswer) and _score_answer_fits(question, answer)
-        case _:
-            assert_never(question)
-
-
-def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
-    """Whether an answer's confidence and probabilities are probabilities, and its probabilities sum to one."""
-    probabilities = answer.probabilities.values()
-    # Jev displays probabilities to two decimal places, so each may differ by half a unit, which also
-    # covers the float error of a backend that sends them unrounded.
-    return (
-        isfinite(answer.confidence)
-        and 0 <= answer.confidence <= 1
-        and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
-        and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
-    )
-
-
-def _score_answer_fits(question: ScoreQuestion, answer: ScoreAnswer) -> bool:
-    """Whether a score answer rates the rubric's levels, and its score is one its probabilities could produce."""
-    levels = set(range(len(question.criteria)))
-    if not (
-        answer.probabilities.keys() == levels
-        and (not answer.legend or answer.legend.keys() == levels)
-        and isfinite(answer.score)
-        and 0 <= answer.score <= len(question.criteria) - 1
-        and _probabilities_fit(answer)
-    ):
-        return False
-    # A displayed score and its probabilities may each be rounded, or carry float error. Check
-    # whether any distribution within their intervals could produce that score, using at least
-    # Jev's two decimals and never less than the float tolerance.
-    probabilities_by_level: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
-    lower, upper = _probability_bounds(probabilities_by_level, float_tolerance=_FLOAT_TOLERANCE)
-    return _score_fits(lower, upper, answer.score, float_tolerance=_FLOAT_TOLERANCE)
 
 
 @dataclass(kw_only=True)

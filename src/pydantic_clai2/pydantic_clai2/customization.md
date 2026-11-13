@@ -172,7 +172,7 @@ or to a program inside the project that a list command runs, such as
 needs approval again (a string command is approved as written), and so does
 any change to a project plugin's file. The user's own table is the settings of
 the built-in hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
-clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
+clai2 plugins only lists declarations, since the agent can run clai2 too.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
@@ -380,6 +380,9 @@ installed source. For example, before_model_request returns its
 ModelRequestContext; it is not a None-returning host observer. Do not add CLAI
 moments for core behaviour. Raising before_tool_execute fails the run; consult
 core's documented SkipToolExecution when only one tool execution should be skipped.
+Any bound Hooks leaves code mode's workspace unmounted, since its checked tools
+can't be read before the run; an observer that should keep pathlib file access
+in run_code should be its own AbstractCapability subclass instead.
 
 For typed capability events use hooks.on.event(EventClass) with a handler taking
 RunContext and the event, or core's @on_event(EventClass) on a capability method.
