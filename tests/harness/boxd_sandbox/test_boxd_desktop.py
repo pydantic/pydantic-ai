@@ -92,11 +92,16 @@ def _path(points: int) -> tuple[Point, ...]:
         ),
         pytest.param(PressKeys(keys=('Return',)), ["key 'enter' repeat=1 hold_ms=0"], id='alias'),
         pytest.param(
+            PressKeys(keys=('\n', '\t')), ["key 'Return+Tab' repeat=1 hold_ms=0"], id='newline-and-tab-as-keys'
+        ),
+        pytest.param(
             PressKeys(keys=('ctrl', '+', 'é', 'KP_Enter', 'xf86audiomute', 'f24')),
             ["key 'ctrl+U002B+U00E9+KP_Enter+XF86AudioMute+f24' repeat=1 hold_ms=0"],
             id='keysyms',
         ),
         pytest.param(HoldKeys(keys=('shift', 'a'), seconds=1.5), ["key 'shift+a' repeat=0 hold_ms=1500"], id='hold'),
+        # boxd reads `hold_ms=0` as a plain press.
+        pytest.param(HoldKeys(keys=('a',), seconds=0.0001), ["key 'a' repeat=0 hold_ms=1"], id='short-hold'),
     ],
 )
 async def test_each_action_maps_onto_boxd_calls(host: FakeBoxd, action: DisplayAction, calls: list[str]) -> None:
@@ -121,6 +126,26 @@ async def test_what_boxd_cannot_do_is_refused_before_anything_runs(host: FakeBox
     with pytest.raises(UnsupportedActionError):
         await screen(backend).act(action)
     assert host.desktop.calls == []
+
+
+@pytest.mark.parametrize(
+    ('method', 'args', 'kwargs', 'message'),
+    [
+        pytest.param('type', ('a' * 10_001,), {}, 'type at most 10000 characters per call', id='type'),
+        pytest.param('scroll', (1, 1), {'dy': -101}, 'scroll at most 100 wheel clicks each way', id='scroll'),
+        pytest.param('key', ('a',), {'repeat': 101}, 'repeat at most 100 times', id='repeat'),
+        pytest.param('drag', ([(1, 1)],), {}, 'a drag path has 2 to 100 points', id='drag'),
+    ],
+)
+async def test_the_fake_refuses_what_boxd_refuses_in_one_call(
+    host: FakeBoxd, method: str, args: tuple[object, ...], kwargs: dict[str, int], message: str
+) -> None:
+    """Pins the per-call limits measured on boxd, which the splitting tests above stay within."""
+    await BoxdSandboxBackend(desktop=True).get_sandbox()
+    computer = host.client().machines.computer
+
+    with pytest.raises(APIStatusError, match=message):
+        await getattr(computer, method)(host.only.id, *args, **kwargs)
 
 
 async def test_a_failed_long_drag_releases_the_button(host: FakeBoxd) -> None:

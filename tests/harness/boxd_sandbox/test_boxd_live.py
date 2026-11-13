@@ -104,6 +104,25 @@ async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> N
         assert (await backend.live_view_url()).endswith(f'/desktop/{machine.name}')
 
 
+async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumption that boxd presses every key name `PressKeys` can carry, as the
+    keysym the driver sends for it, alone and held with a modifier."""
+    names = [
+        *('enter', 'escape', 'tab', 'backspace', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown'),
+        *('up', 'down', 'left', 'right', 'space', 'printscreen', 'pause', 'menu', 'capslock', 'numlock'),
+        *('scrolllock', *(f'f{n}' for n in range(1, 25)), *(f'numpad{n}' for n in range(10)), 'numpad_enter'),
+        *('numpad_add', 'numpad_subtract', 'numpad_multiply', 'numpad_divide', 'numpad_decimal'),
+        *('volumemute', 'volumeup', 'volumedown', 'mediaplay', 'medianext', 'mediaprev'),
+        *('a', 'Z', '7', '+', '!', 'é', '\n', '\t', 'super'),
+    ]
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        for name in names:
+            await display.act(PressKeys(keys=(name,)))
+        await display.act(PressKeys(keys=('ctrl', 'shift', '+')))
+
+
 # Starts a terminal on the desktop that saves what is typed into it, as an agent would start a program.
 _TERMINAL = "setsid xterm -e sh -c 'cat > typed.txt' </dev/null >/dev/null 2>&1 &"
 

@@ -82,24 +82,24 @@ _KEYSYMS = {
     'mediaplay': 'XF86AudioPlay',
     'medianext': 'XF86AudioNext',
     'mediaprev': 'XF86AudioPrev',
+    # As keys, not characters: browsers ignore the Linefeed keysym.
+    '\n': 'Return',
+    '\t': 'Tab',
 }
 """Normalized key names boxd knows only by their X keysym. It takes the other names as they are."""
 
 
 def _keysym(key: str) -> str:
+    if key in _KEYSYMS:
+        return _KEYSYMS[key]
     if len(key) == 1 and not (key.isascii() and key.isalnum()):
         # A symbol such as `+` would read as the join in `ctrl++`; `U002B` can't.
         return f'U{ord(key):04X}'
-    return _KEYSYMS.get(key, key)
+    return key
 
 
 def _combination(keys: Sequence[str]) -> str:
     return '+'.join(_keysym(key) for key in keys)
-
-
-def _modifiers(modifiers: Sequence[str]) -> list[str]:
-    # Normalized to `ctrl`, `shift`, `alt` and `super`, which boxd takes as they are.
-    return list(modifiers)
 
 
 def _png(result: ComputerActionResult) -> bytes:
@@ -141,7 +141,7 @@ class BoxdDesktop:
         computer, machine_id = self._attached()
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
-                await computer.click(machine_id, x, y, button=button, count=count, modifiers=_modifiers(modifiers))
+                await computer.click(machine_id, x, y, button=button, count=count, modifiers=modifiers)
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 if modifiers:
                     raise UnsupportedActionError("boxd's desktop cannot hold keys while it moves the pointer.")
@@ -157,9 +157,9 @@ class BoxdDesktop:
                 for start in range(0, amount, _SCROLLED_PER_CALL):
                     clicks = sign * min(_SCROLLED_PER_CALL, amount - start)
                     if direction in ('up', 'down'):
-                        await computer.scroll(machine_id, x, y, dy=clicks, modifiers=_modifiers(modifiers))
+                        await computer.scroll(machine_id, x, y, dy=clicks, modifiers=modifiers)
                     else:
-                        await computer.scroll(machine_id, x, y, dx=clicks, modifiers=_modifiers(modifiers))
+                        await computer.scroll(machine_id, x, y, dx=clicks, modifiers=modifiers)
             case TypeText(text=text):
                 for start in range(0, len(text), _TYPED_PER_CALL):
                     await computer.type(machine_id, text[start : start + _TYPED_PER_CALL])
@@ -168,7 +168,7 @@ class BoxdDesktop:
                 for start in range(0, repeat, _REPEATS_PER_CALL):
                     await computer.key(machine_id, combination, repeat=min(_REPEATS_PER_CALL, repeat - start))
             case HoldKeys(keys=keys, seconds=seconds):
-                await computer.key(machine_id, _combination(keys), hold_ms=round(seconds * 1000))
+                await computer.key(machine_id, _combination(keys), hold_ms=max(1, round(seconds * 1000)))
             case _:
                 raise UnsupportedActionError(f"boxd's desktop cannot perform {action!r}.")
 
@@ -177,7 +177,7 @@ class BoxdDesktop:
     ) -> None:
         points = [(point.x, point.y) for point in path]
         if len(points) <= _DRAG_POINTS_PER_CALL:
-            await computer.drag(machine_id, points, modifiers=_modifiers(modifiers))
+            await computer.drag(machine_id, points, modifiers=modifiers)
             return
         if modifiers:
             raise UnsupportedActionError(
@@ -185,8 +185,9 @@ class BoxdDesktop:
             )
         # More than 100 moves, each its own call: a browser sees the drag start and land without added pauses.
         start, end = path[0], path[-1]
-        await computer.mouse_down(machine_id, start.x, start.y)
         try:
+            # Inside the `try`: a press cancelled after boxd made it is still let go of.
+            await computer.mouse_down(machine_id, start.x, start.y)
             for point in path[1:]:
                 await computer.move(machine_id, point.x, point.y)
             await computer.mouse_up(machine_id, end.x, end.y)
