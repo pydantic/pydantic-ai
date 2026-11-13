@@ -1795,8 +1795,9 @@ def test_stamping_leaves_the_enqueued_request_as_it_was() -> None:
     assert stamped is not request
     assert request.parts == [page, prompt]
     assert page.capability_id is None
-    assert [type(part).__name__ for part in stamped.parts] == ['TaskReportPart', '_CapabilityInstructionPart']
-    assert stamped.parts[0].capability_id == 'plugin'
+    stamped_page, stamped_prompt = stamped.parts
+    assert isinstance(stamped_page, TaskReportPart) and stamped_page.capability_id == 'plugin'
+    assert type(stamped_prompt).__name__ == '_CapabilityInstructionPart'
 
 
 @pytest.mark.parametrize('cause', ['validation_error', 'model_retry'])
