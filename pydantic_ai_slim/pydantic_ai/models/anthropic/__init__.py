@@ -2132,8 +2132,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if self._sends_inference_geo(model_settings, anthropic_profile):
             return inference_geo
         warnings.warn(
-            f'`anthropic_inference_geo` is not supported on this client, where the endpoint decides the inference '
-            f'region; the setting {inference_geo!r} will be ignored.',
+            f'`anthropic_inference_geo` is not supported on `{type(self.client).__name__}`, where the endpoint decides '
+            f'the inference region; the setting {inference_geo!r} will be ignored.',
             UserWarning,
             stacklevel=2,
         )

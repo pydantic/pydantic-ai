@@ -109,6 +109,11 @@ _CLIENTS: dict[str, Callable[[httpx2.AsyncClient], AsyncAnthropicClient]] = {
 """The SDK client for each client name the tests parametrize over, sending through the given HTTP client."""
 
 
+def _ignored_warning(client: AsyncAnthropicClient) -> str:
+    """The warning raised when `client` ignores the setting, which names its class."""
+    return f'`anthropic_inference_geo` is not supported on `{type(client).__name__}`, where the endpoint decides'
+
+
 def _last_response(messages: list[ModelMessage]) -> ModelResponse:
     response = messages[-1]
     assert isinstance(response, ModelResponse)
@@ -189,14 +194,13 @@ async def test_inference_geo_request_field_by_client(
     """Bedrock, Vertex AI and Foundry decide the region by endpoint, so the setting is ignored there with a warning."""
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        model = AnthropicModel(
-            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=_CLIENTS[client_name](http_client))
-        )
+        client = _CLIENTS[client_name](http_client)
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
         )
         if expected is None:
-            with pytest.warns(UserWarning, match='`anthropic_inference_geo` is not supported on this client'):
+            with pytest.warns(UserWarning, match=_ignored_warning(client)):
                 messages = (await agent.run('Reply with exactly: OK')).all_messages()
         else:
             messages = (await agent.run('Reply with exactly: OK')).all_messages()
@@ -216,13 +220,12 @@ async def test_inference_geo_not_reported_when_ignored_streamed(allow_model_requ
     """
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        model = AnthropicModel(
-            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=_CLIENTS[client_name](http_client))
-        )
+        client = _CLIENTS[client_name](http_client)
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
         )
-        with pytest.warns(UserWarning, match='`anthropic_inference_geo` is not supported on this client'):
+        with pytest.warns(UserWarning, match=_ignored_warning(client)):
             async with agent.run_stream('Reply with exactly: OK') as streamed:
                 await streamed.get_output()
 
@@ -248,16 +251,15 @@ async def test_inference_geo_provider_profile_wins(
 
     bodies: list[dict[str, Any]] = []
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
-        model = AnthropicModel(
-            'claude-sonnet-5-5', provider=InferenceGeoProvider(anthropic_client=_CLIENTS[client_name](http_client))
-        )
+        client = _CLIENTS[client_name](http_client)
+        model = AnthropicModel('claude-sonnet-5-5', provider=InferenceGeoProvider(anthropic_client=client))
         agent = Agent(
             model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
         )
         if supports_inference_geo:
             await agent.run('Reply with exactly: OK')
         else:
-            with pytest.warns(UserWarning, match='`anthropic_inference_geo` is not supported on this client'):
+            with pytest.warns(UserWarning, match=_ignored_warning(client)):
                 await agent.run('Reply with exactly: OK')
 
     [body] = bodies
