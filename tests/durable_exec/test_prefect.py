@@ -3056,7 +3056,7 @@ async def test_flow_retry_keeps_run_deadline() -> None:
 
 
 async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
-    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    """A model selector sees the run's cached default IDs and deadline on every step, and again on a flow retry."""
     selections: list[tuple[int, str | None, str | None, datetime | None]] = []
 
     def select(ctx: ModelSelectionContext[object]) -> Model:
