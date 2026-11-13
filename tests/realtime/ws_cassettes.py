@@ -623,6 +623,22 @@ class ReplayWebSocket:
                     self._interactions.insert(self._position, self._interactions.pop(index))
                 return
 
+    def unsent(self, *, heartbeats: bool = True) -> list[dict[str, Any]]:
+        """The recorded sends replay has reached that the run hasn't made, up to the next recorded inbound frame.
+
+        A send recorded after an inbound frame the run hasn't read is one it hasn't reached: a session can close
+        sooner in replay than it did live. `heartbeats=False` leaves out ElevenLabs' `pong` answers and the idle
+        pump's audio (see `pumps_audio`).
+        """
+        unsent: list[dict[str, Any]] = []
+        for interaction in self._interactions[self._position :]:
+            if not isinstance(interaction, CassetteMessage) or interaction.direction == 'received':
+                break
+            frame = interaction.data
+            if heartbeats or not (frame.get('type') == 'pong' or (self.pumps_audio and _is_audio_send(frame))):
+                unsent.append(frame)
+        return unsent
+
     def _advance(self) -> None:
         """Consume the next interaction. Call with the condition held."""
         self._position += 1
@@ -726,9 +742,17 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
 
 @contextmanager
 def patched_ws_connect(
-    provider: ProviderName, cassette: RealtimeCassette, plan: CassettePlan, *, hold_open: bool = False
+    provider: ProviderName,
+    cassette: RealtimeCassette,
+    plan: CassettePlan,
+    *,
+    hold_open: bool = False,
+    unsent_heartbeat: bool = False,
 ) -> Generator[None]:
-    """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`."""
+    """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`.
+
+    Replay fails if the run never made a recorded send it reached; `unsent_heartbeat` excuses heartbeats among them.
+    """
     target, attr = _connect_target(provider)
     real_connect = getattr(target, attr)
     replay = ReplayWebSocket(cassette, hold_open=hold_open) if plan == 'replay' else None
@@ -759,6 +783,9 @@ def patched_ws_connect(
         _patched_idle_audio(provider, replay),
     ):
         yield
+    # A recorded send the run never made after the last inbound frame it read has no read waiting on it to fail.
+    if replay is not None and (unsent := replay.unsent(heartbeats=not unsent_heartbeat)):
+        raise AssertionError(f'The run never made these recorded sends: {unsent!r}')
 
 
 @contextmanager

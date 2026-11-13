@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
@@ -468,6 +469,44 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
     wrong_content = RealtimeCassette(interactions=[CassetteMessage(direction='sent', data={'type': 'client.expected'})])
     with pytest.raises(AssertionError, match='did not match cassette'):
         await ReplayWebSocket(wrong_content).send(json.dumps({'type': 'client.unexpected'}))
+    # A recorded send the run never makes, after the last inbound frame, which leaves nothing waiting on it.
+    trailing_send = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data={'type': 'client.expected'}),
+        ]
+    )
+    with pytest.raises(
+        AssertionError, match=re.escape("never made these recorded sends: [{'type': 'client.expected'}]")
+    ):
+        with patched_ws_connect('openai', trailing_send, 'replay'):
+            replay = trailing_send._replay  # pyright: ignore[reportPrivateUsage]
+            assert replay is not None
+            assert await replay.recv() == json.dumps({'type': 'server.event'})
+    # `realtime_ws_unsent_heartbeat` excuses a `pong` and the idle pump's audio, and no other send.
+    pong = {'type': 'pong', 'event_id': 1}
+    trailing_pong = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data=pong),
+        ]
+    )
+    with patched_ws_connect('openai', trailing_pong, 'replay', unsent_heartbeat=True):
+        replay = trailing_pong._replay  # pyright: ignore[reportPrivateUsage]
+        assert replay is not None
+        assert await replay.recv() == json.dumps({'type': 'server.event'})
+    audio = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+    expected = {'type': 'client.expected'}
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, audio, expected)]
+        )
+    )
+    assert replay.unsent() == [pong, audio, expected]
+    # Without the pump, audio is the application's own microphone.
+    assert replay.unsent(heartbeats=False) == [audio, expected]
+    replay.pumps_audio = True
+    assert replay.unsent(heartbeats=False) == [expected]
 
 
 _LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
