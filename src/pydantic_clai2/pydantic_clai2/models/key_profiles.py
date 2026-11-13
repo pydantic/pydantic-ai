@@ -63,7 +63,6 @@ KEY_VARIABLES = {
     'litellm': (),  # LiteLLM reads the key of the provider it routes to.
     'heroku': ('HEROKU_INFERENCE_KEY',),
     'huggingface': ('HF_TOKEN',),
-    'snowflake': ('SNOWFLAKE_TOKEN',),
     'vercel': ('VERCEL_AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN'),
     'voyageai': ('VOYAGE_API_KEY',),
 }
