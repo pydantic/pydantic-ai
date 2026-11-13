@@ -40,6 +40,16 @@ with try_import() as imports_successful:
             return len(ctx.output) >= self.minimum
 
     @dataclass
+    class KeywordOnlyFirstWithDefault(Evaluator[str, str, str]):
+        """A positional value would land in `evaluation_name`, the first positional parameter."""
+
+        minimum: int = field(default=0, kw_only=True)
+        evaluation_name: str = 'length'
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum
+
+    @dataclass
     class Positional(Evaluator[str, str, str]):
         minimum: int
 
@@ -68,7 +78,14 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])
 @pytest.mark.parametrize(
     'evaluator_name',
-    ['KeywordOnly', 'KeywordOnlyField', 'MixedFields', 'Positional', 'PositionalWithKeywordOnlyDefault'],
+    [
+        'KeywordOnly',
+        'KeywordOnlyField',
+        'MixedFields',
+        'KeywordOnlyFirstWithDefault',
+        'Positional',
+        'PositionalWithKeywordOnlyDefault',
+    ],
 )
 def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'], evaluator_name: str):
     """File persistence retains constructor names without changing existing positional short forms."""
@@ -76,6 +93,7 @@ def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'],
         'KeywordOnly': KeywordOnly,
         'KeywordOnlyField': KeywordOnlyField,
         'MixedFields': MixedFields,
+        'KeywordOnlyFirstWithDefault': KeywordOnlyFirstWithDefault,
         'Positional': Positional,
         'PositionalWithKeywordOnlyDefault': PositionalWithKeywordOnlyDefault,
     }[evaluator_name]
