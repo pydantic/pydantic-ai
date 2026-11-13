@@ -192,11 +192,6 @@ def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tu
     return scroll, f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
 
 
-_SCROLL_NOTES = 'computer_scroll_notes'
-"""The `provider_details` key of a note per `computer` tool action, on how a pixel scroll ran in wheel clicks."""
-
-_SCROLL_NOTES_TA = TypeAdapter(list[str | None])
-
 _STORED_ITEM_TA = TypeAdapter(dict[str, Any])
 
 _COMPUTER_CALL_KEYS = (
@@ -239,7 +234,9 @@ def map_computer_call(
         # runs. OpenAI says not to run a partially generated action.
         args = '{"actions": ['
     else:
-        args = _map_actions(dumped, provider_details, sent=item.model_fields_set)
+        # A call with no actions only asks to look.
+        actions = [action for action, _ in _map_actions(dumped, sent=item.model_fields_set)]
+        args = {'actions': actions or [{'type': 'screenshot'}]}
     return ComputerCallPart(
         tool_name,
         args,
@@ -250,8 +247,8 @@ def map_computer_call(
     )
 
 
-def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any], *, sent: set[str]) -> dict[str, Any]:
-    """A `computer_call` item's actions as the `computer` tool's arguments, noting scrolls in `provider_details`.
+def _map_actions(dumped: dict[str, Any], *, sent: set[str]) -> list[tuple[dict[str, Any], str | None]]:
+    """A `computer_call` item's actions as `computer` tool actions, each with its note on how a pixel scroll runs.
 
     `sent` names the fields the response had, including those it sent as `null`, which `dumped` leaves out.
     """
@@ -270,13 +267,7 @@ def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any], *, se
     except ValidationError:
         # Not a list, even if it is one action: the call is malformed, so none of it runs.
         actions = [None]
-    mapped = [tool_action for action in actions for tool_action in _map_computer_action(action)]
-    notes = [note for _, note in mapped]
-    if any(notes):
-        # Written now, while what the model asked for is known, and read when the result is sent back.
-        provider_details[_SCROLL_NOTES] = notes
-    # A call with no actions only asks to look.
-    return {'actions': [tool_action for tool_action, _ in mapped] or [{'type': 'screenshot'}]}
+    return [tool_action for action in actions for tool_action in _map_computer_action(action)]
 
 
 def computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
@@ -295,17 +286,15 @@ def computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart
 
 
 def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
-    """The notes on the pixel scrolls that ran, kept on the call when it was made.
+    """The notes on the pixel scrolls that ran, made again from the stored item's validated numbers.
 
-    Only the first `performed` actions ran. Nothing is said for a call changed before it ran (its summary covers it),
-    a result without its outcome, or notes that don't validate, since a history may come from storage or a UI.
+    Not kept as text on the call, where a history from storage or a UI could put any text. Only the first `performed`
+    actions ran. Nothing is said for a call changed before it ran (its summary covers it) or a result without its
+    outcome.
     """
-    if call is None or result is None or result.get('changed'):
+    if call is None or result is None or result.get('changed') or not (stored := stored_computer_call(call)):
         return []
-    try:
-        notes = _SCROLL_NOTES_TA.validate_python((call.provider_details or {}).get(_SCROLL_NOTES, []))
-    except ValidationError:
-        return []
+    notes = [note for _, note in _map_actions(stored, sent=set(stored))]
     return [note for note in notes[: result['performed']] if note]
 
 
