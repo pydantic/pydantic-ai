@@ -50,9 +50,9 @@ class FunctionSchema:
     description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
-    # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
+    # if not None, the function takes a single by that name (besides potentially `info`)
     single_arg_name: str | None = None
     single_field_name: str | None = None
     """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
