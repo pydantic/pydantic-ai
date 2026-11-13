@@ -160,6 +160,9 @@ class NativeComputer:
         if name == 'screenshot' and not last:
             # The `computer` tool captures the screen once, after the batch, but each screenshot call needs its image.
             return [{'type': 'screenshot', 'not_the_last_call': True}]
+        if not self.is_toolset and name in _COMPUTER_CLICKS and 'text' in block['input']:
+            # The earlier tools' clicks take modifier keys only as `key`, so `text` there is refused, not merged into it.
+            return [{'type': 'click', 'unsupported_fields': ['text']}]
         return map_computer_member(name, args)
 
 
