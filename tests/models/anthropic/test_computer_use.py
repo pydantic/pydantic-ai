@@ -644,11 +644,10 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
     assert (
         [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [ComputerCallPart, TextPart]
     )
-    starts = [
-        event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
-    ]
-    # Started once, with the whole batch, so a UI sees one call.
-    assert [len(part.args_as_dict()['actions']) for part in starts] == [3]
+    starts = [(event.index, type(event.part)) for event in events if isinstance(event, PartStartEvent)]
+    # Started before the text that follows it, so events replay in the response's order, and again with the member
+    # after the text, at the same index, so a UI sees one call.
+    assert starts == [(0, ComputerCallPart), (1, TextPart), (0, ComputerCallPart)]
 
 
 async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow_model_requests: None) -> None:
