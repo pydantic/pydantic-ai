@@ -94,6 +94,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> E2BSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -110,6 +111,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=sandbox_timeout,
             working_dir=working_dir,
             env=env,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
