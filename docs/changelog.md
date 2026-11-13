@@ -25,7 +25,7 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 ### v2.62.0 (2026-10-26)
 
-- See [#11111](https://github.com/pydantic/pydantic-ai/pull/11111) - A model request that names a `thinking` effort level emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent], which a durability `event_stream_handler=` receives in an event-handler activity or step of its own. This can break replay of durable workflows paused across the upgrade: see [Temporal](durable_execution/temporal.md#streaming) and [DBOS](durable_execution/dbos.md#streaming) for who is affected and how to upgrade.
+- See [#11111](https://github.com/pydantic/pydantic-ai/pull/11111) - A model request whose `thinking` effort level differs from the one in effect, like a run's first request with `thinking='low'`, emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent], which a durability `event_stream_handler=` receives in an event-handler activity or step of its own. This can break replay of durable workflows paused across the upgrade: see [Temporal](durable_execution/temporal.md#streaming) and [DBOS](durable_execution/dbos.md#streaming) for who is affected and how to upgrade.
 
 ### v2.60.0 (2026-10-22)
 

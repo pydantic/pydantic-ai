@@ -8488,12 +8488,12 @@ async def test_delta_event_handler_activity_breaks_replay_of_earlier_histories(
     assert _scheduled_activity_kinds(history) == activities
     assert _delta_handler_events == handled_events
 
-    monkeypatch.setattr(
-        'pydantic_ai.durable_exec._base.MODEL_RESPONSE_STREAM_EVENT_TYPES',
-        (*MODEL_RESPONSE_STREAM_EVENT_TYPES, delta_event_type),
-    )
-    earlier_history = await _record_delta_event_history(client, workflow_type, agent)
-    monkeypatch.undo()
+    with monkeypatch.context() as patch_dispatch:
+        patch_dispatch.setattr(
+            'pydantic_ai.durable_exec._base.MODEL_RESPONSE_STREAM_EVENT_TYPES',
+            (*MODEL_RESPONSE_STREAM_EVENT_TYPES, delta_event_type),
+        )
+        earlier_history = await _record_delta_event_history(client, workflow_type, agent)
     assert _scheduled_activity_kinds(earlier_history) == earlier_activities
 
     replayer = Replayer(
