@@ -3890,6 +3890,52 @@ def test_dump_load_roundtrip_builtin_tool_return_before_function_call() -> None:
     assert reloaded == original
 
 
+@pytest.mark.parametrize(
+    'tool_calls,results,expected',
+    [
+        pytest.param(
+            ['pyd_ai_builtin|anthropic|srv_1', 'call_1'],
+            ['pyd_ai_builtin|anthropic|srv_1'],
+            snapshot(['NativeToolCallPart:srv_1', 'NativeToolReturnPart:srv_1', 'ToolCallPart:call_1']),
+            id='native-then-function',
+        ),
+        pytest.param(
+            ['pyd_ai_builtin|anthropic|srv_1', 'pyd_ai_builtin|anthropic|srv_2'],
+            ['pyd_ai_builtin|anthropic|srv_2', 'pyd_ai_builtin|anthropic|srv_1'],
+            snapshot(
+                [
+                    'NativeToolCallPart:srv_1',
+                    'NativeToolCallPart:srv_2',
+                    'NativeToolReturnPart:srv_2',
+                    'NativeToolReturnPart:srv_1',
+                ]
+            ),
+            id='nested-native-order-kept',
+        ),
+    ],
+)
+def test_load_builtin_tool_return_before_function_call(
+    tool_calls: list[str], results: list[str], expected: list[str]
+) -> None:
+    """A native tool return loads ahead of a function call the same `AssistantMessage` lists after its call.
+
+    A frontend keeps all of a response's calls on one message and appends each result as it streams in.
+    Native returns keep the order they arrived in, as for a server tool called from inside another one.
+    """
+    messages: list[Message] = [
+        UserMessage(id='msg_1', content='Find my earlier chats'),
+        AssistantMessage(
+            id='msg_2',
+            tool_calls=[ToolCall(id=id, function=FunctionCall(name='tool', arguments='{}')) for id in tool_calls],
+        ),
+        *(ToolMessage(id=f'result_{id}', tool_call_id=id, content='result') for id in results),
+    ]
+
+    response = AGUIAdapter.load_messages(messages)[1]
+    assert isinstance(response, ModelResponse)
+    assert [f'{type(part).__name__}:{getattr(part, "tool_call_id", None)}' for part in response.parts] == expected
+
+
 def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
     original: list[ModelMessage] = [
         ModelResponse(
