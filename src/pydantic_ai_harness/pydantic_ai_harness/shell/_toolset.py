@@ -21,7 +21,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError
+from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutError
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
@@ -303,8 +303,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             # \udc80-\udcff range as the raw bytes it round-trips from. Encoding
             # as plain UTF-8 here would reject commands the OS runs happily.
             os.fsencode(command)
-        except UnicodeEncodeError as e:
-            raise ModelRetry('The command contains characters that cannot be encoded for the operating system.') from e
+        except UnicodeEncodeError as exc:
+            raise ModelRetry(
+                'The command contains characters that cannot be encoded for the operating system.'
+            ) from exc
 
         if not self._allow_interactive and is_interactive_command(command):
             raise PermissionError(f'Interactive commands are not allowed. Command: {command!r}')
@@ -406,8 +408,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                     env=self._resolve_env(),
                     timeout=timeout,
                 )
-            except WorkspaceTimeoutError as e:
-                return _labelled(e.stdout, e.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
+            except WorkspaceTimeoutError as exc:
+                return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
 
             output = _labelled(result.stdout, result.stderr, empty='(no output)')
             exit_code = result.exit_code
@@ -551,11 +553,17 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 _, exit_code = await job.status()
 
         stdout, stderr = await self._read_bg_output(job)
-        await job.cleanup()
-
         parts = [_labelled(stdout, stderr, empty='(no output)'), '[stopped]']
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
+        try:
+            await job.cleanup()
+        # Before `PermissionError`: a read-only workspace's `WorkspaceReadOnlyError` is one too.
+        except WorkspaceError:
+            raise
+        except PermissionError:
+            # The wrapper makes only the job directory writable again, not a jobs directory the command made read-only.
+            parts.append('[job directory not removed: permission denied]')
         return '\n'.join(parts)
 
 
