@@ -288,7 +288,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   [workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
   The review step `exec`s the runner, so the runner is that process. The first signal raises
   `KeyboardInterrupt` in it and the runner ignores the rest, so a cancelled review exports its run
-  span and review span when Logfire answers within those 10 s.
+  span and then its review span in those 10 s. The run span's export waits up to 5 s and the
+  review span's up to 30 s, so a Logfire that answers slowly can still lose the review span.
   OpenCode's own spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
