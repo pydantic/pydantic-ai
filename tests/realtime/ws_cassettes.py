@@ -623,20 +623,22 @@ class ReplayWebSocket:
                     self._interactions.insert(self._position, self._interactions.pop(index))
                 return
 
-    def unsent(self, *, heartbeats: bool = True) -> list[dict[str, Any]]:
+    def unsent(self, *, final_heartbeat: bool = True) -> list[dict[str, Any]]:
         """The recorded sends replay has reached that the run hasn't made, up to the next recorded inbound frame.
 
         A send recorded after an inbound frame the run hasn't read is one it hasn't reached: a session can close
-        sooner in replay than it did live. `heartbeats=False` leaves out ElevenLabs' `pong` answers and the idle
-        pump's audio (see `pumps_audio`).
+        sooner in replay than it did live. `final_heartbeat=False` leaves out the last of them when it is an
+        ElevenLabs `pong` answer or a frame of the idle pump's audio (see `pumps_audio`).
         """
         unsent: list[dict[str, Any]] = []
         for interaction in self._interactions[self._position :]:
             if not isinstance(interaction, CassetteMessage) or interaction.direction == 'received':
                 break
-            frame = interaction.data
-            if heartbeats or not (frame.get('type') == 'pong' or (self.pumps_audio and _is_audio_send(frame))):
-                unsent.append(frame)
+            unsent.append(interaction.data)
+        if not final_heartbeat and unsent:
+            last = unsent[-1]
+            if last.get('type') == 'pong' or (self.pumps_audio and _is_audio_send(last)):
+                unsent.pop()
         return unsent
 
     def _advance(self) -> None:
@@ -751,7 +753,8 @@ def patched_ws_connect(
 ) -> Generator[None]:
     """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`.
 
-    Replay fails if the run never made a recorded send it reached; `unsent_heartbeat` excuses heartbeats among them.
+    Replay fails if the run never made a recorded send it reached; `unsent_heartbeat` excuses the last of them when it
+    is a heartbeat.
     """
     target, attr = _connect_target(provider)
     real_connect = getattr(target, attr)
@@ -784,7 +787,7 @@ def patched_ws_connect(
     ):
         yield
     # A recorded send the run never made after the last inbound frame it read has no read waiting on it to fail.
-    if replay is not None and (unsent := replay.unsent(heartbeats=not unsent_heartbeat)):
+    if replay is not None and (unsent := replay.unsent(final_heartbeat=not unsent_heartbeat)):
         raise AssertionError(f'The run never made these recorded sends: {unsent!r}')
 
 

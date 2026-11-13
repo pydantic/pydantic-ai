@@ -483,7 +483,7 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
             replay = trailing_send._replay  # pyright: ignore[reportPrivateUsage]
             assert replay is not None
             assert await replay.recv() == json.dumps({'type': 'server.event'})
-    # `realtime_ws_unsent_heartbeat` excuses a `pong` and the idle pump's audio, and no other send.
+    # `realtime_ws_unsent_heartbeat` excuses a final `pong` or frame of the idle pump's audio, and no other send.
     pong = {'type': 'pong', 'event_id': 1}
     trailing_pong = RealtimeCassette(
         interactions=[
@@ -498,15 +498,18 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
     audio = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
     expected = {'type': 'client.expected'}
     replay = ReplayWebSocket(
-        RealtimeCassette(
-            interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, audio, expected)]
-        )
+        RealtimeCassette(interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, audio)])
     )
-    assert replay.unsent() == [pong, audio, expected]
+    assert replay.unsent() == [pong, audio]
     # Without the pump, audio is the application's own microphone.
-    assert replay.unsent(heartbeats=False) == [audio, expected]
+    assert replay.unsent(final_heartbeat=False) == [pong, audio]
+    # Only the final heartbeat is excused.
     replay.pumps_audio = True
-    assert replay.unsent(heartbeats=False) == [expected]
+    assert replay.unsent(final_heartbeat=False) == [pong]
+    trailing_expected = RealtimeCassette(
+        interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, expected)]
+    )
+    assert ReplayWebSocket(trailing_expected).unsent(final_heartbeat=False) == [pong, expected]
 
 
 _LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
