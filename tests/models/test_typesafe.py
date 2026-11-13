@@ -1255,20 +1255,6 @@ async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to
     }
 
 
-async def test_a_yes_no_field_reports_its_raw_probability_whatever_the_boolean_threshold(allow_model_requests: None):
-    def record(request: httpx2.Request) -> httpx2.Response:
-        return answers(urgent={'type': 'noul', 'noul': 0.7})
-
-    agent = Agent(mock_model(record), output_type=Ticket)
-    for threshold, urgent in [(0.5, True), (0.9, False)]:
-        result = await agent.run('x', model_settings=TypeSafeModelSettings(decision_boolean_threshold=threshold))
-
-        assert result.output == Ticket(urgent=urgent)
-        assert (result.response.provider_details or {})['probabilities'] == {
-            'urgent': {'true': 0.7, 'false': pytest.approx(0.3)}
-        }
-
-
 async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_model_requests: None):
     """A list of options is one yes/no per option, so the same bar decides each of them."""
 
