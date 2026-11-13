@@ -39,7 +39,7 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from ..display_contract import check_display_contract
+from ..display_contract_live import check_display_contract
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live

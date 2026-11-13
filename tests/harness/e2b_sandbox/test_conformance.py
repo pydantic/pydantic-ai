@@ -19,7 +19,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
-from ..display_contract import check_display_contract
+from ..display_contract_live import check_display_contract
 from .fake_e2b import FakeE2B
 
 
