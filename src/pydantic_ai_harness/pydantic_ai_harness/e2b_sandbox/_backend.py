@@ -545,8 +545,13 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def working_dir(self) -> str:
         """The canonical absolute directory commands start in."""
         if self._resolved_working_dir is None:
-            result = await self._probe(['pwd', '-P'], 'Could not determine the working directory')
-            printed = result.stdout.removesuffix('\n')
+            # E2B runs every command through `bash -l`, whose login profile can print first: the
+            # directory is what follows a marker printed just before `pwd -P`.
+            marker = f'pydantic-e2b-pwd-{uuid.uuid4().hex}\n'
+            result = await self._probe(
+                ['sh', '-c', 'printf %s "$1"; exec pwd -P', 'sh', marker], 'Could not determine the working directory'
+            )
+            printed = result.stdout.rpartition(marker)[2].removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
                 sandbox = await self._sandbox_for_operation()
                 raise WorkspaceError(

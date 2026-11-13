@@ -690,7 +690,20 @@ class TestWorkingDir:
         backend = await started()
         assert await backend.working_dir() == '/home/user'
         assert await backend.working_dir() == '/home/user'
-        assert [_user_line(call.command) for call in fake_e2b.sandboxes[0].commands.calls] == ['pwd -P']
+        [call] = fake_e2b.sandboxes[0].commands.calls
+        assert 'pwd -P' in _user_line(call.command)
+
+    async def test_a_login_profile_that_prints_is_ignored(
+        self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # E2B's `bash -l` sources the template's profile before every command; the host fake's
+        # `bash -c` sources `BASH_ENV` the same way.
+        profile = tmp_path / 'profile'
+        profile.write_text('echo "Welcome to my template"\n')
+        monkeypatch.setenv('BASH_ENV', str(profile))
+        fake_e2b.host_root = tmp_path.resolve()
+        backend = await started()
+        assert await backend.working_dir() == str(tmp_path.resolve())
 
     async def test_the_probe_carries_a_deadline(self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
         # The probe is a command like any other, so it is bounded and killed rather than left
@@ -721,7 +734,7 @@ class TestWorkingDir:
         assert await workspace.resolve('src/main.py') == '/home/user/src/main.py'
 
     async def test_the_facade_preserves_trailing_space_in_probed_working_dir(self, fake_e2b: FakeE2B) -> None:
-        fake_e2b.responder = lambda command, timeout: ('/srv/project \n' if command == 'pwd -P' else '', '', 0)
+        fake_e2b.responder = lambda command, timeout: ('/srv/project \n' if 'pwd -P' in command else '', '', 0)
         backend = await started()
         fake_e2b.sandboxes[0].files.files['/srv/project /marker.txt'] = b'found'
         workspace = Workspace(backend)
