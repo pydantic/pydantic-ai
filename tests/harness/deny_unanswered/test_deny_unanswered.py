@@ -114,7 +114,7 @@ class TestDenyUnanswered:
         assert result.output.approvals == []
 
     async def test_without_capability_calls_stay_deferred(self):
-        """Without `DenyUnanswered` the run pauses on `DeferredToolRequests`, and the caller's approval runs the tool."""
+        """Without `DenyUnanswered` the run pauses on `DeferredToolRequests` and the caller's approval runs the tool."""
         ran: list[int] = []
         agent = _approval_agent(ran, deny=False)
 
