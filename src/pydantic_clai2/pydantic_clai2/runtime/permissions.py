@@ -157,20 +157,18 @@ def unattended_only(
     capability, counts too. An attended session leaves calls nobody handles, and questions, as they were,
     instead of denying them.
     """
-    if not any(_is_approval_handler(capability) for capability in supplied):
+    capabilities: list[AbstractCapability[AgentDepsT]] = [
+        capability for capability in supplied if isinstance(capability, AbstractCapability)
+    ]
+    if not any(_is_approval_handler(capability) for capability in capabilities):
         return tuple(permissions)
     return tuple(capability for capability in permissions if not isinstance(capability, DenyUnansweredInSession))
 
 
-def _is_approval_handler(capability: AgentCapability[AgentDepsT]) -> bool:
-    candidate: AbstractCapability[AgentDepsT] | None = (
-        capability if isinstance(capability, AbstractCapability) else None
-    )
-    while candidate is not None:
-        if isinstance(candidate, ApprovalHandler):
-            return True
-        candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
-    return False
+def _is_approval_handler(capability: AbstractCapability[AgentDepsT]) -> bool:
+    if isinstance(capability, ApprovalHandler):
+        return True
+    return isinstance(capability, WrapperCapability) and _is_approval_handler(capability.wrapped)
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
