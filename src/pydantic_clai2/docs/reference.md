@@ -833,7 +833,8 @@ downgrade.
 
 Set `api_key` to the name of a `/keys` entry for a model to use that key instead of
 the provider's environment variable. Only the name is saved; the key stays in `/keys`
-and is read each time the model is built, so a deleted key fails the turn. The row
+and is read each time the model is built, so deleting or renaming the key in `/keys`
+fails the turn until you pick another. The row
 shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
 The plain model's `api_key` also applies to its `@default` account, which uses the
 environment's key; a profile such as `openai@work` keeps its own sign-in unless its
