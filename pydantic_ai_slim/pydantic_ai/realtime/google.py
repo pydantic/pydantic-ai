@@ -83,6 +83,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
@@ -573,6 +574,21 @@ def _thinking_to_config(thinking: ThinkingLevel, profile: GoogleRealtimeModelPro
     return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel(level))
 
 
+def _resolve_automatic_vad(model_settings: GoogleRealtimeModelSettings) -> AutomaticVAD | None:
+    """The `AutomaticVAD` that `google_vad`, or else the cross-provider `turn_detection`, asks for."""
+    if 'google_vad' in model_settings:
+        return model_settings['google_vad']
+    if 'turn_detection' in model_settings:
+        turn_detection = model_settings['turn_detection']
+        # `True` means the provider default (on), same as an absent setting. `False` asks for the
+        # same thing as `google_vad={'disabled': True}`, so both land on the disabled-VAD check in
+        # `GoogleRealtimeModel._realtime_input_config`.
+        if turn_detection is False:
+            return {'disabled': True}
+        return None if turn_detection is True else _automatic_vad_from_turn_detection(turn_detection)
+    return None
+
+
 def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> AutomaticVAD:
     """Map cross-provider turn detection to Gemini's automatic-VAD shape."""
     sensitivity = turn_detection.get('sensitivity')
@@ -628,6 +644,32 @@ async def _seed_turns(
     return turns
 
 
+def _has_function_parts(seed: Sequence[genai_types.Content]) -> bool:
+    return any(part.function_call or part.function_response for turn in seed for part in turn.parts or ())
+
+
+async def _open_live_session(
+    opening: AbstractAsyncContextManager[AsyncSession], client: Client, *, handshake_timeout: float
+) -> AsyncSession:
+    """Enter the SDK's live connection, which dials the socket and waits for its `setup_complete`."""
+    async with _ws_connect_lock():
+        with ExitStack() as stack:
+            stack.enter_context(_single_ws_user_agent(client))
+            stack.enter_context(_ws_trace_context(client))
+            # A gateway route needs nothing extra here: the relay routes the SDK's native
+            # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a
+            # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
+            # The SDK waits for `setup_complete` without a deadline of its own, so a server that
+            # accepts the socket and never answers the setup would hang the dial forever.
+            # `asyncio.wait_for` rather than an anyio scope: its cancellation is edge-triggered,
+            # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
+            # where a level-triggered scope would cancel that close too and leak the socket.
+            try:
+                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
+            except TimeoutError as e:
+                raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
+
+
 async def _send_seed(
     session: AsyncSession,
     seed: list[genai_types.Content],
@@ -663,122 +705,131 @@ async def _seed_request_parts(
         # reads exactly like the retried return the framework emits for the same failure.
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
-        if isinstance(
-            part,
-            (
-                SystemPromptPart,
-                InstructionDeltaPart,
-                InstructionBaselinePart,
-                ToolAvailabilityDeltaPart,
-                CapabilityLoadDeltaPart,
-                ModelSettingsDeltaPart,
-            ),
-        ):
-            # System prompts are seeded through session instructions, and tool-availability news
-            # from a prior standard run is stale here: the session advertises its own tools.
-            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
-            # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
-            continue
-        elif isinstance(part, UserPromptPart):
-            parts.extend(
-                _genai_user_parts(
-                    await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
-                )
-            )
-        elif isinstance(part, CompactionPart):
-            if part.content:
-                parts.append(genai_types.Part(text=_conversation_summary_text(part.content)))
-        elif isinstance(part, SpeechPart):
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
-            if isinstance(content, str):
-                if content:
-                    parts.append(genai_types.Part(text=content))
-            else:
-                # Seeded audio has to be at the live input rate: 24 kHz audio closes the session with
-                # `1008 Operation is not implemented, or supported, or enabled` (verified live).
-                pcm = seed_pcm_audio(audio=content, provider_name=provider_name, sample_rate=INPUT_SAMPLE_RATE)
-                parts.append(
-                    genai_types.Part(
-                        inline_data=genai_types.Blob(data=pcm, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
-                    )
-                )
-        elif isinstance(part, ToolReturnPart):
-            output, user_content = part.model_response_str_and_user_content()
-            if function_parts:
-                # Gemini's function response has an `error` key for a failed call, as on a standard request.
-                response = (
-                    {'error': part.model_response_str(wrap_if_error=False)}
-                    if part.outcome in ERROR_OUTCOMES
-                    else {'output': output}
-                )
-                parts.append(
-                    genai_types.Part(
-                        function_response=genai_types.FunctionResponse(
-                            id=part.tool_call_id, name=part.tool_name, response=response
-                        )
-                    )
-                )
-            else:
-                parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
-            if user_content:
+        match part:
+            case (
+                SystemPromptPart()
+                | InstructionDeltaPart()
+                | InstructionBaselinePart()
+                | ToolAvailabilityDeltaPart()
+                | CapabilityLoadDeltaPart()
+                | ModelSettingsDeltaPart()
+            ):
+                # System prompts are seeded through session instructions, and tool-availability news
+                # from a prior standard run is stale here: the session advertises its own tools.
+                # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
+                # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
+                continue
+            case UserPromptPart():
                 parts.extend(
                     _genai_user_parts(
-                        await seed_user_content(
-                            part=UserPromptPart(content=user_content),
-                            provider_name=provider_name,
-                            supports_images=supports_images,
-                        )
+                        await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
                     )
                 )
-        elif isinstance(part, RetryFeedbackPart):
-            parts.append(genai_types.Part(text=seed_retry_feedback_text(part)))
-        else:
-            assert_never(part)
+            case CompactionPart():
+                if part.content:
+                    parts.append(genai_types.Part(text=_conversation_summary_text(part.content)))
+            case SpeechPart():
+                parts.extend(_seed_speech_parts(part, provider_name=provider_name, supports_audio=supports_audio))
+            case ToolReturnPart():
+                parts.extend(
+                    await _seed_tool_return_parts(
+                        part,
+                        provider_name=provider_name,
+                        supports_images=supports_images,
+                        function_parts=function_parts,
+                    )
+                )
+            case RetryFeedbackPart():
+                parts.append(genai_types.Part(text=seed_retry_feedback_text(part)))
+            case _:
+                assert_never(part)
+    return parts
+
+
+def _seed_speech_parts(part: SpeechPart, *, provider_name: str, supports_audio: bool) -> list[genai_types.Part]:
+    content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
+    if isinstance(content, str):
+        return [genai_types.Part(text=content)] if content else []
+    # Seeded audio has to be at the live input rate: 24 kHz audio closes the session with
+    # `1008 Operation is not implemented, or supported, or enabled` (verified live).
+    pcm = seed_pcm_audio(audio=content, provider_name=provider_name, sample_rate=INPUT_SAMPLE_RATE)
+    return [genai_types.Part(inline_data=genai_types.Blob(data=pcm, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}'))]
+
+
+async def _seed_tool_return_parts(
+    part: ToolReturnPart, *, provider_name: str, supports_images: bool, function_parts: bool
+) -> list[genai_types.Part]:
+    output, user_content = part.model_response_str_and_user_content()
+    parts: list[genai_types.Part] = []
+    if function_parts:
+        # Gemini's function response has an `error` key for a failed call, as on a standard request.
+        response = (
+            {'error': part.model_response_str(wrap_if_error=False)}
+            if part.outcome in ERROR_OUTCOMES
+            else {'output': output}
+        )
+        parts.append(
+            genai_types.Part(
+                function_response=genai_types.FunctionResponse(
+                    id=part.tool_call_id, name=part.tool_name, response=response
+                )
+            )
+        )
+    else:
+        parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
+    if user_content:
+        parts.extend(
+            _genai_user_parts(
+                await seed_user_content(
+                    part=UserPromptPart(content=user_content),
+                    provider_name=provider_name,
+                    supports_images=supports_images,
+                )
+            )
+        )
     return parts
 
 
 def _seed_response_parts(message: ModelResponse, *, provider_name: str, function_parts: bool) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for index, part in enumerate(message.parts):
-        if isinstance(part, TextPart):
-            if part.content:
-                parts.append(genai_types.Part(text=part.content))
-        elif isinstance(part, ThinkingPart):
-            if part.content:
-                start_tag, end_tag = DEFAULT_THINKING_TAGS
-                parts.append(genai_types.Part(text='\n'.join([start_tag, part.content, end_tag])))
-        elif isinstance(part, ToolCallPart):
-            if function_parts:
-                parts.append(
-                    genai_types.Part(
-                        function_call=genai_types.FunctionCall(
-                            id=part.tool_call_id, name=part.tool_name, args=part.args_as_dict()
-                        )
-                    )
+        match part:
+            case TextPart():
+                if part.content:
+                    parts.append(genai_types.Part(text=part.content))
+            case ThinkingPart():
+                if part.content:
+                    start_tag, end_tag = DEFAULT_THINKING_TAGS
+                    parts.append(genai_types.Part(text='\n'.join([start_tag, part.content, end_tag])))
+            case ToolCallPart():
+                parts.append(_seed_tool_call_part(part, function_parts=function_parts))
+            case NativeToolCallPart() | NativeToolReturnPart():
+                continue
+            case SpeechPart():
+                # Assistant audio can't be replayed on any provider, so it's seeded as its transcript, marked where a
+                # barge-in cut it off: the model never heard what came after.
+                if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
+                    parts.append(genai_types.Part(text=assistant_speech_text(message, index)))
+            case CompactionPart():
+                # Provider-session-bound compaction state can't round-trip into another session; classic
+                # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
+                continue
+            case FilePart():
+                raise UserError(
+                    f'`FilePart` cannot be seeded into {provider_name} realtime history. '
+                    'Convert it to text or filter it from `message_history` before connecting.'
                 )
-            else:
-                parts.append(
-                    genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
-                )
-        elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
-            continue
-        elif isinstance(part, SpeechPart):
-            # Assistant audio can't be replayed on any provider, so it's seeded as its transcript, marked where a
-            # barge-in cut it off: the model never heard what came after.
-            if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
-                parts.append(genai_types.Part(text=assistant_speech_text(message, index)))
-        elif isinstance(part, CompactionPart):
-            # Provider-session-bound compaction state can't round-trip into another session; classic
-            # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
-            continue
-        elif isinstance(part, FilePart):
-            raise UserError(
-                f'`FilePart` cannot be seeded into {provider_name} realtime history. '
-                'Convert it to text or filter it from `message_history` before connecting.'
-            )
-        else:
-            assert_never(part)
+            case _:
+                assert_never(part)
     return parts
+
+
+def _seed_tool_call_part(part: ToolCallPart, *, function_parts: bool) -> genai_types.Part:
+    if function_parts:
+        return genai_types.Part(
+            function_call=genai_types.FunctionCall(id=part.tool_call_id, name=part.tool_name, args=part.args_as_dict())
+        )
+    return genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
 
 
 def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_types.Part]:
@@ -975,6 +1026,47 @@ def _ws_trace_context(client: Client) -> Generator[None]:
     finally:
         for key in added:
             headers.pop(key, None)
+
+
+def _map_connect_error(
+    error: genai_errors.APIError | websockets.WebSocketException | OSError, model_name: str
+) -> Exception:
+    """Map a failure to open the Gemini Live session to the typed exception `connect` raises in its place."""
+    if isinstance(error, genai_errors.APIError):
+        if error.code >= _MIN_WEBSOCKET_CLOSE_CODE:
+            # The server closed the socket during setup, and the SDK reports the WebSocket close
+            # code (`1007` for a rejected config, `1008` for an unknown model) where an HTTP status
+            # would go. A close code is not an HTTP status, so this is a `RealtimeError`, worded like
+            # a close later in the session and like the OpenAI-protocol providers' handshake closes.
+            return RealtimeError(model_name=model_name, message=f'Gemini Live connection closed: {error}')
+        mapped_error = _map_api_error(error, model_name)
+        if isinstance(mapped_error, ModelHTTPError):
+            return mapped_error
+        return RealtimeError(model_name=model_name, message=str(error))  # pragma: no cover
+    if isinstance(error, websockets.InvalidStatus):
+        # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
+        # `websockets` error rather than an `APIError`; the WebSocket is the API here, so map its
+        # HTTP status to `ModelHTTPError` like a regular request.
+        response = error.response
+        body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+        return ModelHTTPError(
+            status_code=response.status_code,
+            model_name=model_name,
+            body=body,
+            headers=dict(response.headers),
+        )
+    if isinstance(error, websockets.WebSocketException):
+        # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
+        # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
+        return RealtimeError(model_name=model_name, message=f'WebSocket error during connect: {error}')
+    if isinstance(error, TimeoutError):
+        # `handshake_timeout` ran out before the session was set up, or the socket's own
+        # opening timeout did: a `RealtimeError`, like an OpenAI-protocol handshake timeout.
+        return RealtimeError(model_name=model_name, message=f'Timed out opening the Gemini Live session: {error}')
+    # The connection never came up: DNS failure, refused, or reset. No HTTP status exists,
+    # so this is a `RealtimeError` too, rather than a bare built-in from what looks like an
+    # ordinary model call.
+    return RealtimeError(model_name=model_name, message=f'Could not reach the realtime API: {error}')
 
 
 @dataclass(init=False)
@@ -1240,20 +1332,7 @@ class GoogleRealtimeModel(RealtimeModel):
     ) -> genai_types.RealtimeInputConfig | None:
         """Build the turn-taking config from `vad`, `activity_handling`, and `turn_coverage`."""
         detection: genai_types.AutomaticActivityDetection | None = None
-        vad: AutomaticVAD | None
-        if 'google_vad' in model_settings:
-            vad = model_settings['google_vad']
-        elif 'turn_detection' in model_settings:
-            turn_detection = model_settings['turn_detection']
-            # `True` means the provider default (on), same as an absent setting. `False` asks for the
-            # same thing as `google_vad={'disabled': True}`, so both land on the check below.
-            if turn_detection is False:
-                vad = {'disabled': True}
-            else:
-                vad = None if turn_detection is True else _automatic_vad_from_turn_detection(turn_detection)
-        else:
-            vad = None
-        if vad is not None:
+        if (vad := _resolve_automatic_vad(model_settings)) is not None:
             if vad.get('disabled', False):
                 # Disabling VAD is push-to-talk, which needs manual turn control Gemini Live doesn't
                 # expose through this session API yet (no `commit_audio()`/`create_response()`), so a
@@ -1365,6 +1444,20 @@ class GoogleRealtimeModel(RealtimeModel):
             config.session_resumption = genai_types.SessionResumptionConfig(handle=resumption_handle)
         if initial_history_in_client_content:
             config.history_config = genai_types.HistoryConfig(initial_history_in_client_content=True)
+        if genai_tools := self._genai_tools(tools, settings, native_tools):
+            config.tools = genai_tools
+        self._apply_generation(config, settings)
+        if config_overrides := settings.get('google_config_overrides'):
+            for key, value in config_overrides.items():
+                setattr(config, key, value)
+        return config
+
+    def _genai_tools(
+        self,
+        tools: list[ToolDefinition] | None,
+        settings: GoogleRealtimeModelSettings,
+        native_tools: list[AbstractNativeTool] | None,
+    ) -> list[Any]:
         # Typed as `list[Any]` because `LiveConnectConfig.tools` is a broad union (Tool | Callable |
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
@@ -1393,13 +1486,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 )
             )
         genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
-        if genai_tools:
-            config.tools = genai_tools
-        self._apply_generation(config, settings)
-        if config_overrides := settings.get('google_config_overrides'):
-            for key, value in config_overrides.items():
-                setattr(config, key, value)
-        return config
+        return genai_tools
 
     @asynccontextmanager
     async def connect(
@@ -1451,9 +1538,7 @@ class GoogleRealtimeModel(RealtimeModel):
             # `turn_complete` without triggering a reply; one without is sent as context turns. A server
             # waiting for initial history would take the next typed turn as history and not answer it, so
             # only a dial that sends such a seed asks for it.
-            history_in_client_content = any(
-                part.function_call or part.function_response for turn in seed for part in turn.parts or ()
-            )
+            history_in_client_content = _has_function_parts(seed)
             config = self._config(
                 instructions,
                 model_request_parameters.function_tools,
@@ -1464,22 +1549,7 @@ class GoogleRealtimeModel(RealtimeModel):
             )
             dialed = True
             opening = client.aio.live.connect(model=self.model, config=config)
-            async with _ws_connect_lock():
-                with ExitStack() as stack:
-                    stack.enter_context(_single_ws_user_agent(client))
-                    stack.enter_context(_ws_trace_context(client))
-                    # A gateway route needs nothing extra here: the relay routes the SDK's native
-                    # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a
-                    # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
-                    # The SDK waits for `setup_complete` without a deadline of its own, so a server that
-                    # accepts the socket and never answers the setup would hang the dial forever.
-                    # `asyncio.wait_for` rather than an anyio scope: its cancellation is edge-triggered,
-                    # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
-                    # where a level-triggered scope would cancel that close too and leak the socket.
-                    try:
-                        session = await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
-                    except TimeoutError as e:
-                        raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
+            session = await _open_live_session(opening, client, handshake_timeout=handshake_timeout)
             cm = opening
             await _send_seed(session, seed, asked_again, history_in_client_content=history_in_client_content)
             return session
@@ -1492,44 +1562,8 @@ class GoogleRealtimeModel(RealtimeModel):
             # Reconnects dial from the receive loop, which keeps handling the `APIError` as a retryable drop.
             try:
                 session = await dial(None)
-            except genai_errors.APIError as e:
-                if e.code >= _MIN_WEBSOCKET_CLOSE_CODE:
-                    # The server closed the socket during setup, and the SDK reports the WebSocket close
-                    # code (`1007` for a rejected config, `1008` for an unknown model) where an HTTP status
-                    # would go. A close code is not an HTTP status, so this is a `RealtimeError`, worded like
-                    # a close later in the session and like the OpenAI-protocol providers' handshake closes.
-                    raise RealtimeError(model_name=self.model, message=f'Gemini Live connection closed: {e}') from e
-                mapped_error = _map_api_error(e, self.model)
-                if isinstance(mapped_error, ModelHTTPError):
-                    raise mapped_error from e
-                raise RealtimeError(model_name=self.model, message=str(e)) from e  # pragma: no cover
-            except websockets.InvalidStatus as e:
-                # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
-                # `websockets` error rather than an `APIError`; the WebSocket is the API here, so map its
-                # HTTP status to `ModelHTTPError` like a regular request.
-                response = e.response
-                body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-                raise ModelHTTPError(
-                    status_code=response.status_code,
-                    model_name=self.model,
-                    body=body,
-                    headers=dict(response.headers),
-                ) from e
-            except websockets.WebSocketException as e:
-                # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
-                # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
-                raise RealtimeError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
-            except TimeoutError as e:
-                # `handshake_timeout` ran out before the session was set up, or the socket's own
-                # opening timeout did: a `RealtimeError`, like an OpenAI-protocol handshake timeout.
-                raise RealtimeError(
-                    model_name=self.model, message=f'Timed out opening the Gemini Live session: {e}'
-                ) from e
-            except OSError as e:
-                # The connection never came up: DNS failure, refused, or reset. No HTTP status exists,
-                # so this is a `RealtimeError` too, rather than a bare built-in from what looks like an
-                # ordinary model call.
-                raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
+            except (genai_errors.APIError, websockets.WebSocketException, OSError) as e:
+                raise _map_connect_error(e, self.model) from e
             connection = GoogleRealtimeConnection(
                 session,
                 profile=self.profile,
@@ -1547,6 +1581,22 @@ class GoogleRealtimeModel(RealtimeModel):
             if cm is not None:
                 await cm.__aexit__(None, None, None)
             await self._close_live_client(client)
+
+
+@dataclass
+class _DroppedConnection:
+    """What a dropped Gemini connection leaves unfinished, which `GoogleRealtimeConnection.frames` reports."""
+
+    lost: RealtimeFrame
+    """The lifecycle events that end what was under way on it."""
+    lost_tool_calls: dict[str, tuple[str, str | None]]
+    """The calls running at the drop, which the re-dialed session won't answer."""
+    lost_typed_turns: list[InputId]
+    """The typed turns whose replies nothing will answer."""
+    state_resumed: bool
+    """Whether the re-dial resumes from a resumption handle."""
+    state_restored: bool
+    """Whether the conversation comes through the re-dial whole."""
 
 
 @dataclass
@@ -1844,30 +1894,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         output = content.output
         media: list[genai_types.FunctionResponsePart] = []
         if content.content:
-            text_content: list[str] = []
-            items = content.content
-            dropped_tags: set[int] = set()
             try:
-                for index, item in enumerate(items):
-                    if index in dropped_tags:
-                        continue
-                    if isinstance(item, str):
-                        text_content.append(item)
-                    elif isinstance(item, TextContent):
-                        text_content.append(item.content)
-                    elif isinstance(item, CachePoint):
-                        continue
-                    elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
-                        media.append(await self._tool_result_media(item))
-                        # A file the tool returned comes framed in provenance tags for the user channel.
-                        # Inside the function response it is the tool's by construction, as on a
-                        # standard Gemini request, so the tags, which would frame nothing, are dropped.
-                        open_tag, close_tag = _tool_result_provenance_tags(name, content.tool_call_id, item.identifier)
-                        if text_content[-1:] == [open_tag] and index + 1 < len(items) and items[index + 1] == close_tag:
-                            text_content.pop()
-                            dropped_tags.add(index + 1)
-                    else:
-                        assert_never(item)
+                text_content, media = await self._tool_result_content(
+                    content.content, tool_call_id=content.tool_call_id, name=name
+                )
             except BaseException:
                 # Refused, or its media couldn't be fetched: the result is never sent, so the call is
                 # forgotten as a sent one would be.
@@ -1905,6 +1935,36 @@ class GoogleRealtimeConnection(RealtimeConnection):
         else:
             await self._session.send_tool_response(function_responses=function_response)
         self._tool_calls.pop(content.tool_call_id, None)
+
+    async def _tool_result_content(
+        self, items: Sequence[UserContent], *, tool_call_id: str, name: str
+    ) -> tuple[list[str], list[genai_types.FunctionResponsePart]]:
+        """Split the content attached to a tool result into the text folded into its output and its media parts."""
+        text_content: list[str] = []
+        media: list[genai_types.FunctionResponsePart] = []
+        dropped_tags: set[int] = set()
+        for index, item in enumerate(items):
+            if index in dropped_tags:
+                continue
+            match item:
+                case str():
+                    text_content.append(item)
+                case TextContent():
+                    text_content.append(item.content)
+                case CachePoint():
+                    continue
+                case ImageUrl() | AudioUrl() | DocumentUrl() | VideoUrl() | BinaryContent() | UploadedFile():
+                    media.append(await self._tool_result_media(item))
+                    # A file the tool returned comes framed in provenance tags for the user channel.
+                    # Inside the function response it is the tool's by construction, as on a
+                    # standard Gemini request, so the tags, which would frame nothing, are dropped.
+                    open_tag, close_tag = _tool_result_provenance_tags(name, tool_call_id, item.identifier)
+                    if text_content[-1:] == [open_tag] and index + 1 < len(items) and items[index + 1] == close_tag:
+                        text_content.pop()
+                        dropped_tags.add(index + 1)
+                case _:
+                    assert_never(item)
+        return text_content, media
 
     async def _tool_result_media(
         self, item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile
@@ -1952,103 +2012,118 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     )
                     yield [*self._lifecycle.connection_lost(), error]
                     return
-                # Gemini issues no resumption handle while a call is executing, so the re-dialed session
-                # never has a call still running at the drop, and won't answer its result (verified live:
-                # 2.5 ignores it, 3.8 closes the turn without speaking).
-                lost_tool_calls = dict(self._tool_calls)
-                state_resumed = self._resumption_handle is not None
-                # Likewise the typed turns no handle has covered yet, on a server that withholds handles
-                # mid-turn (or without any handle). Those still awaiting their reply are released, unless
-                # the reply had already started (it took the response, and is closed as interrupted below).
-                # A turn still on the wire is left out: its send fails, and the session takes it back.
-                uncovered = [
-                    turn
-                    for turn in self._uncovered_typed_turns
-                    if not turn.sending and (not state_resumed or self._withholds_handles_mid_turn)
-                ]
-                unanswered = [turn.input_index for turn in uncovered if not turn.answered]
-                lost_typed_turns = unanswered[1:] if self._turn_open else unanswered
-                # Without a handle the re-dial is a fresh session, which the session's conversation is replayed
-                # into (see `GoogleRealtimeModel._replay_turns`). Those turns come last in it, and their replies
-                # are asked for again, as an OpenAI-protocol reconnect asks again for a reply that hadn't
-                # started: they aren't lost.
-                replays = not state_resumed and self._message_history is not None
-                self._asked_again = lost_typed_turns if replays else []
-                if replays:
-                    lost_typed_turns = []
-                # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
-                lost: RealtimeFrame = [*self._lifecycle.connection_lost(asked_again=self._asked_again)]
-                self._uncovered_typed_turns = []
-                # The new session's audio, and the offsets it reports, start over.
-                self._audio_seconds = 0.0
-                self._sent_at.clear()
-                # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state. A
-                # replayed conversation is all there, unless the drop cut a reply off.
-                state_restored = not lost_tool_calls and (
-                    not uncovered if state_resumed else replays and not self._turn_open
-                )
+                dropped = self._drop_connection()
                 reconnected = await self._try_reconnect()
                 # The replies asked again are owed by the new session, which tracks their turns like any other.
                 asked_again, self._asked_again = self._asked_again, []
-                if reconnected:
-                    self._uncovered_typed_turns = [
-                        _TypedTurn(input_index, sending=False) for input_index in asked_again
-                    ]
-                    reconnect_frame: RealtimeFrame = [*lost, *self._lifecycle.take_pending()]
-                    # The new session hasn't been answered for anything yet.
-                    self._lost_tool_calls_answered = False
-                    if not state_resumed:
-                        # A fresh session has no stale exchange left to answer.
-                        self._unanswered_lost_tool_calls.clear()
-                    if lost_tool_calls:
-                        # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
-                        # cancelled and each call still gets a matching return in history. Nothing
-                        # awaits between the re-dial and this event, so no tool task can send a result
-                        # for one of these calls onto the new socket before the session cancels it. A
-                        # result sent while re-dialing went to the dead socket, so the call is still owed.
-                        for call_id, call in lost_tool_calls.items():
-                            self._tool_calls.pop(call_id, None)
-                            if state_resumed and self._can_answer(call):
-                                self._unanswered_lost_tool_calls.append(call)
-                        reconnect_frame.append(ToolCallCancelled(tool_call_ids=list(lost_tool_calls)))
-                    if self._turn_open:
-                        # The dropped connection was mid-turn. Gemini never continues an in-flight
-                        # generation on the re-dialed connection (resumption restores conversation
-                        # state only), so its `turn_complete` will never arrive — without a synthetic
-                        # boundary the session would keep the partial response open forever, never
-                        # ending the turn or delivering messages queued behind it.
-                        self._turn_open = False
-                        self._turn_interrupted = False
-                        self._tool_call_turn_unanswered = False
-                        self._native_part_index = 0
-                        # The lifecycle already lost the response: this terminal is the codec stream's alone.
-                        reconnect_frame.append(StaleEvent(ResponseDone(interrupted=True)))
-                    for input_index in lost_typed_turns:
-                        # Nothing will answer it, so the reply it asked for is released rather than awaited
-                        # forever; the turn stays in history, and `state_restored=False` tells the app to
-                        # send it again.
-                        reconnect_frame.append(InputRejected(input_index=input_index, refused='response'))
-                    reconnect_frame.append(RealtimeSessionReconnectEvent(state_restored=state_restored))
-                    yield reconnect_frame
-                    if self._unanswered_lost_tool_calls:
-                        # Answered right away rather than only ahead of the next input, so the resumed
-                        # session has closed the stale exchange by the time the user speaks. A new socket
-                        # that is already gone keeps them owed; receiving notices the drop next.
-                        with suppress(*self.transport_errors):
-                            async with self._send_lock:
-                                await self._answer_lost_tool_calls()
-                    continue
-                # Out of attempts: no reconnect is coming any more, nor the replies it would have asked for again.
-                self._gave_up = True
-                for input_index in asked_again:
-                    self._lifecycle.input_unanswerable(input_index)
-                lost += self._lifecycle.take_pending()
-                error = RealtimeSessionErrorEvent(
-                    message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
-                )
-                yield [*lost, error]
-                return
+                if not reconnected:
+                    yield self._reconnect_failed_frame(dropped, asked_again, e)
+                    return
+                yield self._reconnected_frame(dropped, asked_again)
+                if self._unanswered_lost_tool_calls:
+                    # Answered right away rather than only ahead of the next input, so the resumed
+                    # session has closed the stale exchange by the time the user speaks. A new socket
+                    # that is already gone keeps them owed; receiving notices the drop next.
+                    with suppress(*self.transport_errors):
+                        async with self._send_lock:
+                            await self._answer_lost_tool_calls()
             # `receive()` returned normally → the turn ended; loop for the next one.
+
+    def _drop_connection(self) -> _DroppedConnection:
+        """Settle what a dropped connection leaves unfinished, ahead of re-dialing it."""
+        # Gemini issues no resumption handle while a call is executing, so the re-dialed session
+        # never has a call still running at the drop, and won't answer its result (verified live:
+        # 2.5 ignores it, 3.8 closes the turn without speaking).
+        lost_tool_calls = dict(self._tool_calls)
+        state_resumed = self._resumption_handle is not None
+        # Likewise the typed turns no handle has covered yet, on a server that withholds handles
+        # mid-turn (or without any handle). Those still awaiting their reply are released, unless
+        # the reply had already started (it took the response, and `_reconnected_frame` closes it as interrupted).
+        # A turn still on the wire is left out: its send fails, and the session takes it back.
+        uncovered = [
+            turn
+            for turn in self._uncovered_typed_turns
+            if not turn.sending and (not state_resumed or self._withholds_handles_mid_turn)
+        ]
+        unanswered = [turn.input_index for turn in uncovered if not turn.answered]
+        lost_typed_turns = unanswered[1:] if self._turn_open else unanswered
+        # Without a handle the re-dial is a fresh session, which the session's conversation is replayed
+        # into (see `GoogleRealtimeModel._replay_turns`). Those turns come last in it, and their replies
+        # are asked for again, as an OpenAI-protocol reconnect asks again for a reply that hadn't
+        # started: they aren't lost.
+        replays = not state_resumed and self._message_history is not None
+        self._asked_again = lost_typed_turns if replays else []
+        if replays:
+            lost_typed_turns = []
+        # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
+        lost: RealtimeFrame = [*self._lifecycle.connection_lost(asked_again=self._asked_again)]
+        self._uncovered_typed_turns = []
+        # The new session's audio, and the offsets it reports, start over.
+        self._audio_seconds = 0.0
+        self._sent_at.clear()
+        # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state. A
+        # replayed conversation is all there, unless the drop cut a reply off.
+        state_restored = not lost_tool_calls and (not uncovered if state_resumed else replays and not self._turn_open)
+        return _DroppedConnection(
+            lost=lost,
+            lost_tool_calls=lost_tool_calls,
+            lost_typed_turns=lost_typed_turns,
+            state_resumed=state_resumed,
+            state_restored=state_restored,
+        )
+
+    def _reconnected_frame(self, dropped: _DroppedConnection, asked_again: list[InputId]) -> RealtimeFrame:
+        """Carry the dropped connection's state over to the re-dialed one, returning the frame reporting it."""
+        self._uncovered_typed_turns = [_TypedTurn(input_index, sending=False) for input_index in asked_again]
+        reconnect_frame: RealtimeFrame = [*dropped.lost, *self._lifecycle.take_pending()]
+        # The new session hasn't been answered for anything yet.
+        self._lost_tool_calls_answered = False
+        if not dropped.state_resumed:
+            # A fresh session has no stale exchange left to answer.
+            self._unanswered_lost_tool_calls.clear()
+        if dropped.lost_tool_calls:
+            # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
+            # cancelled and each call still gets a matching return in history. Nothing
+            # awaits between the re-dial and this event, so no tool task can send a result
+            # for one of these calls onto the new socket before the session cancels it. A
+            # result sent while re-dialing went to the dead socket, so the call is still owed.
+            for call_id, call in dropped.lost_tool_calls.items():
+                self._tool_calls.pop(call_id, None)
+                if dropped.state_resumed and self._can_answer(call):
+                    self._unanswered_lost_tool_calls.append(call)
+            reconnect_frame.append(ToolCallCancelled(tool_call_ids=list(dropped.lost_tool_calls)))
+        if self._turn_open:
+            # The dropped connection was mid-turn. Gemini never continues an in-flight
+            # generation on the re-dialed connection (resumption restores conversation
+            # state only), so its `turn_complete` will never arrive — without a synthetic
+            # boundary the session would keep the partial response open forever, never
+            # ending the turn or delivering messages queued behind it.
+            self._turn_open = False
+            self._turn_interrupted = False
+            self._tool_call_turn_unanswered = False
+            self._native_part_index = 0
+            # The lifecycle already lost the response: this terminal is the codec stream's alone.
+            reconnect_frame.append(StaleEvent(ResponseDone(interrupted=True)))
+        for input_index in dropped.lost_typed_turns:
+            # Nothing will answer it, so the reply it asked for is released rather than awaited
+            # forever; the turn stays in history, and `state_restored=False` tells the app to
+            # send it again.
+            reconnect_frame.append(InputRejected(input_index=input_index, refused='response'))
+        reconnect_frame.append(RealtimeSessionReconnectEvent(state_restored=dropped.state_restored))
+        return reconnect_frame
+
+    def _reconnect_failed_frame(
+        self, dropped: _DroppedConnection, asked_again: list[InputId], error: Exception
+    ) -> RealtimeFrame:
+        # Out of attempts: no reconnect is coming any more, nor the replies it would have asked for again.
+        self._gave_up = True
+        for input_index in asked_again:
+            self._lifecycle.input_unanswerable(input_index)
+        lost = [*dropped.lost, *self._lifecycle.take_pending()]
+        session_error = RealtimeSessionErrorEvent(
+            message=f'{self._provider_label} connection closed; reconnect failed: {error}', recoverable=False
+        )
+        return [*lost, session_error]
 
     def _can_answer(self, call: tuple[str, str | None]) -> bool:
         """Whether a lost call can be answered on the resumed session.
@@ -2114,47 +2189,53 @@ class GoogleRealtimeConnection(RealtimeConnection):
             return False
         return True
 
+    def _map_model_turn(
+        self, model_turn: genai_types.Content | None
+    ) -> tuple[list[RealtimeCodecEvent], list[ModelResponsePart]]:
+        """Translate a `model_turn`'s parts to events, and to the native tool parts they reconstruct."""
+        events: list[RealtimeCodecEvent] = []
+        native_tool_parts: list[ModelResponsePart] = []
+        if model_turn is None:
+            return events, native_tool_parts
+        for part in model_turn.parts or []:
+            if part.inline_data is not None and part.inline_data.data:
+                events.append(AudioDelta(data=part.inline_data.data))
+            elif part.executable_code is not None:
+                # Reuse the classic `GoogleModel` mapper so the code-execution call part is
+                # byte-identical; generate and stash the id to pair the following result with it.
+                self._code_execution_tool_call_id = generate_tool_call_id()
+                native_tool_parts.append(
+                    _map_executable_code(part.executable_code, self._provider_name, self._code_execution_tool_call_id)
+                )
+            elif part.code_execution_result is not None:
+                if self._code_execution_tool_call_id is None:
+                    # No code ran: native-audio models announce a Google Search with a bare
+                    # `code_execution_result` ("Looking up information on Google Search.") and no
+                    # `executable_code` before it (verified live). The search itself arrives as
+                    # grounding metadata, mapped in `_map_server_content`, so this status line has nothing to pair with.
+                    continue
+                native_tool_parts.append(
+                    _map_code_execution_result(
+                        part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
+                    )
+                )
+                # Each `executable_code` has exactly one result, as the classic path assumes, so the
+                # pairing ends here: a search status line later in the session must not pair with it.
+                self._code_execution_tool_call_id = None
+            elif part.text and not part.thought:
+                # Skip thinking parts: native-audio models stream their reasoning as `thought`
+                # text alongside the spoken answer, and it must not leak into the transcript. A
+                # model-turn text part is the model's plain text output (`response_modality='text'`),
+                # distinct from the spoken-audio transcription in `output_transcription`, which
+                # `_map_server_content` maps, so it becomes a `TextPart` rather than a `SpeechPart`.
+                events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
+        return events, native_tool_parts
+
     def _map_server_content(self, content: genai_types.LiveServerContent) -> list[RealtimeCodecEvent]:
         """Translate a `server_content` message (audio/transcripts/native tools/turn boundary) to events."""
-        events: list[RealtimeCodecEvent] = []
-        # Native tool call/return parts reconstructed for history (code execution here, web grounding
-        # below), folded into the turn's `ModelResponse` by the session rather than yielded live.
-        native_tool_parts: list[ModelResponsePart] = []
-        if content.model_turn is not None:
-            for part in content.model_turn.parts or []:
-                if part.inline_data is not None and part.inline_data.data:
-                    events.append(AudioDelta(data=part.inline_data.data))
-                elif part.executable_code is not None:
-                    # Reuse the classic `GoogleModel` mapper so the code-execution call part is
-                    # byte-identical; generate and stash the id to pair the following result with it.
-                    self._code_execution_tool_call_id = generate_tool_call_id()
-                    native_tool_parts.append(
-                        _map_executable_code(
-                            part.executable_code, self._provider_name, self._code_execution_tool_call_id
-                        )
-                    )
-                elif part.code_execution_result is not None:
-                    if self._code_execution_tool_call_id is None:
-                        # No code ran: native-audio models announce a Google Search with a bare
-                        # `code_execution_result` ("Looking up information on Google Search.") and no
-                        # `executable_code` before it (verified live). The search itself arrives as
-                        # grounding metadata, mapped below, so this status line has nothing to pair with.
-                        continue
-                    native_tool_parts.append(
-                        _map_code_execution_result(
-                            part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
-                        )
-                    )
-                    # Each `executable_code` has exactly one result, as the classic path assumes, so the
-                    # pairing ends here: a search status line later in the session must not pair with it.
-                    self._code_execution_tool_call_id = None
-                elif part.text and not part.thought:
-                    # Skip thinking parts: native-audio models stream their reasoning as `thought`
-                    # text alongside the spoken answer, and it must not leak into the transcript. A
-                    # model-turn text part is the model's plain text output (`response_modality='text'`),
-                    # distinct from the spoken-audio transcription in `output_transcription` below, so it
-                    # becomes a `TextPart` rather than a `SpeechPart`.
-                    events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
+        # Native tool call/return parts reconstructed for history (code execution in `_map_model_turn`,
+        # web grounding below), folded into the turn's `ModelResponse` by the session rather than yielded live.
+        events, native_tool_parts = self._map_model_turn(content.model_turn)
         # Gemini 3.x models transcribe the user's speech even when the setup asks for no input
         # transcription (verified live), so honor the setting here: with it off, the user's words must
         # stay out of history.
@@ -2218,42 +2299,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if message.server_content is not None:
             events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:
-            for call in message.tool_call.function_calls or []:
-                name = call.name or ''
-                # Gemini usually assigns an id, but fall back to the same synthetic id a standard
-                # request builds for an id-less call, so parallel calls don't collide on one key and
-                # the `pyd_ai_` prefix still marks the id as ours after a handoff to a standard run.
-                # The provider's own id (`None` here) is what goes back on the wire — echoing one it
-                # never issued is what "Gemini rejects unknown ids" is about.
-                call_id = call.id or generate_tool_call_id()
-                self._tool_calls[call_id] = (name, call.id)
-                # A tool call opens the turn like audio output does: the session holds a partial
-                # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
-                self._turn_open = True
-                # Every call in the frame belongs to one model response, which Gemini answers once all of
-                # them have results. `response_usage_follows` keeps them together until the frame's usage
-                # below closes the response, unless the model talks on in it while they run.
-                events.append(
-                    ToolCall(
-                        tool_call_id=call_id,
-                        tool_name=name,
-                        args=to_json(call.args or {}).decode(),
-                        response_usage_follows=not self._talks_through_tool_calls,
-                        response_continues=self._talks_through_tool_calls,
-                    )
-                )
+            events.extend(self._map_tool_calls(message.tool_call.function_calls or []))
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
-            # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
-            # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
-            # A cancelled call never sends a result, so nothing else will ever pop it: forget it here
-            # or every barge-in leaks an entry for the life of the connection.
-            for call_id in cancelled_ids:
-                self._tool_calls.pop(call_id, None)
-            if not self._tool_calls:
-                # A frame the model abandoned has no answer coming, so no boundary after it is taken for
-                # the tool-call turn's own.
-                self._tool_call_turn_unanswered = False
-            events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
+            events.append(self._map_tool_call_cancellation(cancelled_ids))
         if message.usage_metadata is not None:
             events.append(
                 SessionUsage(
@@ -2274,56 +2322,100 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
-            interrupted = self._turn_interrupted
-            # A reasoning model rides several responses through one exchange: it speaks a filler, ends
-            # the turn, calls a tool in the background, and speaks again. `interaction_status` is what
-            # tells the two boundaries apart — `IN_PROGRESS` alongside `turn_complete` means the model
-            # is still working, and only `IDLE` ends the exchange. Models without background reasoning
-            # send no status at all, which reads as "this was the last response", as it always was.
-            more_expected = (
-                message.server_content.interaction_status == genai_types.InteractionStatus.IN_PROGRESS
-                and not interrupted
-            )
-            closes_answered_tool_call_turn = (
-                self._closes_tool_call_turn_separately
-                and self._tool_call_turn_unanswered
-                and not interrupted
-                and not more_expected
-                and not self._tool_calls
-            )
-            self._tool_call_turn_unanswered = False
-            # The model said nothing after its tool calls and has all their results: this closes the
-            # tool-call turn, not the answer, which is still to come. Like the OpenAI protocol's
-            # function-call-only `response.done`, it reports only its usage (emitted above, folded into
-            # the answer's response), and the turn stays open for the answer: the next boundary ends
-            # it, even an empty one, and a drop before then closes it as interrupted.
-            if closes_answered_tool_call_turn:
-                self._turn_open = True
-            else:
-                # When Gemini says why it ended a turn (a malformed function call, refused input or output),
-                # it's reported like a standard response's `finish_reason`, with the raw reason kept alongside.
-                reason = message.server_content.turn_complete_reason
-                events.append(
-                    ResponseDone(
-                        interrupted=interrupted,
-                        more_expected=more_expected,
-                        finish_reason=_turn_complete_finish_reason(reason) if reason is not None else None,
-                        provider_details={'finish_reason': reason.value} if reason is not None else None,
-                    )
-                )
-                if not more_expected:
-                    self._mark_oldest_typed_turn_answered()
-                self._turn_interrupted = False
-                # A stalled exchange's response is still open — the model will add a tool call and an
-                # answer to it — so the turn stays open too. Closing it here would leave a drop between
-                # the filler and the tool call with no synthetic terminal, and the partial response in
-                # flight forever.
-                self._turn_open = more_expected
-                if not more_expected:
-                    self._native_part_index = 0
+            events.extend(self._map_turn_complete(message.server_content))
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         if (update := message.session_resumption_update) is not None:
             self._track_resumption_update(update)
+        return events
+
+    def _map_tool_calls(self, function_calls: Sequence[genai_types.FunctionCall]) -> list[ToolCall]:
+        events: list[ToolCall] = []
+        for call in function_calls:
+            name = call.name or ''
+            # Gemini usually assigns an id, but fall back to the same synthetic id a standard
+            # request builds for an id-less call, so parallel calls don't collide on one key and
+            # the `pyd_ai_` prefix still marks the id as ours after a handoff to a standard run.
+            # The provider's own id (`None` here) is what goes back on the wire — echoing one it
+            # never issued is what "Gemini rejects unknown ids" is about.
+            call_id = call.id or generate_tool_call_id()
+            self._tool_calls[call_id] = (name, call.id)
+            # A tool call opens the turn like audio output does: the session holds a partial
+            # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
+            self._turn_open = True
+            # Every call in the frame belongs to one model response, which Gemini answers once all of
+            # them have results. `response_usage_follows` keeps them together until the frame's usage,
+            # which `_map_message` emits after them, closes the response, unless the model talks on in it
+            # while they run.
+            events.append(
+                ToolCall(
+                    tool_call_id=call_id,
+                    tool_name=name,
+                    args=to_json(call.args or {}).decode(),
+                    response_usage_follows=not self._talks_through_tool_calls,
+                    response_continues=self._talks_through_tool_calls,
+                )
+            )
+        return events
+
+    def _map_tool_call_cancellation(self, cancelled_ids: list[str]) -> ToolCallCancelled:
+        # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s `_map_tool_calls`
+        # emitted whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
+        # A cancelled call never sends a result, so nothing else will ever pop it: forget it here
+        # or every barge-in leaks an entry for the life of the connection.
+        for call_id in cancelled_ids:
+            self._tool_calls.pop(call_id, None)
+        if not self._tool_calls:
+            # A frame the model abandoned has no answer coming, so no boundary after it is taken for
+            # the tool-call turn's own.
+            self._tool_call_turn_unanswered = False
+        return ToolCallCancelled(tool_call_ids=list(cancelled_ids))
+
+    def _map_turn_complete(self, content: genai_types.LiveServerContent) -> list[ResponseDone]:
+        events: list[ResponseDone] = []
+        interrupted = self._turn_interrupted
+        # A reasoning model rides several responses through one exchange: it speaks a filler, ends
+        # the turn, calls a tool in the background, and speaks again. `interaction_status` is what
+        # tells the two boundaries apart — `IN_PROGRESS` alongside `turn_complete` means the model
+        # is still working, and only `IDLE` ends the exchange. Models without background reasoning
+        # send no status at all, which reads as "this was the last response", as it always was.
+        more_expected = content.interaction_status == genai_types.InteractionStatus.IN_PROGRESS and not interrupted
+        closes_answered_tool_call_turn = (
+            self._closes_tool_call_turn_separately
+            and self._tool_call_turn_unanswered
+            and not interrupted
+            and not more_expected
+            and not self._tool_calls
+        )
+        self._tool_call_turn_unanswered = False
+        # The model said nothing after its tool calls and has all their results: this closes the
+        # tool-call turn, not the answer, which is still to come. Like the OpenAI protocol's
+        # function-call-only `response.done`, it reports only its usage (emitted by `_map_message` ahead
+        # of this boundary, folded into the answer's response), and the turn stays open for the answer:
+        # the next boundary ends it, even an empty one, and a drop before then closes it as interrupted.
+        if closes_answered_tool_call_turn:
+            self._turn_open = True
+        else:
+            # When Gemini says why it ended a turn (a malformed function call, refused input or output),
+            # it's reported like a standard response's `finish_reason`, with the raw reason kept alongside.
+            reason = content.turn_complete_reason
+            events.append(
+                ResponseDone(
+                    interrupted=interrupted,
+                    more_expected=more_expected,
+                    finish_reason=_turn_complete_finish_reason(reason) if reason is not None else None,
+                    provider_details={'finish_reason': reason.value} if reason is not None else None,
+                )
+            )
+            if not more_expected:
+                self._mark_oldest_typed_turn_answered()
+            self._turn_interrupted = False
+            # A stalled exchange's response is still open — the model will add a tool call and an
+            # answer to it — so the turn stays open too. Closing it here would leave a drop between
+            # the filler and the tool call with no synthetic terminal, and the partial response in
+            # flight forever.
+            self._turn_open = more_expected
+            if not more_expected:
+                self._native_part_index = 0
         return events
 
     def _mark_oldest_typed_turn_answered(self) -> None:
