@@ -829,10 +829,10 @@ class SessionPlugins(Generic[DepsT]):
         """Load an enabled declaration and remember requirements learned from its plugin."""
         await self.load(entry.name)
         # `load` refreshed the entries; only a loaded plugin can say what its settings need.
-        loaded = self._entries[entry.name].loaded
-        host = loaded.plugin.host if loaded is not None else None
+        current = self._entries[entry.name]
+        host = current.loaded.plugin.host if current.loaded is not None else None
         if host is not None and host.requirements:
-            self._process.store.update_plugin_requirements(entry.declaration, requires=host.requirements)
+            self._process.store.update_plugin_requirements(current.declaration, requires=host.requirements)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now, in every live session, and remember it as disabled."""
