@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ToolCallPart,
     ToolReturn,
 )
@@ -335,6 +336,43 @@ def _over_limit(actions: list[ComputerToolAction], limits: ComputerUseActionLimi
     return None
 
 
+@dataclass
+class _Steps:
+    """Runs one call's actions on `display`, keeping what they return and whether the screen still has to settle."""
+
+    display: Display
+    call: _Call
+    settle_seconds: float
+    outputs: list[str | BinaryImage] = field(default_factory=list[str | BinaryImage])
+    unsettled: bool = False
+
+    async def settle(self) -> None:
+        """Wait `settle_seconds` after an action, before a zoom or the closing screenshot."""
+        if self.unsettled and self.settle_seconds:
+            await anyio.sleep(self.settle_seconds)
+        self.unsettled = False
+
+    async def run(self, action: ComputerToolAction) -> None:
+        match action:
+            case Wait(seconds=seconds):
+                await anyio.sleep(seconds)
+            case Zoom(region=region):
+                if not isinstance(self.display, SupportsZoom):
+                    raise UnsupportedActionError('This display cannot zoom.')
+                await self.settle()
+                self.outputs.append(BinaryImage(data=await self.display.zoom(region), media_type='image/png'))
+            case CursorPosition():
+                if not isinstance(self.display, SupportsCursorPosition):
+                    raise UnsupportedActionError('This display cannot report the pointer position.')
+                point = self.call.to_model(await self.display.cursor_position())
+                self.outputs.append(f'The pointer is at ({point.x}, {point.y}).')
+            case Screenshot():
+                pass
+            case _:
+                self.unsettled = True
+                await self.display.act(action)
+
+
 async def _perform(
     display: Display,
     actions: list[ComputerToolAction],
@@ -345,15 +383,7 @@ async def _perform(
 
     After an action, the screen settles for `settle_seconds` before a zoom or the closing screenshot.
     """
-    outputs: list[str | BinaryImage] = []
-    unsettled = False
-
-    async def settle() -> None:
-        nonlocal unsettled
-        if unsettled and settle_seconds:
-            await anyio.sleep(settle_seconds)
-        unsettled = False
-
+    steps = _Steps(display, call, settle_seconds)
     performed, error = 0, None
     held: list[MouseButton] = []
     try:
@@ -362,24 +392,7 @@ async def _perform(
                 # Counted before it runs, since a press can take effect and still fail.
                 held.append(action.button)
             try:
-                match action:
-                    case Wait(seconds=seconds):
-                        await anyio.sleep(seconds)
-                    case Zoom(region=region):
-                        if not isinstance(display, SupportsZoom):
-                            raise UnsupportedActionError('This display cannot zoom.')
-                        await settle()
-                        outputs.append(BinaryImage(data=await display.zoom(region), media_type='image/png'))
-                    case CursorPosition():
-                        if not isinstance(display, SupportsCursorPosition):
-                            raise UnsupportedActionError('This display cannot report the pointer position.')
-                        point = call.to_model(await display.cursor_position())
-                        outputs.append(f'The pointer is at ({point.x}, {point.y}).')
-                    case Screenshot():
-                        pass
-                    case _:
-                        unsettled = True
-                        await display.act(action)
+                await steps.run(action)
             except WorkspaceUnavailableError:
                 raise
             except WorkspaceError as e:
@@ -393,45 +406,58 @@ async def _perform(
         for button in held:
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await display.act(MouseUp(button=button))
-    await settle()
-    return performed, error, outputs
+    await steps.settle()
+    return performed, error, steps.outputs
 
 
 def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
     """The size of the latest screenshot the model saw, from its result's metadata or, without it, the image."""
     for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            for part in reversed(message.parts):
-                if isinstance(part, ComputerReturnPart) and (screenshot := part.screenshot) is not None:
-                    result = part.result
-                    if result is not None and 'screenshot_size' in result:
-                        width, height = result['screenshot_size']
-                        return width, height
-                    return png_size(screenshot.data)
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in reversed(message.parts):
+            if isinstance(part, ComputerReturnPart) and (screenshot := part.screenshot) is not None:
+                return _screenshot_size(part, screenshot)
     return None
 
 
+def _screenshot_size(part: ComputerReturnPart, screenshot: BinaryImage) -> tuple[int, int] | None:
+    result = part.result
+    if result is not None and 'screenshot_size' in result:
+        width, height = result['screenshot_size']
+        return width, height
+    return png_size(screenshot.data)
+
+
 def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
-    """The index of the response that made this call, and the call as the model made it.
+    """The index of the response that made this call, and the call as the model made it."""
+    for index in range(len(ctx.messages) - 1, -1, -1):
+        message = ctx.messages[index]
+        if not isinstance(message, ModelResponse):
+            continue
+        for part in message.parts:
+            if (call := _as_computer_call(part, ctx.tool_call_id)) is not None:
+                return index, call
+    return None
+
+
+def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> ComputerCallPart | None:
+    """`part` as a `ComputerCallPart`, if it's the tool call with this ID.
 
     A call whose arguments didn't validate is a plain `ToolCallPart` that keeps the agent's labels, so it's read as a
     `ComputerCallPart` whose `actions` are `None`.
     """
-    for index in range(len(ctx.messages) - 1, -1, -1):
-        message = ctx.messages[index]
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, ComputerCallPart) and part.tool_call_id == ctx.tool_call_id:
-                    return index, part
-                if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
-                    return index, ComputerCallPart(
-                        part.tool_name,
-                        part.args_as_json_str(),
-                        tool_call_id=part.tool_call_id,
-                        provider_name=part.provider_name,
-                        provider_details=part.provider_details,
-                    )
-    return None
+    if not isinstance(part, ToolCallPart) or part.tool_call_id != tool_call_id:
+        return None
+    if isinstance(part, ComputerCallPart):
+        return part
+    return ComputerCallPart(
+        part.tool_name,
+        part.args_as_json_str(),
+        tool_call_id=part.tool_call_id,
+        provider_name=part.provider_name,
+        provider_details=part.provider_details,
+    )
 
 
 def _changed(call: ComputerCallPart, actions: list[ComputerToolAction]) -> bool:
