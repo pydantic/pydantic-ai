@@ -411,8 +411,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
         desktop: Give the agent the machine's desktop for
-            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse], held at 1280x800 with `True`,
-            or at its `(width, height)`.
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800,
+            or its `(width, height)`.
     """
 
     def __init__(
