@@ -2836,6 +2836,14 @@ The ones people reach for:
 The full list and every signature are in the
 [hooks reference](https://pydantic.dev/docs/ai/core-concepts/hooks/).
 
+Which tools a `Hooks` checks can't be read before the run, so with any `Hooks`
+bound, [code mode](docs/reference.md#code-mode-and-speculative-execution) does
+not mount the workspace: `pathlib` in `run_code` can't read or write files a
+`before_tool_execute` hook would have stopped, and file access goes through the
+file tools. A plugin that only observes keeps the mount by returning its own
+`AbstractCapability` subclass, with `@on_event` or the hook method, instead of a
+`Hooks`.
+
 ### React to a typed event: `hooks.on.event(EventClass)`
 
 Tools and capabilities emit typed events (a shell started, a file was written).

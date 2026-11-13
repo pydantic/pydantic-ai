@@ -213,7 +213,8 @@ def test_go_refusal_runs_detection_on_the_coding_plan(detection_dir: Path, monke
     # Go takes a minute to refuse, on the clock the launcher reads.
     clock = [1000.0]
     invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), refused_runs=1, clock=clock)
-    monkeypatch.setattr(douwebot_opencode_run, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    stub = SimpleNamespace(monotonic=lambda: clock[0], time_ns=douwebot_opencode_run.time.time_ns)
+    monkeypatch.setattr(douwebot_opencode_run, 'time', stub)
 
     gh_aw_opencode_detect.main()
 

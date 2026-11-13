@@ -1,14 +1,15 @@
 """Tests for the shared _spec.py module."""
 
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import pytest
+from pydantic import JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
 
 from .conftest import try_import
 
@@ -229,12 +230,25 @@ class TestLoadFromRegistry:
 
 class TestBuildSchemaTypes:
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
-    def test_variadic_keyword_capability_schema(self):
-        """Arbitrary keyword metadata remains valid when the constructor also has keyword-only parameters."""
-        spec = {'model': 'test', 'capabilities': [{'SetToolMetadata': {'code_mode': True}}]}
-        Agent.from_spec(spec)
+    @pytest.mark.parametrize(
+        ('arguments', 'tools', 'metadata'),
+        [
+            pytest.param(['a'], ['a'], {}, id='short-form-list'),
+            pytest.param('all', 'all', {}, id='short-form-all'),
+            pytest.param({'code_mode': True}, 'all', {'code_mode': True}, id='metadata-only'),
+            pytest.param({'tools': ['a'], 'code_mode': True}, ['a'], {'code_mode': True}, id='tools-and-metadata'),
+        ],
+    )
+    def test_variadic_keyword_capability_schema(
+        self, arguments: JsonValue, tools: list[str] | Literal['all'], metadata: dict[str, JsonValue]
+    ):
+        """Every `SetToolMetadata` form the schema accepts loads, short forms included."""
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{'SetToolMetadata': arguments}]}
         schema = AgentSpec.model_json_schema_with_capabilities()
         assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+        capabilities = Agent.from_spec(spec).root_capability.capabilities
+        [capability] = [c for c in capabilities if isinstance(c, SetToolMetadata)]
+        assert (capability.tools, capability.metadata) == (tools, metadata)
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_keyword_only_capability_schema(self):
