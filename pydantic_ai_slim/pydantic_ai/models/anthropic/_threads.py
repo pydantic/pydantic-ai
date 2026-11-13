@@ -131,7 +131,7 @@ class ThreadRecord:
     """Set by `_first_attempt` when its request was sent in a thread, or without one that threads don't support.
 
     The response is stamped with the thread's fingerprint in its `provider_details`. Sent in the thread, it also gets
-    the digest of the history with its own parts as its `history_digest`. Sent without it, it's marked
+    its `thread_digest` as its `history_digest`. Sent without it, it's marked
     `'thread_unsupported'`, so the next request with the same fingerprint doesn't try the thread again.
     """
 
@@ -146,13 +146,22 @@ class ThreadRecord:
         details = {**(response.provider_details or {}), _THREAD_FINGERPRINT_KEY: self.fingerprint}
         if self.history is None:
             return replace(response, provider_details={**details, _THREAD_UNSUPPORTED_KEY: True})
-        return replace(
-            response, provider_details=details, history_digest=continuation_digest(self.history, response.parts)
-        )
+        return replace(response, provider_details=details, history_digest=thread_digest(self.history, response))
 
 
 _THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
 _THREAD_UNSUPPORTED_KEY = 'thread_unsupported'
+
+
+def thread_digest(history: Hasher, response: ModelResponse) -> str:
+    """The `history_digest` of a thread response: its ID and parts after the history it was created from.
+
+    A continue request names the response by its ID, so the ID is covered too. With `history_digest_key`, a client
+    holding the history then can't swap in another conversation's response ID to continue that thread.
+    """
+    bound = history.copy()
+    bound.update(f'\n{response.provider_response_id}'.encode())
+    return continuation_digest(bound, response.parts)
 
 
 def latest_response(messages: list[ModelMessage]) -> tuple[int, ModelResponse] | None:
@@ -199,8 +208,7 @@ def thread_continuation(
         and response.provider_response_id
         and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
         and response.history_digest is not None
-        and response.history_digest
-        == continuation_digest(history_hasher(messages[:index], history_digest_key), response.parts)
+        and response.history_digest == thread_digest(history_hasher(messages[:index], history_digest_key), response)
         and response.finish_reason != 'content_filter'
         and response.state == 'complete'
         and new_messages
