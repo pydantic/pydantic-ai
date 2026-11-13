@@ -29,7 +29,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import anyio
 import grpc
@@ -380,11 +380,58 @@ def _invalid(message: str) -> APIStatusError:
     return APIStatusError(message, code='invalid_argument', grpc_code=3)
 
 
-def _point(point: Any) -> str:
+class _Point(Protocol):
+    x: int
+    y: int
+
+
+class _Region(_Point, Protocol):
+    width: int
+    height: int
+
+
+class _Message(Protocol):
+    def HasField(self, field_name: str) -> bool: ...
+
+
+class _Action(_Message, Protocol):
+    """The fields of boxd's computer action messages that the fake reads; each message has only its own."""
+
+    at: _Point
+    to: _Point
+    path: Sequence[_Point]
+    width: int
+    height: int
+    button: str
+    count: int
+    modifiers: Sequence[str]
+    delta_x: int
+    delta_y: int
+    text: str
+    keys: Sequence[str]
+    repeat: int
+    hold_ms: int
+
+
+class _ScreenshotOptions(_Message, Protocol):
+    region: _Region
+
+
+class _ActionRequest(Protocol):
+    """boxd's `ComputerActionRequest`, as the fake reads it."""
+
+    vm_id: str
+    return_screenshot: bool
+    screenshot_options: _ScreenshotOptions
+
+    def WhichOneof(self, oneof_group: str) -> str | None: ...
+
+
+def _point(point: _Point) -> str:
     return f'{point.x} {point.y}'
 
 
-def _at(action: Any) -> str:
+def _at(action: _Action) -> str:
     return _point(action.at) if action.HasField('at') else 'pointer'
 
 
@@ -394,13 +441,16 @@ class _FakeComputerTransport:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
 
-    async def call(self, method: str, request: Any, *, region: str | None = None, **options: object) -> Any:
+    async def call(
+        self, method: str, request: _ActionRequest, *, region: str | None = None, **options: object
+    ) -> object:
         assert method == 'ComputerAction'
         owner = self._owner
         owner.check_call()
         owner.check_runnable(owner.find(request.vm_id))
         desktop = owner.desktop
         which = request.WhichOneof('action')
+        assert which is not None
         action = getattr(request, which)
         if which not in ('screenshot', 'cursor_position'):
             desktop.calls.append(f'{which} {self._describe(which, action)}'.rstrip())
@@ -424,7 +474,7 @@ class _FakeComputerTransport:
             screenshot=shot,
         )
 
-    def _describe(self, which: str, action: Any) -> str:
+    def _describe(self, which: str, action: _Action) -> str:
         desktop = self._owner.desktop
         if which == 'set_screen_size':
             desktop.size = (action.width, action.height)
