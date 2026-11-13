@@ -81,10 +81,12 @@ def split_bedrock_model_id(model_id: str) -> tuple[str | None, str]:
 # The Claude models whose Bedrock entry lists both the 5-minute and the 1-hour cache TTL; the others
 # (Claude 3.7 Sonnet, Claude 3.5 Sonnet v2) only take the default 5 minutes. Bare names, as
 # `split_bedrock_model_id` returns them; a prefix also covers later point releases (`claude-opus-5-5`).
+# Claude Haiku 5.5 was verified live on 2026-10-30 on both Converse and InvokeModel.
 # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models
 _ONE_HOUR_CACHE_CLAUDE_MODEL_PREFIXES = (
     'claude-fable-5',
     'claude-haiku-4-5',
+    'claude-haiku-5-5',
     'claude-mythos-5',
     'claude-opus-4-5',
     'claude-opus-4-6',

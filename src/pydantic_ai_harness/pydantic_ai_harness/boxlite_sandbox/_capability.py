@@ -10,7 +10,12 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    check_integer,
+    check_working_dir,
+    reject_defer_loading,
+    require_asyncio,
+)
 from pydantic_ai_harness.boxlite_sandbox import _backend
 from pydantic_ai_harness.boxlite_sandbox._backend import BoxLiteSandboxBackend
 
@@ -61,11 +66,7 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     installs the display programs, which needs `allow_internet_access`."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            raise UserError(
-                '`BoxLiteSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('BoxLiteSandbox', self.defer_loading)
         check_integer('cpus', self.cpus, optional=True)
         check_integer('memory_mb', self.memory_mb, optional=True)
         check_working_dir(self.working_dir)
@@ -87,8 +88,7 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
         a cancelled caller waits for it to end.
         """
         _backend.check_ref(ref)
-        if not running_on_asyncio():
-            raise UserError(_backend.ASYNCIO_ONLY)
+        require_asyncio(_backend.ASYNCIO_ONLY)
         await _backend.delete(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

@@ -55,6 +55,29 @@ __all__ = (
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Fail collection when a `temporal` test lives in a module `test-durable-exec` wouldn't select.
+
+    That job only runs harness modules mentioning Temporal, and every other job deselects `temporal` tests, so such a
+    test would otherwise silently never run.
+    """
+    for module in {item.path for item in items if item.get_closest_marker('temporal')}:
+        # `test-durable-exec` selects `test_*.py` files that mention Temporal; pytest also collects `*_test.py`.
+        if not module.name.startswith('test_') or 'temporal' not in module.read_text().lower():  # pragma: no cover
+            raise pytest.UsageError(
+                f'{module} has `temporal` tests but `test-durable-exec` only runs `test_*.py` modules that mention '
+                'Temporal.'
+            )
+
+
+@pytest.fixture(scope='session', autouse=True)
+def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep Pixeltable's catalog out of `~/.pixeltable`; it reads the variable once per process."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path_factory.mktemp('pixeltable')))
+        yield
+
+
 @pytest.fixture(scope='session')
 def anyio_backend() -> str:
     """The harness suite is asyncio-only: capabilities lean on `asyncio.create_task`, Temporal, Monty and
@@ -63,13 +86,6 @@ def anyio_backend() -> str:
     Session-scoped like the root override so module-scoped async fixtures (`temporal_env`, Modal `session`)
     can depend on it."""
     return 'asyncio'
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
-    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
 
 
 @pytest.fixture
