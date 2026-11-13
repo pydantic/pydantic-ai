@@ -28,6 +28,8 @@ returns `self`, as `docs/toolsets.md` describes.
 
 VARIANTS: tuple[Variant, ...] = ('copy', 'nested', 'inplace')
 
+READINESS_WAIT_TIMEOUT = 10
+
 
 @dataclass
 class StepState:
@@ -57,7 +59,7 @@ class StepStateToolset(WrapperToolset[None]):
             self.state.listed[ctx.tool_call_id] = self.serial
             if len(self.state.listed) == 2:
                 self.state.both_listed.set()
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
                 await self.state.both_listed.wait()
         return tools
 
