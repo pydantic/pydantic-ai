@@ -4071,6 +4071,30 @@ def _executor_kinds(params: ModelRequestParameters, native_tool: AbstractNativeT
     )
 
 
+def _has_executors(params: ModelRequestParameters, native_tool: AbstractNativeTool) -> bool:
+    """Whether the request has exactly one tool of each kind that runs `native_tool`'s calls.
+
+    An optional native tool without them is dropped; a required one raises `UserError`, as does one with more than one
+    tool of a kind.
+    """
+    executor_kinds = _executor_kinds(params, native_tool)
+    if missing := sorted(kind.id for kind in native_tool.executed_by if kind.id not in executor_kinds):
+        # Its calls would have no tool to run them.
+        if native_tool.optional:
+            return False
+        raise UserError(
+            f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
+            'and the request has none the model can call.'
+        )
+    if shared := sorted(kind.id for kind in native_tool.executed_by if executor_kinds[kind.id] > 1):
+        # Which of them ran a call would depend on the order of the tools.
+        raise UserError(
+            f'`{type(native_tool).__name__}` needs one tool of each of the kinds {shared} to run its calls, '
+            'and the request has more than one the model can call.'
+        )
+    return True
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4084,26 +4108,12 @@ def _supported_native_tools(
     unsupported_natives: list[AbstractNativeTool] = []
     unapplied_settings: dict[str, frozenset[str]] = {}
     for native_tool in params.native_tools:
-        executor_kinds = _executor_kinds(params, native_tool)
         if not isinstance(native_tool, tuple(supported_types)):
             unsupported_natives.append(native_tool)
         elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
             unsupported_natives.append(native_tool)
             unapplied_settings[native_tool.unique_id] = settings
-        elif missing := sorted(kind.id for kind in native_tool.executed_by if kind.id not in executor_kinds):
-            # Its calls would have no tool to run them.
-            if not native_tool.optional:
-                raise UserError(
-                    f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
-                    'and the request has none the model can call.'
-                )
-        elif shared := sorted(kind.id for kind in native_tool.executed_by if executor_kinds[kind.id] > 1):
-            # Which of them ran a call would depend on the order of the tools.
-            raise UserError(
-                f'`{type(native_tool).__name__}` needs one tool of each of the kinds {shared} to run its calls, '
-                'and the request has more than one the model can call.'
-            )
-        else:
+        elif _has_executors(params, native_tool):
             supported_natives.append(native_tool)
 
     unsupported_ids = {t.unique_id for t in unsupported_natives}

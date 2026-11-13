@@ -38,7 +38,7 @@ from pydantic_ai_harness.coder import Coder
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from ..display_contract import check_display_contract
+from ..display_contract_live import check_display_contract
 from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
 
 pytestmark = pytest.mark.boxd_live

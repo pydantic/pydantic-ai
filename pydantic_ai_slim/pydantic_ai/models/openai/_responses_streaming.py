@@ -623,10 +623,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         call = map_computer_call(item, computer_name, self._computer_call_id(item), self.provider_name)
         if isinstance(self._parts_manager.get_part_by_vendor_id(item.id), ComputerCallPart):
             # Started at its added event, so it's completed as a delta; a second start would read as another call.
-            if event := self._parts_manager.handle_tool_call_delta(
+            event = self._parts_manager.handle_tool_call_delta(
                 vendor_part_id=item.id, args=call.args, provider_details=call.provider_details
-            ):
-                yield event
+            )
+            # A delta to a complete part always makes an event.
+            assert event is not None
+            yield event
         else:
             yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 

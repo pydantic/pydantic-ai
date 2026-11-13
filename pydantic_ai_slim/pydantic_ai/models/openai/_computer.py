@@ -2,7 +2,8 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated, Any, Literal
+from collections.abc import Sequence
+from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -13,6 +14,7 @@ from ...computer_use import (
     ComputerCallPart,
     ComputerResult,
     ComputerReturnPart,
+    SafetyCheck,
     _safety_checks,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
@@ -122,13 +124,7 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
     try:
         action = _OPENAI_ACTION.validate_python(raw)
     except ValidationError as error:
-        # A field's error location starts with the action type. An error with no location is about the action as a
-        # whole: a type that isn't one comes back as the error's tag, and an action that isn't an object has none.
-        details = error.errors()
-        fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
-        kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
-        # Under the tool's own type, so the retry names the fields rather than refusing the type.
-        return [({'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': fields}, None)]
+        return [(_refused_action(error), None)]
     match action:
         case _OpenAIClick():
             button = 'middle' if action.button == 'wheel' else action.button
@@ -141,31 +137,7 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
             path = [{'x': point.x, 'y': point.y} for point in action.path]
             return [({'type': 'drag', 'path': path, 'modifiers': action.keys}, None)]
         case _OpenAIScroll():
-            # OpenAI scrolls by pixels on both axes at once; the tool scrolls one way at a time, in wheel clicks.
-            scrolls: list[tuple[dict[str, Any], str | None]] = []
-            for axis, pixels, direction in (
-                ('scroll_x', action.scroll_x, 'right' if action.scroll_x > 0 else 'left'),
-                ('scroll_y', action.scroll_y, 'down' if action.scroll_y > 0 else 'up'),
-            ):
-                if pixels:
-                    # Rounded half up in whole numbers: any JSON integer is valid, and a float can't hold them all.
-                    clicks = max(1, (abs(pixels) + _SCROLL_PIXELS_PER_CLICK // 2) // _SCROLL_PIXELS_PER_CLICK)
-                    scroll = {
-                        'type': 'scroll',
-                        'x': action.x,
-                        'y': action.y,
-                        'direction': direction,
-                        'amount': clicks,
-                        'modifiers': action.keys,
-                    }
-                    note = (
-                        None
-                        if clicks * _SCROLL_PIXELS_PER_CLICK == abs(pixels)
-                        else f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
-                    )
-                    scrolls.append((scroll, note))
-            # A scroll by nothing only moves the pointer there.
-            return scrolls or [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+            return _map_scroll(action)
         case _OpenAIKeypress():
             return [({'type': 'keypress', 'keys': action.keys}, None)]
         case _OpenAIType():
@@ -174,6 +146,50 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
             return [({'type': 'wait'}, None)]
         case _OpenAIScreenshot():
             return [({'type': 'screenshot'}, None)]
+        case _:
+            assert_never(action)
+
+
+def _refused_action(error: ValidationError) -> dict[str, Any]:
+    """An action the tool refuses, naming the fields that didn't validate."""
+    # A field's error location starts with the action type. An error with no location is about the action as a
+    # whole: a type that isn't one comes back as the error's tag, and an action that isn't an object has none.
+    details = error.errors()
+    fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
+    kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
+    # Under the tool's own type, so the retry names the fields rather than refusing the type.
+    return {'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': fields}
+
+
+def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]]:
+    """OpenAI scrolls by pixels on both axes at once; the tool scrolls one way at a time, in wheel clicks."""
+    scrolls = [
+        _scroll(action, axis, pixels, direction)
+        for axis, pixels, direction in (
+            ('scroll_x', action.scroll_x, 'right' if action.scroll_x > 0 else 'left'),
+            ('scroll_y', action.scroll_y, 'down' if action.scroll_y > 0 else 'up'),
+        )
+        if pixels
+    ]
+    # A scroll by nothing only moves the pointer there.
+    return scrolls or [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+
+
+def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tuple[dict[str, Any], str | None]:
+    """A scroll along one axis in wheel clicks, with a note when the clicks don't match the pixels asked for."""
+    # Rounded half up in whole numbers: any JSON integer is valid, and a float can't hold them all.
+    clicks = max(1, (abs(pixels) + _SCROLL_PIXELS_PER_CLICK // 2) // _SCROLL_PIXELS_PER_CLICK)
+    scroll = {
+        'type': 'scroll',
+        'x': action.x,
+        'y': action.y,
+        'direction': direction,
+        'amount': clicks,
+        'modifiers': action.keys,
+    }
+    if clicks * _SCROLL_PIXELS_PER_CLICK == abs(pixels):
+        return scroll, None
+    return scroll, f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
 
 
 _SCROLL_NOTES = 'computer_scroll_notes'
@@ -210,19 +226,7 @@ def map_computer_call(
         # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
         args = '{"actions": ['
     else:
-        raw = dumped['actions'] if 'actions' in dumped else [dumped['action']] if 'action' in dumped else []
-        try:
-            actions = _LIST.validate_python(raw)
-        except ValidationError:
-            # Not a list, even if it is one action: the call is malformed, so none of it runs.
-            actions = [None]
-        mapped = [tool_action for action in actions for tool_action in _map_computer_action(action)]
-        notes = [note for _, note in mapped]
-        if any(notes):
-            # Written now, while what the model asked for is known, and read when the result is sent back.
-            provider_details[_SCROLL_NOTES] = notes
-        # A call with no actions only asks to look.
-        args = {'actions': [tool_action for tool_action, _ in mapped] or [{'type': 'screenshot'}]}
+        args = _map_actions(dumped, provider_details)
     return ComputerCallPart(
         tool_name,
         args,
@@ -231,6 +235,23 @@ def map_computer_call(
         provider_name=provider_name,
         provider_details=provider_details,
     )
+
+
+def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any]) -> dict[str, Any]:
+    """A `computer_call` item's actions as the `computer` tool's arguments, noting scrolls in `provider_details`."""
+    raw = dumped['actions'] if 'actions' in dumped else [dumped['action']] if 'action' in dumped else []
+    try:
+        actions = _LIST.validate_python(raw)
+    except ValidationError:
+        # Not a list, even if it is one action: the call is malformed, so none of it runs.
+        actions = [None]
+    mapped = [tool_action for action in actions for tool_action in _map_computer_action(action)]
+    notes = [note for _, note in mapped]
+    if any(notes):
+        # Written now, while what the model asked for is known, and read when the result is sent back.
+        provider_details[_SCROLL_NOTES] = notes
+    # A call with no actions only asks to look.
+    return {'actions': [tool_action for tool_action, _ in mapped] or [{'type': 'screenshot'}]}
 
 
 def computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
@@ -297,12 +318,7 @@ def map_computer_call_output(
     # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
     # plain `ToolCallPart`, and may still have run with corrected arguments.
     if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
-        output['acknowledged_safety_checks'] = [
-            responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
-                id=check.id or '', code=check.code, message=check.message
-            )
-            for check in checks
-        ]
+        output['acknowledged_safety_checks'] = _acknowledged(checks)
     items: list[responses.ResponseInputItemParam] = [output]
     # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
     content = (computer_return.typed_content if computer_return else None) or part.content_items()
@@ -311,22 +327,39 @@ def map_computer_call_output(
     others = images[:-1] if image is not None else images
     conversions = _scroll_notes(call, computer_return.result) if computer_return else []
     if image is None or computer_return is None or _needs_summary(computer_return.result) or others or conversions:
-        # The output can only carry an image: say what didn't run, or why the image is blank. The note is the tool's
-        # result, so it is framed as one on the user channel, as for any tool result that can't go natively.
-        texts = [item for item in content if isinstance(item, str)]
-        note = (
-            ' '.join([*texts, *conversions]) if texts or conversions else part.model_response_str(wrap_if_error=False)
-        )
-        framed = wrap(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-        if others:
-            message_content: list[responses.ResponseInputContentParam] = [
-                responses.ResponseInputTextParam(type='input_text', text=framed),
-                *(
-                    responses.ResponseInputImageParam(type='input_image', image_url=other.data_uri, detail='original')
-                    for other in others
-                ),
-            ]
-            items.append(responses.EasyInputMessageParam(role='user', content=message_content))
-        else:
-            items.append(responses.EasyInputMessageParam(role='user', content=framed))
+        items.append(_summary_message(part, content, others, conversions))
     return items
+
+
+def _acknowledged(
+    checks: list[SafetyCheck],
+) -> list[responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck]:
+    return [
+        responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
+            id=check.id or '', code=check.code, message=check.message
+        )
+        for check in checks
+    ]
+
+
+def _summary_message(
+    part: ToolReturnPart, content: Sequence[object], others: list[BinaryImage], conversions: list[str]
+) -> responses.EasyInputMessageParam:
+    """The output can only carry an image: say what didn't run, or why the image is blank.
+
+    The note is the tool's result, so it is framed as one on the user channel, as for any tool result that can't go
+    natively.
+    """
+    texts = [item for item in content if isinstance(item, str)]
+    note = ' '.join([*texts, *conversions]) if texts or conversions else part.model_response_str(wrap_if_error=False)
+    framed = wrap(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    if not others:
+        return responses.EasyInputMessageParam(role='user', content=framed)
+    message_content: list[responses.ResponseInputContentParam] = [
+        responses.ResponseInputTextParam(type='input_text', text=framed),
+        *(
+            responses.ResponseInputImageParam(type='input_image', image_url=other.data_uri, detail='original')
+            for other in others
+        ),
+    ]
+    return responses.EasyInputMessageParam(role='user', content=message_content)
