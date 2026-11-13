@@ -14,6 +14,8 @@ from ...computer_use import (
     ComputerCallPart,
     ComputerResult,
     ComputerReturnPart,
+    SafetyCheck,
+    _safety_checks,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 
@@ -332,8 +334,10 @@ def map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    if computer_return and isinstance(call, ComputerCallPart) and call.safety_checks:
-        output['acknowledged_safety_checks'] = _acknowledged(call)
+    # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
+    # plain `ToolCallPart`, and may still have run with corrected arguments.
+    if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
+        output['acknowledged_safety_checks'] = _acknowledged(checks)
     items: list[responses.ResponseInputItemParam] = [output]
     # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
     content = (computer_return.typed_content if computer_return else None) or part.content_items()
@@ -347,13 +351,13 @@ def map_computer_call_output(
 
 
 def _acknowledged(
-    call: ComputerCallPart,
+    checks: list[SafetyCheck],
 ) -> list[responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck]:
     return [
         responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
             id=check.id or '', code=check.code, message=check.message
         )
-        for check in call.safety_checks
+        for check in checks
     ]
 
 

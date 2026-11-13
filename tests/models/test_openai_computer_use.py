@@ -189,6 +189,44 @@ async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks
     assert output['acknowledged_safety_checks'] == [CHECK]
 
 
+async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_its_safety_checks(
+    allow_model_requests: None,
+) -> None:
+    from pydantic_ai import RunContext, ToolApproved
+    from pydantic_ai.capabilities import Hooks
+
+    # An option the `computer` tool lacks: once through JSON, the call is a plain `ToolCallPart`.
+    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'extra': 'bad'}, safety_checks=[CHECK])
+    client = MockOpenAIResponses.create_mock([first, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    corrected = {'actions': [{'type': 'click', 'x': 5, 'y': 6}]}
+
+    async def correct(ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any) -> Any:
+        return corrected
+
+    computer = FakeComputer(requires_approval=True)
+    agent = Agent(
+        model,
+        capabilities=[computer, InMemoryProvider().capability(), Hooks(before_tool_validate=correct)],
+        output_type=[str, DeferredToolRequests],
+    )
+    paused = await agent.run('Click.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    (approval,) = paused.output.approvals
+    history = ModelMessagesTypeAdapter.validate_json(paused.all_messages_json())
+
+    await agent.run(
+        message_history=history,
+        deferred_tool_results=DeferredToolResults(
+            approvals={approval.tool_call_id: ToolApproved(override_args=corrected)}
+        ),
+    )
+    assert computer.actions != []
+    _, second = get_mock_responses_kwargs(client)
+    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
+    assert output['acknowledged_safety_checks'] == [CHECK]
+
+
 async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safety_checks(
     allow_model_requests: None,
 ) -> None:
