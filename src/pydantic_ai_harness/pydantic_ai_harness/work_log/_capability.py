@@ -1,0 +1,364 @@
+"""The `WorkLog` capability: a queryable record of every tool call with its full result."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+    durable_operation,
+)
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    ToolFailedError,
+    ToolRetryError,
+)
+from pydantic_ai.messages import (
+    CachePoint,
+    ModelResponse,
+    TextContent,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturn,
+    is_multi_modal_content,
+)
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest
+from pydantic_ai_harness._history_bm25 import Bm25Params, bm25_rank, clip, tokenize
+from pydantic_ai_harness._line_slice import MAX_READ_CHARS, slice_lines
+from pydantic_ai_harness._typeguards import is_object_list
+from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
+from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.compaction._receipts import last_reset_notice
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits._payload import to_text
+from pydantic_ai_harness.work_log._store import (
+    InMemoryWorkLogStore,
+    WorkLogEntry,
+    WorkLogEntryKind,
+    WorkLogOutcome,
+    WorkLogRecord,
+    WorkLogStore,
+    WorkspaceWorkLogStore,
+)
+from pydantic_ai_harness.work_log._toolset import WorkLogMatch, WorkLogRead, WorkLogSearchResult, WorkLogToolset
+
+_OWN_KINDS = frozenset({WORK_LOG_SEARCH_KIND.id, WORK_LOG_READ_KIND.id})
+"""The work log's own tools, whose calls it does not record."""
+
+_BM25 = Bm25Params(k1=1.5, b=0.75)
+"""`ConversationSearch`'s default BM25 tuning."""
+
+_ARGS_CHARS = 200
+_EXCERPT_CHARS = 300
+
+
+@dataclass
+class WorkLog(AbstractCapability[AgentDepsT]):
+    """Record every tool call with its full result, and model replies, in a log the model can search.
+
+    Each conversation has one log, keyed by its `conversation_id`, so a run continued from earlier
+    history appends to the same log. Tool results are recorded before `ToolOutputLimits` reduces
+    them. Calls made from CodeMode's `run_code` are recorded too, each with `run_code`'s call id as
+    its `parent_tool_call_id`. The model reads the log with `search_work_log` and `read_work_log`,
+    as tools or from code:
+
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai_harness.work_log import FileWorkLogStore, WorkLog
+
+    agent = Agent('openai:gpt-5', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
+    ```
+
+    `WorkLog` adds no instructions: the tool descriptions say what the log holds.
+    """
+
+    store: WorkLogStore | WorkspaceWorkLogStore = field(default_factory=InMemoryWorkLogStore)
+    """Where the log is kept. Defaults to an `InMemoryWorkLogStore`, which lasts as long as the process."""
+
+    record_text: bool = True
+    """Record the model's text replies."""
+
+    record_thinking: bool = False
+    """Record the model's thinking."""
+
+    tool_id: str = 'work-log'
+    """Toolset id for the `search_work_log` and `read_work_log` tools."""
+
+    _: KW_ONLY
+    id: str | None = 'work_log'
+    """Stable capability ID: durable execution names the log's operations by it.
+
+    Two `WorkLog`s sharing this `id` are one log stated twice when they agree, and an error when
+    they differ.
+    """
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one log stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
+
+    def get_ordering(self) -> CapabilityOrdering:
+        # Inside `ToolOutputLimits`: inner `after_tool_execute` hooks run first, so the log sees a
+        # result before it is reduced.
+        return CapabilityOrdering(wrapped_by=[ToolOutputLimits])
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Fail the run at its start when the log belongs in the run's workspace and none is attached."""
+        store = self.store
+        if isinstance(store, WorkspaceWorkLogStore) and store.workspace is None:
+            require_workspace(ctx.workspace, 'WorkLog', ctx.messages)
+
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
+        """Provide `search_work_log` and `read_work_log`, each running through a durable operation."""
+        return WorkLogToolset[AgentDepsT](search=self._search, read=self._read, tool_id=self.tool_id)
+
+    # --- recording ---
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        """Record a tool's result as the model sees it, before an outer capability reduces it."""
+        if tool_def.tool_kind not in _OWN_KINDS:
+            await self._append(ctx, _tool_record(ctx, call, 'success', _result_text(result)))
+        return result
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Record a tool call that failed or asked for a retry, then re-raise.
+
+        Failures skip `after_tool_execute`, so they are recorded here. A deferral or a skipped call
+        has no result yet; its later execution is recorded.
+        """
+        try:
+            return await handler(args)
+        except (CallDeferred, ApprovalRequired, SkipToolExecution):
+            raise
+        except Exception as error:
+            if tool_def.tool_kind not in _OWN_KINDS:
+                if isinstance(error, (ModelRetry, ToolRetryError)):
+                    record = _tool_record(ctx, call, 'retried', str(error))
+                else:
+                    # Core wraps a tool's `ToolFailed` before it reaches a wrap hook; name what the tool raised.
+                    name = 'ToolFailed' if isinstance(error, ToolFailedError) else type(error).__name__
+                    record = _tool_record(ctx, call, 'failed', f'{name}: {error}')
+                await self._append(ctx, record)
+            raise
+
+    async def after_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        """Record the response's text, and its thinking when `record_thinking` is set."""
+        for index, part in enumerate(response.parts):
+            if isinstance(part, TextPart) and self.record_text:
+                kind: WorkLogEntryKind = 'text'
+            elif isinstance(part, ThinkingPart) and self.record_thinking:
+                kind = 'thinking'
+            else:
+                continue
+            key = f'{ctx.run_id}:{ctx.run_step}:response:{index}'
+            await self._append(ctx, _record(ctx, key=key, kind=kind, content=part.content))
+        return response
+
+    # --- durable operations ---
+
+    def _target(self, ctx: RunContext[AgentDepsT]) -> tuple[WorkLogStore, str]:
+        """The store, bound to the run's workspace when it keeps logs there, and this conversation's log id."""
+        log_id = ctx.conversation_id
+        assert log_id is not None, 'every run resolves a conversation id at its start'
+        store = self.store
+        return (store.bind(ctx.workspace) if isinstance(store, WorkspaceWorkLogStore) else store), log_id
+
+    # One operation per recorded part, so a replay or a retried unit does not write again; the
+    # record's key makes a retried write inside a durable unit, such as `run_code`'s, write once.
+    @durable_operation('append')
+    async def _append(self, ctx: RunContext[AgentDepsT], record: WorkLogRecord) -> int:
+        store, log_id = self._target(ctx)
+        return await store.append(log_id, record)
+
+    @durable_operation('search')
+    async def _search(
+        self, ctx: RunContext[AgentDepsT], query: str | None, tool_name: str | None, run_id: str | None, limit: int
+    ) -> WorkLogSearchResult:
+        store, log_id = self._target(ctx)
+        entries = await store.read(log_id)
+        candidates = [
+            entry
+            for entry in entries
+            if (tool_name is None or entry['tool_name'] == tool_name) and (run_id is None or entry['run_id'] == run_id)
+        ]
+        matches, capped = _matches(_ranked(candidates, query)[:limit], frozenset(tokenize(query or '')))
+        return WorkLogSearchResult(total_entries=len(entries), matches=matches, capped=capped)
+
+    @durable_operation('read')
+    async def _read(
+        self, ctx: RunContext[AgentDepsT], seq: int, offset: int, limit: int, from_end: bool, pattern: str | None
+    ) -> WorkLogRead | RetryRequest:
+        store, log_id = self._target(ctx)
+        found = await store.read(log_id, seq, seq + 1)
+        if not found:
+            count = len(await store.read(log_id))
+            valid = f'entries run from 1 to {count}' if count else 'the work log is empty'
+            return RetryRequest(f'No work log entry has `seq` {seq}: {valid}.')
+        entry = found[0]
+        window = slice_lines(entry['content'], offset=offset, limit=limit, from_end=from_end, pattern=pattern)
+        end = offset + window.shown
+        return WorkLogRead(
+            seq=entry['seq'],
+            context=entry['context'],
+            kind=entry['kind'],
+            tool_name=entry['tool_name'],
+            tool_call_id=entry['tool_call_id'],
+            parent_tool_call_id=entry['parent_tool_call_id'],
+            args=entry['args'],
+            outcome=entry['outcome'],
+            text=window.text,
+            offset=offset,
+            next_offset=end if end < window.total else None,
+            total_lines=window.total,
+        )
+
+
+def _record(
+    ctx: RunContext[Any],
+    *,
+    key: str,
+    kind: WorkLogEntryKind,
+    content: str,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    parent_tool_call_id: str | None = None,
+    args: str | None = None,
+    outcome: WorkLogOutcome | None = None,
+) -> WorkLogRecord:
+    """Build a record, numbering its context from the latest reset notice in the run's messages."""
+    notice = last_reset_notice(ctx.messages)
+    number: object = notice.metadata.get('number') if notice is not None else 0
+    return WorkLogRecord(
+        key=key,
+        run_id=ctx.run_id,
+        step=ctx.run_step,
+        context=number if isinstance(number, int) else 0,
+        kind=kind,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        parent_tool_call_id=parent_tool_call_id,
+        args=args,
+        outcome=outcome,
+        content=content,
+        chars=len(content),
+        timestamp=datetime.now(UTC).isoformat(),
+    )
+
+
+def _tool_record(ctx: RunContext[Any], call: ToolCallPart, outcome: WorkLogOutcome, content: str) -> WorkLogRecord:
+    # The step is in the key because models reuse tool call ids across turns.
+    # A nested `ToolManager`, such as `run_code`'s, carries the context of the call that dispatched it;
+    # a top-level call's manager carries the step's, which has no tool call id.
+    dispatcher = ctx.tool_manager.ctx if ctx.tool_manager is not None else None
+    return _record(
+        ctx,
+        key=f'{ctx.run_id}:{ctx.run_step}:{call.tool_call_id}:{ctx.retry}',
+        kind='tool',
+        content=content,
+        tool_name=call.tool_name,
+        tool_call_id=call.tool_call_id,
+        parent_tool_call_id=dispatcher.tool_call_id if dispatcher is not None else None,
+        args=call.args_as_json_str(),
+        outcome=outcome,
+    )
+
+
+def _ranked(entries: list[WorkLogEntry], query: str | None) -> list[WorkLogEntry]:
+    """`entries` by BM25 relevance to `query` over tool name, arguments and content, or newest first without one."""
+    if query is None or not query.strip():
+        return entries[::-1]
+    documents = [
+        ' '.join(text for text in (entry['tool_name'], entry['args'], entry['content']) if text) for entry in entries
+    ]
+    return [entries[index] for index, _ in bm25_rank(query, documents, _BM25)]
+
+
+def _matches(entries: list[WorkLogEntry], terms: frozenset[str]) -> tuple[list[WorkLogMatch], bool]:
+    """Excerpt each entry around `terms`, stopping before the matches pass `MAX_READ_CHARS` as JSON.
+
+    Also returns whether it stopped early.
+    """
+    matches: list[WorkLogMatch] = []
+    size = 0
+    for entry in entries:
+        args = entry['args']
+        match = WorkLogMatch(
+            seq=entry['seq'],
+            context=entry['context'],
+            kind=entry['kind'],
+            tool_name=entry['tool_name'],
+            args=None if args is None else clip(args, _ARGS_CHARS, terms),
+            excerpt=clip(entry['content'], _EXCERPT_CHARS, terms),
+            chars=entry['chars'],
+        )
+        size += len(json.dumps(match, ensure_ascii=False))
+        if size > MAX_READ_CHARS:
+            return matches, True
+        matches.append(match)
+    return matches, False
+
+
+def _result_text(result: object) -> str:
+    """A tool result as the model sees it: a `ToolReturn`'s `content` when set, else the value as text.
+
+    Files are named by media type rather than logged.
+    """
+    if isinstance(result, ToolReturn) and result.content is not None:
+        content = result.content
+        items: Sequence[object] = [content] if isinstance(content, str) else content
+    else:
+        value: object = result.return_value if isinstance(result, ToolReturn) else result
+        items = value if is_object_list(value) and any(is_multi_modal_content(item) for item in value) else [value]
+    return '\n'.join(_item_text(item) for item in items if not isinstance(item, CachePoint))
+
+
+def _item_text(item: object) -> str:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, TextContent):
+        return item.content
+    if not is_multi_modal_content(item):
+        return to_text(item)
+    try:
+        media_type = item.media_type
+    except ValueError:
+        # A URL whose media type cannot be inferred from it.
+        media_type = item.kind
+    return f'[{media_type} content not logged]'

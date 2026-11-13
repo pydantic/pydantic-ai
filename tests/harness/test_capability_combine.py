@@ -474,6 +474,10 @@ COMBINE_POLICY: dict[str, Policy] = {
             cls(SnapshotHistorySource(InMemoryStepStore()), scope='all'),
         ),
     ),
+    'WorkLog': Narrows(
+        'one log per id under fixed tool names, and its store decides where raw tool results are kept',
+        lambda cls: (cls(), cls(record_thinking=True)),
+    ),
     'ExaAgent': Narrows(
         'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),

@@ -14,7 +14,7 @@ from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     ToolCallPart,
@@ -28,9 +28,11 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness._line_slice import check_window, slice_lines
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._typeguards import is_mapping, is_object_list
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
@@ -63,13 +65,19 @@ READ_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'read_tool_result')
 """The kind of the `read_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
 
 _EXEMPT_KINDS = frozenset(
-    {READ_TOOL_RESULT_KIND.id, LoadCapabilityReturnPart.tool_kind, ToolSearchReturnPart.tool_kind}
+    {
+        READ_TOOL_RESULT_KIND.id,
+        WORK_LOG_READ_KIND.id,
+        LoadCapabilityReturnPart.tool_kind,
+        ToolSearchReturnPart.tool_kind,
+    }
 )
 """Kinds whose returns are never reduced, whatever `tool_filter` says.
 
-Besides `read_tool_result`, these are core's `load_capability` and `search_tools`: core re-reads their
-structured content from history to decide which capabilities are loaded and which tools are revealed,
-so a reduced return would leave those locked.
+`read_tool_result` and `WorkLog`'s `read_work_log` return a bounded page of a stored result, so
+reducing one would store the page a second time. The others are core's `load_capability` and
+`search_tools`: core re-reads their structured content from history to decide which capabilities
+are loaded and which tools are revealed, so a reduced return would leave those locked.
 """
 
 _DEFAULT_THRESHOLD = 10_000
@@ -801,13 +809,6 @@ def _head_tail_preview(text: str, preview_chars: int) -> str:
     return f'{text[:head_chars]}\n...[{omitted:,} chars omitted]...\n{text[-tail_chars:]}'
 
 
-_MAX_READ_LINES = 1_000
-"""Hard cap on lines returned by one `read_tool_result` call."""
-
-_MAX_READ_CHARS = 50_000
-"""Hard cap on characters returned by one `read_tool_result` call."""
-
-
 async def _read_slice(
     read: Callable[[str], Awaitable[bytes]],
     handle: str,
@@ -816,17 +817,8 @@ async def _read_slice(
     from_end: bool,
     pattern: str | None,
 ) -> str:
-    """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
-
-    `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
-    the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text.
-    """
-    if offset < 0:
-        raise ModelRetry('`offset` must be >= 0.')
-    if limit < 1:
-        raise ModelRetry('`limit` must be >= 1.')
-    limit = min(limit, _MAX_READ_LINES)
+    """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes (see `_line_slice`)."""
+    limit = check_window(offset, limit)
 
     try:
         data = await read(handle)
@@ -845,21 +837,9 @@ async def _read_slice(
             'available, re-run the original tool.]'
         )
 
-    lines = data.decode('utf-8', errors='replace').splitlines()
-    if pattern is not None:
-        lines = [line for line in lines if pattern in line]
-
-    total = len(lines)
-    if from_end:
-        end = max(0, total - offset)
-        window = lines[max(0, end - limit) : end]
-    else:
-        window = lines[offset : offset + limit]
-
-    body = '\n'.join(window)
-    capped = ''
-    if len(body) > _MAX_READ_CHARS:
-        body = body[:_MAX_READ_CHARS]
-        capped = ', output capped'
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {len(window)}{capped}]'
-    return f'{header}\n{body}' if body else header
+    window = slice_lines(
+        data.decode('utf-8', errors='replace'), offset=offset, limit=limit, from_end=from_end, pattern=pattern
+    )
+    capped = ', output capped' if window.capped else ''
+    header = f'[handle {handle!r}: {window.total:,} matching line(s); showing {window.shown}{capped}]'
+    return f'{header}\n{window.text}' if window.text else header
