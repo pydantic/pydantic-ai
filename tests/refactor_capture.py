@@ -26,14 +26,14 @@ Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2
 `Endpoint.make_request`, before it's signed and after a model's extra headers are added, once per call: botocore
 retries a call below `make_request`, so its retries aren't recorded. Either is recorded with its method and URL as the
 target, its headers and its body, parsed when it's JSON. Two kinds of header are left out: credentials
-(`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `xi-api-key`,
-`x-amz-security-token`, `cookie`), so a capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose ids are
-random per run. Prefect's client, which marks each request it sends with its API version, retries a request by sending
-it again when its test server is busy, so each request it sends is recorded once. Its checks of the server's version and
-fetches of a CSRF token carry nothing from the code under test and are sent wherever the load puts them, so they aren't
-recorded. Neither are the log batches its background worker sends during whichever test is running: no node can claim
-them, so the task run names and failure messages they hold go uncompared. A test that hands a model one of the SDK
-client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded
+(`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `xi-api-key`, `x-amz-security-token`,
+`cookie`), so a capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose
+ids are random per run. Prefect's client, which marks each request it sends with its API version, retries a request by
+sending it again when its test server is busy, so each request it sends is recorded once. Its checks of the server's
+version and fetches of a CSRF token carry nothing from the code under test and are sent wherever the load puts them, so
+they aren't recorded. Neither are the log batches its background worker sends during whichever test is running: no node
+can claim them, so the task run names and failure messages they hold go uncompared. A test that hands a model one of the
+SDK client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded
 instead, with the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When
 a capture starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on
 botocore, and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture
@@ -68,8 +68,8 @@ makes while it handles a frame comes before the frame. Each frame `RealtimeConne
 the connection's own class, with its events in order, each named by its class, lifecycle events and `StaleEvent`s
 included: iterating the connection drops the lifecycle events and unwraps the stale ones. So is the error iteration
 raised, if any. The capture wraps `frames` and `send` on `RealtimeConnection` and on every subclass that overrides them,
-whether the subclass is defined before the capture starts or after, and closes what `frames` returned when the consumer
-closes the recording, so the connection settles what's open when it would without the capture. A `send` call is
+whether the subclass is defined before the capture starts or after, and closes the generator `frames` returned when the
+consumer closes the recording, so the connection settles what's open when it would without the capture. A `send` call is
 recorded with its input, named by its class, and the lifecycle events it returns or the error it raises. A frame
 reaches the provider through a test double: a cassette's `ReplayWebSocket`, or a test's own socket or Google
 `AsyncSession`. Each call on a method `REALTIME_SEND_METHODS` lists is recorded, under the double's class, with its

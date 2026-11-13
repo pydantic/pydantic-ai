@@ -3846,9 +3846,17 @@ async def test_an_mcp_call_without_a_server_id_is_named_by_kind_alone() -> None:
 
 async def test_an_mcp_call_denied_before_a_drop_keeps_its_denial() -> None:
     connection, ws = _connection()
-    with pytest.warns(UserWarning, match='cannot do, so the call was denied'):
+    with pytest.warns(UserWarning) as record:
         ws._incoming.append(json.dumps(_mcp_call('awaiting_approval')))  # pyright: ignore[reportPrivateUsage]
         frames = [frame async for frame in connection.frames()]
+    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
+        [
+            (
+                'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval off for the tool on the ElevenLabs side.',
+                'elevenlabs_agents.py',
+            )
+        ]
+    )
     returns = [part for part in _native_parts(frames) if isinstance(part, NativeToolReturnPart)]
     assert [(part.tool_call_id, part.outcome) for part in returns] == [('mcp_1', 'denied')]
     ended = [event for frame in frames for event in frame if isinstance(event, ResponseEnded)]
