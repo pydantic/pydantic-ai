@@ -309,13 +309,23 @@ async def test_x11_computer_releases_what_a_failed_action_held(
     assert recovery(desktop.argvs) == releases
 
 
-async def test_x11_computer_tries_every_release_when_one_fails() -> None:
+async def test_x11_computer_tries_every_release_when_one_fails_and_says_what_may_still_be_held() -> None:
     failed = CommandResult(exit_code=1, stdout='', stderr='BadValue')
     # The action fails, then stopping it, then letting go of the button.
     desktop = ScriptedDesktop(failed, failed, failed)
-    with pytest.raises(WorkspaceError, match='BadValue'):
+    with pytest.raises(WorkspaceError, match='BadValue') as error:
         await desktop.screen.act(Click(x=1, y=2, modifiers=('ctrl',)))
+    assert 'Releasing what it pressed failed too, so a mouse button or key may still be held' in str(error.value)
     assert recovery(desktop.argvs) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'ctrl'])
+
+
+async def test_x11_computer_raises_a_lost_environment_while_releasing() -> None:
+    failed = CommandResult(exit_code=1, stdout='', stderr='BadValue')
+    desktop = ScriptedDesktop(
+        failed, CommandResult(exit_code=0, stdout='', stderr=''), WorkspaceUnavailableError('gone')
+    )
+    with pytest.raises(WorkspaceUnavailableError, match='gone'):
+        await desktop.screen.act(Click(x=1, y=2))
 
 
 @pytest.mark.parametrize(
