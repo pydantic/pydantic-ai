@@ -176,6 +176,25 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 
 @needs_anthropic
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='loading the capability swaps the deferred `computer` tool for the toolset')
+async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _claude('claude-sonnet-5-5', anthropic_api_key, request_capture)
+    await Agent(model, capabilities=[provider.capability(), ComputerUse(defer_loading=True)]).run(TASK)
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
+    first, second, *_ = bodies = request_capture.bodies('/v1/messages')
+    # Before loading, `computer` is a deferred function; after it, Claude's toolset, which history can't reference.
+    assert {'name': 'computer', 'defer_loading': True}.items() <= _tools(first)[-1].items()
+    assert {'type': 'computer_toolset_20260801'} in _tools(second)
+    for body in bodies:
+        assert "'name': 'computer'" not in str(content_blocks(body, 'tool_addition'))
+
+
+@needs_anthropic
+@pytest.mark.vcr
 async def test_claude_sonnet_4_6_gets_computer_20251124_sized_to_the_display(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
