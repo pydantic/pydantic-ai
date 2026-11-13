@@ -360,6 +360,7 @@ def test_infer_str_unknown(model_name: str, message: str):
         ('elevenlabs:eleven_realtime_v1_mini', 'elevenlabs'),
         ('sentence-transformers:all-MiniLM-L6-v2', 'sentence-transformers'),
         ('voyageai:voyage-3', 'voyageai'),
+        ('gateway/voyageai:voyage-3', 'voyageai'),
     ],
 )
 def test_infer_model_non_chat_provider(model_name: str, provider_name: str):

@@ -3674,9 +3674,15 @@ def infer_model(  # noqa: C901
             message += f". Did you mean '{suggested_name}'?"
         raise UserError(message)
 
+    model_kind = provider_name
+    if model_kind.startswith('gateway/'):
+        from ..providers.gateway import normalize_gateway_provider
+
+        model_kind = normalize_gateway_provider(model_kind)
+
     # Checked before the provider is built, which would first ask for its package and API key.
-    if provider_name in _NON_CHAT_PROVIDERS:
-        raise UserError(f'Unknown model: {model}. Provider {provider_name!r} has no chat models.')
+    if model_kind in _NON_CHAT_PROVIDERS:
+        raise UserError(f'Unknown model: {model}. Provider {model_kind!r} has no chat models.')
 
     if provider_factory is infer_provider:
         try:
@@ -3688,12 +3694,6 @@ def infer_model(  # noqa: C901
             raise UserError(message) from None
 
     provider = provider_factory(provider_name)
-
-    model_kind = provider_name
-    if model_kind.startswith('gateway/'):
-        from ..providers.gateway import normalize_gateway_provider
-
-        model_kind = normalize_gateway_provider(model_kind)
 
     if provider_name == 'bedrock-mantle':
         from ..providers.bedrock_mantle import BedrockMantleProvider, bedrock_mantle_model_profile
