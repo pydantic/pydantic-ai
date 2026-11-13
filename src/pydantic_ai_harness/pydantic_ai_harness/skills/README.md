@@ -277,8 +277,9 @@ skills = Skills(
   exist, instead of failing the run. A path that is a file, or that holds a
   `SKILL.md` itself (a skill package rather than a library of them), is left
   out with a `UserWarning`, so one a model creates mid-session doesn't fail
-  every later run. So is a library directory that can't be read, such as one
-  whose permissions changed mid-session.
+  every later run. So is a library directory the workspace raises
+  `PermissionError` for, such as a local one whose permissions changed
+  mid-session.
 - `duplicate_names='keep_first'` keeps the skill from the earlier directory when
   two valid skills with different `SKILL.md` files share a name, and skips the
   other with a `UserWarning`. An invalid `SKILL.md` is skipped first, so it does
@@ -367,7 +368,7 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 | `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
 | `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
 | `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
-| `'unreadable'` | A library directory that can't be read, such as one without permission, with `missing_directories='skip'` |
+| `'unreadable'` | A library directory the workspace raises `PermissionError` for, such as a local one without permission, with `missing_directories='skip'` |
 | `'flagged'` | A skill whose description or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
 
 A skipped library path leaves out every skill it holds, so `SkippedSkill`

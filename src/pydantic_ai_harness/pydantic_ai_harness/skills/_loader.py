@@ -77,7 +77,8 @@ class _SkillFrontmatter(BaseModel):
 MissingDirectories: TypeAlias = Literal['error', 'skip']
 """What `Skills` does with a library path that is not a library: fail the run, or skip it.
 
-A path is not a library when it does not exist, is not a directory, or is itself a skill package.
+A path is not a library when it does not exist, is not a directory, is itself a skill package, or cannot be read
+(the workspace raises `PermissionError` for it).
 """
 
 DuplicateNames: TypeAlias = Literal['error', 'keep_first']
@@ -172,8 +173,8 @@ SkipReason: TypeAlias = Literal[
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
 - `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
 - `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
-- `'unreadable'`: a library directory that cannot be read, such as one without permission, with
-  `missing_directories='skip'`.
+- `'unreadable'`: a library directory the workspace raises `PermissionError` for, such as a local one without
+  permission, with `missing_directories='skip'`.
 - `'flagged'`: a skill whose description or body the `Skills(scanner=...)` artifact scan flagged.
 """
 
@@ -320,7 +321,8 @@ async def _libraries(
         try:
             entry, children = await _read_library(workspace, library)
         except PermissionError:
-            # Permissions can change mid-session, so with 'skip' it must not fail every later run.
+            # Permissions can change mid-session, so with 'skip' it must not fail every later run. A shell-backed
+            # workspace raises this only when `stat` is denied; a listing it is denied raises `WorkspaceError`.
             if missing_directories == 'error':
                 raise
             message = f'Skipping {library}: it is not readable.'
