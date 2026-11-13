@@ -304,6 +304,8 @@ class InFlightRegistry:
         run waits for the work to end, so catch the errors the model should hear about and enqueue them instead.
         The run's node error hooks don't see the error, and an error raised after the run's last step is not
         raised at all. If several pieces of work fail, only the first error is raised.
+        When the run ends, it cancels the work it doesn't wait for and waits for it to stop, which nothing,
+        not even the run's `timeout=`, cuts short: `fn` must let cancellation stop it, or the run never returns.
 
         Args:
             fn: The work to run, called with no arguments.
