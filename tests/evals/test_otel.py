@@ -1137,6 +1137,30 @@ async def test_span_query_child_count():
     assert matched_names == {'parent_two_children', 'parent_three_children'}
 
 
+async def test_empty_sub_queries_are_real_conditions():
+    """An empty sub-query is a condition that every span meets, not a condition that is left out."""
+    with context_subtree() as tree:
+        with logfire.span('root'):
+            with logfire.span('child'):
+                with logfire.span('grandchild'):
+                    pass
+    assert isinstance(tree, SpanTree)
+    root = tree.roots[0]
+    grandchild = root.children[0].children[0]
+
+    assert not root.matches({'or_': []})
+    assert not root.matches({'not_': {}})
+    assert root.matches({'some_child_has': {}})
+    assert not grandchild.matches({'some_child_has': {}})
+    assert not root.matches({'no_child_has': {}})
+    assert root.matches({'some_descendant_has': {}})
+    assert not grandchild.matches({'some_descendant_has': {}})
+    assert grandchild.matches({'some_ancestor_has': {}})
+    assert not root.matches({'some_ancestor_has': {}})
+    assert not root.matches({'some_descendant_has': {'name_equals': 'grandchild'}, 'stop_recursing_when': {}})
+    assert not grandchild.matches({'some_ancestor_has': {'name_equals': 'root'}, 'stop_recursing_when': {}})
+
+
 async def test_or_cannot_be_mixed(span_tree: SpanTree):
     with pytest.raises(ValueError) as exc_info:
         span_tree.first({'name_equals': 'child1', 'or_': [SpanQuery(name_equals='child2')]})
