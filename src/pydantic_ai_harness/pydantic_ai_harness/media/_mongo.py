@@ -30,10 +30,12 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from importlib.metadata import version
 
 from bson.binary import Binary
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.driver_info import DriverInfo
 
 from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
@@ -112,7 +114,10 @@ class MongoMediaStore:
             self._own_client = False
         else:
             assert db_url is not None
-            self._client = AsyncMongoClient[_MongoDocument](db_url)
+            self._client = AsyncMongoClient[_MongoDocument](
+                db_url,
+                driver=DriverInfo(name='pydantic-ai-harness', version=version('pydantic-ai-harness')),
+            )
             self._own_client = True
 
         self._db: AsyncDatabase[_MongoDocument] = self._client[database]

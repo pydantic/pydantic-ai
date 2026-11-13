@@ -9,11 +9,15 @@ The store uses only the async collection surface `mongomock-motor` provides
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import struct
 from datetime import UTC, datetime, timedelta, timezone
+from importlib.metadata import version
 
 import anyio.to_thread
 import pytest
+from bson import decode, encode
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
@@ -112,6 +116,67 @@ class TestMongoStepStoreConstruction:
         # an observation rather than a spy that never wired up.
         await client.close()
         assert closed == [client]
+
+    async def test_db_url_handshake_includes_harness_driver_info(self) -> None:
+        handshake_metadata: list[dict[str, object]] = []
+
+        async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                while True:
+                    header = await reader.readexactly(16)
+                    length, request_id, _, opcode = struct.unpack('<iiii', header)
+                    payload = await reader.readexactly(length - 16)
+                    if opcode == 2013:
+                        command: dict[str, object] = decode(payload[5:])
+                    else:
+                        command = decode(payload[payload.index(b'\0', 4) + 9 :])
+                    if 'client' in command:
+                        client = command['client']
+                        assert isinstance(client, dict)
+                        handshake_metadata.append(client)
+                        reply: dict[str, object] = {
+                            'ok': 1,
+                            'isWritablePrimary': True,
+                            'minWireVersion': 0,
+                            'maxWireVersion': 17,
+                            'logicalSessionTimeoutMinutes': 30,
+                        }
+                    elif 'find' in command:
+                        db = command.get('$db', 't')
+                        reply = {'ok': 1, 'cursor': {'id': 0, 'ns': f'{db}.{command["find"]}', 'firstBatch': []}}
+                    else:
+                        reply = {'ok': 1}
+                    if opcode == 2013:
+                        response = struct.pack('<iB', 0, 0) + encode(reply)
+                        response_opcode = 2013
+                    else:
+                        response = struct.pack('<iqii', 0, 0, 0, 1) + encode(reply)
+                        response_opcode = 1
+                    writer.write(struct.pack('<iiii', 16 + len(response), 1, request_id, response_opcode) + response)
+                    await writer.drain()
+            except asyncio.IncompleteReadError:
+                pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(handle, '127.0.0.1', 0)
+        port = server.sockets[0].getsockname()[1]
+        url = f'mongodb://127.0.0.1:{port}/?directConnection=true&serverSelectionTimeoutMS=1000'
+        store = await anyio.to_thread.run_sync(lambda: MongoStepStore(db_url=url, database='t', media_store=None))
+        try:
+            assert await store.get_run(run_id='handshake') is None
+        finally:
+            await store.aclose()
+            server.close()
+            await server.wait_closed()
+
+        assert handshake_metadata
+        driver = handshake_metadata[0]['driver']
+        assert isinstance(driver, dict)
+        assert driver['name'] == 'PyMongo|pydantic-ai-harness'
+        expected_version = await anyio.to_thread.run_sync(version, 'pydantic-ai-harness')
+        assert driver['version'].endswith(f'|{expected_version}')
 
 
 class TestMongoStepStoreProtocol:
