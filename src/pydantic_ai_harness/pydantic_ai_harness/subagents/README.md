@@ -197,7 +197,9 @@ delegation = SubAgents(
 ```
 
 The child runs with the returned workspace, so its relative file paths and repository instructions
-use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply.
+use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply,
+and the child's whole workspace gets the lowest `authority` the parent gives anything in or above that
+directory, `path_authority` entries included, so no file gets more authority in the child than the parent gives it.
 Also limit the delegate to trusted read-only tools: arbitrary Python tools can bypass the workspace
 API. The resolver must preserve any additional backend restrictions the application requires.
 
@@ -606,6 +608,8 @@ orchestrator = Agent(
 ```
 
 Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from somewhere else, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
+
+A definition file below `'operator'` [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) in the workspace it's read from, such as one in a repository the operator doesn't control, is not loaded, and the run warns naming it: a definition's body becomes a delegate's instructions, and its description is listed in the parent's. It's left out before names are compared, so it can't shadow an operator's definition of the same name. Read the folders from a workspace the operator controls with `workspace=` instead.
 
 `agent_folders` controls which folders are read:
 

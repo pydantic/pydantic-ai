@@ -166,7 +166,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Where to load Markdown and standalone Codex TOML definitions from, in addition to `agents`.
     Off by default: only `agents` are exposed unless this is set. Every folder is
     read at the start of each run through the run's workspace (`ctx.workspace`),
-    or through `workspace` when set.
+    or through `workspace` when set. A definition file below `'operator'`
+    [authority][pydantic_ai.workspaces.Workspace.authority_of] in that workspace is skipped with a warning.
 
     - a folder-name `str` (`'agents'` is the conventional layout): load
       from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working
@@ -257,7 +258,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Return the child's `Workspace`; the caller owns
     its resources, including keeping it alive for background tasks. Omission keeps the parent workspace.
     The callback validates paths and decides which delegates and backends may change directory.
-    Parent and delegate read-only restrictions still apply. Tools that bypass the workspace API need
+    Parent and delegate read-only restrictions still apply, and the child's workspace gets the lowest
+    authority the parent gives anything in or above its directory. Tools that bypass the workspace API need
     their own restrictions. Remote and durable delegations cannot request another directory.
     Resuming a task keeps its saved directory; the resolver is called again for that directory.
     This does not change where `agent_folders` are discovered (see `workspace`)."""
@@ -504,9 +506,16 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             if isinstance(folders, str) and str(home) != await workspace.working_dir():
                 # Earlier releases also read the home folder, which the run's workspace does not reach.
                 await self._warn_host_folder_ignored(folders, [home])
-        definitions = await load_definitions(
+        definitions, lowered = await load_definitions(
             workspace, folders if isinstance(folders, str) else [_folder_path(folder) for folder in folders]
         )
+        if lowered:
+            warnings.warn(
+                f"`SubAgents` did not load the agent definitions {lowered!r}: they're below `'operator'` authority "
+                "in their workspace, and a definition becomes a delegate's instructions. Define the delegates in "
+                'code, or pass `SubAgents(workspace=...)` to read the folders from a workspace the operator controls.',
+                stacklevel=2,
+            )
         if not definitions:
             return
         self._build_roster(self._disk_agents(definitions))

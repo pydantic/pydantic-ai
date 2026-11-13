@@ -13,11 +13,17 @@ from typing_extensions import TypeIs
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import Authority, ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceReadOnlyError,
+)
 from pydantic_ai_harness.subagents import (
     DelegationTask,
     DelegationTasks,
@@ -55,10 +61,121 @@ async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None
     assert (await agent.run('inspect schema')).output == 'checked'
 
 
+@pytest.mark.parametrize(
+    'path_authority,directory,expected',
+    [
+        # A lower entry inside the delegate's directory lowers all of it: no file gets more than the parent gives it.
+        ({'vendor/lib': 'none'}, 'vendor', 'none'),
+        # A lower entry elsewhere leaves the delegate at the directory's own level.
+        ({'other': 'none'}, 'vendor', 'operator'),
+        # An operator entry inside an untrusted parent doesn't raise the rest of the directory.
+        ({'vendor/lib': 'operator'}, 'vendor', 'none'),
+        # Nor does an operator entry for the directory itself, whose ancestors stay the parent's.
+        ({'vendor': 'operator'}, 'vendor', 'none'),
+        # A lower entry containing a directory outside the parent's working directory covers it.
+        ({'../uploads': 'none'}, '../uploads/project', 'none'),
+    ],
+)
+async def test_selected_directory_keeps_the_parents_authority(
+    tmp_path: Path, path_authority: dict[str, Authority], directory: str, expected: Authority
+) -> None:
+    parent_dir = tmp_path / 'parent'
+    (parent_dir / 'vendor' / 'lib').mkdir(parents=True)
+    (tmp_path / 'uploads' / 'project').mkdir(parents=True)
+    default: Authority = 'none' if 'operator' in path_authority.values() else 'operator'
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(parent_dir)), authority=default, path_authority=path_authority
+    )
+    await _assert_delegate_levels(workspace, directory, expected)
+
+
+async def test_a_linked_directory_keeps_the_parents_cap(tmp_path: Path) -> None:
+    # `rules` is an operator entry, but it's a link the repository controls to `evil`, so the parent caps it at
+    # `none`; delegating to `evil` mustn't give the link's target the entry's level.
+    parent_dir = tmp_path / 'parent'
+    (parent_dir / 'evil').mkdir(parents=True)
+    (parent_dir / 'rules').symlink_to(parent_dir / 'evil', target_is_directory=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(parent_dir)), authority='none', path_authority={'rules': 'operator'}
+    )
+    assert await workspace.authority_of('evil/AGENTS.md') == 'none'
+    await _assert_delegate_levels(workspace, 'evil', 'none')
+
+
+async def test_a_link_into_the_delegates_directory_keeps_its_cap(tmp_path: Path) -> None:
+    # `aliasdir/alias` is an operator entry, but it's a link inside `aliasdir` (at `none`) to `dir/sub`, so the parent
+    # caps `dir/sub` at `none`; a delegate rooted at `dir` mustn't give `dir/sub` the entry's level.
+    (tmp_path / 'dir' / 'sub').mkdir(parents=True)
+    (tmp_path / 'aliasdir').mkdir()
+    (tmp_path / 'aliasdir' / 'alias').symlink_to(tmp_path / 'dir' / 'sub', target_is_directory=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(tmp_path)),
+        authority='operator',
+        path_authority={'aliasdir': 'none', 'aliasdir/alias': 'operator'},
+    )
+    assert await workspace.authority_of('dir/sub/AGENTS.md') == 'none'
+    await _assert_delegate_levels(workspace, 'dir', 'none')
+
+
+async def test_a_link_out_of_the_parents_root_keeps_its_cap(tmp_path: Path) -> None:
+    # `vendor/trusted` is an operator entry, but it's a link inside `vendor` (at `none`) leading out of the parent's
+    # root, so the parent caps its target at `none`; the delegate, rooted at the target, mustn't get the entry's level.
+    parent_dir, external = tmp_path / 'parent', tmp_path / 'external'
+    (parent_dir / 'vendor').mkdir(parents=True)
+    external.mkdir()
+    (parent_dir / 'vendor' / 'trusted').symlink_to(external, target_is_directory=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(parent_dir)),
+        authority='operator',
+        path_authority={'vendor': 'none', 'vendor/trusted': 'operator'},
+    )
+    assert await workspace.authority_of(str(external / 'AGENTS.md')) == 'none'
+    await _assert_delegate_levels(workspace, 'vendor/trusted', 'none')
+
+
+async def test_the_resolvers_own_lower_level_still_applies(tmp_path: Path) -> None:
+    # The parent gives `lib` `'operator'`, but the resolver's workspace is at `'none'`: wrapping only lowers.
+    (tmp_path / 'lib').mkdir()
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'vendor': 'none'}
+    )
+    await _assert_delegate_levels(workspace, 'lib', 'none', resolver_authority='none')
+
+
+async def _assert_delegate_levels(
+    workspace: Workspace, directory: str, expected: Authority, *, resolver_authority: Authority = 'operator'
+) -> None:
+    child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
+    levels: list[Authority] = []
+
+    @child.tool
+    async def inspect(ctx: RunContext[object]) -> str:
+        levels.append(await ctx.workspace.authority_of('AGENTS.md'))
+        levels.append(await ctx.workspace.authority_of('lib/AGENTS.md'))
+        return 'inspected'
+
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+        resolved = Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(request.directory)))
+        return AuthorityWorkspace(resolved, authority=resolver_authority)
+
+    toolset = SubAgents[object](agents=[SubAgent(child)], workspace_resolver=resolve).get_toolset()
+    assert is_toolset(toolset)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=workspace, conversation_id='parent')
+    await toolset.delegate_task(ctx, 'worker', 'inspect', working_directory=directory)
+    assert levels == [expected, expected]
+
+
 @pytest.mark.parametrize('mode', ['plain', 'owned', 'controlled'])
-@pytest.mark.parametrize('parent_read_only,child_read_only', [(False, False), (True, False), (False, True)])
-async def test_selected_directory_and_read_only(
-    tmp_path: Path, mode: Literal['plain', 'owned', 'controlled'], parent_read_only: bool, child_read_only: bool
+@pytest.mark.parametrize(
+    'parent_read_only,child_read_only,parent_trusted',
+    [(False, False, True), (True, False, True), (False, True, True), (False, False, False)],
+)
+async def test_selected_directory_keeps_the_parents_policy(
+    tmp_path: Path,
+    mode: Literal['plain', 'owned', 'controlled'],
+    parent_read_only: bool,
+    child_read_only: bool,
+    parent_trusted: bool,
 ) -> None:
     parent_dir, child_dir = tmp_path / 'parent', tmp_path / 'policy'
     parent_dir.mkdir()
@@ -68,6 +185,8 @@ async def test_selected_directory_and_read_only(
     workspace = Workspace(LocalWorkspaceBackend(parent_dir))
     if parent_read_only:
         workspace = ReadOnlyWorkspace(workspace)
+    if not parent_trusted:
+        workspace = AuthorityWorkspace(workspace, authority='none')
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
 
     @child.tool
@@ -75,6 +194,7 @@ async def test_selected_directory_and_read_only(
         assert await ctx.workspace.working_dir() == str(child_dir)
         assert await ctx.workspace.read_text('marker') == 'policy'
         assert ctx.workspace.read_only is (parent_read_only or child_read_only)
+        assert ctx.workspace.authority == ('operator' if parent_trusted else 'none')
         if ctx.workspace.read_only:
             with pytest.raises(WorkspaceReadOnlyError):
                 await ctx.workspace.write_text('marker', 'changed')

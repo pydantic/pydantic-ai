@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace, WorkspaceBackend
 from pydantic_ai_harness import HarnessDeprecationWarning, subagents
 from pydantic_ai_harness.subagents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.subagents._disk import ParsedAgent, parse_agent_markdown
@@ -135,7 +135,11 @@ class TestParseAgentMarkdown:
         assert parse_agent_markdown('---\nname: a\n---\nB').tools == ()
 
 
-async def _listing(cap: SubAgents[object], workspace: LocalWorkspaceBackend | None) -> str | None:
+def _untrusted(backend: WorkspaceBackend) -> AuthorityWorkspace:
+    return AuthorityWorkspace(Workspace(backend), authority='none')
+
+
+async def _listing(cap: SubAgents[object], workspace: WorkspaceBackend | None) -> str | None:
     """The sub-agent listing a run sees on its first step."""
     seen: list[tuple[str | None, list[str]]] = []
     parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[cap])
@@ -195,6 +199,46 @@ class TestDiskLoading:
         for workspace in (LocalWorkspaceBackend(tmp_path / 'run'), None):
             listing = await _listing(cap, workspace)
             assert listing is not None and '- packaged' in listing and 'project' not in listing
+
+    async def test_definitions_below_operator_authority_are_not_loaded(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / 'app' / '.agents' / 'agents', 'packaged.md', 'Ship it.')
+        _write_agent(tmp_path / 'run' / '.agents' / 'agents', 'project.md', 'Project work.')
+        app = LocalWorkspaceBackend(tmp_path / 'app')
+        run = LocalWorkspaceBackend(tmp_path / 'run')
+
+        with pytest.warns(UserWarning, match="below `'operator'` authority") as record:
+            untrusted_run = await _listing(SubAgents(agent_folders='agents'), _untrusted(run))
+            untrusted_own = await _listing(SubAgents(agent_folders='agents', workspace=_untrusted(app)), run)
+        messages = [str(warning.message) for warning in _user_warnings(record)]
+        assert len(messages) == 2
+        assert 'project.md' in messages[0] and 'packaged.md' in messages[1]
+        assert untrusted_run is None
+        assert untrusted_own is None
+        # A workspace without definitions is not warned about.
+        (tmp_path / 'empty').mkdir()
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert (
+                await _listing(SubAgents(agent_folders='agents'), _untrusted(LocalWorkspaceBackend(tmp_path / 'empty')))
+                is None
+            )
+        # An operator workspace of its own is read whatever the run's workspace is.
+        trusted_own = await _listing(SubAgents(agent_folders='agents', workspace=app), _untrusted(run))
+        assert trusted_own is not None and '- packaged' in trusted_own and 'project' not in trusted_own
+
+    async def test_a_lowered_definition_does_not_shadow_an_operator_one(self, tmp_path: Path) -> None:
+        # `.agents/` comes first, but its file is below operator, so `.claude/`'s definition of the name loads.
+        _write_agent(tmp_path / '.agents' / 'agents', 'reviewer.md', '---\ndescription: Planted.\n---\nPlanted.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'reviewer.md', '---\ndescription: Reviews code.\n---\nReview it.')
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'.agents': 'none'}
+        )
+
+        with pytest.warns(UserWarning, match="below `'operator'` authority") as record:
+            listing = await _listing(SubAgents(agent_folders='agents'), workspace)
+        [message] = [str(warning.message) for warning in _user_warnings(record)]
+        assert '.agents/agents/reviewer.md' in message
+        assert listing is not None and 'Reviews code.' in listing and 'Planted.' not in listing
 
     def test_workspace_capability_is_refused(self) -> None:
         with pytest.raises(TypeError, match='takes a workspace backend'):

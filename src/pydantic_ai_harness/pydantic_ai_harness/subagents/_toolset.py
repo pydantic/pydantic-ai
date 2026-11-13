@@ -31,7 +31,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import repair_messages
+from pydantic_ai.messages import Authority, repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -41,7 +41,10 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+
+# Private, like `_authority_layers` below: the same ordering `Workspace.authority` uses, not yet public.
+from pydantic_ai.workspaces._authority_paths import lowest_authority
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -848,7 +851,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if previous is not None and directory != previous.working_directory:
             # Reject before charging max_calls or publishing task-start events.
             raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
-        return (ReadOnlyWorkspace(workspace) if ctx.workspace.read_only else workspace), directory
+        if ctx.workspace.read_only:
+            workspace = ReadOnlyWorkspace(workspace)
+        return await _with_parent_authority(ctx.workspace, workspace, directory), directory
 
     def _is_self(self, agent_name: str) -> bool:
         """Whether `agent_name` names the running agent, which `include_self` makes a delegate."""
@@ -1601,3 +1606,66 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
         cost_limit=cost,
         count_tokens_before_request=parent.count_tokens_before_request or child.count_tokens_before_request,
     )
+
+
+async def _with_parent_authority(parent: Workspace, workspace: Workspace, directory: str) -> Workspace:
+    """`workspace`, rooted at `directory`, with no more [authority][pydantic_ai.messages.Authority] than `parent` gives it.
+
+    A delegate's `working_directory` workspace comes from the host's resolver, which knows nothing of the parent's
+    levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lowest of:
+
+    - what the parent gives `directory`: `authority_of`, which accounts for links, or the parent's own level for a
+      directory outside its working directory;
+    - the parent's own level, which a capability reading above the delegate's directory, such as `RepoContext`'s
+      walk-up, gives the ancestors the parent doesn't list;
+    - every parent `path_authority` entry inside `directory` or containing it: its level where it's written, and
+      what `authority_of` gives where it leads, since core caps a link's target at its location's level.
+
+    It's conservative: a file the parent gives more can get less in the delegate, but none gets more. Wrapping only
+    ever lowers, so the resolver's own levels still apply where they're lower.
+    """
+    # Core has no public way to read a workspace's `path_authority` entries yet, so this reads the wrapper chain's
+    # private layers, as `Workspace.authority` does; core and harness ship together.
+    layers = parent._authority_layers()  # pyright: ignore[reportPrivateUsage]
+    if not layers:
+        return workspace
+    parent_root = await parent.working_dir()
+    inside = _folded_dir(directory)
+    in_parent = inside.startswith(_folded_dir(parent_root))
+    levels: list[Authority] = [
+        await parent.authority_of(directory) if in_parent else parent.authority,
+        parent.authority,
+    ]
+    for _, path_authority in layers:
+        for path, level in path_authority.items():
+            levels.extend(await _entry_levels(parent, parent_root, path, level, directory))
+    lowest = lowest_authority(levels)
+    return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
+
+
+async def _entry_levels(
+    parent: Workspace, parent_root: str, path: str, level: Authority, directory: str
+) -> list[Authority]:
+    """The levels a parent `path_authority` entry gives a delegate rooted at `directory`, if it's inside or contains it.
+
+    Checked where the entry is written, at its level, and where it leads, at the level `authority_of` gives the target:
+    core caps a link's target at what the link's own location gets, which can be below the entry's level.
+    """
+    written = await parent.resolve(path, base=parent_root)
+    levels: list[Authority] = []
+    inside = _folded_dir(directory)
+    for location in {written, await parent.realpath(written)}:
+        folded = _folded_dir(location)
+        if not (folded.startswith(inside) or inside.startswith(folded)):
+            continue
+        levels.append(level if location == written else await parent.authority_of(location))
+    return levels
+
+
+def _folded_dir(path: str) -> str:
+    """`path` case-folded with one trailing slash, so `a.startswith(b)` says whether `a` is inside or at `b`.
+
+    Case-folded like core's `layer_authority`, which also matches paths case-folded and only ever lowers with it, so
+    another spelling of a lower directory on a case-insensitive filesystem still counts.
+    """
+    return path.casefold().rstrip('/') + '/'
