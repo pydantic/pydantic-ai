@@ -72,19 +72,19 @@ def _accumulated() -> chat_types.Response:
 
 
 def _tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The sent messages that carry a server-side call or its result, with each id replaced by whether it pairs."""
+    """The sent messages that carry a server-side call or its result, with each call reduced to its function name and each id to whether it pairs."""
     turns: list[dict[str, Any]] = []
     for message in messages:
-        call_ids = [call['id'] for call in message.get('tool_calls', [])]
-        if not call_ids:
+        calls = message.get('tool_calls', [])
+        if not calls:
             continue
         turn: dict[str, Any] = {
             'role': message['role'],
-            'calls': len(call_ids),
+            'calls': [call['function']['name'] for call in calls],
             'encrypted_content': 'encrypted_content' in message,
         }
         if 'tool_call_id' in message:
-            turn['paired'] = message['tool_call_id'] == call_ids[0]
+            turn['paired'] = message['tool_call_id'] == calls[0]['id']
         turns.append(turn)
     return turns
 
@@ -129,6 +129,9 @@ async def test_xai_native_tool_result_replayed_paired(
 
     response = history[-1]
     assert isinstance(response, ModelResponse)
+    # xAI ran `open_page`, one of its web search functions, which the follow-up must send back by that name.
+    call_parts = [part for part in response.parts if isinstance(part, NativeToolCallPart)]
+    assert [part.provider_details for part in call_parts] == [{'function_name': 'open_page'}]
     return_parts = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
     assert return_parts
     assert all((part.provider_details or {}).get('encrypted_content') for part in return_parts)
@@ -148,8 +151,8 @@ async def test_xai_native_tool_result_replayed_paired(
     assert follow_up.output == FOLLOW_UP_OUTPUTS[stream]
     assert _tool_turns(get_sent_request_messages(xai_provider.client)[-1]) == snapshot(
         [
-            {'role': 'ROLE_ASSISTANT', 'calls': 1, 'encrypted_content': True},
-            {'role': 'ROLE_TOOL', 'calls': 1, 'paired': True, 'encrypted_content': True},
+            {'role': 'ROLE_ASSISTANT', 'calls': ['open_page'], 'encrypted_content': True},
+            {'role': 'ROLE_TOOL', 'calls': ['open_page'], 'paired': True, 'encrypted_content': True},
         ]
     )
 
