@@ -13,6 +13,7 @@ is the ambiguity the backend has to resolve.
 from __future__ import annotations
 
 import asyncio
+import base64
 import errno
 import os
 import posixpath
@@ -34,9 +35,14 @@ from daytona import (
     DaytonaConnectionError,
     DaytonaError,
     DaytonaNotFoundError,
+    DaytonaServiceUnavailableError,
     DaytonaTimeoutError,
     SandboxState,
+    ScreenshotRegion,
 )
+from daytona.common.errors import SOURCE_PROXY
+
+from ..display_fakes import FAKE_SCREENSHOT
 
 
 class CreateParams(Protocol):
@@ -374,12 +380,160 @@ class _HostFileSystem(FakeFileSystem):
                 Path(path).unlink()
 
 
+class FakeComputerUse:
+    """`sandbox.computer_use`: records each call in `owner.desktop_calls` as one line, such as `click 3 4 left`.
+
+    Its `mouse`, `keyboard`, `screenshot` and `display` are separate objects, as in the SDK, so input sent through the
+    wrong one fails.
+    """
+
+    def __init__(self, owner: FakeSandbox) -> None:
+        self.owner = owner
+        self.mouse = FakeMouse(self)
+        self.keyboard = FakeKeyboard(self)
+        self.screenshot = FakeScreenshots(self)
+        self.display = FakeDisplayInfo(self)
+        self.started = False
+        self.broken = False
+        """Set by a test: every request then answers 503 `connection is shut down`, as a desktop that took input
+        before it started does. `call` asserts input never comes before `start`."""
+        self.proxy_unavailable = 0
+        """How many of the next desktop requests the proxy refuses with a 503 before passing them on."""
+        self.request_gate: asyncio.Event | None = None
+        """When set, each desktop request is accepted, setting `request_accepted`, and takes effect once it is set."""
+        self.request_accepted = asyncio.Event()
+        self.png = FAKE_SCREENSHOT
+        self.position = SimpleNamespace(x=7, y=8)
+        self.displays = [SimpleNamespace(width=1280, height=800, is_active=True)]
+
+    def stop_with_sandbox(self) -> None:
+        """The sandbox stopped and started again, as someone else may do: the desktop is down until `start`."""
+        self.started = False
+
+    def _check_broken(self) -> None:
+        if self.proxy_unavailable:
+            self.proxy_unavailable -= 1
+            # Worded as the broken desktop's 503, so only its source tells them apart.
+            raise DaytonaServiceUnavailableError('connection is shut down', status_code=503, source=SOURCE_PROXY)
+        if self.broken:
+            raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+
+    async def call(self, line: str) -> None:
+        await anyio.lowlevel.checkpoint()
+        if self.request_gate is not None:
+            self.request_accepted.set()
+            await self.request_gate.wait()
+        self.owner.check_alive()
+        self._check_broken()
+        assert self.started, f'{line} before the desktop started'
+        self.owner.desktop_calls.append(line)
+
+    async def start(self, request_timeout: float | None = None) -> None:
+        self._check_broken()
+        self.started = True
+        await self.call('start')
+
+    async def get_status(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await anyio.lowlevel.checkpoint()
+        self._check_broken()
+        return SimpleNamespace(status='active' if self.started else 'inactive')
+
+
+class FakeDisplayInfo:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
+
+    async def get_info(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await self.desktop.call('get_info')
+        return SimpleNamespace(displays=self.desktop.displays)
+
+
+class FakeScreenshots:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
+
+    async def take_full_screen(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await self.desktop.call('take_full_screen')
+        return SimpleNamespace(screenshot=base64.b64encode(self.desktop.png).decode())
+
+    async def take_region(self, region: ScreenshotRegion, request_timeout: float | None = None) -> SimpleNamespace:
+        await self.desktop.call(f'take_region {region.x} {region.y} {region.width} {region.height}')
+        return SimpleNamespace(screenshot=base64.b64encode(self.desktop.png).decode())
+
+
+class FakeMouse:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
+
+    async def get_position(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await self.desktop.call('get_position')
+        return self.desktop.position
+
+    async def click(
+        self,
+        x: int,
+        y: int,
+        button: str = 'left',
+        request_timeout: float | None = None,
+        *,
+        clicks: int | None = None,
+        modifiers: list[str] | None = None,
+    ) -> None:
+        await self.desktop.call(f'click {x} {y} {button} clicks={clicks} modifiers={modifiers}')
+
+    async def move(self, x: int, y: int, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'move {x} {y}')
+
+    async def down(
+        self, x: int | None = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
+    ) -> None:
+        await self.desktop.call(f'mousedown {x} {y} {button}')
+
+    async def up(
+        self, x: int | None = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
+    ) -> None:
+        await self.desktop.call(f'mouseup {x} {y} {button}')
+
+    async def scroll(
+        self,
+        x: int,
+        y: int,
+        direction: str,
+        amount: int = 1,
+        request_timeout: float | None = None,
+        *,
+        modifiers: list[str] | None = None,
+    ) -> bool:
+        await self.desktop.call(f'scroll {x} {y} {direction} {amount} modifiers={modifiers}')
+        return True
+
+
+class FakeKeyboard:
+    def __init__(self, desktop: FakeComputerUse) -> None:
+        self.desktop = desktop
+
+    async def down(self, key: str, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'keydown {key}')
+
+    async def up(self, key: str, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'keyup {key}')
+
+    async def type(self, text: str, delay: int | None = None, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'type {text}')
+
+    async def press(self, key: str, modifiers: list[str] | None = None, request_timeout: float | None = None) -> None:
+        await self.desktop.call(f'press {key} modifiers={modifiers}')
+
+
 class FakeSandbox:
     def __init__(self, sandbox_id: str, host_root: Path | None = None) -> None:
         self.client: FakeClient | None = None
         self.id = sandbox_id
         self.name: str | None = None
         self.state = SandboxState.STARTED
+        self.public = False
+        # Whether the control plane has it public; `public` only learns it on `refresh_data`, as in the SDK.
+        self.server_public = False
         self.purged = False
         self.refresh_error: Exception | None = None
         # What a toolbox call to a deleted sandbox raises, when not the default 404.
@@ -419,6 +573,9 @@ class FakeSandbox:
         self.process_status_polled = asyncio.Event()
         self.process = FakeProcess(self)
         self.fs = FakeFileSystem(self)
+        # Every `computer_use` call, as `FakeComputerUse` writes it.
+        self.desktop_calls: list[str] = []
+        self.computer_use = FakeComputerUse(self)
         if host_root is not None:
             self.workdir = str(host_root)
             self.process = _HostProcess(self, host_root)
@@ -436,6 +593,7 @@ class FakeSandbox:
             raise self.refresh_error
         if self.purged:
             raise DaytonaNotFoundError(f'Sandbox with ID or name {self.id} not found', status_code=404)
+        self.public = self.server_public
 
     async def delete(self, timeout: float | None = 60, wait: bool = False) -> None:
         self.state = SandboxState.DESTROYING

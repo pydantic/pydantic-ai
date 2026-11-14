@@ -32,12 +32,14 @@ import daytona
 import pytest
 from pytest_examples import CodeExample
 
-from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai.computer_use import Click, PressKeys, TypeText
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..display_contract_live import check_display_contract
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live
@@ -287,6 +289,53 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+
+class TestLiveDaytonaDesktop:
+    """Runs the display against a sandbox started with a desktop. Commands and files are the module's other tests':
+    a desktop sandbox runs them the same way."""
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    async def backend(cls) -> AsyncIterator[WorkspaceBackend]:
+        backend = DaytonaSandboxBackend(auto_stop_interval=LIVE_AUTO_STOP_INTERVAL, desktop=True)
+        try:
+            yield backend
+        finally:
+            try:
+                if backend.ref is not None:
+                    await DaytonaSandbox().destroy(backend.ref)
+            finally:
+                await backend.aclose()
+
+    async def test_display_contract(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = backend.display
+        assert display is not None
+        assert await display.display_size() == (1280, 800)
+        await check_display_contract(display)
+
+    async def test_keys_and_text_reach_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        """Validates the key mapping the fake assumes: a shifted symbol is shift and its key on Daytona's display."""
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = backend.display
+        assert display is not None
+        await display.display_size()  # starts the desktop, so the terminal opens on it
+        # Its own process, so a terminal already running in the session doesn't take the window and its directory.
+        await backend.run(
+            'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > typed.txt" '
+            '>/dev/null 2>&1 &',
+            shell=True,
+        )
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], timeout=30)
+
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='hello, desktop'))
+        await display.act(PressKeys(keys=('!',)))
+        await display.act(PressKeys(keys=('enter',)))
+
+        typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
+        assert typed.stdout == 'hello, desktop!\n'
 
 
 # The README's Python blocks are the same as this page's.

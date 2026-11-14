@@ -103,6 +103,29 @@ A command's output is collected once it exits, so `run()` returns then even if a
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[DaytonaSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open a terminal and find out which Python version is installed.')
+    print(result.output)
+```
+
+Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another, at least 1024x768. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). The agent also gets the sandbox's shell and files, so `Coder` and `ComputerUse` can share it.
+
+Daytona's desktop can't press F13 to F24, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji; the agent is told when it asks. On Daytona's Tier 1 and 2, a sandbox can only reach package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run). A public sandbox's desktop is refused, since anyone could open it through the sandbox's preview link: make it private with `set_public(False)` first.
+
 ## Reattach later
 
 To come back to the sandbox without the message history, pass its ref back as `workspace=`:
@@ -212,6 +235,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | `allow_internet_access` | Whether a new sandbox can reach the internet. When `False`, what is blocked depends on your Daytona organization's tier: on Tier 3 and 4 everything, while lower tiers keep package registries, GitHub, and AI APIs reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `True`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/daytona`, where commands run as non-root `daytona`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox. Default: `False`. |
 
 Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 

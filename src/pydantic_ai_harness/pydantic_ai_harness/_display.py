@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Protocol, TypeVar
 
 import anyio
@@ -49,6 +50,7 @@ class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
     Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
+    `scope` wraps every call, start included, such as to map a provider's errors.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
     action isn't retried, so nothing is done twice.
@@ -56,12 +58,23 @@ class LazyDisplay:
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
 
-    def __init__(self, driver: DisplayDriver, start: Callable[[], Awaitable[None]]):
+    def __init__(
+        self,
+        driver: DisplayDriver,
+        start: Callable[[], Awaitable[None]],
+        *,
+        scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
+    ):
         self._driver = driver
         self._start = start
+        self._scope = scope
         self._running = False
         """Whether the display is known to be running, so a call needn't start it first."""
         self._lock = anyio.Lock()
+
+    def reset(self) -> None:
+        """Forget that the display runs, such as when the environment may restart: the next call starts it."""
+        self._running = False
 
     async def _start_unless_running(self) -> None:
         # One start at a time: two would both find no display and start two.
@@ -74,8 +87,9 @@ class LazyDisplay:
         retry = observe
         while True:
             try:
-                await self._start_unless_running()
-                return await call(self._driver)
+                async with self._scope():
+                    await self._start_unless_running()
+                    return await call(self._driver)
             except UnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
             except Exception as error:
