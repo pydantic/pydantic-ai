@@ -514,6 +514,15 @@ _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
 # Anthropic documents `inference_geo` as not applicable on Bedrock, Vertex AI (Google managed) and Foundry, where the
 # endpoint or deployment decides the inference region. Claude Platform on AWS and Claude on Google Cloud (Anthropic
 # managed) take it, and their clients are `AsyncAnthropic` subclasses.
+# The Claude API rejects a `tool_use` with no `tool_result`, and a `tool_result` whose `tool_use_id` names no
+# `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The platform clients aren't verified to, so
+# `rejects_unpaired_tool_calls` stays off for them and their requests keep the history as translated.
+_UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 _INFERENCE_GEO_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -1054,8 +1063,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
     _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
-    # The Messages API rejects a `tool_result` whose `tool_use_id` names no `tool_use`, and a `tool_use` with no result.
-    _rejects_unpaired_tool_calls = True
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -1267,6 +1274,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
+
+        `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Vertex AI and Foundry
+        clients, which aren't verified to reject an unpaired tool call, unless the provider's profile already sets it.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1305,6 +1315,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_calls_cited_web_tools_directly=not isinstance(
                         client, _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS
                     )
+                ),
+            )
+        if 'rejects_unpaired_tool_calls' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    rejects_unpaired_tool_calls=not isinstance(client, _UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS)
                 ),
             )
         return profile

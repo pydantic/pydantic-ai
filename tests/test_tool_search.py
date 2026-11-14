@@ -130,6 +130,12 @@ def ag_ui_preserves_tool_kind() -> bool:
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    from anthropic import (
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
     from anthropic.types.beta import (
         BetaServerToolUseBlock,
         BetaTextBlock,
@@ -181,6 +187,8 @@ with try_import() as openai_available:
         tool_search_namespace_for_synthesis,
     )
     from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
@@ -6570,10 +6578,8 @@ TRANSLATED_HISTORY_CASES = [
 ]
 
 
-class _PairingFunctionModel(FunctionModel):
-    """A `FunctionModel` whose API, like Anthropic's and OpenAI's, rejects an unpaired tool call or result."""
-
-    _rejects_unpaired_tool_calls = True
+# What the OpenAI provider and the Claude API's own Anthropic client set, given to a `FunctionModel`.
+_REJECTS_UNPAIRED_TOOL_CALLS: ModelProfile = {'rejects_unpaired_tool_calls': True}
 
 
 @pytest.mark.parametrize('fallback', [False, True], ids=['agent', 'fallback'])
@@ -6595,7 +6601,7 @@ async def test_translated_tool_search_history_pairs_every_call(case: TranslatedH
         received[:] = messages
         return ModelResponse(parts=[TextPart('done')])
 
-    function_model = _PairingFunctionModel(respond)
+    function_model = FunctionModel(respond, profile=_REJECTS_UNPAIRED_TOOL_CALLS)
     agent = Agent(FallbackModel(function_model) if fallback else function_model, toolsets=[_METRICS_TOOLSET])
 
     await agent.run(case.prompt, message_history=case.history)
@@ -6660,7 +6666,7 @@ def test_prepare_messages_answers_only_translated_calls_before_the_frontier() ->
     An agent run repairs every other unanswered call before `prepare_messages`, and resumes a suspended
     response without repairing it, so neither shape reaches the model through a run started here.
     """
-    model = _PairingFunctionModel(lambda messages, info: ModelResponse(parts=[]))
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=_REJECTS_UNPAIRED_TOOL_CALLS)
     local_call = ToolSearchCallPart(args={'queries': ['metrics']}, tool_call_id='local_1')
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='show metrics')]),
@@ -6671,6 +6677,111 @@ def test_prepare_messages_answers_only_translated_calls_before_the_frontier() ->
     assert _tool_exchange(model.prepare_messages(history)) == snapshot(
         [('call', 'srvtoolu_1'), ('call', 'local_1'), ('interrupted', 'srvtoolu_1'), ('call', 'srvtoolu_2')]
     )
+
+
+_GATEWAY_BASE_URL = 'https://gateway.example.com/proxy'
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'build,rejects',
+    [
+        pytest.param(lambda: OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key='x')), True, id='openai'),
+        pytest.param(lambda: OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(api_key='x')), True, id='openai-chat'),
+        pytest.param(
+            lambda: AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='x')), True, id='anthropic'
+        ),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'gpt-5.4', provider=gateway_provider('openai', api_key='x', base_url=_GATEWAY_BASE_URL)
+            ),
+            True,
+            id='gateway-openai',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5', provider=gateway_provider('anthropic', api_key='x', base_url=_GATEWAY_BASE_URL)
+            ),
+            True,
+            id='gateway-anthropic',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(anthropic_client=AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1')),
+            ),
+            False,
+            id='bedrock',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1')
+                ),
+            ),
+            False,
+            id='mantle',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropicVertex(project_id='p', region='us-east5', access_token='x')
+                ),
+            ),
+            False,
+            id='vertex',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropicFoundry(api_key='x', base_url='https://example.com/anthropic')
+                ),
+            ),
+            False,
+            id='foundry',
+        ),
+        pytest.param(
+            lambda: OpenAIChatModel('llama3.2', provider=OllamaProvider(base_url='http://localhost:11434/v1')),
+            False,
+            id='ollama',
+        ),
+        pytest.param(
+            lambda: OpenAIChatModel(
+                'llama3.2',
+                provider=OllamaProvider(base_url='http://localhost:11434/v1'),
+                profile=_REJECTS_UNPAIRED_TOOL_CALLS,
+            ),
+            True,
+            id='ollama-profile-on',
+        ),
+    ],
+)
+def test_rejects_unpaired_tool_calls_by_endpoint(build: Callable[[], Model], rejects: bool) -> None:
+    """`rejects_unpaired_tool_calls` is on only for the endpoints where an unpaired tool call fails the request.
+
+    First-party OpenAI and the Claude API's own client, directly or through the Pydantic AI Gateway, failed the
+    histories of https://github.com/pydantic/pydantic-ai/issues/13404. Other endpoints, unverified, keep the
+    history as translated unless the user's `profile=` opts in. Checked on the resolved profile: the tests above
+    pin what each value sends.
+    """
+    assert build().profile.get('rejects_unpaired_tool_calls', False) is rejects
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+def test_rejects_unpaired_tool_calls_provider_profile_wins() -> None:
+    """A provider's own `model_profile()` value wins over the default `AnthropicModel` sets by client class."""
+
+    class AcceptsUnpairedProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return {'rejects_unpaired_tool_calls': False}
+
+    model = AnthropicModel('claude-sonnet-5-5', provider=AcceptsUnpairedProvider(api_key='x'))
+    assert model.profile.get('rejects_unpaired_tool_calls') is False
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')

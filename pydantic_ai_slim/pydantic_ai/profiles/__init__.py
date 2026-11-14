@@ -455,6 +455,9 @@ class ModelProfile(TypedDict, total=False):
     [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
     """
 
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`."""
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 

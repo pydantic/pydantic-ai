@@ -931,12 +931,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Set by adapters whose tool result channel carries text only, so `prepare_messages` knows such a request has a
     frame in it.
     """
-    _rejects_unpaired_tool_calls: ClassVar[bool] = False
-    """Whether the API rejects a tool call with no result, or a result that names no call.
-
-    Set by adapters whose API pairs them by ID and fails the request otherwise, so `prepare_messages` pairs the
-    tool-search calls and returns it translates from another provider's history. Elsewhere they go out as translated.
-    """
     _lookalike_notes_precede_tool_results: ClassVar[bool] = False
     """Whether the API takes a lookalike note ahead of a request's tool results.
 
@@ -2171,7 +2165,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = synthesize_local_tool_search_messages(
             messages,
             keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
-            pair_returns=self._rejects_unpaired_tool_calls,
+            pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
         )
 
         if not clears_request_scoped_prompts:
@@ -2208,9 +2202,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     ) -> list[ModelMessage]:
         """Answer the tool-search calls translated from `untranslated` that have no return, where the API requires it.
 
-        See `_tool_search.repair_dangling_translated_calls` and `_rejects_unpaired_tool_calls`.
+        See `_tool_search.repair_dangling_translated_calls` and the profile's `rejects_unpaired_tool_calls`.
         """
-        if not self._rejects_unpaired_tool_calls:
+        if not self.profile.get('rejects_unpaired_tool_calls', False):
             return messages
         from .._tool_search import repair_dangling_translated_calls
 

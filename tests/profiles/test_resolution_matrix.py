@@ -407,6 +407,7 @@ def test_openai_gpt_5_4():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -465,6 +466,7 @@ def test_openai_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -513,6 +515,7 @@ def test_openai_gpt_6_astra():
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -665,6 +668,7 @@ def test_openai_gpt_4o():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -698,6 +702,7 @@ def test_openai_o3_mini():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -741,6 +746,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
             'tool_deferral_mode': 'with_tool_search',
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
