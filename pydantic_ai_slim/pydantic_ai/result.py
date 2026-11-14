@@ -379,7 +379,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         except ValidationError as e:
             # Say that the token limit cut the output off, as `CallToolsNode` does, rather than only that it's invalid.
             if cut_off and not allow_partial and is_incomplete_json(e):
-                raise exceptions.UnexpectedModelBehavior(truncated_output_message(self._max_tokens_getter())) from e
+                raise exceptions.OutputTokenLimitExceeded(truncated_output_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
@@ -664,6 +664,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         A settled result is for handing the run to code that outlives the stream, which is exactly
         when the span has closed and the ambient trace context is gone, so it cannot be read lazily.
         """
+        self._completion_raised = False
+        """Whether finishing the run raised or was cancelled after the stream was received in full.
+
+        `is_complete` is already `True` by then, and the output can't tell either: a validated output
+        can be `None`, and a tool call can fail after the output was validated.
+        """
 
     @property
     def result(self) -> AgentRunResult[OutputDataT]:
@@ -676,8 +682,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         for this to hand the run to code that outlives the stream.
 
         Raises:
-            UserError: If the stream hasn't finished, or was cancelled before producing an output,
-                so the run has no settled output to settle on.
+            UserError: If the stream hasn't finished, was cancelled before producing an output, or the run
+                stopped before it finished, so the run has no settled output to settle on.
         """
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
@@ -689,6 +695,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UserError(
                     'The run is still streaming, so it has no settled result yet. Await `stream_output()`, '
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
+                )
+            elif self._completion_raised:
+                raise exceptions.UserError(
+                    'The run stopped before it finished, so this run has no settled result. The messages recorded '
+                    'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
             result = AgentRunResult(
@@ -976,7 +987,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if message is not None:
             self._record_response(message)
         if self._on_complete is not None:
-            await self._on_complete()
+            try:
+                await self._on_complete()
+            # `BaseException`, as a run cancelled while it finishes didn't finish either.
+            except BaseException:
+                self._completion_raised = True
+                raise
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.

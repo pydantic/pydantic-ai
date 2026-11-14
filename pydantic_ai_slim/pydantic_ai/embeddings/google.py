@@ -7,7 +7,7 @@ from typing import Literal, cast
 import httpx2
 
 from pydantic_ai import _model_errors
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.models._transport_errors import transport_error_message
@@ -35,29 +35,29 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
-            status = e.status if isinstance(e.status, str) else None
-            raise ModelHTTPError.for_category(
-                _model_errors.google_status_category(
-                    status,
-                    e.message,
-                    cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                )
-                or _model_errors.http_status_category(status_code, e.message),
+            raise _model_errors.google_status_error(
+                model_name,
                 status_code=status_code,
-                model_name=model_name,
+                status=e.status if isinstance(e.status, str) else None,
+                message=e.message,
                 body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                provider_error_code=status,
             ) from e
 
         raise
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+        raise _model_errors.google_transport_status_error(model_name, e.response) from e
     except httpx2.TransportError as e:
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
+LatestGoogleGLAEmbeddingModelNames = Literal[
+    'gemini-embedding-2',
+    'gemini-embedding-001',
+]
 """Latest Gemini API embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -65,11 +65,8 @@ for available models and their capabilities.
 """
 
 LatestGoogleVertexEmbeddingModelNames = Literal[
-    'gemini-embedding-001',
-    'gemini-embedding-2-preview',
     'gemini-embedding-2',
-    'text-embedding-005',
-    'text-multilingual-embedding-002',
+    'gemini-embedding-001',
 ]
 """Latest Google Cloud (formerly known as Vertex AI) embedding models.
 

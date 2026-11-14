@@ -30,14 +30,19 @@ class Worktree:
     """Whether this launch also created `branch`, so exit deletes it with an unchanged checkout."""
     remove_if_unchanged: bool = False
     """Whether an interactive exit removes the checkout without asking when nothing changed."""
+    remove_if_pushed: bool = False
+    """Whether an interactive exit removes the checkout without asking when it is clean with no unpushed commits."""
 
     @property
     def notice(self) -> str:
         """The launch line naming the checkout and its branch."""
         opened = 'Worktree' if self.created else 'Reopened worktree'
-        on_exit = (
-            'Removed on exit if unchanged.' if self.remove_if_unchanged else 'Kept unless removal is confirmed on exit.'
-        )
+        if self.remove_if_unchanged:
+            on_exit = f'Removed on exit if unchanged{", or if clean and pushed" if self.remove_if_pushed else ""}.'
+        elif self.remove_if_pushed:
+            on_exit = 'Removed on exit if clean and pushed, otherwise kept unless removal is confirmed.'
+        else:
+            on_exit = 'Kept unless removal is confirmed on exit.'
         return f'{opened}: {self.path} (branch: {self.branch}). {on_exit}'
 
 
@@ -236,27 +241,41 @@ def offer_worktree_cleanup(
     read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None = None,
     store: SettingsStore | None = None,
 ) -> None:
-    """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
+    """After interactive shutdown, remove a checkout with nothing to lose, or offer to remove a changed one.
 
-    Uncommitted or untracked files, or a commit other than the one at launch, count as changes. Other
-    unchanged checkouts are kept without asking. By default, a confirmed removal keeps the branch and
-    dirty files. A registered command owns explicitly confirmed removal for its repository only.
-    `read_remove_commands` reads configuration only when a changed checkout needs a prompt.
+    Nothing to lose is an unchanged checkout marked `remove_if_unchanged`, or a clean one marked
+    `remove_if_pushed` whose commits are all on a remote-tracking branch and that a readable saved
+    choice does not keep. Uncommitted or untracked files, or a commit other than the one at launch,
+    count as changes. Other unchanged checkouts are kept without asking. By default, a confirmed
+    removal keeps the branch and dirty files. A registered command owns explicitly confirmed removal
+    for its repository only. `read_remove_commands` reads configuration only when a changed checkout
+    needs a prompt.
     """
     if worktree is None or not sys.stdin.isatty():
         return
     root = str(worktree.path)
     try:
-        changed = (
-            bool(_git('-C', root, 'status', '--porcelain')) or _git('-C', root, 'rev-parse', 'HEAD') != worktree.head
+        clean = not _git('-C', root, 'status', '--porcelain')
+        unchanged = clean and _git('-C', root, 'rev-parse', 'HEAD') == worktree.head
+        removable = (
+            clean
+            and worktree.remove_if_pushed
+            and not _git('-C', root, 'rev-list', '--max-count=1', 'HEAD', '--not', '--remotes')
         )
     except (OSError, subprocess.CalledProcessError):
         return
-    if not changed:
-        if worktree.remove_if_unchanged:
-            _remove(worktree, unchanged=True)
+    if unchanged and worktree.remove_if_unchanged:
+        _remove(worktree, keep_branch=False)
         return
-    _offer_changed_worktree_cleanup(worktree=worktree, read_remove_commands=read_remove_commands, store=store)
+    if unchanged and not removable:
+        return
+    kept = kept_checkout(worktree.path, store=store)
+    if kept:
+        print(f'Worktree kept at {root}.')
+    elif removable and kept is False:
+        _remove(worktree, keep_branch=True)
+    elif not unchanged:
+        _offer_changed_worktree_cleanup(worktree=worktree, read_remove_commands=read_remove_commands, store=store)
 
 
 def _offer_changed_worktree_cleanup(
@@ -265,11 +284,8 @@ def _offer_changed_worktree_cleanup(
     read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None,
     store: SettingsStore | None,
 ) -> None:
-    """Confirm changed-checkout removal, unless this checkout's saved preference keeps it."""
+    """Confirm changed-checkout removal, saving a choice to keep this checkout without asking again."""
     root = str(worktree.path)
-    if _kept_checkout(worktree.path, store=store):
-        print(f'Worktree kept at {root}.')
-        return
     try:
         remove_commands: Mapping[str, Sequence[str]] = (
             read_remove_commands() if read_remove_commands is not None else {}
@@ -302,8 +318,8 @@ def _offer_changed_worktree_cleanup(
         return
     if custom is not None:
         _remove_with_command(path=worktree.path, repo=custom[0], command=custom[1])
-    elif _remove(worktree, unchanged=False):
-        print(f'Removed worktree {root}. Branch kept.')
+    else:
+        _remove(worktree, keep_branch=True)
 
 
 def _checkout_identity(path: Path) -> str:
@@ -312,15 +328,19 @@ def _checkout_identity(path: Path) -> str:
     return f'{identity.st_dev}:{identity.st_ino}:{identity.st_mtime_ns}'
 
 
-def _kept_checkout(path: Path, *, store: SettingsStore | None) -> bool:
-    """An unreadable preference still lets the user choose whether to remove the checkout."""
+def kept_checkout(path: Path, *, store: SettingsStore | None) -> bool | None:
+    """Whether a saved choice keeps the checkout, or `None` when it cannot be read.
+
+    An unreadable preference removes nothing without asking, and still lets the user choose whether to
+    remove a changed checkout.
+    """
     if store is None:
         return False
     try:
         return store.kept_worktree(path) == _checkout_identity(path)
     except (OSError, sqlite3.Error) as exc:
         print(f'Cannot read worktree cleanup preference for {path}: {exc}', file=sys.stderr)
-        return False
+        return None
 
 
 def _keep_checkout(path: Path, *, store: SettingsStore | None) -> None:
@@ -355,8 +375,11 @@ def _remove_with_command(*, path: Path, repo: Path, command: list[str]) -> None:
             os.chdir(original)
 
 
-def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
-    """Remove the checkout without `--force`, and an unchanged branch this launch created; report a refusal."""
+def _remove(worktree: Worktree, *, keep_branch: bool) -> None:
+    """Remove the checkout without `--force`, and report a refusal.
+
+    With `keep_branch`, report the removal too. Without it, also delete a branch this launch created.
+    """
     root = str(worktree.path)
     original = Path.cwd()
     try:
@@ -368,14 +391,15 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
         os.chdir(original)
         detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
         print(f'Worktree kept at {root}: {detail}', file=sys.stderr)
-        return False
-    if unchanged and worktree.new_branch:
+        return
+    if keep_branch:
+        print(f'Removed worktree {root}. Branch kept.')
+    elif worktree.new_branch:
         try:
             # `-d`, not `-D`: Git keeps a branch that is not merged into the main checkout's `HEAD`.
             _git('-C', str(common), 'branch', '-d', '--', worktree.branch)
         except (OSError, subprocess.CalledProcessError):
             pass  # A kept branch loses nothing; it is `git branch -d` away.
-    return True
 
 
 def _common_directory(*, path: Path) -> Path:

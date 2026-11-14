@@ -28,9 +28,8 @@ except ImportError as _import_error:
 __all__ = ('CerebrasModel', 'CerebrasModelName', 'CerebrasModelSettings')
 
 LatestCerebrasModelNames = Literal[
-    'gemma-4-31b',
     'gpt-oss-120b',
-    'zai-glm-4.7',
+    'qwen-3.8-27b',
 ]
 
 CerebrasModelName = str | LatestCerebrasModelNames

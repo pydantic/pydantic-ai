@@ -80,8 +80,12 @@ watch_logs() {{
 }}
 stop_watcher() {{
   [ -z "$watcher" ] || {{
-    true 2> /dev/null > "$dir/watch.stop" && [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
-    wait "$watcher" 2> /dev/null
+    if true 2> /dev/null > "$dir/watch.stop"; then
+      [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
+      wait "$watcher" 2> /dev/null
+    else
+      kill "$watcher" 2> /dev/null
+    fi
   }}
 }}
 unset __harness_stopped
@@ -105,6 +109,7 @@ fi
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
 code=$?
+[ -w "$dir" ] || chmod u+w "$dir" 2> /dev/null
 stop_watcher
 publish $code
 """
@@ -118,22 +123,33 @@ running, and a command that reads its own log (a glob over job logs) reaches the
 the log into itself until the disk is full. A log holding no more than the notice is left alone, so a limit below its
 size doesn't clear it at every check. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps
 growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
-own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only once
-the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its last
-check. When `watch.stop` cannot be created, as when the command removed the job directory, the wrapper sends `TERM`
-regardless: the logs that last check would clear are gone, and a watcher sent neither would keep the wrapper waiting on
-it. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM`
-ignored, at its next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a
-`sleep` without fractional seconds gets 1.
+own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only
+once the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its
+last check. When `watch.stop` cannot be created, as when the command removed the job directory or left it read-only
+(below), the wrapper sends `TERM` regardless and exits without waiting for the watcher; publishing the exit status needs
+the same write, so none is published. That `TERM` is then the watcher's only stop, and it can be lost: `dash` drops a
+`TERM` that arrives before the watcher's subshell has reset the trap it inherits from the wrapper, and a shell that
+started with `TERM` ignored never gets it. Such a watcher exits at its next check, once the wrapper is gone. A watcher
+that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM` ignored, at its
+next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without
+fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
 a trap with an action is reset in a child. Stopping the group therefore still records how the
-command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
+command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation, or a job directory the wrapper cannot write to
+(below), leaves `exit_code` null.
 The trap also records the signal, so a job stopped before its command starts (the wrapper waits
 for `launch.ready` first) never starts it and publishes `143` instead. A launcher that dies
 before `launch.ready` (a cancelled or timed-out launch) counts as a stop too, so the wrapper
 never waits for it forever.
+
+A command can take write permission away from its job directory, as `chmod -R a-w .` in the workspace does. Stopping the
+watcher and publishing both create files there, so once the command exits, the wrapper gives the directory's owner write
+permission back; a directory that is still writable costs only the `-w` test, a shell builtin. Nothing else the command
+changed is restored, so a jobs directory it made read-only keeps `Job.cleanup` from removing the job directory. A stop
+signal that lands while `chmod` runs ends it, as `chmod` runs with default signal handling, and the directory stays
+read-only: no exit status is published.
 
 A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
 handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
@@ -145,6 +161,17 @@ _SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 
 `true` rather than `:`, as a failed redirection on a special builtin exits the shell (the job
 directory may be gone).
+"""
+
+_ZOMBIE_GROUP_SCRIPT = """[ "$(uname -s 2> /dev/null)" = Darwin ] || exit 1
+members=$(ps -A -o pgid= -o stat=) || exit 1
+echo "$members" | while read -r group state; do [ "$group" != "$1" ] || case $state in Z*) ;; *) exit 1 ;; esac; done
+"""
+"""Exit 0 on macOS when `ps` lists no live member of process group `$1`: macOS refuses any signal to a group of zombies.
+
+Without `setsid` the wrapper is left to `launchd` once the launcher exits, so between the wrapper's exit and its reap
+the job's group holds only zombies. A group `ps` no longer lists was reaped after the signal. Linux signals a group of
+zombies, so elsewhere this exits 1 and the refusal stands.
 """
 
 _REQUIRED_TOOLS = ('mv', 'base64')
@@ -390,12 +417,16 @@ class Job:
             if await self._signal('0'):
                 await self._signal('KILL')
             return
+        # The grace period is counted in the time slept, not read from a clock, so a durable engine that
+        # records each signal replays the same ones (as `run_persistent_command`'s foreground wait).
         interval = POLL_MIN
-        with anyio.move_on_after(_KILL_GRACE_PERIOD):
-            while await self._signal('0'):
-                await anyio.sleep(interval)
-                interval = min(interval * 2, POLL_MAX)
-            return
+        waited = 0.0
+        while waited < _KILL_GRACE_PERIOD:
+            if not await self._signal('0'):
+                return
+            await anyio.sleep(interval)
+            waited += interval
+            interval = min(interval * 2, POLL_MAX)
         await self._signal('KILL')
 
     async def _signal(self, name: str) -> bool:
@@ -403,7 +434,8 @@ class Job:
 
         The shell's `kill` builtin sends it, so no `kill` executable is needed: slim images
         such as Debian's ship none. A failure other than "no such process" raises, rather than
-        reporting a job stopped that may still be running.
+        reporting a job stopped that may still be running, unless `_ZOMBIE_GROUP_SCRIPT` finds
+        the group holds only zombies.
         """
         target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
@@ -414,6 +446,12 @@ class Job:
             return True
         if 'no such process' in result.stderr.lower():
             return False
+        if self.pgid is not None:
+            check = await self.workspace.run(
+                ['sh', '-c', _ZOMBIE_GROUP_SCRIPT, 'sh', str(self.pgid)], timeout=CONTROL_TIMEOUT
+            )
+            if check.exit_code == 0:
+                return False
         raise WorkspaceError(result.stderr.strip() or f'Unable to send SIG{name} to job {self.pid}.')
 
     async def cleanup(self) -> None:
