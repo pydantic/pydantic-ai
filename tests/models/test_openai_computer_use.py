@@ -59,7 +59,14 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    # Another thread touching `random` during a draw trips Hypothesis's check, as `tests/test_history_properties.py`
+    # explains, and `filterwarnings = error` makes it a flaky error. No strategy here uses `random`.
+    pytest.mark.filterwarnings(
+        'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+    ),
+]
 
 
 def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]] | None = None) -> resp.Response:
@@ -1389,7 +1396,7 @@ def _accepted(tool_action: dict[str, Any]) -> bool:
     return True
 
 
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, derandomize=True, database=None, deadline=None)
 @given(_NEAR_ACTION | _JSON)
 def test_any_action_maps_without_raising_and_a_refusal_is_rejected(raw: Any) -> None:
     """The tool checks every action before running any, so one it rejects means none of the call runs."""
@@ -1397,7 +1404,7 @@ def test_any_action_maps_without_raising_and_a_refusal_is_rejected(raw: Any) -> 
         assert 'unsupported_fields' not in tool_action or not _accepted(tool_action)
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=300, derandomize=True, database=None, deadline=None)
 @given(_VALID_ACTION)
 def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, Any]) -> None:
     mapped = _map_computer_action(raw)
@@ -1406,7 +1413,11 @@ def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, 
 
 
 @settings(
-    max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture]
+    max_examples=200,
+    derandomize=True,
+    database=None,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 @given(
     stored_item=st.fixed_dictionaries({}, optional={'actions': _JSON, 'pending_safety_checks': _JSON, 'extra': _JSON}),
