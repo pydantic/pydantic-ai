@@ -1462,8 +1462,8 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
                 parts=[
                     ThinkingPart(
                         content='I will use the get_temperature tool to find the temperature in Paris.',
-                        id='tool_plan',
                         provider_name='cohere',
+                        provider_details={'tool_plan': True},
                     ),
                     ToolCallPart(
                         tool_name='get_temperature',
@@ -1602,7 +1602,7 @@ async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests
 
     assert result.all_messages()[1].parts == snapshot(
         [
-            ThinkingPart(content=plan, id='tool_plan', provider_name='cohere'),
+            ThinkingPart(content=plan, provider_name='cohere', provider_details={'tool_plan': True}),
             ToolCallPart(tool_name='get_temperature', args='{"city": "Paris"}', tool_call_id='get_temperature_1'),
         ]
     )
@@ -1634,7 +1634,12 @@ ROLL_DIE_RETURN = ModelRequest(parts=[ToolReturnPart(tool_name='roll_die', conte
     'response_parts,follow_up,expected',
     [
         pytest.param(
-            [ThinkingPart(content='I will roll the die.', id='tool_plan', provider_name='cohere'), ROLL_DIE_CALL],
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='cohere', provider_details={'tool_plan': True}
+                ),
+                ROLL_DIE_CALL,
+            ],
             ROLL_DIE_RETURN,
             snapshot(
                 {
@@ -1682,7 +1687,12 @@ ROLL_DIE_RETURN = ModelRequest(parts=[ToolReturnPart(tool_name='roll_die', conte
             id='two-thinking-parts',
         ),
         pytest.param(
-            [ThinkingPart(content='I will roll the die.', id='tool_plan', provider_name='openai'), ROLL_DIE_CALL],
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='openai', provider_details={'tool_plan': True}
+                ),
+                ROLL_DIE_CALL,
+            ],
             ROLL_DIE_RETURN,
             snapshot(
                 {
@@ -1691,10 +1701,32 @@ ROLL_DIE_RETURN = ModelRequest(parts=[ToolReturnPart(tool_name='roll_die', conte
                     'tool_calls': [ROLL_DIE_CALL_JSON],
                 }
             ),
-            id='foreign-tool-plan-id',
+            id='foreign-tool-plan-marker',
         ),
         pytest.param(
-            [ThinkingPart(content='I will roll the die.', id='tool_plan', provider_name='cohere'), TextPart('No die.')],
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='cohere', provider_details={'tool_plan': 'yes'}
+                ),
+                ROLL_DIE_CALL,
+            ],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [{'type': 'thinking', 'thinking': 'I will roll the die.'}],
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                }
+            ),
+            id='malformed-tool-plan-marker',
+        ),
+        pytest.param(
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='cohere', provider_details={'tool_plan': True}
+                ),
+                TextPart('No die.'),
+            ],
             ModelRequest.user_text_prompt('Try again.'),
             snapshot(
                 {
@@ -1718,7 +1750,7 @@ async def test_thinking_replayed_as_tool_plan_only_for_own_plan_with_tool_calls(
     """Only Cohere's own tagged plan, beside tool calls, goes back as `tool_plan`; other thinking keeps its mapping.
 
     Not a VCR test: each case hand-builds a history to reach one mapping branch, which no recording holds.
-    The history is dumped and loaded first, which pins the stored `id` and `provider_name` the replay keys on.
+    The history is dumped and loaded first, pinning the stored `provider_name` and `provider_details` the replay reads.
     """
     sent: list[httpx.Request] = []
     agent = Agent(cohere_over_transport([{'content': [{'type': 'text', 'text': 'Done.'}]}], sent))

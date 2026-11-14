@@ -166,8 +166,8 @@ _THINKING_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
 See [the Cohere docs](https://docs.cohere.com/docs/reasoning).
 """
 
-_TOOL_PLAN_ID = 'tool_plan'
-"""`ThinkingPart.id` of the plan Cohere writes before its tool calls, which goes back as `tool_plan`."""
+_TOOL_PLAN_VENDOR_PART_ID = 'tool_plan'
+"""Parts-manager key of the streamed plan Cohere writes before its tool calls."""
 
 _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'COMPLETE': 'stop',
@@ -416,7 +416,9 @@ class CohereModel(Model[AsyncClientV2]):
         parts: list[ModelResponsePart] = []
         if tool_plan := response.message.tool_plan:
             # A thinking part, not text: text streamed before a tool call would become `run_stream`'s output.
-            parts.append(ThinkingPart(content=tool_plan, id=_TOOL_PLAN_ID, provider_name=self.system))
+            parts.append(
+                ThinkingPart(content=tool_plan, provider_name=self.system, provider_details={'tool_plan': True})
+            )
         if response.message.content is not None:
             for content in response.message.content:
                 if content.type == 'text':
@@ -480,9 +482,7 @@ class CohereModel(Model[AsyncClientV2]):
             match item:
                 case TextPart():
                     texts.append(item.content)
-                case ThinkingPart() if (
-                    has_tool_calls and item.id == _TOOL_PLAN_ID and item.provider_name == self.system
-                ):
+                case ThinkingPart() if has_tool_calls and self._is_own_tool_plan(item):
                     tool_plans.append(item.content)
                 case ThinkingPart():
                     thinking.append(item.content)
@@ -514,6 +514,14 @@ class CohereModel(Model[AsyncClientV2]):
         if tool_calls:
             message_param.tool_calls = tool_calls
         return message_param
+
+    def _is_own_tool_plan(self, part: ThinkingPart) -> bool:
+        """Whether `part` is the plan this provider wrote before its tool calls, which goes back as `tool_plan`."""
+        return (
+            part.provider_name == self.system
+            and part.provider_details is not None
+            and part.provider_details.get('tool_plan') is True
+        )
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
@@ -656,10 +664,10 @@ class CohereStreamedResponse(StreamedResponse):
             case ToolPlanDeltaV2ChatStreamResponse():
                 if event.delta and event.delta.message and (tool_plan := event.delta.message.tool_plan):
                     yield from self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=_TOOL_PLAN_ID,
+                        vendor_part_id=_TOOL_PLAN_VENDOR_PART_ID,
                         content=tool_plan,
-                        id=_TOOL_PLAN_ID,
                         provider_name=self._provider_name,
+                        provider_details={'tool_plan': True},
                     )
             case ToolCallStartV2ChatStreamResponse() | ToolCallDeltaV2ChatStreamResponse():
                 yield from self._handle_tool_call(event)
