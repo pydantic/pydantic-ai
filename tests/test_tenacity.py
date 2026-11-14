@@ -2,16 +2,21 @@ from __future__ import annotations as _annotations
 
 import threading
 import time
+from collections.abc import AsyncIterator, Iterable, Iterator
 from datetime import UTC, datetime
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
 
+import anyio
+import httpcore2
 import httpx
 import httpx2
 import pytest
 
 from .conftest import try_import
+
+READINESS_WAIT_TIMEOUT = 10
 
 with try_import() as imports_successful:
     from tenacity import (
@@ -36,6 +41,88 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install tenaci
 # Only the classes that construct the deprecated transports may silence their warning; the `httpx2` classes
 # run under the repo-wide `filterwarnings = ["error"]` so a deprecation escaping into them fails the test.
 ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
+
+
+class _NetworkStream(httpx2.SyncByteStream, httpx2.AsyncByteStream):
+    """A response body that, like one from the network, is read only when iterated, and can fail mid-read."""
+
+    def __init__(self, *, fail_read: bool):
+        self.fail_read = fail_read
+        self.iterated = False
+        self.closed = False
+
+    def __iter__(self) -> Iterator[bytes]:
+        self.iterated = True
+        if self.fail_read:
+            raise httpx2.ReadError('connection lost')
+        yield b'{"error": "rejected"}'
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self:
+            yield chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def aclose(self) -> None:
+        self.close()
+
+
+class _StalledConnection(httpcore2.AsyncNetworkStream):
+    """A connection that sends a 503's headers, then stalls its body until the reader is cancelled."""
+
+    def __init__(self):
+        self.reading_body = anyio.Event()
+        self.closed = False
+        self._head = [b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 64\r\n\r\n']
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        if self._head:
+            return self._head.pop()
+        self.reading_body.set()
+        await anyio.sleep_forever()
+        return b''  # pragma: no cover
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _StalledConnectionBackend(httpcore2.AsyncNetworkBackend):
+    def __init__(self, connection: _StalledConnection):
+        self.connection = connection
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[object] | None = None,
+    ) -> httpcore2.AsyncNetworkStream:
+        return self.connection
+
+
+def _reject(response: httpx2.Response) -> None:
+    raise httpx2.HTTPStatusError(f'rejected {response.status_code}', request=response.request, response=response)
+
+
+def _read_content(response: httpx2.Response) -> bytes | None:
+    try:
+        return response.content
+    except httpx2.ResponseNotRead:
+        return None
+
+
+_REJECTED_RESPONSES = [
+    pytest.param(429, False, True, b'{"error": "rejected"}', id='error-status-read'),
+    pytest.param(200, False, False, None, id='success-status-closed-unread'),
+    pytest.param(503, True, True, None, id='failed-read-keeps-validator-error'),
+]
+"""`(status_code, fail_read, iterated, content)`: a response `validate_response` rejected reads its body only for an
+error status, and a failed read still raises the validator's exception."""
 
 
 class TestHTTPX2TenacityTransport:
@@ -140,6 +227,75 @@ class TestHTTPX2TenacityTransport:
 
         wrapped.handle_async_request.assert_awaited_once_with(request)
         wrapped.aclose.assert_awaited_once_with()
+
+    @pytest.mark.parametrize(('status_code', 'fail_read', 'iterated', 'content'), _REJECTED_RESPONSES)
+    def test_sync_transport_reads_rejected_error_body_before_closing(
+        self, status_code: int, fail_read: bool, iterated: bool, content: bytes | None
+    ):
+        """Below any model, so a test can see whether the body was read and the stream closed, which no model shows."""
+        stream = _NetworkStream(fail_read=fail_read)
+        transport = HTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True),
+            wrapped=httpx2.MockTransport(lambda request: httpx2.Response(status_code, stream=stream)),
+            validate_response=_reject,
+        )
+
+        with httpx2.Client(transport=transport) as client, pytest.raises(httpx2.HTTPStatusError) as exc_info:
+            client.get('https://example.com')
+
+        assert exc_info.value.response.status_code == status_code
+        assert _read_content(exc_info.value.response) == content
+        assert stream.iterated == iterated
+        assert stream.closed
+
+    @pytest.mark.parametrize(('status_code', 'fail_read', 'iterated', 'content'), _REJECTED_RESPONSES)
+    async def test_async_transport_reads_rejected_error_body_before_closing(
+        self, status_code: int, fail_read: bool, iterated: bool, content: bytes | None
+    ):
+        """The async counterpart; `test_retrying_transport_gave_up_keeps_streamed_error_body` covers it through a model."""
+        stream = _NetworkStream(fail_read=fail_read)
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True),
+            wrapped=httpx2.MockTransport(lambda request: httpx2.Response(status_code, stream=stream)),
+            validate_response=_reject,
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client:
+            with pytest.raises(httpx2.HTTPStatusError) as exc_info:
+                await client.get('https://example.com')
+
+        assert exc_info.value.response.status_code == status_code
+        assert _read_content(exc_info.value.response) == content
+        assert stream.iterated == iterated
+        assert stream.closed
+
+    @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+    async def test_async_transport_closes_rejected_response_when_body_read_is_cancelled(self):
+        """Cancelling the error body's read still closes the default transport's connection.
+
+        Otherwise each cancelled attempt would hold a pooled connection
+        (https://github.com/pydantic/pydantic-ai/issues/2724). `httpx2.AsyncHTTPTransport` takes no network backend,
+        so its pool is replaced with one on a stalled connection; the transport's own response stream still sits
+        between the read and that connection.
+        """
+        connection = _StalledConnection()
+        pool = httpcore2.AsyncConnectionPool(network_backend=_StalledConnectionBackend(connection))
+        wrapped = httpx2.AsyncHTTPTransport()
+        wrapped._pool = pool  # pyright: ignore[reportPrivateUsage]
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True), wrapped=wrapped, validate_response=_reject
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(client.get, 'http://example.com')
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await connection.reading_body.wait()
+                tg.cancel_scope.cancel()
+
+            # Checked before the client closes, since closing it closes the pool and every connection in it.
+            assert connection.closed
+            assert pool.connections == []
 
 
 class TestLegacyHTTPXTransports:
