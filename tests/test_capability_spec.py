@@ -65,6 +65,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    NATIVE_TOOL_TYPES,
     AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -2805,6 +2806,32 @@ def test_native_tool_flat_form_schema_requires_kind():
     assert list(validator_for(schema)(schema).iter_errors(spec))
     with pytest.raises(ValueError, match="Failed to instantiate capability 'NativeTool'"):
         Agent.from_spec(spec)
+
+
+@pytest.fixture
+def restore_native_tool_types() -> Iterator[None]:
+    """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
+    registered = dict(NATIVE_TOOL_TYPES)
+    yield
+    NATIVE_TOOL_TYPES.clear()
+    NATIVE_TOOL_TYPES.update(registered)
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_native_tool_flat_form_schema_custom_kind():
+    """A native tool type defined after import is in the schema, and its flat form loads as that type."""
+
+    @dataclass(kw_only=True)
+    class WidgetTool(AbstractNativeTool):
+        kind: str = 'widget'
+        size: int = 0
+
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'widget', 'size': 3}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WidgetTool(size=3)]
 
 
 def test_save_schema(tmp_path: str):

@@ -2,16 +2,26 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from functools import cache
 from typing import Any
 
 import pydantic
 
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool
 
 from .abstract import AbstractCapability
 
-_NATIVE_TOOL_ADAPTER = pydantic.TypeAdapter(AbstractNativeTool)
+
+@cache
+def _native_tool_adapter(tool_types: tuple[type[AbstractNativeTool], ...]) -> pydantic.TypeAdapter[AbstractNativeTool]:
+    """Build the adapter once for each state of `NATIVE_TOOL_TYPES`, which `tool_types` snapshots.
+
+    A native tool type registers when its class is defined, which can be after this module is imported, while the
+    `AgentSpec` schema reads the registry each time it's generated: an adapter built at import would reject the flat
+    form of a type the schema accepts. Class definitions, not spec loads, add entries, so the cache stays bounded.
+    """
+    return pydantic.TypeAdapter(AbstractNativeTool)
 
 
 @dataclass
@@ -41,10 +51,11 @@ class NativeTool(AbstractCapability[AgentDepsT]):
         - Flat: `{NativeTool: {kind: web_search, search_context_size: high}}`
         - Explicit: `{NativeTool: {tool: {kind: web_search}}}`
         """
+        adapter = _native_tool_adapter(tuple(NATIVE_TOOL_TYPES.values()))
         if tool is not None:
-            validated = _NATIVE_TOOL_ADAPTER.validate_python(tool)
+            validated = adapter.validate_python(tool)
         elif kwargs:
-            validated = _NATIVE_TOOL_ADAPTER.validate_python(kwargs)
+            validated = adapter.validate_python(kwargs)
         else:
             raise TypeError(
                 '`NativeTool.from_spec()` requires either a `tool` argument or keyword arguments'
