@@ -5,10 +5,11 @@ workspace, such as `Coder`. `DockerContainerBackend` is the workspace backend it
 applications that want to build one and pass it to a run as `workspace=`.
 """
 
-from pydantic_ai_harness.docker_container._backend import DockerContainerBackend
+from pydantic_ai_harness.docker_container._backend import DESKTOP_DOCKERFILE, DockerContainerBackend
 from pydantic_ai_harness.docker_container._capability import DockerContainer
 
 __all__ = [
+    'DESKTOP_DOCKERFILE',
     'DockerContainer',
     'DockerContainerBackend',
 ]

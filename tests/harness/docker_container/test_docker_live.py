@@ -12,9 +12,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
 import pytest
 
+from pydantic_ai.computer_use import Click, PressKeys, TypeText
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai_harness.computer_use import Display
 from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
+
+from ..display_contract_live import check_display_contract
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
@@ -147,3 +151,60 @@ class TestLiveDocker(WorkspaceBackendSuite):
             shell=True,
         )
         assert alive.exit_code != 0
+
+
+@pytest.mark.docker_live
+class TestLiveDockerDesktop:
+    """Runs the display against real containers of the desktop image, which the first test builds if this machine
+    lacks it. Commands and files are `TestLiveDocker`'s: a desktop container runs them the same way."""
+
+    @pytest.fixture
+    async def backend(self) -> AsyncIterator[WorkspaceBackend]:
+        backend = DockerContainerBackend(executable=EXECUTABLE, desktop=True)
+        yield backend
+        if backend.ref is not None:
+            await _destroy(backend)
+
+    async def test_display_contract(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DockerContainerBackend)
+        assert backend.display is not None
+        await check_display_contract(backend.display)
+
+    async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        display = await _focused_typing_window(backend)
+        await display.act(TypeText(text='hello, Desktop! @#?\t~'))
+        await display.act(PressKeys(keys=('?',)))
+        await display.act(PressKeys(keys=('enter',)))
+        assert await _typed(backend) == 'hello, Desktop! @#?\t~?\n'
+
+    async def test_a_modifier_left_down_does_not_change_later_input(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DockerContainerBackend)
+        display = await _focused_typing_window(backend)
+        # As an action stopped between pressing and releasing leaves it: without a release, `a` types `A`.
+        await backend.run(['xdotool', 'keydown', 'Shift_L'], env={'DISPLAY': ':1'})
+        await display.act(TypeText(text='ab\n'))
+        assert await _typed(backend) == 'ab\n'
+
+
+async def _focused_typing_window(backend: WorkspaceBackend) -> Display:
+    """Start the display and an xterm that writes what it's typed to `typed.txt`, and focus it."""
+    assert isinstance(backend, DockerContainerBackend)
+    display = backend.display
+    assert display is not None
+    await display.display_size()  # starts the display
+    await backend.run(
+        'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
+        shell=True,
+        env={'DISPLAY': ':1'},
+    )
+    await backend.run(
+        ['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'}, timeout=30
+    )
+    await display.act(Click(x=300, y=180))
+    return display
+
+
+async def _typed(backend: WorkspaceBackend) -> str:
+    assert isinstance(backend, DockerContainerBackend)
+    typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
+    return typed.stdout

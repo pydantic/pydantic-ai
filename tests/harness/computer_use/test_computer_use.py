@@ -547,8 +547,8 @@ Each call runs a list of actions in order and returns a screenshot of the result
         with pytest.raises(UserError) as error:
             await agent.run('Go.')
         assert error.value.message == (
-            '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
-            "run's workspace has none."
+            "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with one, such as "
+            '`DockerContainer(desktop=True)`.'
         )
 
     @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])

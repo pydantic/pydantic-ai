@@ -393,13 +393,12 @@ implements `SupportsDisplay` and a model that accepts images. A model without im
 its request. A workspace without a display fails the run at its start; under durable execution, the
 first `computer` call or native tool size read fails it instead.
 
-```python {test="skip" lint="skip"}
+```python {test="skip"}
 from pydantic_ai import Agent
 
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerContainer
 
-# `my_desktop_sandbox`: a capability whose workspace has a display (`SupportsDisplay`).
-agent = Agent('test', capabilities=[my_desktop_sandbox, ComputerUse()])
+agent = Agent('test', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 ```
 
 Fields: `settle_seconds=0` (pause after acting before a zoom or the closing screenshot; set it if screenshots catch pages mid-load), `action_limits` (a `ComputerUseActionLimits` capping one action, such as `max_wait_seconds`; no limits by default), `native=True` (adds a `ComputerTool`

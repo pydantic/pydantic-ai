@@ -17,6 +17,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -448,7 +449,7 @@ Python up to 3.14.
 
 ### DockerContainer
 
-`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker', desktop=False)`
 (backend `DockerContainerBackend`) runs commands and file operations in a local container through the
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
@@ -467,6 +468,10 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
+- `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
+  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
+  it; a custom `image` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. Under durable execution, build the image first and
+  pass it as `image`.
 
 ### OpenSandbox
 

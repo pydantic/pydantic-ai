@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.docker_container._backend import (
     PROVIDER,
@@ -61,17 +62,22 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the container a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`."""
+
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
+        desktop_size(self.desktop)  # a bad size fails here, not when a run starts
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
         return DockerContainerBackend(
-            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
+            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path, desktop=self.desktop
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -84,7 +90,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
         del ctx
         if ref is not None:
             return self.backend(ref) if ref.provider == PROVIDER else None
-        if self.image is None:
+        if self.image is None and not self.desktop:
             return None
         return DockerContainerBackend(
             image=self.image,
@@ -93,4 +99,5 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
             allow_internet_access=self.allow_internet_access,
             docker_args=self.docker_args,
             executable=self._executable_path,
+            desktop=self.desktop,
         )
