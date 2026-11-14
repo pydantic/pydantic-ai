@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -22,6 +22,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
+from pydantic_ai_harness._workspace_fallback import fallback_asking, other_workspace
 from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
@@ -184,22 +185,14 @@ class _WindowsFallback(AbstractCapability[AgentDepsT]):
 
     `LocalWorkspace` needs a POSIX host, so without this a run on Windows has no workspace and fails at
     its start. A capability function returns it, so core asks it only once the run's capabilities are
-    resolved, with the root capability set. It asks that first, declining while it asks, and defers to
-    any capability that supplies a workspace, wherever it is listed.
+    resolved, with the root capability set. It is a last resort: it defers to any capability that supplies
+    a workspace, wherever it is listed, other fallbacks such as CLAI's session directory included.
     """
 
-    _asking: bool = field(default=False, init=False, repr=False)
-
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if self._asking:
+        if fallback_asking() or other_workspace(ctx, ref=ref) is not None:
             return None
-        assert ctx.root_capability is not None, 'core sets the root capability before asking a capability function'
-        self._asking = True
-        try:
-            other = ctx.root_capability.get_workspace(ctx, ref=ref)
-        finally:
-            self._asking = False
-        return None if other is not None else WindowsWorkspace[AgentDepsT]('.').get_workspace(ctx, ref=ref)
+        return WindowsWorkspace[AgentDepsT]('.').get_workspace(ctx, ref=ref)
 
 
 def _add_windows_fallback(capabilities: list[AbstractCapability[AgentDepsT]]) -> None:

@@ -413,20 +413,16 @@ class Job:
         if length <= 0:
             return b''
         if self.workspace.platform == 'windows':
-            # A `'windows'` workspace is this machine, so reading the log here costs no transfer.
-            try:
-                return (await self.workspace.read_bytes(path))[offset : offset + length]
-            except FileNotFoundError:  # pragma: no cover - a log removed while the job is read
-                return b''
-        quoted = shlex.quote(path)
-        result = await self.workspace.run(
+            script = _powershell.read_script(path, offset, length)
+        else:
+            quoted = shlex.quote(path)
             # A pipeline reports only `base64`'s status, so check the log is readable before it.
             # A log removed between the two checks is missing, not unreadable.
-            f'test -f {quoted} || exit 66; test -r {quoted} || {{ test -f {quoted} || exit 66; exit 67; }}; '
-            f'tail -c +{offset + 1} {quoted} | head -c {length} | base64',
-            shell=True,
-            timeout=CONTROL_TIMEOUT,
-        )
+            script = (
+                f'test -f {quoted} || exit 66; test -r {quoted} || {{ test -f {quoted} || exit 66; exit 67; }}; '
+                f'tail -c +{offset + 1} {quoted} | head -c {length} | base64'
+            )
+        result = await self.workspace.run(script, shell=True, timeout=CONTROL_TIMEOUT)
         if result.exit_code == 66:
             return b''
         if result.exit_code != 0:

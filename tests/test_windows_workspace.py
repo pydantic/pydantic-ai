@@ -7,7 +7,9 @@ how `Workspace` treats a `'windows'` backend's paths is checked everywhere, with
 from __future__ import annotations
 
 import ntpath
+import os
 import posixpath
+import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -171,6 +173,15 @@ class TestWindowsCommands:
         with anyio.fail_after(30):
             while (await backend.run(f'Get-Process -Id {pid}', shell=True)).exit_code == 0:
                 await anyio.sleep(0.1)  # pragma: lax no cover - depends on how fast the process dies
+
+    async def test_a_bare_program_is_not_run_from_the_current_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`CreateProcess` would run a checkout's `rg.exe` in place of the real one; like `execvp`, only `PATH` counts."""
+        shutil.copy(Path(os.environ['SYSTEMROOT'], 'System32', 'findstr.exe'), tmp_path / 'hijack.exe')
+        monkeypatch.chdir(tmp_path)
+        result = await WindowsWorkspaceBackend(tmp_path).run(['hijack', '/?'])
+        assert (result.exit_code, result.stderr) == (127, 'hijack: command not found\n')
 
     async def test_a_script_too_long_for_a_command_line(self, tmp_path: Path) -> None:
         with pytest.raises(OSError, match='too long'):

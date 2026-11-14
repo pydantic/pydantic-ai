@@ -61,9 +61,9 @@ so no execution policy applies to it.
 
 _LAUNCHER = """try {
   New-Item -ItemType Directory -Force -Path (Split-Path -LiteralPath $dir) -ErrorAction Stop | Out-Null
-  if ($exclusive -and (Test-Path -LiteralPath $dir)) { exit 126 }
-  New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
-} catch { exit 125 }
+  # Without `-Force`, so of two launches that claim the same directory, only one creates it.
+  New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+} catch { if ($exclusive -and (Test-Path -LiteralPath $dir)) { exit 126 }; exit 125 }
 foreach ($log in $logs) { [IO.File]::WriteAllBytes((Join-Path $dir $log), [byte[]]@()) }
 [IO.File]::WriteAllText((Join-Path $dir 'command.ps1'), $script, [Text.UTF8Encoding]::new($true))
 [IO.File]::WriteAllText((Join-Path $dir 'launcher'), "$PID")
@@ -97,6 +97,28 @@ def launch_script(directory: str, cwd: str, command: str, *, exclusive: bool, co
         f'$dir = {literal(directory)}\n$exclusive = ${str(exclusive).lower()}\n$logs = @({logs})\n'
         f'$script = {literal(_PREAMBLE + command + _EPILOGUE)}\n$supervisor = {literal(wrapper)}\n' + _LAUNCHER
     )
+
+
+def read_script(path: str, offset: int, length: int) -> str:
+    """PowerShell printing, in base64, up to `length` bytes of `path` from `offset`; it exits 66 when `path` is missing.
+
+    Like the `sh` side, it reads only those bytes, whatever the log's size, and exits 67 when the log is unreadable.
+    """
+    return f"""$path = {literal(path)}
+if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {{ exit 66 }}
+try {{ $file = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite, Delete') }}
+catch {{ if (Test-Path -LiteralPath $path) {{ exit 67 }}; exit 66 }}
+try {{
+  $null = $file.Seek({offset}, 'Begin')
+  $buffer = [byte[]]::new([Math]::Min({length}, [Math]::Max(0, $file.Length - {offset})))
+  $read = 0
+  while ($read -lt $buffer.Length) {{
+    $count = $file.Read($buffer, $read, $buffer.Length - $read)
+    if ($count -eq 0) {{ break }}
+    $read += $count
+  }}
+}} finally {{ $file.Dispose() }}
+[Console]::Out.Write([Convert]::ToBase64String($buffer, 0, $read))"""
 
 
 def kill_command(pid: int) -> list[str]:

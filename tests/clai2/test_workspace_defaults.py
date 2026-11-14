@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, TypeGuard
 
 import pytest
@@ -169,3 +170,23 @@ async def test_wrapped_dynamic_plugin_gets_the_local_default(tmp_path: Path) -> 
     )
     result = await Session(agent, deps=None, workspace=tmp_path).prompt('go')
     assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(tmp_path.resolve()))
+
+
+async def test_coders_windows_fallback_leaves_the_session_directory_to_clai(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both fall back to a workspace only when no other capability supplies one; CLAI's session directory wins."""
+    monkeypatch.setattr('pydantic_ai_harness.coder._capability.sys', SimpleNamespace(platform='win32'))
+    monkeypatch.setattr('pydantic_ai_harness.coder._capability.WindowsWorkspace', LocalWorkspace)
+    launch = tmp_path / 'launch'
+    launch.mkdir()
+    monkeypatch.chdir(launch)
+    session_dir = tmp_path / 'session'
+    session_dir.mkdir()
+    agent = Agent(
+        TestModel(call_tools=[], custom_output_text='done'),
+        deps_type=type(None),
+        capabilities=[Coder(repo_context=False, sub_agents=False)],
+    )
+    result = await Session(agent, deps=None, workspace=session_dir).prompt('go')
+    assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(session_dir.resolve()))

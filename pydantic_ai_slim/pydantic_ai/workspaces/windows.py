@@ -9,11 +9,11 @@ from __future__ import annotations as _annotations
 import base64
 import errno
 import functools
+import ntpath
 import os
-import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
@@ -99,8 +99,10 @@ class _JobObjects:
         import ctypes
         from ctypes import wintypes
 
-        # `CDLL`, not `WinDLL`: one calling convention on 64-bit Windows, and it type-checks everywhere.
-        kernel32 = ctypes.CDLL('kernel32', use_last_error=True)
+        # `WinDLL` for `kernel32`'s `stdcall` convention, which 32-bit Windows needs. Read with `getattr`
+        # because it exists only on Windows; it is a `CDLL` subclass.
+        win_dll: type[ctypes.CDLL] = getattr(ctypes, 'WinDLL')
+        kernel32 = win_dll('kernel32', use_last_error=True)
         self._create = kernel32.CreateJobObjectW
         self._create.restype = wintypes.HANDLE
         self._create.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
@@ -134,6 +136,35 @@ class _JobObjects:
 
     def close(self, job: int) -> None:
         self._close(job)
+
+
+def _which(name: str, env: Mapping[str, str]) -> str | None:
+    """`name` in an absolute directory on `env`'s `PATH`, trying each `PATHEXT` extension when it has none.
+
+    Unlike `shutil.which`, never in the current directory: from there, a checkout's `rg.exe` would run in
+    place of the real one.
+    """
+    extensions = [''] if ntpath.splitext(name)[1] else env.get('PATHEXT', '.COM;.EXE;.BAT;.CMD').split(';')
+    for directory in env.get('PATH', '').split(';'):
+        if ntpath.splitdrive(directory)[0] and ntpath.isabs(directory):
+            for extension in extensions:
+                if os.path.isfile(candidate := ntpath.join(directory, name + extension)):
+                    return candidate
+    return None
+
+
+def _resolve_program(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
+    """`argv` with a bare program name replaced by its path on `PATH`.
+
+    `CreateProcess` looks for a bare name in this process's current directory before `PATH`, which
+    `execvp` on POSIX does not. Raises `FileNotFoundError` when it is not on `PATH`.
+    """
+    program, *args = argv
+    if ntpath.basename(program) != program or ntpath.splitdrive(program)[0]:
+        return [program, *args]
+    if (path := _which(program, env)) is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), program)
+    return [path, *args]
 
 
 @functools.cache
@@ -182,7 +213,7 @@ class WindowsWorkspaceBackend(_HostWorkspaceBackend):
 
     def _executable(self, env: Mapping[str, str]) -> str:
         if self._powershell is None:
-            self._powershell = shutil.which('pwsh', path=env.get('PATH')) or 'powershell.exe'
+            self._powershell = _which('pwsh', env) or 'powershell.exe'
         return self._powershell
 
     async def run(
@@ -199,8 +230,9 @@ class WindowsWorkspaceBackend(_HostWorkspaceBackend):
 
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
         if isinstance(command, str):
-            # `which` searches `PATH` on disk, so not on the event loop.
+            # Both search `PATH` on disk, so not on the event loop.
             command = _powershell_command(await run_in_executor(self._executable, env), command)
+        command = await run_in_executor(_resolve_program, command, env)
         process = await anyio.open_process(
             command,
             cwd=working_dir,
