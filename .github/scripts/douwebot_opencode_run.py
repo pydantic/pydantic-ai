@@ -111,7 +111,7 @@ class Attempt:
     limit_name: str | None = None
     """The OpenCode Go usage window that refused the run with `provider.go-limit`, such as `5 hour`."""
     retry_after_ms: int | None = None
-    """How long OpenCode Go asked a `provider.go-limit` refusal to wait before the run tries again."""
+    """The milliseconds OpenCode Go's `Retry-After` asked a `provider.go-limit` refusal to wait, from `retryAfterMs`."""
     finished: bool | None = None
     """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
 
