@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent
@@ -235,7 +236,7 @@ class TestShellOnWindows:
         return tmp_path
 
     async def test_coder_works_in_the_current_directory(self, project: Path) -> None:
-        (project / 'app.py').write_text('def main():\n    pass\n')
+        (project / 'app.py').write_bytes(b'def main():\n    pass\n')
         results = await call_tools(
             [Coder[None](repo_context=False, sub_agents=False)],
             [
@@ -267,10 +268,10 @@ class TestShellOnWindows:
         )
         assert 'ID: ' in started, started
         command_id = started.rsplit('ID: ', 1)[1].strip()
-        results = await call_tools(
-            [shell, workspace],
-            [('check_command', {'command_id': command_id}), ('stop_command', {'command_id': command_id})],
-        )
-        assert '[status: running]' in results[0]
-        assert '[stdout]\nstarted' in results[1] and '[stderr]\nerr' in results[1]
-        assert '[stopped]' in results[1] and '[exit code: 1]' in results[1]
+        check = {'command_id': command_id}
+        with anyio.fail_after(60):
+            while '[stderr]\nerr' not in (checked := await call_tool([shell, workspace], 'check_command', check)):
+                await anyio.sleep(0.5)  # pragma: lax no cover - depends on how fast PowerShell starts
+        assert '[stdout]\nstarted' in checked and '[status: running]' in checked
+        stopped = await call_tool([shell, workspace], 'stop_command', check)
+        assert '[stdout]\nstarted' in stopped and '[stopped]' in stopped and '[exit code: 1]' in stopped
