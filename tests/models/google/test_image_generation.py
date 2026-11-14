@@ -480,7 +480,7 @@ async def test_google_image_generation_drops_thought_images(
 async def test_google_image_generation_stream_drops_thought_images(
     allow_model_requests: None, gemini_api_key: str, vcr: Cassette
 ):
-    """Streaming drops the interim thought image too: the response holds the thinking and the signed final image."""
+    """Streaming drops the interim thought image too, and keeps the thinking on each side of it apart, as a plain run does."""
     agent = Agent(
         GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key)),
         output_type=str | BinaryImage,
@@ -512,6 +512,7 @@ async def test_google_image_generation_stream_drops_thought_images(
     )
     assert result.response.parts == snapshot(
         [
+            ThinkingPart(content=IsStr()),
             ThinkingPart(content=IsStr()),
             FilePart(
                 content=IsInstance(BinaryImage),

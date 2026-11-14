@@ -1713,10 +1713,11 @@ class GeminiStreamedResponse(StreamedResponse):
     )
     _pending_web_search_return: NativeToolReturnPart | None = field(default=None, init=False)
     _grounding_metadata: GroundingMetadata | None = field(default=None, init=False)
-    # google-genai streams a long decode's continuation requests as one stream, each request's chunks under its own
-    # `response_id`. The first text or thinking of a new request starts a new part, as in the unary response, which
-    # the SDK merges from each request's parts.
-    _new_request_vendor_part_id: UUID | None = field(default=None, init=False)
+    # Set when the next text or thinking must start a new part, as in the unary response:
+    # - google-genai streams a long decode's continuation requests as one stream, each request's chunks under its own
+    #   `response_id`, and the SDK merges the unary response from each request's parts.
+    # - A dropped thought image separates the thinking before it from the thinking after it.
+    _new_part_vendor_part_id: UUID | None = field(default=None, init=False)
     # A continuation token checkpoints the output up to and including its chunk. When a stream drops after a
     # checkpoint, google-genai resumes from that token without retracting the chunks it already yielded after it,
     # so the resumed request would repeat them. Live Argon streams carry a token on every chunk from the first
@@ -1819,7 +1820,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         'The stream was interrupted after output that no continuation token covers, '
                         'and `google-genai` resumed it, which would repeat that output.',
                     )
-                self._new_request_vendor_part_id = uuid4()
+                self._new_part_vendor_part_id = uuid4()
             self.provider_response_id = chunk.response_id
         if candidate.continuation_token:
             self._uncheckpointed_output = False
@@ -1886,7 +1887,7 @@ class GeminiStreamedResponse(StreamedResponse):
     def _track_text_run(self, part: Part) -> None:
         # A new request's first text starts a new part, like any text after a non-text part.
         is_text = part.text is not None and not part.thought
-        if is_text and (not self._continue_text_run or self._new_request_vendor_part_id is not None):
+        if is_text and (not self._continue_text_run or self._new_part_vendor_part_id is not None):
             self._text_runs.append(_GoogleStreamTextRun(part_id=uuid4()))
         # Parts that make no part of their own, such as function responses, leave the text run going.
         if is_text or not (_is_signature_only_part(part) or part.function_response is not None):
@@ -1897,7 +1898,7 @@ class GeminiStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         if thought:
             yield from self._parts_manager.handle_thinking_delta(
-                vendor_part_id=self._new_request_vendor_part_id,
+                vendor_part_id=self._new_part_vendor_part_id,
                 content=text,
                 provider_name=self.provider_name if provider_details else None,
                 provider_details=provider_details,
@@ -1911,7 +1912,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 provider_name=self.provider_name if provider_details else None,
                 provider_details=provider_details,
             )
-        self._new_request_vendor_part_id = None
+        self._new_part_vendor_part_id = None
 
     def _map_inline_data(
         self, inline_data: Blob, thought: bool | None, provider_details: dict[str, Any] | None
@@ -1920,6 +1921,7 @@ class GeminiStreamedResponse(StreamedResponse):
             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
             # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
             # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
+            self._new_part_vendor_part_id = uuid4()
             return
         data = inline_data.data
         mime_type = inline_data.mime_type
