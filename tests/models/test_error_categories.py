@@ -2091,6 +2091,72 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     assert (exc.__cause__ is not None) == case.has_cause
 
 
+def _gave_up_on(handler: Handler) -> Handler:
+    """What a retrying transport raises once its `validate_response` rejected the error status `handler` answers."""
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
+
+
+_TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
+    _openai,
+    _openrouter,
+    _zai,
+    _moonshotai,
+    _anthropic,
+    _anthropic_bedrock,
+    _google,
+    _mistral,
+)
+"""Models whose status a retrying transport gave up on is classified from its body as their SDK's error is.
+
+Groq and Cohere chat aren't: their SDKs take a legacy `httpx` client, whose retrying transport closes the response
+without reading its body.
+"""
+
+_GAVE_UP_TWINS = [
+    case
+    for case in CASES
+    if case.model in _TRANSPORT_CLASSIFIED_MODELS
+    and not case.stream
+    and case.has_cause
+    and ModelHTTPError in case.categories
+    and 'transport-gave-up' not in case.id
+]
+
+
+@pytest.mark.parametrize('case', _GAVE_UP_TWINS, ids=[case.id for case in _GAVE_UP_TWINS])
+async def test_transport_gave_up_status_error_category(allow_model_requests: None, case: Case):
+    """A status a retrying transport gave up on raises what the provider SDK raises for the same response.
+
+    That's the same error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+
+    async def error(handler: Handler) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(case.model(handler)).run('hello')
+        return exc_info.value
+
+    def summary(exc: ModelHTTPError) -> tuple[object, ...]:
+        categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
+        return (
+            categories,
+            exc.status_code,
+            exc.provider_error_code,
+            exc.provider_error_type,
+            exc.suggested_model_id,
+            exc.hint,
+            exc.retry_after,
+        )
+
+    sdk_error = await error(case.handler)
+    gave_up_error = await error(_gave_up_on(case.handler))
+    assert summary(gave_up_error) == summary(sdk_error)
+
+
 def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
     """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
 

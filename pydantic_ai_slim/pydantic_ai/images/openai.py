@@ -265,22 +265,15 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                match e.body:
-                    case {'code': 'moderation_blocked'}:
-                        raise ContentFilterError(
-                            'OpenAI image generation was blocked for content moderation',
-                            json.dumps(e.body),
-                        ) from e
-                    case _:
-                        pass
-                raise ModelHTTPError.for_category(
-                    _model_errors.openai_compatible_category(status_code, e.code, e.type, e.message),
+                raise _status_error(
+                    self.model_name,
                     status_code=status_code,
-                    model_name=self.model_name,
                     body=e.body,
+                    error_object=e.body,
+                    code=e.code,
+                    error_type=e.type,
+                    message=e.message,
                     headers=dict(e.response.headers),
-                    provider_error_code=e.code,
-                    provider_error_type=e.type,
                 ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
@@ -288,7 +281,19 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
-            raise _model_errors.transport_status_error(self.model_name, e.response) from e
+            body, error, text = _model_errors.transport_error_body(e.response)
+            code, error_type = error.get('code'), error.get('type')
+            raise _status_error(
+                self.model_name,
+                status_code=e.response.status_code,
+                body=body,
+                error_object=error,
+                # As `openai` reads them from the error object in the body, and the whole body into its message.
+                code=str(code) if code is not None else None,
+                error_type=error_type if isinstance(error_type, str) else None,
+                message=text,
+                headers=dict(e.response.headers),
+            ) from e
 
         return self._map_response(prompt, check_json_response(self.model_name, response))
 
@@ -393,6 +398,36 @@ def _resolve_openai_settings(
     geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
 
     return _OpenAIResolvedSettings(size=geometry.size, ignored=ignored, conflicts=geometry.conflicts)
+
+
+def _status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    error_object: object,
+    code: str | None,
+    error_type: str | None,
+    message: str,
+    headers: dict[str, str],
+) -> ContentFilterError | ModelHTTPError:
+    """The error for an OpenAI image API error status, whose `body` is or wraps `error_object`.
+
+    A `moderation_blocked` one is a `ContentFilterError` holding `error_object` as JSON.
+    """
+    if code == 'moderation_blocked':
+        return ContentFilterError(
+            'OpenAI image generation was blocked for content moderation', json.dumps(error_object)
+        )
+    return _model_errors.openai_compatible_status_error(
+        model_name,
+        status_code=status_code,
+        body=body,
+        code=code,
+        error_type=error_type,
+        message=message,
+        headers=headers,
+    )
 
 
 def _response_body(response: ImagesResponse) -> str:

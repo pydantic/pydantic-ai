@@ -433,6 +433,44 @@ async def test_http_provider_error_category(case: Case):
     assert exc.__cause__ is not None
 
 
+def _gave_up_on(handler: Handler) -> Handler:
+    """What a retrying transport raises once its `validate_response` rejected the error status `handler` answers."""
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
+
+
+_GAVE_UP_TWINS = [
+    case
+    for case in CASES
+    # Cohere's SDK takes a legacy `httpx` client, whose retrying transport closes the response without reading it.
+    if case.model in (_openai, _google) and ModelHTTPError in case.categories and 'transport-gave-up' not in case.id
+]
+
+
+@pytest.mark.parametrize('case', _GAVE_UP_TWINS, ids=[case.id for case in _GAVE_UP_TWINS])
+async def test_transport_gave_up_status_error_category(case: Case):
+    """A status a retrying transport gave up on raises what the provider SDK raises for the same response.
+
+    That's the same error category, provider error code and type, and `retry_after`.
+    """
+
+    async def error(handler: Handler) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Embedder(case.model(handler)).embed_query('hello')
+        return exc_info.value
+
+    def summary(exc: ModelHTTPError) -> tuple[object, ...]:
+        return (_categories(exc), exc.status_code, exc.provider_error_code, exc.provider_error_type, exc.retry_after)
+
+    sdk_error = await error(case.handler)
+    gave_up_error = await error(_gave_up_on(case.handler))
+    assert summary(gave_up_error) == summary(sdk_error)
+
+
 async def test_cohere_count_tokens_transport_gave_up():
     """`count_tokens` raises a status a retrying transport gave up on as its category, as `embed` does.
 

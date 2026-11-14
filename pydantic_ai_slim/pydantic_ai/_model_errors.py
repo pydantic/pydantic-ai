@@ -130,6 +130,28 @@ def openai_compatible_category(
     return http_status_category(status_code, message) if status_code is not None else None
 
 
+def openai_compatible_status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    code: str | None,
+    error_type: str | None,
+    message: object,
+    headers: Mapping[str, str],
+) -> ModelHTTPError:
+    """The error for an OpenAI-compatible API's error status, in the category its `code`, `type` and message name."""
+    return ModelHTTPError.for_category(
+        openai_compatible_category(status_code, code, error_type, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
+
+
 def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
     """Read an error response body that no SDK read, the way the provider SDKs read one.
 
@@ -311,6 +333,35 @@ def google_status_category(status: str | None, message: object, body: object) ->
             return None
 
 
+def google_status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    status: str | None,
+    message: str | None,
+    body: object,
+    headers: Mapping[str, str] | None,
+    suggested_model_id: str | None = None,
+    in_stream: bool = False,
+) -> ModelHTTPError:
+    """The error for a Google API error response, in the category its `status` and `body`'s details name.
+
+    Its `retry_after` falls back to the body's `google.rpc.RetryInfo`.
+    """
+    error = ModelHTTPError.for_category(
+        google_status_category(status, message, body) or http_status_category(status_code, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        provider_error_code=status,
+        in_stream=in_stream,
+    )
+    error.retry_after = google_retry_after(error)
+    return error
+
+
 _BEDROCK_CONTEXT_WINDOW_MESSAGES = ('input is too long', 'input tokens exceeded', 'prompt is too long')
 """Bedrock reports a context window overflow as a `ValidationException`, identifiable only by its message."""
 
@@ -445,12 +496,16 @@ class HTTPStatusResponse(Protocol):
     def content(self) -> bytes: ...
 
 
-def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
-    """The `ModelHTTPError` for an error status the HTTP transport raised before the provider SDK saw the response.
+def transport_error_body(response: HTTPStatusResponse) -> tuple[object, dict[str, object], str]:
+    """Read the body of an error status the HTTP transport raised before the provider SDK saw the response.
 
     A retrying transport's `validate_response` raises `HTTPStatusError` for a status it retries, and re-raises it
     once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
     in their connection error, though the provider did respond.
+
+    Returns the body, parsed as JSON, or its text when it isn't JSON, or `None` when it's empty or the transport
+    closed the response without reading it; the error object in it, which most APIs wrap as `{"error": {...}}`, or
+    the body itself when it holds no `error`, or `{}` when it isn't an object; and the body's text.
     """
     try:
         content = response.content
@@ -463,10 +518,38 @@ def transport_status_error(model_name: str, response: HTTPStatusResponse) -> Mod
             body = pydantic_core.from_json(content)
         except ValueError:
             body = text
+    error = body.get('error', body) if is_str_dict(body) else None
+    return body, error if is_str_dict(error) else {}, text
+
+
+def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `ModelHTTPError` for an error status the HTTP transport raised, by its status and body text alone.
+
+    See `transport_error_body` for when the transport raises it.
+    """
+    body, _, text = transport_error_body(response)
     return ModelHTTPError.for_category(
         http_status_category(response.status_code, text),
         status_code=response.status_code,
         model_name=model_name,
+        body=body,
+        headers=dict(response.headers),
+    )
+
+
+def google_transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `google_status_error` for an error status the HTTP transport raised, from its body as `google.genai` reads it.
+
+    See `transport_error_body` for when the transport raises it.
+    """
+    body, error, text = transport_error_body(response)
+    status, message = error.get('status'), error.get('message')
+    return google_status_error(
+        model_name,
+        status_code=response.status_code,
+        status=status if isinstance(status, str) else None,
+        # `google.genai` takes the text of a body that isn't JSON as the message.
+        message=message if isinstance(message, str) else text,
         body=body,
         headers=dict(response.headers),
     )

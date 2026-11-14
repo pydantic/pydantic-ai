@@ -138,7 +138,16 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
-        raise _model_errors.transport_status_error(model_name, e.response) from e
+        body, _, text = _model_errors.transport_error_body(e.response)
+        message = body.get('message') if _utils.is_str_dict(body) else None
+        raise _status_error(
+            model_name,
+            status_code=e.response.status_code,
+            body=body,
+            parsed=body,
+            message=message if isinstance(message, str) else text,
+            headers=dict(e.response.headers),
+        ) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -150,22 +159,33 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
         error = pydantic_core.from_json(e.body)
     except ValueError:
         error = None
-    code = error.get('code') if _utils.is_str_dict(error) else None
-    error_type = error.get('type') if _utils.is_str_dict(error) else None
+    return _status_error(
+        model_name,
+        status_code=e.status_code,
+        body=e.body,
+        parsed=error,
+        message=error.get('message') if _utils.is_str_dict(error) else None,
+        headers=dict(e.headers),
+    )
+
+
+def _status_error(
+    model_name: str, *, status_code: int, body: object, parsed: object, message: object, headers: dict[str, str]
+) -> ModelHTTPError:
+    """The error for a Mistral API error status, classified by `parsed`, the error object its `body` holds."""
+    code = parsed.get('code') if _utils.is_str_dict(parsed) else None
+    error_type = parsed.get('type') if _utils.is_str_dict(parsed) else None
     # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
     code = str(code) if isinstance(code, str | int) else None
-    message = error.get('message') if _utils.is_str_dict(error) else None
     category = (
-        ModelContextWindowExceededError
-        if code == '3051'
-        else _model_errors.http_status_category(e.status_code, message)
+        ModelContextWindowExceededError if code == '3051' else _model_errors.http_status_category(status_code, message)
     )
     return ModelHTTPError.for_category(
         category,
-        status_code=e.status_code,
+        status_code=status_code,
         model_name=model_name,
-        body=e.body,
-        headers=dict(e.headers),
+        body=body,
+        headers=headers,
         provider_error_code=code,
         provider_error_type=error_type if isinstance(error_type, str) else None,
     )

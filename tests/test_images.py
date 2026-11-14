@@ -2019,6 +2019,25 @@ async def test_google_image_generation_maps_non_http_api_error():
             id='retry-info-body',
         ),
         pytest.param(
+            429,
+            None,
+            {
+                'code': 429,
+                'message': 'You exceeded your current quota, please check your plan and billing details.',
+                'status': 'RESOURCE_EXHAUSTED',
+                'details': [
+                    {
+                        '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                        'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}],
+                    },
+                    {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'},
+                ],
+            },
+            ModelQuotaExceededError,
+            14.0,
+            id='daily-quota',
+        ),
+        pytest.param(
             503,
             None,
             {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'},
@@ -2069,14 +2088,24 @@ async def test_google_image_generation_maps_non_http_api_error():
         ),
     ],
 )
+@pytest.mark.parametrize('gave_up', [False, True])
 async def test_google_image_generation_status_error(
     status_code: int,
     headers: dict[str, str] | None,
     error: dict[str, object],
-    expected_error: type[ModelRateLimitError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ],
     expected_retry_after: float | None,
+    gave_up: bool,
 ):
     """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
+
+    So does one a retrying transport gave up on, which `google.genai` never sees.
 
     Not a VCR test because an error status is easy to provoke but its wait is not: a `retry-after` header and a
     structured error body both depend on Google's live quota state, and a recording would pin whatever that happened to
@@ -2084,7 +2113,10 @@ async def test_google_image_generation_status_error(
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(status_code, headers=headers, json={'error': error})
+        response = httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+        if gave_up:
+            raise httpx2.HTTPStatusError(f'Error status {status_code}', request=request, response=response)
+        return response
 
     async with _mock_google_provider(handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
@@ -4552,6 +4584,7 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
         ),
     ],
 )
+@pytest.mark.parametrize('gave_up', [False, True], ids=['sdk', 'gave-up'])
 async def test_openai_image_generation_status_error(
     status_code: int,
     headers: dict[str, str] | None,
@@ -4566,8 +4599,11 @@ async def test_openai_image_generation_status_error(
     | None,
     expected_retry_after: float | None,
     edit: bool,
+    gave_up: bool,
 ):
     """An OpenAI error status surfaces as its `ModelHTTPError` category on both endpoints, as it does from embeddings.
+
+    So does one a retrying transport gave up on, which `openai` never sees; its `body` is the whole response body.
 
     Driven through the real `AsyncOpenAI` over a mock transport, so the SDK unwraps the `error` envelope that
     `provider_error_code` and `provider_error_type` come from. `max_retries=0` keeps the SDK from waiting out the
@@ -4576,7 +4612,10 @@ async def test_openai_image_generation_status_error(
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+        response = httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+        if gave_up:
+            raise httpx2.HTTPStatusError(f'Error status {status_code}', request=request, response=response)
+        return response
 
     client = AsyncOpenAI(
         api_key='test',
@@ -4594,11 +4633,11 @@ async def test_openai_image_generation_status_error(
         ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gpt-image-1')
     )
     assert exc_info.value.status_code == status_code
-    assert exc_info.value.body == error
+    assert exc_info.value.body == ({'error': error} if gave_up else error)
     assert exc_info.value.provider_error_code == error['code']
     assert exc_info.value.provider_error_type == error['type']
     assert exc_info.value.retry_after == expected_retry_after
-    assert isinstance(exc_info.value.__cause__, APIStatusError)
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError if gave_up else APIStatusError)
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -4671,7 +4710,8 @@ async def test_openai_image_generation_transport_error(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_moderation_blocked():
+@pytest.mark.parametrize('gave_up', [False, True], ids=['sdk', 'gave-up'])
+async def test_openai_image_generation_moderation_blocked(gave_up: bool):
     """A `moderation_blocked` 400 keeps its structured body and is never auto-retried.
 
     OpenAI returns HTTP 400 with an `error` object whose `code` is `moderation_blocked`, carrying a
@@ -4687,12 +4727,15 @@ async def test_openai_image_generation_moderation_blocked():
     what pins the unwrapped shape. Not a VCR test because provoking a real block means committing a
     policy-violating prompt to the repository, which the recorded request body would carry verbatim. The
     response is fixed from OpenAI's documented error format instead.
+
+    A retrying transport that gave up on the 400 raises it before `openai` sees it; the error object is unwrapped from
+    its body the same way.
     """
     requests: list[httpx2.Request] = []
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx2.Response(
+        response = httpx2.Response(
             400,
             json={
                 'error': {
@@ -4702,7 +4745,11 @@ async def test_openai_image_generation_moderation_blocked():
                     'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
                 }
             },
+            request=request,
         )
+        if gave_up:
+            raise httpx2.HTTPStatusError('Error status 400', request=request, response=response)
+        return response
 
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
