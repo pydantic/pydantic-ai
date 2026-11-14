@@ -1,25 +1,42 @@
-"""Spend tracking and budget enforcement for Pydantic AI agents."""
+"""Deprecated import location for `pydantic_ai_harness.spend_limits`.
+
+Renamed to the snake_case of its capability, `SpendLimits`. Importing from here still works but emits a
+`HarnessDeprecationWarning`. Import from `pydantic_ai_harness.spend_limits` instead.
+"""
 
 import warnings
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.spend import _exceptions
-from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, Window
-from pydantic_ai_harness.spend._capability import PriceFunc, SpendCallback, SpendLimits
-from pydantic_ai_harness.spend._events import SPEND_LIMITS_EVENTS, SpendBudgetStatus, SpendRecordedEvent
-from pydantic_ai_harness.spend._exceptions import (
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_module_renamed
+from pydantic_ai_harness.spend_limits import (
+    SPEND_LIMITS_EVENTS,
+    BatchSpendStore,
+    Budget,
+    BudgetSpec,
+    BudgetStatus,
+    InMemorySpendStore,
+    PostgresSpendStore,
+    PriceFunc,
+    RedisClient,
+    RedisSpendStore,
+    SpendBudgetStatus,
+    SpendCallback,
+    SpendEntry,
     SpendLimitExceeded,
+    SpendLimits,
+    SpendRecordedEvent,
+    SpendSnapshot,
+    SpendStore,
+    Spent,
     UnpricedModelError,
     UnpricedModelWarning,
+    Window,
 )
-from pydantic_ai_harness.spend._postgres import PostgresSpendStore
-from pydantic_ai_harness.spend._redis import RedisClient, RedisSpendStore
-from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent
-from pydantic_ai_harness.spend._store import BatchSpendStore, InMemorySpendStore, SpendEntry, SpendStore
 
 if TYPE_CHECKING:
-    from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
+    from pydantic_ai_harness.spend_limits._exceptions import SpendCompositionWarning
+
+warn_module_renamed('spend', 'spend_limits')
 
 __all__ = [
     'BatchSpendStore',
@@ -50,6 +67,8 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     if name == 'SpendCompositionWarning':
+        from pydantic_ai_harness.spend_limits import _exceptions
+
         warnings.warn(
             '`pydantic_ai_harness.spend.SpendCompositionWarning` is deprecated and no longer emitted: '
             '`SpendLimits` now counts every billed response whatever order capabilities are listed in. '
