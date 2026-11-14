@@ -419,8 +419,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_chat_function_tools_require_reasoning_off: bool
     """Whether the Chat Completions API rejects function tools while reasoning is on. Default: `False`.
 
-    When enabled, `OpenAIChatModel` raises a `UserError` for a request that combines function tools with
-    reasoning, before anything is sent: the API rejects the combination with a 400 pointing at `/v1/responses`
+    When enabled, `OpenAIChatModel` raises a `UserError` for a request that sends tools, output tools included,
+    with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at `/v1/responses`
     or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
     gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol). `openai_model_profile` leaves it off,
     because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.

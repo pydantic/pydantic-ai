@@ -131,7 +131,12 @@ from ._citations import map_chat_content
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
-from ._reasoning import drop_sampling_params_for_reasoning, reasoning_active, resolve_openai_thinking_effort
+from ._reasoning import (
+    drop_sampling_params_for_reasoning,
+    reasoning_active,
+    resolve_openai_thinking_effort,
+    supports_reasoning_effort_none,
+)
 from ._response_fields import map_usage
 from ._settings import (
     OpenAIChatModelSettings,
@@ -524,6 +529,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
+
+        # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
+        # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
+        # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too.
+        if (
+            tools
+            and profile.get('openai_chat_function_tools_require_reasoning_off', False)
+            and reasoning_active(profile, model_settings, model_request_parameters)
+        ):
+            remedy = ', or disable reasoning with `thinking=False`' if supports_reasoning_effort_none(profile) else ''
+            raise UserError(
+                f'OpenAI rejects function tools while reasoning is enabled on {self.model_name} over Chat '
+                f'Completions. Use `OpenAIResponsesModel`{remedy} instead.'
+            )
 
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
         self._finalize_cache_breakpoints(tools, openai_messages)
