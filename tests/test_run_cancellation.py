@@ -24,7 +24,7 @@ import gc
 import pickle
 import threading
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Any, Literal
@@ -421,14 +421,30 @@ async def test_run_sync_token_cancel_from_another_thread():
         raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
-    run_thread = asyncio.create_task(
-        asyncio.to_thread(Agent(FunctionModel(model_function)).run_sync, 'hello', cancellation_token=token)
-    )
+    closed_loops: list[bool] = []
+
+    def run_sync_then_close_loop() -> None:
+        try:
+            Agent(FunctionModel(model_function)).run_sync('hello', cancellation_token=token)
+        finally:
+            # `run_sync` sets a new event loop on this worker thread and nothing else closes it, so the loop
+            # would be finalized, still open, during a later collection: `BaseEventLoop.__del__` then closes a
+            # self-pipe that is already gone and raises `ValueError: Invalid file descriptor: -1` in whichever
+            # test happens to be running. Closing it here keeps the failure off an unrelated test's teardown.
+            with suppress(RuntimeError):
+                loop = asyncio.get_event_loop()
+                loop.close()
+                closed_loops.append(loop.is_closed())
+
+    run_thread = asyncio.create_task(asyncio.to_thread(run_sync_then_close_loop))
     await asyncio.to_thread(started.wait)
     token.cancel()
 
     with pytest.raises(RunCancelled):
         await run_thread
+
+    # Regression guard for the loop the run left behind: it must be closed, not left for the GC.
+    assert closed_loops == [True]
 
 
 def test_run_cancelled_result_surface():
