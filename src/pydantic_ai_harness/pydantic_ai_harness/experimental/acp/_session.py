@@ -40,7 +40,7 @@ SessionUpdate: TypeAlias = (
 
 
 @dataclass(frozen=True, kw_only=True)
-class AcpSession:
+class ACPSession:
     """The setup an ACP client provides when it starts a session.
 
     Passed to the adapter's `session_config` factory so an embedder can derive per-session run
@@ -62,7 +62,7 @@ class AcpSession:
 
 
 @dataclass(frozen=True, kw_only=True)
-class AcpSessionConfig(Generic[AgentDepsT]):
+class ACPSessionConfig(Generic[AgentDepsT]):
     """Per-session run configuration returned by a `session_config` factory.
 
     `deps`, `capabilities`, `toolsets`, and `workspace` are applied to every agent run in that session,
@@ -71,7 +71,7 @@ class AcpSessionConfig(Generic[AgentDepsT]):
     `deps=None` for an agent with no dependencies.
 
     Configure session behavior through `capabilities`; reserve `toolsets` for bare toolsets such
-    as MCP servers or directly constructed `AcpFileSystemToolset` instances. A capability contributes its tools
+    as MCP servers or directly constructed `ACPFileSystemToolset` instances. A capability contributes its tools
     along with its hooks, instructions, and event ownership, whereas reaching past it for its
     toolset alone drops the rest -- and a
     [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] its tools emit then has no owning
@@ -91,16 +91,16 @@ class AcpSessionConfig(Generic[AgentDepsT]):
 class SessionConfigFunc(Protocol[AgentDepsT]):
     """Factory mapping an ACP session's setup to its run configuration; may be sync or async.
 
-    Any callable taking the client's `AcpSession` and returning an `AcpSessionConfig` (or an
+    Any callable taking the client's `ACPSession` and returning an `ACPSessionConfig` (or an
     awaitable of one) satisfies it.
     """
 
-    # `session` is positional-only (`/`) so any callable taking one `AcpSession` satisfies the
+    # `session` is positional-only (`/`) so any callable taking one `ACPSession` satisfies the
     # protocol regardless of how it names the parameter -- matching a plain `Callable` alias.
     def __call__(
-        self, session: AcpSession, /
+        self, session: ACPSession, /
     ) -> (
-        AcpSessionConfig[AgentDepsT] | Awaitable[AcpSessionConfig[AgentDepsT]]
+        ACPSessionConfig[AgentDepsT] | Awaitable[ACPSessionConfig[AgentDepsT]]
     ): ...  # pragma: no cover - structural protocol; the body never runs
 
 
@@ -109,7 +109,7 @@ class SessionState(Generic[AgentDepsT]):
     """All per-session adapter state; `new_session`/`load_session` create one, `close_session` removes it."""
 
     session_id: str
-    config: AcpSessionConfig[AgentDepsT]
+    config: ACPSessionConfig[AgentDepsT]
     cwd: str
     history: list[ModelMessage] = field(default_factory=list[ModelMessage])
     transcript: list[SessionUpdate] = field(default_factory=list[SessionUpdate])

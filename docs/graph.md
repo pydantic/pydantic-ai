@@ -208,6 +208,43 @@ stateDiagram-v2
   Increment --> DivisibleBy5
 ```
 
+### Nodes in separate modules
+
+A node's `run` return annotation names its successor classes, so nodes that route to each other
+import each other. To split them across modules, use postponed annotations and import the
+successor's module rather than its class:
+
+```py {title="nodes/first.py" test="skip" lint="skip"}
+from __future__ import annotations
+
+from pydantic_graph import BaseNode, GraphRunContext
+
+from . import second
+
+
+class First(BaseNode[None, None, int]):
+    async def run(self, ctx: GraphRunContext[None, None]) -> second.Second:
+        return second.Second()
+```
+
+```py {title="nodes/second.py" test="skip" lint="skip"}
+from __future__ import annotations
+
+from pydantic_graph import BaseNode, End, GraphRunContext
+
+from . import first
+
+
+class Second(BaseNode[None, None, int]):
+    async def run(self, ctx: GraphRunContext[None, None]) -> first.First | End[int]:
+        return End(42)
+```
+
+Neither module reads the other's class while it is being imported: the annotations are resolved when
+you register the classes with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node], and the
+`run` bodies execute later still. Importing the classes directly (`from .second import Second`)
+fails with a circular `ImportError`.
+
 ## Stateful Graphs
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
@@ -325,7 +362,7 @@ async def main():
 11. If the balance is insufficient, go to `InsertCoin` to prompt the user to insert more coins.
 12. If the product is invalid, go to `SelectProduct` to prompt the user to select a product again.
 13. Build the graph with [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder], declaring the `MachineState` type. Each `BaseNode` subclass is registered with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node]; outgoing edges are inferred from the `run` return types. The `start` step constructs the first node.
-14. The return type of the node's [`run`][pydantic_graph.basenode.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
+14. The return type of the node's [`run`][pydantic_graph.basenode.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams).
 15. The return type of `CoinsInserted`'s [`run`][pydantic_graph.basenode.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
 16. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.basenode.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
 17. Initialize the state. This will be passed to the graph run and mutated as the graph runs.

@@ -666,7 +666,7 @@ snapshot and logs the error.
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
 | `InMemoryStepStore` | _(not applicable)_                     | bytes stay in the in-memory snapshot  |
-| `FileStepStore`     | `DiskMediaStore(<root>/media/)`        | `<root>/media/<sha256>.bin`           |
+| `FileStepStore`     | `FileMediaStore(<root>/media/)`        | `<root>/media/<sha256>.bin`           |
 | `SqliteStepStore`   | `SqliteMediaStore(database=<same db>)` | sibling `media` table in the same DB  |
 | `MongoStepStore`    | `MongoMediaStore(client=<same client>)` | sibling `media` + `media_chunks` collections |
 | `PostgresStepStore` | `PostgresMediaStore(<same pool>)`      | `{table}_media` table on the same pool |
@@ -702,7 +702,7 @@ through any `MediaStore` resolves the same way -- dedup is automatic and
 moving the underlying storage is a one-line swap. The shipped
 implementations are:
 
-- `DiskMediaStore(directory)` -- one file per blob at
+- `FileMediaStore(directory)` -- one file per blob at
   `<directory>/<sha256>.bin`.
 - `SqliteMediaStore(database=...)` or `SqliteMediaStore(connection=...)` --
   one row per blob (`INSERT OR IGNORE` for content-addressed dedup).
@@ -779,13 +779,13 @@ All fields have defaults; pass what you have.
 **Persistence by store.** `get_metadata(uri)` returns the stored
 `metadata` mapping and raises `FileNotFoundError` for a blob that was
 never stored. A repeated `put` keeps the first metadata on the SQLite,
-MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with
+MongoDB, and PostgreSQL stores. On `FileMediaStore` a later `put` with
 metadata replaces it; on `S3MediaStore` every `put` replaces it, and one
 without metadata clears it. On Disk and S3 this holds for puts that
 resolve to the same key, which a custom `key_strategy` may not.
 `get_metadata` does not return `media_type`: S3 sends it as
 `Content-Type`, the database stores keep it in a column, and
-`DiskMediaStore` does not persist it.
+`FileMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type`
   to a dedicated column
@@ -793,7 +793,7 @@ resolve to the same key, which a custom `key_strategy` may not.
   `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*`
   values back from the HEAD response. Keys must match `[A-Za-z0-9-]+` and
   come back lowercased
-- `DiskMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`)
+- `FileMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`)
   alongside each blob, atomically through a uniquely named temporary file
 - `MongoMediaStore` writes `metadata` as a JSON string and `media_type`
   as a dedicated field on the blob's manifest document (the `media`
@@ -805,21 +805,21 @@ resolve to the same key, which a custom `key_strategy` may not.
 
 ### `key_strategy` -- controlling the backend storage path
 
-Default is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept
+Default is `<sha256>.bin`. `FileMediaStore` and `S3MediaStore` accept
 overrides to fit existing layouts; `SqliteMediaStore`, `MongoMediaStore`, and
 `PostgresMediaStore` do not (the digest is their primary key, so a user-chosen key would either
 break dedup or be a no-op -- use `table=` / `collection=` to move the rows
 or documents):
 
 ```python
-from pydantic_ai_harness.media import DiskMediaStore, MediaContext
+from pydantic_ai_harness.media import FileMediaStore, MediaContext
 
 def by_media_type(uri: str, ctx: MediaContext) -> str:
     digest = uri.removeprefix('media+sha256://')
     ext = {'image/png': '.png', 'image/jpeg': '.jpg'}.get(ctx.media_type or '', '.bin')
     return f'images/{digest}{ext}'
 
-store = DiskMediaStore('runs', key_strategy=by_media_type)
+store = FileMediaStore('runs', key_strategy=by_media_type)
 ```
 
 **Caveat**: if your strategy depends on `context.media_type` (e.g. to
@@ -828,7 +828,7 @@ unless the same context is supplied at read time. For pure
 path-organisation strategies (no context dependency) the constraint
 doesn't apply.
 
-`DiskMediaStore` rejects strategies that produce absolute paths or paths
+`FileMediaStore` rejects strategies that produce absolute paths or paths
 containing `..` segments, to prevent escaping the store directory.
 
 Separately, all five stores accept a `public_url=` resolver, useful
