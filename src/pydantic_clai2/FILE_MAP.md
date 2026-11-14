@@ -182,7 +182,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `prompt_background()`, `roles()` |
 | `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |

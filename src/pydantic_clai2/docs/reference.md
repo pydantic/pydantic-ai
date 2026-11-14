@@ -1189,8 +1189,9 @@ is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold. This keeps your prompts apart from
-answers. Steering messages, commands entered during a turn, and prompts restored by
-`/resume` look the same.
+answers. Steering messages, commands entered during a turn, prompts restored by
+`/resume`, and answers you type to a question look the same. Under a bundled
+palette they also sit on a grey background; see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders and no prompt marker, so they cannot drift out of alignment.
@@ -1739,6 +1740,11 @@ searching, Esc first leaves the search). Narrow terminals show the list alone.
 status, and diff highlighting. Starting and exiting with this choice leaves your
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
+
+Under a bundled palette, your prompts sit on a grey background: the palette's
+background moved a little towards its text colour, lighter on a dark palette and
+darker on a light one. The `default` theme does not know your terminal's
+background, so prompts keep the bold text alone.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds

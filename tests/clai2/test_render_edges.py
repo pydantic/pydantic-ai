@@ -214,6 +214,35 @@ async def test_echo_prompt_stands_apart_from_answers() -> None:
     assert marker.color.triplet.hex == theme.LITHIUM.lower()
     assert first.bold and first.color is None
     assert second.bold
+    assert marker.bgcolor is None and first.bgcolor is None, 'the default theme has no tint'
+
+
+@pytest.mark.parametrize(
+    ('name', 'tint'),
+    [
+        pytest.param('tokyo_night', '#2e303f', id='dark-palette-lightens'),
+        pytest.param('github_light', '#f6f6f7', id='light-palette-darkens'),
+    ],
+)
+async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, tint: str) -> None:
+    """The prompt's background moves from the palette's towards its text; answers keep none."""
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
+    with theme.use(lambda: name):
+        renderer = StreamRenderer(console, stop_loading=lambda: None)
+        await renderer.echo_prompt('first\nsecond')
+        await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('answer')))
+        await renderer.finish()
+    echoed = Text.from_ansi(output.getvalue())
+    assert echoed.plain.startswith('> first\nsecond\n\nanswer')
+    marker, first, second, answer = (
+        echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 8, echoed.plain.index('answer'))
+    )
+    for style in (marker, first, second):
+        assert style.bgcolor is not None and style.bgcolor.triplet is not None
+        assert style.bgcolor.triplet.hex == tint.lower()
+    assert first.bold and second.bold
+    assert answer.bgcolor is None
 
 
 @pytest.mark.parametrize('surface_output', [False, True])

@@ -515,6 +515,11 @@ and status. Its diffs use green additions and red deletions. Starting and exitin
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
+Under a bundled palette, your prompts show in bold on a grey background: the
+palette's background moved a little towards its text colour, so lighter on a dark
+palette and darker on a light one. The `default` theme does not know your
+terminal's background, so prompts keep the bold text alone.
+
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds
 no new palettes. `/theme NAME` and `/set display.theme NAME` apply the same
