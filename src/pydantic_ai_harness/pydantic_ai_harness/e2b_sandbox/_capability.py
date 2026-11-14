@@ -69,6 +69,10 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     The agent's commands can read them, and a new sandbox keeps them for every process it runs.
     """
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
@@ -90,6 +94,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> E2BSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -106,6 +111,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=sandbox_timeout,
             working_dir=working_dir,
             env=env,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
@@ -116,6 +122,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -136,4 +143,5 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )

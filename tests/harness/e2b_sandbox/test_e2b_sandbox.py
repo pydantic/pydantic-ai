@@ -6,7 +6,7 @@ import asyncio
 import gc
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -125,19 +125,11 @@ async def test_a_capability_can_use_each_users_client_from_deps(fake_e2b: FakeE2
     assert fake_e2b.clients == ['a', 'b']
 
 
-def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
-    """An `e2b.E2B` annotation must not erase the whole schema entry."""
+def test_agent_spec_schema_publishes_every_field_but_the_client() -> None:
+    """`from_spec` lists its fields by hand, so a new field must be added there too."""
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
-    assert sorted(definitions['spec_params_E2BSandbox']['properties']) == [
-        'allow_internet_access',
-        'defer_loading',
-        'description',
-        'env',
-        'id',
-        'sandbox_timeout',
-        'template',
-        'working_dir',
-    ]
+    published = set(definitions['spec_params_E2BSandbox']['properties'])
+    assert published == {field.name for field in fields(E2BSandbox)} - {'client'}
 
 
 def test_from_spec_forwards_the_spec_fields() -> None:
@@ -149,6 +141,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'sandbox_timeout': 120,
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
+        'desktop': (1280, 800),
     }
     assert E2BSandbox[None].from_spec(**spec_fields) == E2BSandbox[None](**spec_fields)
 

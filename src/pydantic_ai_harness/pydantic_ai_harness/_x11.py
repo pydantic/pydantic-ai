@@ -246,6 +246,36 @@ def _move(x: int | None, y: int | None) -> list[str]:
 _ENV = {'DISPLAY': DISPLAY}
 
 
+_X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
+
+
+def start_x_server(log: str, *, first: str = '') -> str:
+    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
+
+    It fails once the X server exits, or after 10 seconds, printing the end of `log`. `first` runs just before a new X
+    server starts, such as to record that this script started it.
+
+    It takes `START_LOCK`, so a second start waits and finds the first one's X server. The lock is held until the
+    script exits, so the rest of the script runs under it too; anything started in the background must close it with
+    `9>&-`.
+    """
+    return (
+        f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+        # A stale lock, such as one left by `docker stop`, stops Xvfb starting once its PID belongs to another process.
+        # A running X server's lock stays, whichever server it is, such as `Xvnc`.
+        f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+        f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
+        # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
+        # running: the pointer goes back to the middle and held buttons are let go.
+        # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
+        # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
+        f'{first}setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
+        + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
+        + 'fi; '
+    )
+
+
 def x11_display(
     backend: SupportsCommands,
     size: tuple[int, int],
