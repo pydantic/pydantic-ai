@@ -87,4 +87,7 @@ def get_callable_name(callable_: Any) -> str:
     Returns:
         The callable's __name__ attribute if available, otherwise its string representation.
     """
-    return getattr(callable_, '__name__', str(callable_))
+    try:
+        return callable_.__name__
+    except AttributeError:
+        return str(callable_)
