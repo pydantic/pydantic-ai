@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import os
 import time
@@ -1459,3 +1460,13 @@ class TestAgentIntegration:
         assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
         assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
         assert returns[1].content == 'Order A1: refunded'
+
+
+async def test_dense_tool_output_obeys_token_budget():
+    """over_tokens=True measures with the shared estimator: dense output hits a band a character count would miss."""
+    payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
+    cap: ToolOutputLimits[object] = ToolOutputLimits(
+        bands=[Band(over=200, action=Truncate(max_chars=50))], over_tokens=True
+    )
+    out = await _run(cap, payload)
+    assert isinstance(out, str) and len(out) == 50 and out == payload[:20] + payload[-30:]

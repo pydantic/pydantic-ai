@@ -169,7 +169,7 @@ def tool_rounds(rounds: int, return_chars: int) -> list[ModelMessage]:
 @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
 async def test_compact_shrinks_a_history_just_over_the_protected_tail(strategy: str) -> None:
     """186 messages a little over 50,000 tokens once became 187 with nothing saved; now half is compacted."""
-    before = tool_rounds(92, 2160)
+    before = tool_rounds(92, 4320)
     assert len(before) == 186 and sum(estimate_message_tokens(before)) == 50_107
     transcript = Transcript(messages=before, model=TestModel(custom_output_text='the gist'))
     notice = await make_plugin(transcript, strategy=strategy).commands.execute_async('/compact')

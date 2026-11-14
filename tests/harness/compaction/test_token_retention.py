@@ -58,9 +58,9 @@ def assert_original_suffix(result: list[ModelMessage], suffix: list[ModelMessage
 class TestCompactionTokenRetention:
     async def test_automatic_agent_compaction_preserves_floor(self, strategy_type: StrategyType) -> None:
         history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('o' * (139_000 * 4))]),
-            response('x' * (48_000 * 4)),
-            ModelRequest(parts=[UserPromptPart('y' * (3_000 * 4))]),
+            ModelRequest(parts=[UserPromptPart('o' * (278_000 * 4))]),
+            response('x' * (96_000 * 4)),
+            ModelRequest(parts=[UserPromptPart('y' * (6_000 * 4))]),
         ]
         assert estimate_token_count(history) == 190_000
         assert estimate_token_count(history[1:]) == 51_000
