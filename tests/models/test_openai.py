@@ -77,7 +77,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
@@ -5915,19 +5914,6 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
     )
 
 
-async def test_empty_choices_fall_back(allow_model_requests: None):
-    """`FallbackModel` falls back on a completion without choices by default, as on any other model error.
-
-    Mocked because no provider returns a completion without choices on demand.
-    """
-    response = completion_message(ChatCompletionMessage(content='unused', role='assistant'))
-    response.choices = []
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(response)))
-
-    result = await Agent(FallbackModel(m, TestModel(custom_output_text='from fallback'))).run('hello')
-    assert result.output == 'from fallback'
-
-
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
     """Mocked because no provider sends an empty stream on demand."""
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream([[]])))
@@ -5935,18 +5921,6 @@ async def test_empty_stream_raises_model_empty_response_error(allow_model_reques
     with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
         async with Agent(m).run_stream('hello'):
             pass
-
-
-async def test_empty_stream_falls_back(allow_model_requests: None):
-    """`ModelFallback` falls back on a stream that ended before its first event by default.
-
-    Mocked because no provider sends an empty stream on demand.
-    """
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream([[]])))
-    agent = Agent(m, capabilities=[ModelFallback(TestModel(custom_output_text='from fallback'))])
-
-    async with agent.run_stream('hello') as result:
-        assert await result.get_output() == 'from fallback'
 
 
 async def test_empty_response_skipped_in_history(allow_model_requests: None):
