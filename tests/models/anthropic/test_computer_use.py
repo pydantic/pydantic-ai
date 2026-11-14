@@ -71,7 +71,14 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
+    # Another thread touching `random` during a draw trips Hypothesis's check, as `tests/test_history_properties.py`
+    # explains, and `filterwarnings = error` makes it a flaky error. No strategy here uses `random`.
+    pytest.mark.filterwarnings(
+        'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+    ),
+]
 
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 
