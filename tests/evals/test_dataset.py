@@ -7,6 +7,7 @@ import math
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
@@ -35,10 +36,13 @@ with try_import() as imports_successful:
         EvaluatorFailure,
         EvaluatorOutput,
         EvaluatorSpec,
+        HasMatchingSpan,
         LLMJudge,
+        MaxDuration,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.generation import generate_dataset
+    from pydantic_evals.otel.span_tree import SpanQuery
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
 
     BareNoneDatasetCase = tuple[
@@ -2820,76 +2824,39 @@ async def test_task_timeout_recorded_on_spans(capfire: CaptureLogfire):
     )
 
 
-def test_to_file_roundtrip_max_duration_timedelta(tmp_path: Path):
-    """A timedelta MaxDuration check must still be evaluated from the ISO-8601 string to_file writes."""
-    from datetime import timedelta
-
-    from pydantic_evals.evaluators import MaxDuration
-
-    dataset_file = tmp_path / 'dataset.yaml'
-    dataset = Dataset[str, str, None](
-        name='max_duration_iso',
-        cases=[Case(name='case', inputs='in', expected_output='out')],
-        evaluators=[MaxDuration(seconds=timedelta(seconds=5))],
-    )
-    dataset.to_file(dataset_file)
-    assert 'PT5S' in dataset_file.read_text()
-
-    loaded = Dataset[str, str, None].from_file(dataset_file)
-    report = loaded.evaluate_sync(lambda inputs: 'out')
-    case = report.cases[0]
-    assert case.evaluator_failures == []
-    assert list(case.assertions) == ['MaxDuration']
-    assert all(a.value for a in case.assertions.values())
-
-
-def test_to_file_roundtrip_max_duration_float_seconds(tmp_path: Path):
-    """Float-seconds MaxDuration checks must keep working through a YAML round-trip."""
-    from pydantic_evals.evaluators import MaxDuration
-
-    dataset_file = tmp_path / 'dataset.yaml'
-    dataset = Dataset[str, str, None](
-        name='max_duration_float',
-        cases=[Case(name='case', inputs='in', expected_output='out')],
-        evaluators=[MaxDuration(seconds=60.0)],
-    )
-    dataset.to_file(dataset_file)
-    assert '60.0' in dataset_file.read_text()
-
-    loaded = Dataset[str, str, None].from_file(dataset_file)
-    report = loaded.evaluate_sync(lambda inputs: 'out')
-    case = report.cases[0]
-    assert case.evaluator_failures == []
-    assert list(case.assertions) == ['MaxDuration']
-    assert all(a.value for a in case.assertions.values())
-
-
 @needs_logfire
-def test_to_file_roundtrip_has_matching_span_durations(capfire: CaptureLogfire, tmp_path: Path):
-    """HasMatchingSpan duration bounds must be evaluated from the ISO-8601 strings to_file writes."""
-    from pydantic_evals.evaluators import HasMatchingSpan
-    from pydantic_evals.otel.span_tree import SpanQuery
-
-    dataset_file = tmp_path / 'dataset.yaml'
+@pytest.mark.parametrize('fmt', ['yaml', 'json'])
+def test_to_file_roundtrip_duration_evaluators(capfire: CaptureLogfire, tmp_path: Path, fmt: Literal['yaml', 'json']):
+    """Duration bounds still evaluate after `to_file` writes `timedelta` values as ISO-8601 strings."""
+    dataset_file = tmp_path / f'dataset.{fmt}'
     dataset = Dataset[str, str, None](
-        name='has_matching_span_durations',
-        cases=[Case(name='case', inputs='in', expected_output='out')],
+        name='durations',
+        cases=[Case(name='case', inputs='in', evaluators=(MaxDuration(seconds=timedelta(seconds=5)),))],
         evaluators=[
-            HasMatchingSpan(query=SpanQuery(name_equals='work span', min_duration='PT0S')),
-            HasMatchingSpan(query=SpanQuery(name_equals='work span', max_duration='PT1H')),
+            MaxDuration(seconds=60.0),
+            HasMatchingSpan(
+                query=SpanQuery(name_equals='work span', min_duration=timedelta(0), max_duration=timedelta(hours=1)),
+                evaluation_name='bounded',
+            ),
+            HasMatchingSpan(
+                query=SpanQuery(
+                    name_equals='outer span',
+                    some_child_has=SpanQuery(name_equals='work span', max_duration=timedelta(0)),
+                ),
+                evaluation_name='nested_too_slow',
+            ),
         ],
     )
     dataset.to_file(dataset_file)
-    assert 'PT1H' in dataset_file.read_text()
-
-    loaded = Dataset[str, str, None].from_file(dataset_file)
+    serialized = dataset_file.read_text()
+    assert all(value in serialized for value in ('PT5S', 'PT0S', 'PT1H', '60.0'))
 
     def run_task(inputs: str) -> str:
-        with logfire.span('work span'):
+        with logfire.span('outer span'), logfire.span('work span'):
             return 'out'
 
-    report = loaded.evaluate_sync(run_task)
-    case = report.cases[0]
+    case = Dataset[str, str, None].from_file(dataset_file).evaluate_sync(run_task, progress=False).cases[0]
     assert case.evaluator_failures == []
-    assert len(case.assertions) == 2
-    assert all(a.value for a in case.assertions.values())
+    assert {name: result.value for name, result in case.assertions.items()} == snapshot(
+        {'MaxDuration': True, 'MaxDuration_2': True, 'bounded': True, 'nested_too_slow': False}
+    )
