@@ -71,6 +71,13 @@ from .workspace_fakes import (
     WorkspaceCapability,
 )
 
+pytestmark = [
+    pytest.mark.skipif(
+        os.name != 'posix',
+        reason='POSIX-only shell commands, symlinks, FIFOs, process groups, and newline directory names',
+    ),
+]
+
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
 async def test_facade_rejects_invalid_timeout_before_backend(timeout: Any) -> None:
