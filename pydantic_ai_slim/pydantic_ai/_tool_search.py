@@ -22,7 +22,7 @@ provider boundaries.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
 
@@ -466,11 +466,12 @@ def _synthesize_local_response(
     buffer: list[ModelResponsePart] = []
     split_emitted = False  # Tracks whether we've emitted a response from this msg already.
     changed = False
-    unanswered_call_ids: deque[str] = deque()
+    # Insertion-ordered for the FIFO fallback, with constant-time lookup and removal for long histories.
+    unanswered_call_ids: OrderedDict[str, None] = OrderedDict()
     for part in msg.parts:
         if isinstance(part, NativeToolSearchCallPart) and (keeps_native is None or not keeps_native(msg, part)):
             buffer.append(synthesize_local_from_native_call(part))
-            unanswered_call_ids.append(part.tool_call_id)
+            unanswered_call_ids[part.tool_call_id] = None
             translated_call_ids.add(part.tool_call_id)
             changed = True
         elif isinstance(part, NativeToolSearchReturnPart) and (keeps_native is None or not keeps_native(msg, part)):
@@ -499,17 +500,22 @@ def _synthesize_local_response(
 
 
 def _synthesize_paired_local_return(
-    part: NativeToolSearchReturnPart, unanswered_call_ids: deque[str], translated_call_ids: set[str], pair_returns: bool
+    part: NativeToolSearchReturnPart,
+    unanswered_call_ids: OrderedDict[str, None],
+    translated_call_ids: set[str],
+    pair_returns: bool,
 ) -> ToolSearchReturnPart:
     """Translate `part`, onto the call it answers with `pair_returns`, as `synthesize_local_tool_search_messages` says.
 
     `unanswered_call_ids` holds the translated calls of `part`'s response that no return has answered
     yet, oldest first, and loses the one `part` answers.
     """
+    if not pair_returns:
+        return synthesize_local_from_native_return(part)
     if part.tool_call_id in unanswered_call_ids:
-        unanswered_call_ids.remove(part.tool_call_id)
-    elif pair_returns and part.tool_call_id not in translated_call_ids and unanswered_call_ids:
-        part = replace(part, tool_call_id=unanswered_call_ids.popleft())
+        del unanswered_call_ids[part.tool_call_id]
+    elif part.tool_call_id not in translated_call_ids and unanswered_call_ids:
+        part = replace(part, tool_call_id=unanswered_call_ids.popitem(last=False)[0])
     return synthesize_local_from_native_return(part)
 
 
