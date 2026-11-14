@@ -1507,6 +1507,11 @@ def moonshotai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def nvidia_api_key() -> str:
+    return os.getenv('NVIDIA_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
