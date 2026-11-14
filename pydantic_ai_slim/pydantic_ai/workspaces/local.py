@@ -518,7 +518,9 @@ class _HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return denial
 
 
-class LocalWorkspaceBackend(_HostWorkspaceBackend):
+class LocalWorkspaceBackend(
+    _HostWorkspaceBackend, WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath
+):
     """Run commands as subprocesses on this machine and use its filesystem (POSIX only).
 
     This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
