@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, TypeAlias, cast
@@ -33,7 +32,7 @@ class SystemPromptRunner(Generic[AgentDepsT, PromptT]):
     _is_async: bool = field(init=False)
 
     def __post_init__(self):
-        self._takes_ctx = len(inspect.signature(self.function).parameters) > 0
+        self._takes_ctx = _utils.takes_positional_args(self.function, 1)
         self._is_async = _utils.is_async_callable(self.function)
 
     async def run(self, run_context: RunContext[AgentDepsT]) -> PromptT | None:

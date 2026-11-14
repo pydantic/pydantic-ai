@@ -15822,3 +15822,35 @@ def test_tool_sync_function_returning_coroutine():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('tool result value')
+
+
+def test_system_prompt_keyword_only_params():
+    agent = Agent(TestModel(custom_output_text='hi'), deps_type=str)
+
+    @agent.system_prompt
+    def prompt_no_ctx(*, lang: str = 'en') -> str:
+        return f'Reply in {lang}.'
+
+    @agent.system_prompt
+    def prompt_with_ctx(ctx: RunContext[str], *, prefix: str = 'Deps') -> str:
+        return f'{prefix}: {ctx.deps}'
+
+    result = agent.run_sync('hello', deps='world')
+    assert result.output == 'hi'
+    system_parts = [p.content for p in result.all_messages()[0].parts if isinstance(p, SystemPromptPart)]
+    assert system_parts == ['Reply in en.', 'Deps: world']
+
+
+def test_output_validator_keyword_only_params():
+    agent = Agent(TestModel(custom_output_text='hi'), deps_type=str)
+
+    @agent.output_validator
+    def validate_no_ctx(output: str, *, suffix: str = '!') -> str:
+        return f'{output}{suffix}'
+
+    @agent.output_validator
+    def validate_with_ctx(ctx: RunContext[str], output: str, *, sep: str = ':') -> str:
+        return f'{ctx.deps}{sep}{output}'
+
+    result = agent.run_sync('hello', deps='ok')
+    assert result.output == 'ok:hi!'

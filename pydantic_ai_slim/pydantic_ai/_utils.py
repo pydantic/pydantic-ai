@@ -1014,6 +1014,17 @@ def is_async_callable(obj: Any) -> Any:
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
+def takes_positional_args(func: Callable[..., Any], min_positional: int) -> bool:
+    """Return whether `func` can accept at least `min_positional` positional arguments."""
+    params = inspect.signature(func).parameters.values()
+    if any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params):
+        return True
+    positional_count = sum(
+        1 for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    )
+    return positional_count >= min_positional
+
+
 async def await_maybe(value: T | Awaitable[T]) -> T:
     """Await `value` if it is awaitable, otherwise return it unchanged.
 

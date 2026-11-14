@@ -522,7 +522,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
     _is_async: bool = field(init=False)
 
     def __post_init__(self):
-        self._takes_ctx = len(inspect.signature(self.function).parameters) > 1
+        self._takes_ctx = _utils.takes_positional_args(self.function, 2)
         self._is_async = _utils.is_async_callable(self.function)
 
     async def validate(
