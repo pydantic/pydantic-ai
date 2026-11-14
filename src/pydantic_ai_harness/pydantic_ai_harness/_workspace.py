@@ -201,29 +201,32 @@ async def metadata_dir(workspace: Workspace, name: str, *, temp_fallback: bool =
     argument's fault, so a retry cannot fix it. So does a symlink in place of either directory, or a
     dangling `.gitignore`: it could lead outside the working directory.
 
-    With `temp_fallback`, a working directory the workspace user cannot write to (a root-owned `/app`
-    in a container that runs as `nobody`, or a read-only mount) gets the directory from
+    With `temp_fallback`, a working directory the workspace user cannot write to on a POSIX workspace
+    (a root-owned `/app` in a container that runs as `nobody`, or a read-only mount) gets the directory from
     `_temp_metadata_dir` instead. That runs a command, so only callers that already need commands
     pass it; the directory is outside the working directory, so `FileSystem` tools cannot read it.
     """
+    join = workspace.path.join
     working_dir = await workspace.working_dir()
-    root = posixpath.join(working_dir, METADATA_DIR)
-    directory = posixpath.join(root, name)
-    gitignore = posixpath.join(root, '.gitignore')
-    real_root = posixpath.join(await workspace.realpath(working_dir), METADATA_DIR)
-    if await workspace.realpath(directory) != posixpath.join(real_root, name):
+    root = join(working_dir, METADATA_DIR)
+    directory = join(root, name)
+    gitignore = join(root, '.gitignore')
+    real_root = join(await workspace.realpath(working_dir), METADATA_DIR)
+    if await workspace.realpath(directory) != join(real_root, name):
         raise WorkspaceError(f'`{METADATA_DIR}/{name}` in the workspace is a symlink, so it is not used.')
     try:
         await workspace.make_dir(directory)
         if not await workspace.exists(gitignore):
             # A dangling symlink reads as missing; writing it would create its target.
-            if await workspace.realpath(gitignore) != posixpath.join(real_root, '.gitignore'):
+            if await workspace.realpath(gitignore) != join(real_root, '.gitignore'):
                 raise WorkspaceError(f'`{METADATA_DIR}/.gitignore` in the workspace is a symlink, so it is not used.')
             await workspace.write_text(gitignore, '*\n')
     except WorkspaceError:
         raise
     except OSError as error:
-        if temp_fallback and (isinstance(error, PermissionError) or error.errno == errno.EROFS):
+        # The temp directory is found with a POSIX shell script.
+        posix = workspace.platform == 'posix'
+        if temp_fallback and posix and (isinstance(error, PermissionError) or error.errno == errno.EROFS):
             return await _temp_metadata_dir(workspace, real_root, name, error)
         raise WorkspaceError(f'Cannot create `{METADATA_DIR}/{name}` in the workspace: {error.strerror}') from error
     return directory

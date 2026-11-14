@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
-from typing import NoReturn, cast
+from typing import ClassVar, NoReturn, cast
 
 import anyio
 import anyio.abc
@@ -137,32 +137,18 @@ class _FileLock:
     users: int = 0
 
 
-class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
-    """Run commands as subprocesses on this machine and use its filesystem (POSIX only).
+class _HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
+    """What `LocalWorkspaceBackend` and `WindowsWorkspaceBackend` share: subprocesses and files on this machine.
 
-    This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
-    inherit only `PATH`, `HOME` and locale (`LANG`, `LC_ALL`, `LC_CTYPE`), so they find the host's
-    tools and use its text encoding without inheriting arbitrary secrets.
-    Background jobs outlive `run()`; redirect their output to avoid waiting up to two seconds
-    for inherited output pipes. The caller manages those jobs when the host exits.
-    The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
-    exists from construction, and the first operation raises
-    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.
-
-    Args:
-        working_dir: Where commands start and relative paths resolve; `~` is expanded and a relative
-            path is taken from the current directory. The caller creates and removes it.
-        env: Environment variables for every command, on top of the inherited `PATH`, `HOME`, `LANG`,
-            `LC_ALL` and `LC_CTYPE`; the per-call `env` goes on top.
+    Subclasses start a command and stop its process tree the platform's way.
     """
 
+    _provider: ClassVar[str]
+    """The `WorkspaceRef` provider."""
+    _inherited_env: ClassVar[tuple[str, ...]]
+    """Variables of this process every command gets, so it finds the host's tools and configuration."""
+
     def __init__(self, working_dir: str | Path, *, env: Mapping[str, str] | None = None):
-        if os.name != 'posix':
-            raise NotImplementedError(
-                '`LocalWorkspaceBackend` only supports POSIX platforms at the moment: its timeout contract '
-                'kills the whole process group. On other platforms, attach a container- or VM-based '
-                'workspace instead.'
-            )
         expanded = Path(working_dir).expanduser()
         # Absolute from here on, so a later change of the process's directory cannot move the workspace.
         # Symlinks are left for `working_dir()` to resolve on first use.
@@ -172,13 +158,24 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._resolved_working_dir: Path | None = None
         # The ref has a stable lexical spelling, but the live directory retains the original
         # path: a symlink followed by `..` has different kernel and lexical meanings.
-        self._ref = WorkspaceRef(provider='local', id=os.path.normpath(absolute))
-        self._env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | dict(env or {})
+        self._ref = WorkspaceRef(provider=self._provider, id=os.path.normpath(absolute))
+        self._env = {name: os.environ[name] for name in self._inherited_env if name in os.environ} | dict(env or {})
         self._file_locks: dict[str, _FileLock] = {}
+
+    async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
+        """Start `command` with stdin at EOF and both output streams piped, so its process tree can be stopped."""
+        raise NotImplementedError
+
+    def _kill_tree(self, process: anyio.abc.Process) -> PermissionError | None:
+        """Kill the command's process tree; return a denial that left only the direct child killed."""
+        raise NotImplementedError
+
+    def _open_for_read(self, target: Path) -> int:
+        """Open a file to read without blocking on a FIFO or device."""
+        raise NotImplementedError
 
     @property
     def ref(self) -> WorkspaceRef:
-        """`WorkspaceRef(provider='local', id=<absolute working_dir>)`, available from construction."""
         return self._ref
 
     def _ensure_alive(self) -> Path:
@@ -225,8 +222,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def read_bytes(self, path: str) -> bytes:
         def read() -> bytes:
             self._ensure_alive()
-            # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
-            fd = os.open(self._path(path), os.O_RDONLY | os.O_NONBLOCK)
+            fd = self._open_for_read(self._path(path))
             # Check before wrapping: `os.fdopen` would reject a directory without closing the fd.
             try:
                 mode = os.fstat(fd).st_mode
@@ -348,11 +344,22 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        return await self._run(command, shell=shell, env=env, timeout=timeout, cwd=None)
+
+    async def _run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool,
+        env: Mapping[str, str] | None,
+        timeout: float | None,
+        cwd: str | None,
+    ) -> CommandResult:
         validate_timeout(timeout)
         merged_env = {**self._env, **(env or {})}
         _check_command_form(command, shell=shell)
 
-        working_dir = await self._get_working_dir()
+        working_dir = await self._start_dir(cwd)
         # Directory preparation is not command time; process startup still counts, so a
         # process spawned after the deadline is terminated by the existing cleanup path.
         absolute_deadline = None if timeout is None else anyio.current_time() + timeout
@@ -362,15 +369,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # Assigned here, not returned, so the cleanup below reaches a process that finished
             # starting after the caller was cancelled.
             nonlocal process
-            process = await anyio.open_process(
-                command,
-                cwd=working_dir,
-                env=merged_env,
-                stdin=DEVNULL,
-                stdout=PIPE,
-                stderr=PIPE,
-                start_new_session=True,
-            )
+            process = await self._spawn(command, working_dir, merged_env)
 
         try:
             # Startup has its own finite bound, which the command deadline does not shorten: cancelling
@@ -413,6 +412,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             stdout=stdout_buffer.decode('utf-8', errors='replace'),
             stderr=stderr_buffer.decode('utf-8', errors='replace'),
         )
+
+    async def _start_dir(self, cwd: str | None) -> Path:
+        """Where a command starts: `cwd`, else the working directory, which is checked to still exist either way."""
+        working_dir = await self._get_working_dir()
+        return working_dir if cwd is None else Path(cwd)
 
     async def _program_error_result(
         self, command: WorkspaceCommand, error: FileNotFoundError | PermissionError
@@ -506,17 +510,67 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         await process.aclose()
 
     async def _terminate(self, process: anyio.abc.Process) -> PermissionError | None:
-        """Kill the process group and reap it; return a group-kill denial."""
-        denial = None
+        """Kill the process tree and reap it; return a tree-kill denial."""
+        denial = self._kill_tree(process)
+        # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
+        with suppress(TimeoutError):
+            await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
+        return denial
+
+
+class LocalWorkspaceBackend(_HostWorkspaceBackend):
+    """Run commands as subprocesses on this machine and use its filesystem (POSIX only).
+
+    This isolates nothing: commands and absolute paths reach anywhere this process can. Commands
+    inherit only `PATH`, `HOME` and locale (`LANG`, `LC_ALL`, `LC_CTYPE`), so they find the host's
+    tools and use its text encoding without inheriting arbitrary secrets.
+    Background jobs outlive `run()`; redirect their output to avoid waiting up to two seconds
+    for inherited output pipes. The caller manages those jobs when the host exits.
+    The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
+    exists from construction, and the first operation raises
+    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.
+    On Windows, use [`WindowsWorkspaceBackend`][pydantic_ai.workspaces.WindowsWorkspaceBackend].
+
+    Args:
+        working_dir: Where commands start and relative paths resolve; `~` is expanded and a relative
+            path is taken from the current directory. The caller creates and removes it.
+        env: Environment variables for every command, on top of the inherited `PATH`, `HOME`, `LANG`,
+            `LC_ALL` and `LC_CTYPE`; the per-call `env` goes on top.
+    """
+
+    _provider = 'local'
+    _inherited_env = _INHERITED_ENV
+
+    def __init__(self, working_dir: str | Path, *, env: Mapping[str, str] | None = None):
+        if os.name != 'posix':
+            raise NotImplementedError(
+                '`LocalWorkspaceBackend` only supports POSIX platforms: its timeout contract kills the whole '
+                'process group. On Windows, use `WindowsWorkspaceBackend`; elsewhere, attach a container- or '
+                'VM-based workspace instead.'
+            )
+        super().__init__(working_dir, env=env)
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        """`WorkspaceRef(provider='local', id=<absolute working_dir>)`, available from construction."""
+        return self._ref
+
+    async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
+        return await anyio.open_process(
+            command, cwd=working_dir, env=env, stdin=DEVNULL, stdout=PIPE, stderr=PIPE, start_new_session=True
+        )
+
+    def _kill_tree(self, process: anyio.abc.Process) -> PermissionError | None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         except PermissionError as error:
-            denial = error
             with suppress(ProcessLookupError):
                 process.kill()
-        # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
-        with suppress(TimeoutError):
-            await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
-        return denial
+            return error
+        return None
+
+    def _open_for_read(self, target: Path) -> int:
+        # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
+        return os.open(target, os.O_RDONLY | os.O_NONBLOCK)

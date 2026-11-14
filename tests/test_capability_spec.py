@@ -45,6 +45,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
     WebFetch,
     WebSearch,
+    WindowsWorkspace,
     XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -118,6 +119,7 @@ def test_capability_types() -> None:
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'WindowsWorkspace': WindowsWorkspace,
             'XSearch': XSearch,
         }
     )
@@ -2360,6 +2362,7 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'const': 'WindowsWorkspace', 'type': 'string'},
                                 {'const': 'XSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_XSearch'},
                             ]
@@ -2597,6 +2600,7 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'const': 'WindowsWorkspace', 'type': 'string'},
                             {'const': 'XSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_XSearch'},
                         ]

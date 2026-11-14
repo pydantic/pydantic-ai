@@ -25,6 +25,9 @@ model's commands every secret in the process, LLM API keys included. `read_only=
 and `authority='user'` or `'none'` (or any `path_authority`) in `AuthorityWorkspace`, for files the operator didn't write (a user's upload, a cloned repo). Two
 `LocalWorkspace`s share the default id `local_workspace` and combine into the last one (none of
 the earlier one's settings carry over); give one a distinct `id` to keep both.
+`LocalWorkspace` needs POSIX; on Windows use `WindowsWorkspace(working_dir, ...)`, which takes the same options:
+commands run in PowerShell, paths are Windows paths, its ref is `WorkspaceRef(provider='windows', ...)`,
+and `ctx.workspace.platform` is `'windows'`, with `ctx.workspace.path` (`ntpath`) for joining its paths.
 Its ref is `WorkspaceRef(provider='local', id=<absolute working_dir>)` from construction (the
 directory is not checked then; the first operation raises `WorkspaceUnavailableError` if it is
 missing), and the capability

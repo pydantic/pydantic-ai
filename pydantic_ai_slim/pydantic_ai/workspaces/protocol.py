@@ -3,7 +3,8 @@
 A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] plus
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
-[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]. Every backend must:
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
+[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -28,7 +29,7 @@ from __future__ import annotations as _annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from pydantic_ai.messages import WorkspaceRef
 
@@ -49,7 +50,9 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsPlatform',
     'SupportsRealpath',
+    'WorkspacePlatform',
 )
 
 
@@ -60,6 +63,13 @@ def validate_timeout(timeout: float | None) -> None:
 
 WorkspaceCommand: TypeAlias = str | Sequence[str]
 """An argv sequence (`['python', '-c', 'print(1)']`), or a shell string with `shell=True`."""
+
+WorkspacePlatform: TypeAlias = Literal['posix', 'windows']
+"""The shell and path syntax of a workspace.
+
+`'posix'`: `shell=True` runs POSIX `sh`, and paths are POSIX paths (`/home/me/project`).
+`'windows'`: `shell=True` runs PowerShell, and paths are Windows paths (`C:\\Users\\me\\project`).
+"""
 
 
 class WorkspaceError(RuntimeError):
@@ -217,6 +227,22 @@ class SupportsRealpath(Protocol):
         target. Keep missing components as written. A loop must not hang; a returned path through a loop
         must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
         """
+        ...
+
+
+@runtime_checkable
+class SupportsPlatform(Protocol):
+    """Optional: a backend that is not POSIX says so, so tools pick the right shell scripts and path syntax.
+
+    Without it, a backend is `'posix'`. A `'windows'` backend's paths are absolute Windows paths
+    wherever the rest of this module says POSIX, and its `run` also takes `cwd`, an absolute
+    directory to start the command in: with no `sh`, [`Workspace.run`][pydantic_ai.workspaces.Workspace.run]
+    cannot change directory for an argv command itself.
+    """
+
+    @property
+    def platform(self) -> WorkspacePlatform:
+        """The workspace's shell and path syntax."""
         ...
 
 

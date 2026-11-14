@@ -8,12 +8,16 @@
             - ReadOnlyWorkspace
             - AuthorityWorkspace
             - LocalWorkspaceBackend
+            - WindowsWorkspaceBackend
             - UnavailableWorkspace
             - WorkspaceRef
             - WorkspaceBackend
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
+            - SupportsPlatform
+            - WorkspacePlatform
+            - WorkspacePaths
             - WorkspaceCommand
             - CommandResult
             - FileEntry
