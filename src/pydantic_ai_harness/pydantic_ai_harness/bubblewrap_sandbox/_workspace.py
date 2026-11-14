@@ -94,11 +94,23 @@ travels on the command line because `bwrap` may run on another host, which recei
 open files.
 """
 
-_LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
+_LOGIN_PATHS = (
+    '.ssh/',
+    '.config/fish/',
+    '.bashrc',
+    '.bashrc.d/',
+    '.cargo/env',
+    '.local/bin/env',
+    '.zshenv',
+    '.cshrc',
+    '.tcshrc',
+    '.pam_environment',
+)
 """Paths under `$HOME` that the host reads or runs when the next SSH connection logs in, before the command.
 
 `sshd` runs `~/.ssh/rc` and reads `~/.ssh/environment` and `~/.pam_environment`; the login shell runs the
-command with `-c`, which makes bash run `~/.bashrc`, zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
+command with `-c`, which makes bash run `~/.bashrc` (which on common setups sources `~/.bashrc.d/*`,
+`~/.cargo/env`, and `~/.local/bin/env`), zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
 and fish its `~/.config/fish`. A trailing `/` marks a directory.
 """
 
@@ -323,6 +335,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         check_timeout(timeout)
         if isinstance(command, str):
@@ -336,6 +349,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
         else:
             # Through `sh`, a missing program exits 127 as the contract says, not with `bwrap`'s own 1.
             argv = ['sh', '-c', 'exec "$@"', 'sh', *command]
+        if cwd is not None:
+            argv = [*await self._command_in(cwd, argv, shell=False)]
         sandbox = await self._sandbox()
         # Set inside the sandbox, not on the host launcher, so a call `env` cannot swap out `bwrap`.
         env_args = [arg for name, value in (env or {}).items() for arg in ('--setenv', name, value)]

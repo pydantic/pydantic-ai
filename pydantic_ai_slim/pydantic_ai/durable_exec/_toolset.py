@@ -21,7 +21,7 @@ from typing import (
 )
 
 import anyio
-from pydantic import Discriminator, Tag, ValidationError
+from pydantic import Discriminator, Field, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -351,6 +351,10 @@ class _ApprovalRequired:
 class _CallDeferred:
     metadata: dict[str, Any] | None = None
     _: KW_ONLY
+    # Left out of the payload unless it is a question, so plain deferrals journal as they did before it existed.
+    call_kind: Annotated[Literal['external', 'question'], Field(exclude_if=lambda kind: kind == 'external')] = (
+        'external'
+    )
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
@@ -458,7 +462,7 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     except ApprovalRequired as exc:
         return _ApprovalRequired(metadata=exc.metadata)
     except CallDeferred as exc:
-        return _CallDeferred(metadata=exc.metadata)
+        return _CallDeferred(metadata=exc.metadata, call_kind=exc.kind)
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
@@ -486,7 +490,7 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     if isinstance(result, _ApprovalRequired):
         raise ApprovalRequired(metadata=result.metadata)
     if isinstance(result, _CallDeferred):
-        raise CallDeferred(metadata=result.metadata)
+        raise CallDeferred(metadata=result.metadata, kind=result.call_kind)
     if isinstance(result, _ValidationError):
         raise ValidationError.from_exception_data(
             result.title,

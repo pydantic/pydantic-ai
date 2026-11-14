@@ -14,7 +14,9 @@ both histories share. A fork points at an existing entry rather than copying the
 
 from __future__ import annotations as _annotations
 
+import bisect
 import dataclasses
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from copy import deepcopy
@@ -144,6 +146,10 @@ def _left(branches: list[str], tip: str) -> list[str]:
     return [*(entry for entry in branches if entry != tip), tip]
 
 
+def _part_count(messages: Sequence[_messages.ModelMessage]) -> int:
+    return sum(len(message.parts) for message in messages)
+
+
 class ConversationStore(ABC):
     """A store for conversations, keeping each one's messages as a log in which each message is stored once.
 
@@ -249,9 +255,11 @@ class ConversationStore(ABC):
         messages, up to the last one, as `new_message_index` says it holds, say after the
         conversation was serialized, or with all of them when it's `None`. Those that extend it are
         appended, and if it was rewritten, the messages from the first difference on branch off the
-        last message both share, keeping the old branch stored. Messages are matched with `==`, so a
-        change only to a field message equality ignores, like a file's `media_type` or `identifier`,
-        isn't stored.
+        last message both share, keeping the old branch stored. A run cleans the history it's sent
+        before it sets that index, merging a stored output tool result with its new prompt, say, so
+        the messages before the index can also match the stored ones they were cleaned from, not only
+        as many stored ones. Messages are matched with `==`, so a change only to a field message
+        equality ignores, like a file's `media_type` or `identifier`, isn't stored.
 
         The save is checked against the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
@@ -341,11 +349,75 @@ class ConversationStore(ABC):
             if entry.message != message:
                 break
             shared += 1
+        if (
+            record is not None
+            and window is not None
+            and shared < len(history)
+            and await self._sent_as_cleaned(record, history, messages[:window])
+        ):
+            return record.head_id, messages[window:], branches
         parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
         if shared < len(history):
             # A rewritten history leaves the stored one as a branch.
             branches = _left(branches, history[-1].id)
         return parent_id, messages[shared:], branches
+
+    async def _sent_as_cleaned(
+        self, record: ConversationRecord, history: list[ConversationEntry], sent: list[_messages.ModelMessage]
+    ) -> bool:
+        """Whether `sent` is the last stored messages as a run cleans the history it's sent, say merging adjacent requests.
+
+        `history` is the last `len(sent)` stored entries, as the save already read them. A history
+        that starts earlier never cleans to fewer messages or parts, so the entries before them are
+        read only until the stored ones clean to as many parts as `sent`, or to more messages, not the
+        whole history. Cleaning can also add a message, like a result for a tool call nothing
+        answered, so the history `sent` came from can be shorter than `sent`.
+
+        That holds because `repair_messages` drops a tool result only when no earlier message holds
+        its call, and otherwise only adds parts or merges adjacent messages. If a change to it broke
+        that, the search could miss the history `sent` came from, and the save would branch as if
+        `sent` had been edited.
+        """
+        parts = _part_count(sent)
+        stored = [entry.message for entry in history]
+        first, step, read = history[0], 0, len(stored)
+        cleaned = _messages.repair_messages(stored, repair_last_response=False)
+        while _part_count(cleaned) < parts and len(cleaned) <= len(sent) and first.parent_id is not None:
+            # A request that merges into the next one adds no message, so an entry read back can add none:
+            # read at least as many as are missing, and twice as many as last time.
+            step = max(len(sent) - len(cleaned), 2 * step, 1)
+            earlier = await self._history_of(record, up_to=first.parent_id, limit=step)
+            if earlier is None:
+                raise ConversationConflict(record.conversation_id)
+            if not earlier:
+                # A `read_history` that returns nothing for an entry it has can't be read further back.
+                return False
+            first, read = earlier[0], len(earlier)
+            stored = [*(entry.message for entry in earlier), *stored]
+            cleaned = _messages.repair_messages(stored, repair_last_response=False)
+        if _part_count(cleaned) < parts:
+            return False
+        if cleaned == sent:
+            return True
+
+        @functools.cache
+        def cleaned_from(start: int) -> list[_messages.ModelMessage]:
+            return _messages.repair_messages(stored[start:], repair_last_response=False)
+
+        def cleans_to_fewer_parts(start: int) -> bool:
+            return _part_count(cleaned_from(start)) < parts
+
+        # Starting a history one entry earlier adds a part for each entry cleaning keeps a part of, so
+        # only the latest start that cleans to as many parts as `sent` is compared: those before it
+        # differ only by messages cleaning keeps no part of, like a request of tool results whose calls
+        # came before it. It's among the entries read last, and usually near the first, as a stored
+        # history edited before it was sent cleans to about as many parts, so the search doubles its
+        # distance from the first before it bisects.
+        bound = 1
+        while bound < read and not cleans_to_fewer_parts(bound):
+            bound *= 2
+        latest = bisect.bisect_left(range(min(bound, read)), True, lo=bound // 2 + 1, key=cleans_to_fewer_parts)
+        return latest > 1 and cleaned_from(latest - 1) == sent
 
     async def branch(
         self,
@@ -532,15 +604,15 @@ class ConversationStore(ABC):
         return record if _in_scope(record, scope) else None
 
     async def _history_of(
-        self, record: ConversationRecord, *, limit: int | None = None
+        self, record: ConversationRecord, *, limit: int | None = None, up_to: str | None = None
     ) -> list[ConversationEntry] | None:
-        """`record`'s history, or `None` if another writer replaced or deleted the record while it was read.
+        """`record`'s history, or the part of it up to the entry `up_to`, or `None` if another writer replaced or deleted the record while it was read.
 
         A backend that reads the record and its history separately can find entries gone that a
         concurrent save or delete released. That is only an error when the record is unchanged.
         """
         try:
-            return await self.read_history(record.head_id, limit=limit)
+            return await self.read_history(record.head_id if up_to is None else up_to, limit=limit)
         except LookupError:
             current = await self.read_record(record.conversation_id)
             if current is not None and current.revision == record.revision:

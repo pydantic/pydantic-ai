@@ -45,7 +45,7 @@ from pydantic_ai_harness.capability_creation import CapabilityCreation, Capabili
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.keenable import KeenableSearch
 from pydantic_ai_harness.localstack import LocalStack
-from pydantic_ai_harness.memory import InMemoryStore, Memory
+from pydantic_ai_harness.memory import InMemoryMemoryStore, Memory
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCompletedEvent,
@@ -326,7 +326,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
     ),
     'memory': _agent(
         'memory_agent',
-        Memory[None](store=InMemoryStore()),
+        Memory[None](store=InMemoryMemoryStore()),
         ('write_memory', {'content': 'The user prefers tabs.', 'file': 'style.md'}),
         # A missing file asks the model to retry, which the operation records as data.
         ('read_memory', {'file': 'missing.md'}),
@@ -388,13 +388,13 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
         monkeypatch.setattr(CapabilityStore, method, counted)
 
     # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
-    original_memory_write = InMemoryStore.write
+    original_memory_write = InMemoryMemoryStore.write
 
-    async def counted_memory_write(self: InMemoryStore, *args: Any, **kwargs: Any) -> Any:
+    async def counted_memory_write(self: InMemoryMemoryStore, *args: Any, **kwargs: Any) -> Any:
         _requests['memory.write'] += 1
         return await original_memory_write(self, *args, **kwargs)
 
-    monkeypatch.setattr(InMemoryStore, 'write', counted_memory_write)
+    monkeypatch.setattr(InMemoryMemoryStore, 'write', counted_memory_write)
 
     # The plan tools read the store many times; a write is what recovery must not repeat.
     for method in ('set_items', 'add_item'):

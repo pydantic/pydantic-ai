@@ -188,6 +188,13 @@ class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithou
         return schema
 
 
+class _BedrockGlm53JsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    # GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas are inlined,
+    # as `zai_model_profile` does. See https://github.com/pydantic/pydantic-ai/issues/10243.
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+
 class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
@@ -262,16 +269,24 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'openai_responses', 'qwen', 'xai'] | None
+    bedrock_thinking_variant: (
+        Literal['anthropic', 'deepseek', 'openai', 'openai_responses', 'qwen', 'xai', 'zai', 'zai_effort'] | None
+    )
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
+    - `'deepseek'`: Uses `{'reasoning_effort': 'high'|'none'}`: `'high'` is the only level that turns reasoning on
+      (e.g. DeepSeek V3.2)
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
       shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
     - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
+    - `'zai'`: Uses `{'reasoning_effort': 'high'|'none'}`: `'high'` is the only level that turns reasoning on
+      (e.g. GLM-4.7, GLM-5)
+    - `'zai_effort'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'|'xhigh'|'max'}`, for GLM models that always
+      reason and take an effort level (e.g. GLM-5.3)
     - `None`: No unified thinking support.
 
     Default: `None`.
@@ -437,6 +452,9 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         # Bedrock-specific override applies on top of the upstream DeepSeek profile.
         return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
+    if model_name == 'v3.2':
+        # Bedrock's id doesn't match the native DeepSeek names, and V3.2 only reasons with `reasoning_effort='high'`.
+        return merge_profile(profile, BedrockModelProfile(supports_thinking=True, bedrock_thinking_variant='deepseek'))
     return profile  # pragma: no cover
 
 
@@ -538,14 +556,21 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
+    # GLM-5.3 always reasons and takes every effort level from `low` to `max` on Converse; earlier GLM models only
+    # reason with `'high'`.
+    is_glm_5_3 = model_name.startswith('glm-5.3')
+    thinking_variant: Literal['zai', 'zai_effort'] = 'zai_effort' if is_glm_5_3 else 'zai'
     return merge_profile(
         _strip_builtin_tools(zai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
-            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
+            json_schema_transformer=(
+                _BedrockGlm53JsonSchemaTransformer if is_glm_5_3 else _BedrockJsonSchemaTransformerWithoutContains
+            ),
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
+            bedrock_thinking_variant=thinking_variant,
         ),
     )
 
@@ -648,6 +673,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
     # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
     if model_name in {
         'gpt-5.6-sol',
@@ -657,6 +683,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-luna',
         'gpt-6-astra',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
     }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
         # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
@@ -678,6 +705,11 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_thinking_variant='openai',
         supports_thinking=True,
         thinking_always_enabled=True,
+        # The family's default, which this profile doesn't otherwise build on: Converse has no mid-conversation
+        # system role, so gpt-oss gets `<system>` blocks here.
+        default_framing_announcement=openai_model_profile(model_name).get(
+            'default_framing_announcement', 'when_needed'
+        ),
     )
 
 

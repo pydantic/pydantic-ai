@@ -400,6 +400,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_pr_guard.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
@@ -410,6 +411,7 @@ include = [
     ".github/scripts/douwebot_opencode_result.py",
     ".github/scripts/test_douwebot_opencode_run.py",
     ".github/scripts/test_douwebot_opencode_result.py",
+    ".github/scripts/category_classify_opencode.py",
 ]
 
 [tool.ruff.lint]
@@ -497,6 +499,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_pr_guard.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]

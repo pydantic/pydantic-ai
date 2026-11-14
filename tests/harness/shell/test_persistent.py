@@ -249,7 +249,7 @@ class TestShellTool:
         assert isinstance(started, CommandStartedEvent)
         assert started.command == 'printf hello'
         assert recorder.output == 'hello'
-        assert recorder.finished.total_lines == 1
+        assert recorder.finished.line_count == 1
         assert recorder.finished.exit_code == 0
         assert not recorder.finished.truncated
 
@@ -264,7 +264,7 @@ class TestShellTool:
         command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
         # Without a log limit, which would empty a log this size when the command ends.
         await shell(tmp_path, {'command': command}, capabilities=[recorder], max_log_bytes=None)
-        assert recorder.finished.total_lines is None
+        assert recorder.finished.line_count is None
         assert recorder.finished.truncated
 
     async def test_output_arrives_before_command_exit(self, tmp_path: Path) -> None:
@@ -421,7 +421,7 @@ class TestShellTool:
         assert output.startswith('PID: ')
         assert output.endswith('status.json')
         assert recorder.finished.exit_code is None
-        assert recorder.finished.total_lines == 0
+        assert recorder.finished.line_count == 0
         assert recorder.output == ''
 
     async def test_supervisor_exits_after_its_job_directory_is_removed(self, tmp_path: Path) -> None:
