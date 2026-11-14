@@ -369,7 +369,7 @@ class Job:
     def stop_command(self) -> str:
         """The command a model runs to stop the whole job."""
         if self.workspace.platform == 'windows':
-            return ' '.join(_powershell.kill_command(self.pid))
+            return f'& {_powershell.literal(self.workspace.path.join(self.directory, "stop.ps1"))}'
         return f'kill -- -{self.pgid}' if self.pgid is not None else f'kill {self.pid}'
 
     async def status_text(self) -> str | None:
@@ -469,14 +469,9 @@ class Job:
 
     async def _kill_tree(self) -> None:
         """End the wrapper's process tree with `taskkill`, publishing the exit code the wrapper no longer can."""
-        await self.workspace.write_bytes(self.workspace.path.join(self.directory, 'stop'), b'')
-        script = _powershell.kill_script(self.pid, self.directory)
-        result = await self.workspace.run(script, shell=True, timeout=CONTROL_TIMEOUT)
-        if result.exit_code not in (0, _powershell.MISSING_PROCESS):  # pragma: no cover - `taskkill` was refused
+        result = await self.workspace.run(_powershell.stop_script(self.directory), shell=True, timeout=CONTROL_TIMEOUT)
+        if result.exit_code != 0:  # pragma: no cover - `taskkill` was refused
             raise WorkspaceError(result.stderr.strip() or f'Unable to stop job {self.pid}.')
-        if (await self.status())[0]:
-            status = json.dumps({'pid': self.pid, 'exit_code': _powershell.KILLED})
-            await self.workspace.write_bytes(self.status_path, status.encode())
 
     async def _signal(self, name: str) -> bool:
         """Whether the signal reached a process; a job that already exited is not an error.

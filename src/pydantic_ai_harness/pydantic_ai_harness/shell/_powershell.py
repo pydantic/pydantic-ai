@@ -3,7 +3,7 @@
 The launcher writes the command to `command.ps1` in the job directory and starts the wrapper as a
 hidden PowerShell of its own. The wrapper publishes `status.json` as the `sh` one does, runs the
 command, copies its output into the log files byte for byte, and publishes the exit code when it
-ends. Stopping a job ends the wrapper's process tree with `taskkill`.
+ends. Stopping a job runs `stop.ps1`, which ends the wrapper's process tree with `taskkill`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ MISSING_PROCESS = 128
 """`taskkill`'s exit status when no process has the PID."""
 
 KILLED = 1
-"""The exit code `Job.kill` publishes for a job `taskkill` ended, which `taskkill /F` gives it."""
+"""The exit code a stop publishes for a job `taskkill` ended, which `taskkill /F` gives it."""
 
 
 def literal(value: str) -> str:
@@ -133,6 +133,7 @@ while (-not (Test-Path -LiteralPath (Join-Path $dir 'status.json'))) { Start-Sle
 [IO.File]::WriteAllText((Join-Path $dir 'launch.ready'), '')
 # Its start time tells the wrapper from a later process that reuses its PID, which Windows does soon.
 [IO.File]::WriteAllText((Join-Path $dir 'wrapper.started'), "$($wrapper.StartTime.ToFileTimeUtc())")
+[IO.File]::WriteAllText((Join-Path $dir 'stop.ps1'), $stop, [Text.UTF8Encoding]::new($true))
 [IO.File]::WriteAllText((Join-Path $dir 'handle'), "$($wrapper.Id) -")
 [Console]::Out.Write("$($wrapper.Id) -")
 """
@@ -156,7 +157,8 @@ def launch_script(
     logs = ', '.join(literal(log) for log in dict.fromkeys((out, err)))
     return (
         f'$dir = {literal(directory)}\n$exclusive = ${str(exclusive).lower()}\n$logs = @({logs})\n'
-        f'$script = {literal(powershell_script(command))}\n$supervisor = {literal(wrapper)}\n' + _LAUNCHER
+        f'$script = {literal(powershell_script(command))}\n$supervisor = {literal(wrapper)}\n'
+        f'$stop = {literal(stop_script(directory))}\n' + _LAUNCHER
     )
 
 
@@ -182,20 +184,26 @@ try {{
 [Console]::Out.Write([Convert]::ToBase64String($buffer, 0, $read))"""
 
 
-def kill_command(pid: int) -> list[str]:
-    """The argv that ends process `pid` and every process it started that is still its descendant."""
-    return ['taskkill', '/T', '/F', '/PID', str(pid)]
+def stop_script(directory: str) -> str:
+    """PowerShell that stops the job in `directory`, as `stop.ps1` there does for a model's `shell` command.
 
-
-def kill_script(pid: int, directory: str) -> str:
-    """PowerShell that ends the job wrapper `pid`'s process tree, only if `pid` is still that wrapper.
-
-    A wrapper that died without publishing its status leaves its PID free for an unrelated process, so the
-    PID is killed only when its start time matches the one the launcher recorded; otherwise it exits
-    `MISSING_PROCESS`, as when no process has the PID.
+    It ends the wrapper's process tree with `taskkill`, but only while the wrapper's PID has the start time the
+    launcher recorded: a wrapper that died without its status leaves its PID free, and Windows soon gives it to
+    another process. `taskkill /F` gives the wrapper no chance to publish, so this publishes `KILLED` for it, and
+    the job's status file never reads as running after a stop.
     """
-    return f"""$started = [IO.File]::ReadAllText((Join-Path {literal(directory)} 'wrapper.started'))
-try {{ $process = Get-Process -Id {pid} -ErrorAction Stop; $now = "$($process.StartTime.ToFileTimeUtc())" }}
-catch {{ exit {MISSING_PROCESS} }}
-if ($now -ne $started) {{ exit {MISSING_PROCESS} }}
-taskkill /T /F /PID {pid} | Out-Null"""
+    return f"""$dir = {literal(directory)}
+[IO.File]::WriteAllText((Join-Path $dir 'stop'), '')
+$wrapper = [IO.File]::ReadAllText((Join-Path $dir 'handle')).Split(' ')[0]
+$started = [IO.File]::ReadAllText((Join-Path $dir 'wrapper.started'))
+try {{ $current = "$((Get-Process -Id $wrapper -ErrorAction Stop).StartTime.ToFileTimeUtc())" }} catch {{ $current = $null }}
+if ($current -eq $started) {{
+  taskkill /T /F /PID $wrapper | Out-Null
+  if ($LASTEXITCODE -notin 0, {MISSING_PROCESS}) {{ exit $LASTEXITCODE }}
+}}
+$status = Join-Path $dir 'status.json'
+if ([IO.File]::ReadAllText($status) -match '"exit_code": null') {{
+  [IO.File]::WriteAllText("$status.tmp", ('{{"pid": ' + $wrapper + ', "exit_code": {KILLED}}}'))
+  Move-Item -LiteralPath "$status.tmp" -Destination $status -Force
+}}
+exit 0"""

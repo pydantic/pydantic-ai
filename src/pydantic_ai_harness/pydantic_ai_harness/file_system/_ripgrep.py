@@ -123,7 +123,9 @@ async def run_ripgrep(
 async def _run_windows(workspace: Workspace, argv: list[str], cwd: str) -> tuple[str, bool, str, str]:
     """Run `rg` without a shell: its output, whether it was cut, its exit status, and its stderr.
 
-    Output past the workspace's own cap is cut there, rather than by `head -c`.
+    Output past the workspace's own cap is cut there, rather than by `head -c`: up to that cap, about 10 MiB, it is
+    kept whole, and past it only the workspace's preview of its start is, so a search that the caller filters
+    heavily may return fewer matches than on POSIX. Either way, the result is marked as cut.
     """
     try:
         result = await workspace.run(argv, cwd=cwd, timeout=SEARCH_TIMEOUT)

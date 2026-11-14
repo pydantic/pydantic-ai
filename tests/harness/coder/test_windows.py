@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -37,7 +39,7 @@ class TestShellOnWindows:
             ],
         )
         assert 'héllo' in results[0] and 'oops' in results[0] and '"exit_code": 3}' in results[0]
-        assert 'taskkill /T /F /PID' in results[1] and '"exit_code": null}' in results[1]
+        assert "stop.ps1'` to stop" in results[1] and '"exit_code": null}' in results[1]
         assert results[2] == 'app.py:1:def main():'
         assert results[3].startswith('[app.py | 2 lines]')
 
@@ -90,6 +92,20 @@ class TestShellOnWindows:
                 await anyio.sleep(0.5)  # pragma: lax no cover - depends on how fast PowerShell starts
         assert '[Log exceeded max_log_bytes=1000; earlier output was cleared.]' in checked
         assert 'x' * 1000 not in checked
+
+    async def test_the_stop_command_the_model_is_given_publishes_the_status(self, project: Path) -> None:
+        """`taskkill /F` gives the wrapper no chance to publish, so the stop script publishes for it."""
+        shell = Shell[None](tools=['shell'])
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'shell', {'command': 'Start-Sleep 600', 'mode': 'background'})
+        stop, status, pid = (
+            re.search(pattern, started) for pattern in (r'use `(.+?)` to stop', r'Status: (.+)', r'PID: (\d+)')
+        )
+        assert stop is not None and status is not None and pid is not None, started
+        await call_tool([shell, workspace], 'shell', {'command': stop.group(1)})
+        assert json.loads(Path(status.group(1).strip()).read_text(encoding='utf-8'))['exit_code'] == 1
+        alive = await call_tool([shell, workspace], 'shell', {'command': f'Get-Process -Id {pid.group(1)} | Out-Null'})
+        assert '"exit_code": 0}' not in alive
 
     async def test_stop_leaves_a_reused_pid_alone(self, project: Path) -> None:
         """A wrapper that died without its status leaves its PID free; `stop_command` must not kill what reuses it."""
