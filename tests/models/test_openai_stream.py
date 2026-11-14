@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from typing import Literal
 
 import httpx2
 import pytest
@@ -11,10 +10,12 @@ import pytest
 from pydantic_ai import Agent, ModelAPIError, ModelConnectionError, ModelMessage, ModelRequest, ModelTimeoutError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
@@ -152,115 +153,74 @@ async def test_cancelled_stream_does_not_require_finish_reason(allow_model_reque
     assert response.text == 'partial'
 
 
-@asynccontextmanager
-async def _serve_incomplete_503(*, hang_before_body: bool = False) -> AsyncIterator[str]:
-    """Serve a 503 whose error body never completes.
+class _ErrorBodyBreakingOff(httpx2.AsyncByteStream):
+    """A 503 error body that breaks off after its first chunk, as when a proxy cuts the connection."""
 
-    The response advertises a `Content-Length` longer than the body it sends, so the openai SDK fails while it reads
-    the body it needs to build its status error. With `hang_before_body`, the server goes silent after the headers and
-    waits for the client read timeout instead.
-    """
+    def __init__(self, error: httpx2.TransportError) -> None:
+        self.error = error
 
-    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        # Read past the request head; its content does not matter for the failure.
-        while await reader.readline() not in (b'\r\n', b'\n', b''):
-            pass
-        body = b'{"error": {"message": "server overloaded", "type": "server_error"}}'
-        writer.write(
-            b'HTTP/1.1 503 Service Unavailable\r\n'
-            b'Content-Type: application/json\r\n'
-            b'Content-Length: ' + str(len(body) + 64).encode() + b'\r\n'
-            b'Connection: close\r\n'
-            b'\r\n'
-        )
-        await writer.drain()
-        if hang_before_body:
-            # Stay silent until the client read timeout fires while httpx waits for the body.
-            await asyncio.sleep(5)
-        else:
-            writer.write(body)
-            await writer.drain()
-        writer.close()
-        await writer.wait_closed()
-
-    server = await asyncio.start_server(handle, host='127.0.0.1', port=0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        yield f'http://127.0.0.1:{port}/v1'
-    finally:
-        server.close()
-        await server.wait_closed()
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": {"mess'
+        raise self.error
 
 
-@pytest.mark.parametrize('model_class', ['OpenAIChatModel', 'OpenAIResponsesModel'])
-async def test_run_stream_transport_error_during_error_body_read_raises_model_connection_error(
-    allow_model_requests: None, model_class: str
-) -> None:
-    """A transport error the SDK hits while reading a streamed error body surfaces as `ModelConnectionError`."""
-    model_classes = {
-        'OpenAIChatModel': OpenAIChatModel,
-        'OpenAIResponsesModel': OpenAIResponsesModel,
-    }
+def _client_with_error_body_breaking_off(error: httpx2.TransportError) -> AsyncOpenAI:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(503, headers={'content-type': 'application/json'}, stream=_ErrorBodyBreakingOff(error))
 
-    async with _serve_incomplete_503() as base_url:
-        model = model_classes[model_class]('gpt-4o', provider=OpenAIProvider(base_url=base_url, api_key='test-key'))
-        agent = Agent(model)
-        with pytest.raises(ModelConnectionError) as exc_info:
-            async with agent.run_stream('Hello'):
-                pass
-
-    assert type(exc_info.value) is ModelConnectionError
-    assert exc_info.value.model_name == 'gpt-4o'
-    assert exc_info.value.phase == 'read'
-    assert isinstance(exc_info.value.__cause__, httpx2.TransportError)
-    assert not isinstance(exc_info.value.__cause__, httpx2.TimeoutException)
-    assert str(exc_info.value.__cause__) in exc_info.value.message
-
-
-async def test_run_stream_timeout_during_error_body_read_raises_model_timeout_error(
-    allow_model_requests: None,
-) -> None:
-    """A read timeout the SDK hits while reading a streamed error body surfaces as `ModelTimeoutError`."""
-    async with _serve_incomplete_503(hang_before_body=True) as base_url:
-        async with httpx2.AsyncClient(timeout=0.5) as http_client:
-            provider = OpenAIProvider(base_url=base_url, api_key='test-key', http_client=http_client)
-            agent = Agent(OpenAIChatModel('gpt-4o', provider=provider))
-            with pytest.raises(ModelTimeoutError) as exc_info:
-                async with agent.run_stream('Hello'):
-                    pass
-
-    assert type(exc_info.value) is ModelTimeoutError
-    assert exc_info.value.model_name == 'gpt-4o'
-    assert exc_info.value.phase == 'read'
-    assert isinstance(exc_info.value.__cause__, httpx2.TimeoutException)
-    assert str(exc_info.value.__cause__) in exc_info.value.message
-
-
-async def test_fallback_model_default_config_falls_back_when_stream_open_hits_transport_error(
-    allow_model_requests: None,
-) -> None:
-    """`FallbackModel`'s default configuration falls back when opening a stream raises a mapped connection error."""
-    chunk = chat.ChatCompletionChunk(
-        id='123',
-        choices=[
-            ChunkChoice(
-                delta=ChoiceDelta(content='fallback output', role='assistant'),
-                finish_reason=None,
-                index=0,
-            )
-        ],
-        created=1704067200,
-        model='gpt-4o',
-        object='chat.completion.chunk',
+    return AsyncOpenAI(
+        api_key='test-key',
+        base_url='http://localhost/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+        max_retries=0,
     )
 
-    async with _serve_incomplete_503() as base_url:
-        broken = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(base_url=base_url, api_key='test-key'))
-        healthy = OpenAIChatModel(
-            'gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream([chunk]))
-        )
-        agent = Agent(FallbackModel(broken, healthy))
-        async with agent.run_stream('Hello') as result:
-            output = await result.get_output()
 
-    assert output == 'fallback output'
+@pytest.mark.parametrize('model_type', ['chat', 'responses'])
+@pytest.mark.parametrize(
+    'error_class,expected_error_class',
+    [
+        pytest.param(httpx2.RemoteProtocolError, ModelConnectionError, id='protocol-error'),
+        pytest.param(httpx2.ReadTimeout, ModelTimeoutError, id='read-timeout'),
+    ],
+)
+async def test_run_stream_transport_error_during_error_body_read(
+    allow_model_requests: None,
+    model_type: Literal['chat', 'responses'],
+    error_class: type[httpx2.TransportError],
+    expected_error_class: type[ModelConnectionError],
+) -> None:
+    """A transport error while `openai` reads a streamed error body surfaces as `ModelConnectionError`.
+
+    A timeout surfaces as its `ModelTimeoutError` subclass. For a streamed request the SDK reads the body of an error
+    status outside the code that wraps transport errors in `APIConnectionError`. A cassette can't replay a broken-off
+    connection, so a mock transport raises it.
+    """
+    error = error_class('connection broke off while reading the error body')
+    model_class = OpenAIChatModel if model_type == 'chat' else OpenAIResponsesModel
+
+    async with _client_with_error_body_breaking_off(error) as client:
+        agent = Agent(model_class('gpt-5.4', provider=OpenAIProvider(openai_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is expected_error_class
+    assert exc_info.value.model_name == 'gpt-5.4'
+    assert exc_info.value.phase == 'read'
+    assert exc_info.value.message == 'connection broke off while reading the error body'
+    assert exc_info.value.__cause__ is error
+
+
+async def test_fallback_model_falls_back_on_transport_error_during_error_body_read(allow_model_requests: None) -> None:
+    """`FallbackModel`'s default `fallback_on` catches the mapped error, so a run stream moves on to the next model."""
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'fallback output'
+
+    error = httpx2.RemoteProtocolError('peer closed connection without sending complete message body')
+    async with _client_with_error_body_breaking_off(error) as client:
+        broken = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=client))
+        agent = Agent(FallbackModel(broken, FunctionModel(stream_function=stream_function)))
+        async with agent.run_stream('Hello') as result:
+            assert await result.get_output() == 'fallback output'
