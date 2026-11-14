@@ -84,6 +84,7 @@ from pydantic_ai.exceptions import (
     RunTimedOut,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -165,6 +166,14 @@ from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .preamble_text import (
+    RunAndStreamResult,
+    StructuredOutput,
+    plain_run_and_stream,
+    preamble_text_agents,
+    preamble_text_before_output_tool,
+    run_and_stream,
+)
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -4328,6 +4337,51 @@ async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> No
         'stream-exit',
         'model-exit:none',
     ]
+
+
+async def test_dbos_durability_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The workflow replays the step's stream against the parameters the step's model prepared, in which `'auto'` has
+    resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the step and would see the live stream.
+    """
+    agents = preamble_text_agents(DBOSDurability)
+
+    @DBOS.workflow()
+    async def structured_output_after_preamble_text_workflow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await structured_output_after_preamble_text_workflow() == await plain_run_and_stream()
+
+
+async def test_dbos_durability_run_stream_warns_once_about_an_ignored_setting(dbos: DBOS) -> None:
+    """A setting the model ignores is warned about once per request, by the step's model that sends it."""
+
+    class NoStopSequencesFunctionModel(FunctionModel):
+        unsupported_settings = frozenset({'stop_sequences'})
+
+    agent = Agent(
+        NoStopSequencesFunctionModel(stream_function=preamble_text_before_output_tool),
+        name='durability_warns_once_about_an_ignored_setting',
+        output_type=StructuredOutput,
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def ignored_setting_workflow() -> str:
+        async with agent.run_stream('hello') as result:
+            return (await result.get_output()).response
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.warns(UnsupportedSettingWarning) as record:
+        assert await ignored_setting_workflow() == 'Paris'
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "The `stop_sequences` setting is not supported by model 'function:function::preamble_text_before_output_tool' and will be ignored."
+        ]
+    )
 
 
 async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:

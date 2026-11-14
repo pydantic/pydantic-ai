@@ -1237,6 +1237,22 @@ def fail_function_model_prefix_violations(
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
+def gave_up_on(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A mock transport handler raising what a retrying transport raises once it gave up on `handler`'s response.
+
+    That's the `HTTPStatusError` its `validate_response` raised for the error status, carrying the response, which
+    the provider SDK then never sees.
+    """
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
+
+
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
     """Decode a wire request using HTTPX's content-encoding support."""
     return httpx2.Response(200, content=content, headers=headers).content
