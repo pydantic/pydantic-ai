@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings

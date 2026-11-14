@@ -30,10 +30,10 @@ from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.skills import SkillDefinition, Skills
-from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, TaskControl
 from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
 from pydantic_clai2.builtin_plugins.coder_skills import edit_skills
 from pydantic_clai2.commands import Command
@@ -85,8 +85,8 @@ class DelegateModel(BaseModel):
         from pydantic_clai2.models.model_settings import ModelSettingsForm
 
         ModelSettingsForm.model_validate(value)
-        if 'base_url' in value:
-            raise ValueError('Set base_url in /model settings, where the model is built with it.')
+        if built := {'base_url', 'api_key'} & value.keys():
+            raise ValueError(f'Set {" and ".join(sorted(built))} in /model settings, where the model is built with it.')
         return value
 
     @model_serializer(mode='plain')
