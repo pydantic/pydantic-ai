@@ -189,6 +189,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>"
       ]
     },
+    "FunctionSchema.function": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::_capability_operation_schema"
+      ]
+    },
+    "FunctionSchema.revalidate": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
+      ]
+    },
     "FunctionSchema.validator": {
       "engines": [
         "durable_exec"
@@ -198,7 +220,8 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._bind_capability_operations.handler",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::bind_arguments"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::bind_arguments",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
       ]
     },
     "extract_return_schema_type": {
@@ -1399,6 +1422,19 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    }
+  },
+  "pydantic_ai_slim/pydantic_ai/_unsupported_settings.py": {
+    "suppress_warnings": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
       ]
     }
   },
@@ -4964,6 +5000,7 @@
     },
     "Model.prepare_request": {
       "engines": [
+        "durable_exec",
         "temporal"
       ],
       "kinds": [
@@ -4971,6 +5008,7 @@
         "override"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.prepare_request"
       ]
     },
@@ -5457,6 +5495,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._find_registered_model_id_for_hook",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.model_id",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_replace_run_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._register_activities",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.model_id"
       ]
     },
@@ -5966,6 +6005,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel._with_serving_wrapper",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::reject_serving_wrapper",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::unwrap_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.__init__.wrapped_request_stream_step",
@@ -6364,6 +6404,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
+    "Tool.function_schema": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
       ]
     },
     "ToolDefinition": {
@@ -7300,6 +7351,7 @@
     },
     "WrapperToolset.wrapped": {
       "engines": [
+        "dbos",
         "durable_exec",
         "temporal"
       ],
@@ -7307,6 +7359,8 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._wrap_and_register_leaf",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_wrapper_toolset.swap",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset._tool_for_info.args_validator_func",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset.call_tool",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset.for_run",
@@ -7321,6 +7375,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.for_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.for_run_step",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.id",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._child_workflow_toolset",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.__aenter__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.__aexit__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.id"
