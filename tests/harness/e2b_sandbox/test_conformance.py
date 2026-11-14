@@ -129,7 +129,7 @@ class TestLiveE2BDesktop:  # pragma: lax no cover
             '>/dev/null 2>&1 &',
             shell=True,
         )
-        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'])
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], timeout=30)
 
         await display.act(Click(x=300, y=180))
         await display.act(TypeText(text='hello, desktop'))
