@@ -234,6 +234,18 @@ def test_structured_content_renders_once(item: StructuredContent, expected: str)
     assert item.content == expected
 
 
+def test_structured_content_xml_strips_illegal_characters():
+    """`format='xml'` inherits `format_as_xml`'s removal of XML 1.0-illegal characters."""
+    item = StructuredContent(
+        {'note': 'keep\t\r\x7f\x85strip\x00\x1f', 'my key': 'stri\x0bp me'},
+        format='xml',
+        tag='ui_state',
+    )
+    assert item.content == (
+        '<ui_state>\n  <note>keep\t\r\x7f\x85strip</note>\n  <item key="my key">strip me</item>\n</ui_state>'
+    )
+
+
 def test_structured_content_subclass_renders_its_own_way():
     """A subclass carries its rendering, so it doesn't have to be passed each time the item is created."""
 

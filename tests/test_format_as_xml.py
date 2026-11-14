@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Self
 from uuid import UUID
+from xml.etree import ElementTree
 
 import pytest
 from pydantic import BaseModel, Field, computed_field
@@ -717,3 +718,33 @@ def test_model_with_non_primitive_types():
 <age>123.45</age>
 <uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
 """)
+
+
+def test_illegal_xml_characters_are_stripped():
+    """XML 1.0-illegal characters are removed, while legal ones like tab, LF, CR and the C1 controls survive."""
+    illegal = ''.join(
+        chr(n) for n in (*range(0x00, 0x09), 0x0B, 0x0C, *range(0x0E, 0x20), 0xD800, 0xDFFF, 0xFFFE, 0xFFFF)
+    )
+
+    class ExamplePydanticModelWithIllegalCharacters(BaseModel):
+        note: str = Field(title='bad\x07title', description='bad\x0bdescription')
+
+    output = format_as_xml(
+        ExamplePydanticModelWithIllegalCharacters(note=f'keep\t\n\r\x7f\x85{illegal}strip'),
+        root_tag='root',
+        include_field_info=True,
+    )
+    assert output == (
+        '<root>\n  <note title="badtitle" description="baddescription">keep\t\n\r\x7f\x85strip</note>\n</root>'
+    )
+    ElementTree.fromstring(output)  # the result is well-formed XML
+
+    key_output = format_as_xml({'my key\x00': f'stri{illegal}p me'}, root_tag='root')
+    assert key_output == '<root>\n  <item key="my key">strip me</item>\n</root>'
+    ElementTree.fromstring(key_output)
+
+    for char in illegal:
+        assert char not in output
+        assert char not in key_output
+    for char in '\t\n\r\x7f\x85':
+        assert char in output
