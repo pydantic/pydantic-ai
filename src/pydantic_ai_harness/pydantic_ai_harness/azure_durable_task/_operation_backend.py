@@ -169,9 +169,10 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
     async def _call_waiting_retry_after(self, payload: JsonValue, policy: task.RetryPolicy | None) -> _ActivityResult:
         """Call the activity, and again after each wait a model error asked for, within the retry policy.
 
-        Only a model activity asks for a wait; see `_retry_after_result`. Each call carries the retry policy, continued
-        from the attempts before it, so a failure that asks for no wait gets the policy's own backoff and the activity
-        is attempted no more often than the policy allows. `asyncio.sleep` waits on a durable timer here.
+        Only a model activity whose retry policy allows another attempt asks for a wait; see `_retry_after_result`.
+        Each call carries the retry policy, continued from the attempts before it, so a failure that asks for no wait
+        gets the policy's own backoff and the activity is attempted no more often than the policy allows.
+        `asyncio.sleep` waits on a durable timer here.
         """
         loop = current_loop()
         assert loop is not None
@@ -185,12 +186,11 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
             recorded = _RESULT.validate_python(await loop.wait(pending))
             if recorded.retry_after is None:
                 return recorded
+            assert policy is not None, 'Only a model activity with a retry policy asks for a wait.'
             # The SDK counts a retried activity's attempts on the task, but doesn't expose the count.
             attempts += pending._attempt_count if isinstance(pending, task.RetryableTask) else 1  # pyright: ignore[reportPrivateUsage]
-            if (
-                policy is None
-                or attempts >= policy.max_number_of_attempts
-                or (policy.retry_timeout is not None and loop.time() - started >= policy.retry_timeout.total_seconds())
+            if attempts >= policy.max_number_of_attempts or (
+                policy.retry_timeout is not None and loop.time() - started >= policy.retry_timeout.total_seconds()
             ):
                 assert recorded.failure is not None
                 failure = ParseDict(recorded.failure, _pb.TaskFailureDetails())
@@ -202,13 +202,13 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
 
 
 async def _run_operation(
-    operation: DurableOperation[ParamsT, WireT, ResultT], params: ParamsT, *, model_operation: bool
+    operation: DurableOperation[ParamsT, WireT, ResultT], params: ParamsT, *, wait_retry_after: bool
 ) -> object:
     """Run the operation in its activity, and record its result, or the wait a model error asked for."""
     try:
         result = await operation.handler(params)
     except Exception as exc:
-        if not model_operation or (waiting := _retry_after_result(exc)) is None:
+        if not wait_retry_after or (waiting := _retry_after_result(exc)) is None:
             raise
         return waiting
     try:
@@ -261,7 +261,13 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
         if not isinstance(transport, JsonTransport):  # pragma: no cover - this capability installs every transport
             raise TypeError(f'{type(transport).__name__} does not accept the Durable Task JSON wire.')
         json_transport: JsonTransport[ParamsT] = transport
-        model_operation = isinstance(operation.operation_id, MODEL_OPERATION_IDS)
+        # Bound model operations are always called with the policy they're registered with. Without one that allows
+        # another attempt, a model activity fails natively, as it would without waiting `retry_after`.
+        wait_retry_after = (
+            isinstance(operation.operation_id, MODEL_OPERATION_IDS)
+            and config is not None
+            and config.max_number_of_attempts > 1
+        )
 
         async def execute(payload: object) -> object:
             try:
@@ -275,7 +281,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
                             params = json_transport.load(payload, runtime=self)
                         except ValidationError as exc:
                             return _failure(SerializationFailure(exc))
-                        return await _run_operation(operation, params, model_operation=model_operation)
+                        return await _run_operation(operation, params, wait_retry_after=wait_retry_after)
             except UserError as exc:
                 # SDK RetryPolicy retries every activity exception. Raise recorded codec and
                 # configuration failures in orchestration code instead, outside its retry boundary.

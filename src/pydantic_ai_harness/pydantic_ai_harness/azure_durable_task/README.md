@@ -271,11 +271,12 @@ the policy's backoff. A `RetryPolicy` can't set the delay of one retry, so the a
 the wait, and the orchestration waits it and calls the activity again with the attempts the policy has
 left: the history shows the completed activity, a timer, and the activity again. The wait is capped at
 `max_retry_interval`, or without one at the policy's own backoff for that attempt or a minute,
-whichever is longer. Once the policy allows no more attempts, or without `model_options`, the
-orchestration gets a `TaskFailedError` with the model error's type, message and cause, rebuilt from
-the activity's result. The activity shows as completed in the history rather than failed, its message
-names the activity rather than its task number, and properties from a worker's
-`exception_properties_provider` aren't included. Set
+whichever is longer. Once the policy allows no more attempts, the orchestration gets a
+`TaskFailedError` with the model error's type, message and cause, rebuilt from the activity's result:
+the last attempt shows as completed in the history rather than failed, its message names the activity
+rather than its task number, and properties from a worker's `exception_properties_provider` aren't
+included. Without `model_options`, or with `max_number_of_attempts=1`, no retry can happen, so a
+model activity fails with the model error like any other activity. Set
 `model_settings={'max_retries': 0}` on the agent so the provider SDK doesn't also retry inside the
 activity.
 

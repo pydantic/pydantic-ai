@@ -1112,7 +1112,16 @@ class TestAzureDurableTaskDurability:
                 'recovered',
                 id='capped-at-a-minute',
             ),
+            # Without a retry policy that allows another attempt, the model activity fails natively.
             pytest.param(5, None, None, [], 'failed', id='no-retry-policy'),
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 1},
+                None,
+                [],
+                'failed',
+                id='single-attempt',
+            ),
         ],
     )
     def test_model_retry_after_waits_on_a_durable_timer(
@@ -1169,6 +1178,9 @@ class TestAzureDurableTaskDurability:
         assert state.get_output() == output
         assert observed == waits
         assert len(calls) == len(waits) + 1
+        # A model activity that waited a `retry_after` completes with it, so only one that couldn't fails natively.
+        history = durable_worker.instances[instance_id].history
+        assert any(event.HasField('taskFailed') for event in history) == (output == 'failed' and not waits)
 
     def test_user_error_is_terminal_under_native_retries(self, durable_worker: InMemoryWorker) -> None:
         effects: list[str] = []
