@@ -7,8 +7,8 @@ capability runs its local fallback instead.
 
 from __future__ import annotations as _annotations
 
-import json
 import re
+from collections.abc import AsyncIterator
 from datetime import UTC
 from decimal import Decimal
 from typing import Any
@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from cassetter import Cassette
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     Agent,
@@ -47,6 +48,8 @@ from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
+    from google.genai.types import Blob, Candidate, Content, FinishReason, GenerateContentResponse, Part
+
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -478,50 +481,54 @@ async def test_google_image_generation_drops_thought_images(
 
 
 async def test_google_image_generation_stream_drops_thought_images(
-    allow_model_requests: None, gemini_api_key: str, vcr: Cassette
+    allow_model_requests: None, gemini_api_key: str, mocker: MockerFixture
 ):
-    """Streaming drops the interim thought image too, and splits the thinking around it, as a non-streaming run does."""
-    agent = Agent(
-        GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key)),
-        output_type=str | BinaryImage,
-        model_settings={'thinking': True},
+    """Streaming drops interim thought images too; the final image keeps its signature.
+
+    The stream is hand-built rather than recorded because a recorded thought-image stream trips
+    `test_stream_parity.py::test_recorded_streams_match_the_complete_response`: the stream merges the thinking before
+    and after a dropped thought image into one `ThinkingPart`, where the complete response keeps two. The split is
+    tracked separately.
+    """
+    chunk = GenerateContentResponse(
+        model_version='gemini-3-pro-image-preview',
+        candidates=[
+            Candidate(
+                content=Content(
+                    role='model',
+                    parts=[
+                        Part(text='Planning the composition...', thought=True),
+                        Part(inline_data=Blob(data=b'draft-1', mime_type='image/png'), thought=True),
+                        Part(inline_data=Blob(data=b'draft-2', mime_type='image/png'), thought=True),
+                        Part(inline_data=Blob(data=b'final', mime_type='image/png'), thought_signature=b'signature'),
+                    ],
+                ),
+                finish_reason=FinishReason.STOP,
+            )
+        ],
     )
 
-    async with agent.run_stream(THOUGHT_IMAGE_PROMPT) as result:
+    async def stream_chunks() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_chunks())
+    agent = Agent(model, output_type=BinaryImage, model_settings={'thinking': True})
+
+    async with agent.run_stream('Generate an image of an axolotl.') as result:
         output = await result.get_output()
 
-    recorded_chunks = [
-        json.loads(line.removeprefix('data: '))
-        for line in vcr.interactions[0].response.body.content.splitlines()
-        if line.startswith('data: ')
-    ]
-    recorded_parts = [
-        part for chunk in recorded_chunks for candidate in chunk['candidates'] for part in candidate['content']['parts']
-    ]
-    assert recorded_parts == snapshot(
-        [
-            {'text': IsStr(), 'thought': True},
-            {'text': IsStr(), 'thought': True},
-            {'text': IsStr(), 'thought': True},
-            {'inlineData': {'mimeType': 'image/jpeg', 'data': IsStr()}, 'thought': True},
-            {'text': IsStr(), 'thought': True},
-            {'text': IsStr(), 'thought': True},
-            {'inlineData': {'mimeType': 'image/jpeg', 'data': IsStr()}, 'thoughtSignature': IsStr()},
-            {'text': ''},
-        ]
-    )
+    assert output.data == b'final'
     assert result.response.parts == snapshot(
         [
-            ThinkingPart(content=IsStr()),
-            ThinkingPart(content=IsStr()),
+            ThinkingPart(content='Planning the composition...'),
             FilePart(
-                content=IsInstance(BinaryImage),
+                content=BinaryImage(data=b'final', media_type='image/png', identifier='d594c2'),
                 provider_name='google',
-                provider_details={'thought_signature': IsStr()},
+                provider_details={'thought_signature': 'c2lnbmF0dXJl'},
             ),
         ]
     )
-    assert result.response.images == [output]
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, gemini_api_key: str):
