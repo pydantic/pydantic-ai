@@ -487,8 +487,6 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             async with _mapped_errors('The boxd desktop failed', client=client, machine_id=machine_id):
                 try:
                     yield
-                except WorkspaceUnavailableError:
-                    raise
                 except WorkspaceError as error:
                     # The desktop's own failure, such as a button it couldn't let go of, may come from a lost machine.
                     if (gone := await _probe(client, machine_id)) is not None:
