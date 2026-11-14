@@ -595,24 +595,21 @@ class _JsonSchemaTestData:
 
         return self._char()
 
-    def _int_gen(self, schema: dict[str, Any]) -> int:
+    def _int_gen(self, schema: dict[str, Any]) -> int | float:
         """Generate an integer from a JSON Schema integer."""
         maximum = schema.get('maximum')
         minimum = schema.get('minimum')
+
+        if (exc_max := schema.get('exclusiveMaximum')) is not None:
+            maximum = self._tightest_bound(maximum, exc_max - 1, min)
+        if (exc_min := schema.get('exclusiveMinimum')) is not None:
+            minimum = self._tightest_bound(minimum, exc_min + 1, max)
+
         if minimum is not None and maximum == minimum:
             return minimum
 
-        if maximum is None and (exc_max := schema.get('exclusiveMaximum')) is not None:
-            maximum = exc_max - 1
-
-        if minimum is None and (exc_min := schema.get('exclusiveMinimum')) is not None:
-            minimum = exc_min + 1
-
         if minimum is not None and maximum is not None:
             span = maximum - minimum
-            if span == 0:
-                # Exclusive-bound adjustments can collapse a valid narrow range.
-                return minimum
             if (
                 schema.get('type') == 'integer'
                 and minimum % 1 == 0

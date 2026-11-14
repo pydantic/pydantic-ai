@@ -834,7 +834,7 @@ def test_int_inclusive_upper_bound_reachable():
             output.number,
         )
         for output in outputs
-    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 4, 4.0), (5, 5, 2, 2, 2.0)])
+    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 2, 4.0), (5, 5, 2, 3, 2.0)])
 
     def generated_values(minimum: float, maximum: float, seeds: list[int]) -> list[Any]:
         schema = {
@@ -847,6 +847,62 @@ def test_int_inclusive_upper_bound_reachable():
     assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
     assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
     assert generated_values(0.0, 1e20, [10**20]) == [10**20]
+
+
+def test_agent_test_model_mixed_int_lower_bounds():
+    class MyOutput(BaseModel):
+        value: Annotated[int, Field(ge=0, gt=5, le=10)]
+
+    model = TestModel()
+    result = Agent(output_type=MyOutput).run_sync('hello', model=model)
+
+    params = model.last_model_request_parameters
+    assert params is not None
+    value_schema = params.output_tools[0].parameters_json_schema['properties']['value']
+    assert value_schema['minimum'] == 0
+    assert value_schema['exclusiveMinimum'] == 5
+    assert value_schema['maximum'] == 10
+    assert result.output.value >= 0
+    assert result.output.value > 5
+    assert result.output.value <= 10
+
+
+def test_agent_test_model_mixed_int_upper_bounds():
+    class MyOutput(BaseModel):
+        value: Annotated[int, Field(ge=0, le=10, lt=5)]
+
+    model = TestModel(seed=6)
+    result = Agent(output_type=MyOutput).run_sync('hello', model=model)
+
+    params = model.last_model_request_parameters
+    assert params is not None
+    value_schema = params.output_tools[0].parameters_json_schema['properties']['value']
+    assert value_schema['minimum'] == 0
+    assert value_schema['maximum'] == 10
+    assert value_schema['exclusiveMaximum'] == 5
+    assert result.output.value >= 0
+    assert result.output.value <= 10
+    assert result.output.value < 5
+
+
+def test_agent_test_model_mixed_int_all_four_bounds():
+    class MyOutput(BaseModel):
+        value: Annotated[int, Field(ge=0, gt=5, le=10, lt=8)]
+
+    model = TestModel()
+    result = Agent(output_type=MyOutput).run_sync('hello', model=model)
+
+    params = model.last_model_request_parameters
+    assert params is not None
+    value_schema = params.output_tools[0].parameters_json_schema['properties']['value']
+    assert value_schema['minimum'] == 0
+    assert value_schema['exclusiveMinimum'] == 5
+    assert value_schema['maximum'] == 10
+    assert value_schema['exclusiveMaximum'] == 8
+    assert result.output.value >= 0
+    assert result.output.value > 5
+    assert result.output.value <= 10
+    assert result.output.value < 8
 
 
 class Cat(BaseModel):
