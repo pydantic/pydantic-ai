@@ -54,6 +54,10 @@ with try_import() as imports_successful:
         normalized,
     )
 
+# Imported before the `REALTIME` session's capture starts, so the capture finds `ReplayWebSocket` among the classes
+# already defined.
+from .realtime import ws_cassettes
+
 pytest_plugins = ['pytester']
 
 pytestmark = [
@@ -177,7 +181,8 @@ async def post(http, **content):
 
 
 def test_json_over_httpx():
-    asyncio.run(post(httpx, json=dict(text={text!r}, pick=random.randrange(1000))))
+    content = dict(json=dict(text={text!r}, pick=random.randrange(1000)), headers={{'xi-api-key': 'secret'}})
+    asyncio.run(post(httpx, **content))
 
 
 def test_multipart_over_httpx2():
@@ -357,19 +362,163 @@ def test_media_type_set_or_implied():
     MediaTypeAdapter.load_messages([])
 """
 
+REALTIME = """
+import asyncio
+import json
+from contextlib import aclosing
+
+import pytest
+
+from pydantic_ai.realtime.codec import OutputTranscript, RealtimeConnection
+from pydantic_ai.realtime.google import GoogleRealtimeConnection
+from pydantic_ai.realtime.lifecycle import ResponseStarted, StaleEvent
+from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
+
+from tests.realtime.ws_cassettes import CassetteMessage, RealtimeCassette, ReplayWebSocket
+
+
+class Socket:
+    close_code = 1000
+    close_reason = ''
+
+    def __init__(self, *frames):
+        self.frames = [json.dumps(frame) for frame in frames]
+
+    async def send(self, data):
+        pass
+
+    async def __aiter__(self):
+        for frame in self.frames:
+            yield frame
+
+
+class WrappingSocket(Socket):
+    async def send(self, data):
+        await super().send(data)
+
+
+class BrokenSocket(Socket):
+    async def send(self, data):
+        raise ConnectionError('socket closed')
+
+
+async def openai_turn():
+    connection = OpenAIRealtimeConnection(
+        WrappingSocket(
+            dict(type='response.created', event_id='event-1', response=dict(id='resp-1')),
+            dict(
+                type='response.output_text.delta',
+                event_id='event-2',
+                response_id='resp-1',
+                item_id='item-1',
+                output_index=0,
+                content_index=0,
+                delta={text!r},
+            ),
+        )
+    )
+    await connection.send('hi')
+    [event async for event in connection]
+
+
+def test_openai_turn():
+    asyncio.run(openai_turn())
+
+
+def test_broken_socket():
+    with pytest.raises(ConnectionError, match='socket closed'):
+        asyncio.run(OpenAIRealtimeConnection(BrokenSocket()).send('hi'))
+
+
+class Session:
+    async def send_client_content(self, *, turns=None, turn_complete=True):
+        pass
+
+
+def test_google_session():
+    asyncio.run(GoogleRealtimeConnection(Session()).send({text!r}))
+
+
+async def replay():
+    frame = dict(type='session.update')
+    await ReplayWebSocket(RealtimeCassette(interactions=[CassetteMessage(direction='sent', data=frame)])).send(
+        json.dumps(frame)
+    )
+
+
+def test_cassette_replay():
+    asyncio.run(replay())
+
+
+class Scripted(RealtimeConnection):
+    closed = False
+
+    async def send(self, content):
+        return [ResponseStarted(response_id='r1')]
+
+    async def frames(self):
+        try:
+            yield [ResponseStarted(response_id='r1'), StaleEvent(event=OutputTranscript(text={text!r}))]
+            raise RuntimeError('provider went away')
+        finally:
+            Scripted.closed = True
+
+
+class Chained(Scripted):
+    async def send(self, content):
+        return await super().send(content)
+
+
+class ListedFrames:
+    def __init__(self):
+        self.frames = [[OutputTranscript(text='listed')]]
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.frames:
+            raise StopAsyncIteration
+        return self.frames.pop()
+
+
+class Listed(Scripted):
+    def frames(self):
+        return ListedFrames()
+
+
+async def scripted():
+    assert await Chained().send('hi') == [ResponseStarted(response_id='r1')]
+    async with aclosing(Chained().frames()) as frames:
+        await anext(frames)
+    assert Scripted.closed
+    with pytest.raises(RuntimeError, match='provider went away'):
+        [event async for event in Scripted()]
+    [frame async for frame in Listed().frames()]
+
+
+def test_connection_defined_after_the_capture_started():
+    asyncio.run(scripted())
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, or `UI`, carrying `text`, into `capture_dir`.
+    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI` or `REALTIME`, carrying `text`, into
+    `capture_dir`.
 
     It runs as `main` runs each side.
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
 
-    def run(capture_dir: Path, *args: str, text: str = 'hello', ui: bool = False) -> pytest.RunResult:
+    def run(
+        capture_dir: Path, *args: str, text: str = 'hello', ui: bool = False, realtime: bool = False
+    ) -> pytest.RunResult:
         if ui:
             pytester.makepyfile(test_ui=UI.format(text=text))
+        elif realtime:
+            pytester.makepyfile(test_realtime=REALTIME.format(text=text))
         else:
             pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
@@ -448,11 +597,14 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
 def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
     """A request sent over `httpx` or `httpx2` is recorded with its body, and a call on an SDK mock with its arguments.
 
-    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture.
+    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture. The API keys
+    the session's requests carry, under ElevenLabs' `xi-api-key` and Anthropic's `x-api-key`, are left out.
     """
     run(tmp_path).assert_outcomes(passed=11)
 
-    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    capture = (tmp_path / 'main.jsonl').read_text()
+    assert 'secret' not in capture
+    lines = capture.splitlines()
     # `test_anthropic_beta`'s request is checked by `test_compare_flags_a_changed_request_header`, and the calls on
     # in-process models by `test_capture_records_each_in_process_model_call`.
     records = [
@@ -779,6 +931,264 @@ data: [DONE]
     )
 
 
+@pytest.mark.skipif(not ws_cassettes.ws_cassettes_available(), reason='`websockets` or `PyYAML` not installed')
+def test_capture_records_what_realtime_connections_send_and_yield(
+    run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Each frame `frames` yields, each `send` call and each call on a realtime double, in the order they happen.
+
+    The session's own classes stand in for doubles defined under `tests/realtime/` once the capture started, and
+    `ReplayWebSocket` for one defined before. `test_connection_defined_after_the_capture_started` checks that closing
+    the recording closes what `frames` returned.
+    """
+    pytest.importorskip('google.genai')
+    monkeypatch.setattr(refactor_capture, 'REALTIME_DOUBLE_PACKAGES', ('tests.realtime', 'test_realtime'))
+    run(tmp_path, realtime=True).assert_outcomes(passed=5)
+
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    records = [record for line in lines if (record := json.loads(line))['kind'] == 'realtime']
+    assert [
+        (
+            record['node'].split('::')[1],
+            record['target'],
+            [
+                f'StaleEvent({event["event"]["type"]})' if event['type'] == 'StaleEvent' else event['type']
+                for event in record.get('frame', [])
+            ],
+            record.get('input'),
+            [event['type'] for event in record.get('result') or ()],
+            record.get('args'),
+            sorted(record.get('kwargs', {})),
+            record.get('error'),
+        )
+        for record in records
+    ] == snapshot(
+        [
+            (
+                'test_openai_turn',
+                'pydantic_ai.realtime.openai.OpenAIRealtimeConnection.send',
+                [],
+                {'type': 'str', 'value': 'hi'},
+                [],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_openai_turn',
+                'test_realtime.WrappingSocket.send',
+                [],
+                None,
+                [],
+                [
+                    {
+                        'type': 'conversation.item.create',
+                        'event_id': 'pydantic_ai.content.0',
+                        'item': {
+                            'id': 'pydantic_ai_item_0',
+                            'type': 'message',
+                            'role': 'user',
+                            'content': [{'type': 'input_text', 'text': 'hi'}],
+                        },
+                    }
+                ],
+                [],
+                None,
+            ),
+            (
+                'test_openai_turn',
+                'test_realtime.WrappingSocket.send',
+                [],
+                None,
+                [],
+                [
+                    {
+                        'type': 'response.create',
+                        'event_id': 'pydantic_ai.response.0',
+                        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+                    }
+                ],
+                [],
+                None,
+            ),
+            (
+                'test_openai_turn',
+                'pydantic_ai.realtime.openai.OpenAIRealtimeConnection.frames',
+                ['ResponseStarted'],
+                None,
+                [],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_openai_turn',
+                'pydantic_ai.realtime.openai.OpenAIRealtimeConnection.frames',
+                ['OutputTranscript'],
+                None,
+                [],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_openai_turn',
+                'pydantic_ai.realtime.openai.OpenAIRealtimeConnection.frames',
+                ['ResponseEnded', 'RealtimeSessionErrorEvent'],
+                None,
+                [],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_broken_socket',
+                'pydantic_ai.realtime.openai.OpenAIRealtimeConnection.send',
+                [],
+                {'type': 'str', 'value': 'hi'},
+                [],
+                None,
+                [],
+                'ConnectionError: socket closed',
+            ),
+            (
+                'test_broken_socket',
+                'test_realtime.BrokenSocket.send',
+                [],
+                None,
+                [],
+                [
+                    {
+                        'type': 'conversation.item.create',
+                        'event_id': 'pydantic_ai.content.0',
+                        'item': {
+                            'id': 'pydantic_ai_item_0',
+                            'type': 'message',
+                            'role': 'user',
+                            'content': [{'type': 'input_text', 'text': 'hi'}],
+                        },
+                    }
+                ],
+                [],
+                'ConnectionError: socket closed',
+            ),
+            (
+                'test_google_session',
+                'pydantic_ai.realtime.google.GoogleRealtimeConnection.send',
+                [],
+                {'type': 'str', 'value': 'hello'},
+                ['InputAdded'],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_google_session',
+                'test_realtime.Session.send_client_content',
+                [],
+                None,
+                [],
+                [],
+                ['turn_complete', 'turns'],
+                None,
+            ),
+            (
+                'test_cassette_replay',
+                'tests.realtime.ws_cassettes.ReplayWebSocket.send',
+                [],
+                None,
+                [],
+                [{'type': 'session.update'}],
+                [],
+                None,
+            ),
+            (
+                'test_connection_defined_after_the_capture_started',
+                'test_realtime.Chained.send',
+                [],
+                {'type': 'str', 'value': 'hi'},
+                ['ResponseStarted'],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_connection_defined_after_the_capture_started',
+                'test_realtime.Chained.frames',
+                ['ResponseStarted', 'StaleEvent(OutputTranscript)'],
+                None,
+                [],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_connection_defined_after_the_capture_started',
+                'test_realtime.Scripted.frames',
+                ['ResponseStarted', 'StaleEvent(OutputTranscript)'],
+                None,
+                [],
+                None,
+                [],
+                None,
+            ),
+            (
+                'test_connection_defined_after_the_capture_started',
+                'test_realtime.Scripted.frames',
+                [],
+                None,
+                [],
+                None,
+                [],
+                'RuntimeError: provider went away',
+            ),
+            (
+                'test_connection_defined_after_the_capture_started',
+                'test_realtime.Listed.frames',
+                ['OutputTranscript'],
+                None,
+                [],
+                None,
+                [],
+                None,
+            ),
+        ]
+    )
+    (stale_frame,) = [
+        record['frame']
+        for record in records
+        if record['target'] == 'test_realtime.Scripted.frames' and 'frame' in record
+    ]
+    assert stale_frame == snapshot(
+        [
+            {
+                'type': 'ResponseStarted',
+                'value': {
+                    'response_id': 'r1',
+                    'answers': [],
+                    'basis': 'protocol',
+                    'user_turn_id': None,
+                    'continues': None,
+                    'provider_id': True,
+                },
+            },
+            {
+                'type': 'StaleEvent',
+                'event': {
+                    'type': 'OutputTranscript',
+                    'value': {
+                        'text': 'hello',
+                        'is_final': False,
+                        'output_text': False,
+                        'item_id': None,
+                        'response_id': None,
+                    },
+                },
+            },
+        ]
+    )
+
+
 async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
     """A subclass defined once the capture started keeps its type parameters, and its abstract methods."""
     capture = RefactorCapture(tmp_path)
@@ -1047,6 +1457,7 @@ records: base 14, head 14
 stream events: head 11
 requests: head 10
 ui records: head 0
+realtime records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
@@ -1058,7 +1469,8 @@ nodes per request target, head:
   pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 nodes per ui target, head:
-nodes that recorded no request, head: 2
+nodes per realtime target, head:
+nodes that recorded no request or realtime record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
 only in base: 0, only in head: 0, differing: 0
@@ -1067,6 +1479,7 @@ records: base 14, head 12
 stream events: head 9
 requests: head 9
 ui records: head 0
+realtime records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
@@ -1078,7 +1491,8 @@ nodes per request target, head:
   pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 nodes per ui target, head:
-nodes that recorded no request, head: 2
+nodes per realtime target, head:
+nodes that recorded no request or realtime record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
 only in base: 1, only in head: 0, differing: 6
@@ -1112,7 +1526,10 @@ def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path,
 def test_compare_names_the_nodes_that_recorded_no_request(
     run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    """A selected node that recorded no request is listed, whether it recorded a stream or nothing, without failing."""
+    """A selected node that recorded no request or realtime record is listed, whether it recorded a stream or nothing.
+
+    Listing it doesn't fail the comparison.
+    """
     base, head = tmp_path / 'base', tmp_path / 'head'
     for capture_dir in (base, head):
         run(capture_dir, '-k', 'subclass or no_stream or json').assert_outcomes(passed=3, deselected=8)
@@ -1122,7 +1539,7 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     assert compare(base, head) == 0
     assert capsys.readouterr().out.splitlines()[-4:] == snapshot(
         [
-            'nodes that recorded no request, head: 2',
+            'nodes that recorded no request or realtime record, head: 2',
             '  test_streams.py::test_no_stream',
             '  test_streams.py::test_subclass_defined_after_the_capture_started',
             'only in base: 0, only in head: 0, differing: 0',
@@ -1156,11 +1573,13 @@ records: base 1, head 1
 stream events: head 0
 requests: head 0
 ui records: head 1
+realtime records: head 0
 nodes per stream module, head:
 nodes per request target, head:
 nodes per ui target, head:
   test_ui.MediaTypeAdapter.load_messages: 1
-nodes that recorded no request, head: 1
+nodes per realtime target, head:
+nodes that recorded no request or realtime record, head: 1
   test_ui.py::test_media_type_set_or_implied
 only in base: 0, only in head: 0, differing: 1
   differing: test_ui.py::test_media_type_set_or_implied

@@ -141,6 +141,11 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_unsent_heartbeat(reason): a replay may end before its final recorded `pong` or idle-audio frame '
+        'goes out; reason required',
+    )
 
 
 @pytest.hookimpl(trylast=True)

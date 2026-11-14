@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DocumentUrl,
     FilePart,
     FinishReason,
     ImageUrl,
@@ -53,7 +54,9 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
@@ -214,7 +217,9 @@ async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() 
     )
     assert conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
     events = [event async for event in conn]
-    assert isinstance(events[-1], RealtimeSessionErrorEvent) and 'reconnect failed' in events[-1].message
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
+    # The drop's own description is `websockets`' wording.
+    assert events[-1].message == f'Gemini Live connection closed; reconnect failed: {ConnectionClosed(None, None)}'
     assert conn._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
 
 
@@ -1625,21 +1630,46 @@ async def test_send_tool_result_media_goes_in_function_response_parts(monkeypatc
     [
         (
             BinaryContent(data=b'%PDF', media_type='application/pdf'),
-            'carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so '
-            "`BinaryContent` content of type 'application/pdf' attached to a tool return cannot be delivered",
+            snapshot(
+                "Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `BinaryContent` content of type 'application/pdf' attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media."
+            ),
         ),
-        (AudioUrl(url='https://example.com/a.mp3'), 'so `AudioUrl` content attached to a tool return cannot'),
+        (
+            AudioUrl(url='https://example.com/a.mp3'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `AudioUrl` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
+        (
+            DocumentUrl(url='https://example.com/a.pdf'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `DocumentUrl` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
+        (
+            VideoUrl(url='https://example.com/a.mp4'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `VideoUrl` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
+        (
+            UploadedFile(file_id='file-1', provider_name='google-gla', media_type='application/pdf'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `UploadedFile` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
     ],
 )
 async def test_send_tool_result_unsupported_media_raises_where_media_is_supported(
-    item: AudioUrl | BinaryContent, message: str
+    item: AudioUrl | BinaryContent | DocumentUrl | VideoUrl | UploadedFile, message: str
 ) -> None:
     # The 3.x models close the session on a PDF, so media outside the profile's types is refused, unsent.
     session = _RecordingSession()
     conn = _conn_with_tool_result_media(session)
     _register_call(conn)
-    with pytest.raises(UserError, match=re.escape(message)):
+    with pytest.raises(UserError) as exc_info:
         await conn.send(ToolResult(tool_call_id='c1', output='done', content=[item]))
+    assert str(exc_info.value) == message
     assert session._ws.sent == [] and session.tool_responses == []  # pyright: ignore[reportPrivateUsage]
 
 
@@ -4063,11 +4093,13 @@ def _declared_behavior(model: GoogleRealtimeModel, settings: GoogleRealtimeModel
 def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     provider = GoogleProvider(client=_fake_client(_RecordingSession()))
     # A model-level setting is translated when the model is built, so the warning points at that line.
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated') as record:
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         model = GoogleRealtimeModel(
             _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(google_async_tool_calls=True)
         )
-    assert record[0].filename == __file__
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        ('`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.', __file__)
+    ]
     assert model.settings == {'async_tool_calls': True}
     assert _declared_behavior(model, None) == 'NON_BLOCKING'
     # Each settings layer is translated on its own, so a session-level setting still overrides a model-level
@@ -4076,29 +4108,60 @@ def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     model = GoogleRealtimeModel(
         _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(async_tool_calls=True)
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    # A setting translated as the model builds its config warns from that module, once per config.
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, {'google_async_tool_calls': False}) == 'BLOCKING'
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
     # Within one layer, the shared setting wins.
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, {'google_async_tool_calls': True, 'async_tool_calls': False}) == 'BLOCKING'
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
     # A model-level setting assigned after construction is still translated when it's used.
     model.settings = GoogleRealtimeModelSettings(google_async_tool_calls=True)
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, None) == 'NON_BLOCKING'
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
-    ('model_settings', 'session_settings', 'expected_behavior'),
+    ('model_settings', 'session_settings', 'expected_behavior', 'expected_warnings'),
     [
         (
             {'async_tool_calls': True},
             {'google_async_tool_calls': False},
             'BLOCKING',
+            [
+                (
+                    '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+                    'google.py',
+                )
+            ],
         ),
         (
             {'google_async_tool_calls': False},
             {'async_tool_calls': True},
             'NON_BLOCKING',
+            [
+                (
+                    '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+                    'test_google.py',
+                )
+            ],
         ),
     ],
 )
@@ -4106,10 +4169,11 @@ async def test_agent_realtime_session_setting_overrides_the_model_setting_in_eit
     model_settings: GoogleRealtimeModelSettings,
     session_settings: GoogleRealtimeModelSettings,
     expected_behavior: str,
+    expected_warnings: list[tuple[str, str]],
 ) -> None:
     """`Agent.realtime` merges the two layers through the model, which translates each one on its own."""
     captured: dict[str, Any] = {}
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         model = GoogleRealtimeModel(
             _OPTIONAL_MODEL,
             provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)),
@@ -4123,6 +4187,10 @@ async def test_agent_realtime_session_setting_overrides_the_model_setting_in_eit
 
         async with agent.realtime(model, model_settings=session_settings).session():
             pass
+    files = {'google.py': rt_google.__file__, 'test_google.py': __file__}
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (message, files[name]) for message, name in expected_warnings
+    ]
     config = captured['config']
     assert isinstance(config, genai_types.LiveConnectConfig) and config.tools
     genai_tool = config.tools[0]
@@ -4136,13 +4204,19 @@ async def test_deprecated_google_async_tool_calls_setting_reaches_the_connection
     model = GoogleRealtimeModel(
         'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         async with model.connect(
             messages=[],
             model_settings=GoogleRealtimeModelSettings(google_async_tool_calls=True),
             model_request_parameters=ModelRequestParameters(),
         ) as conn:
             assert conn._async_tool_calls_enabled is True  # pyright: ignore[reportPrivateUsage]
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -4275,8 +4349,14 @@ def test_deprecated_google_requires_async_tool_calls_profile_key(requires: bool,
         provider=GoogleProvider(client=_fake_client(_RecordingSession())),
         profile=GoogleRealtimeModelProfile(google_requires_async_tool_calls=requires),
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_requires_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         profile = model.profile
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            "`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use `async_tool_call_mode='always'` instead.",
+            __file__,
+        )
+    ]
     # `False` carried no signal of its own, so it leaves the model's mode alone.
     assert profile.get('async_tool_call_mode') == mode
     assert profile.get('supports_async_tool_calls') is requires

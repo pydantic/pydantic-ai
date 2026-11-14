@@ -2000,13 +2000,14 @@ def test_user_prompt_text_parts_are_joined() -> None:
 async def test_handshake_timeout_is_a_typed_error(model: OpenAILiveModel) -> None:
     """A session that never starts fails predictably instead of hanging."""
     with _patched_connect(_FakeWebSocket([])):
-        with pytest.raises(RealtimeError, match='timed out waiting'):
+        with pytest.raises(RealtimeError) as exc_info:
             async with model.connect(
                 messages=[],
                 model_settings=OpenAILiveModelSettings(handshake_timeout=0.05),
                 model_request_parameters=ModelRequestParameters(),
             ):
                 pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot("timed out waiting for a 'session.started' event")
 
 
 async def test_handshake_error_is_a_typed_error(model: OpenAILiveModel) -> None:

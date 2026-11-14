@@ -231,6 +231,9 @@ async def test_thinking_sets_the_backends_reasoning_effort(
     assert session.usage.details == {'reasoning_tokens': 0}
 
 
+@pytest.mark.realtime_ws_unsent_heartbeat(
+    reason='Recording held the session 0.5 s past the reply; replay closes sooner, cancelling the idle pump before its last recorded frame.'
+)
 async def test_typed_question_runs_the_agents_tool(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
@@ -294,6 +297,9 @@ async def test_typed_question_runs_the_agents_tool(
     ] == ['session.close', 'session.closed']
 
 
+@pytest.mark.realtime_ws_unsent_heartbeat(
+    reason='Recording held the session 0.5 s past the reply; replay closes sooner, cancelling the idle pump before its last recorded frame.'
+)
 async def test_instruction_change_updates_the_backend(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
@@ -366,6 +372,9 @@ The code word is ORANGE. Tell the user when they ask for it.
     assert speech[-1] is not None and 'orange' in speech[-1].lower()
 
 
+@pytest.mark.realtime_ws_unsent_heartbeat(
+    reason='Recording held the session 0.5 s past the reply; replay closes sooner, cancelling the idle pump before its last recorded frame.'
+)
 async def test_typed_small_talk_is_answered_in_one_reply(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
