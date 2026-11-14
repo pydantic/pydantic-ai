@@ -2659,3 +2659,51 @@ async def test_huggingface_status_category(
     assert {cls for cls in _CATEGORIES if isinstance(exc_info.value, cls)} == categories
     assert isinstance(exc_info.value, ModelHTTPError)
     assert exc_info.value.status_code == status_code
+
+
+def test_mistral_3051_invalid_args_maps_to_request_rejected(allow_model_requests: None):
+    model = _mistral(
+        _json(
+            400,
+            {
+                'object': 'error',
+                'message': 'reasoning_effort none is not supported for this model, supported values: '
+                "[<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+                'raw_status_code': 400,
+            },
+        )
+    )
+    agent = Agent(model)
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
+        agent.run_sync('hello')
+
+    assert not isinstance(exc_info.value, ModelContextWindowExceededError)
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.provider_error_code == '3051'
+    assert exc_info.value.provider_error_type == 'invalid_request_invalid_args'
+
+
+def test_mistral_3051_genuine_overflow_still_context_window(allow_model_requests: None):
+    model = _mistral(
+        _json(
+            400,
+            {
+                'object': 'error',
+                'message': 'Prompt contains 150004 tokens and 0 draft tokens, too large for model with 131072 '
+                'maximum context length',
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+            },
+        )
+    )
+    agent = Agent(model)
+    with pytest.raises(ModelContextWindowExceededError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.provider_error_code == '3051'
+    assert exc_info.value.provider_error_type == 'invalid_request_invalid_args'
