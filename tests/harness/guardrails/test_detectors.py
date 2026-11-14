@@ -881,6 +881,56 @@ class TestForToolResultText:
         assert f'context: {_OPENAI_KEY}' not in str(result.all_messages())
         assert 'context: [redacted:openai_key]' in str(result.all_messages())
 
+    @pytest.mark.parametrize('wrapped', [False, True], ids=['list', 'tool-return'])
+    def test_text_beside_an_image_is_redacted_and_the_image_kept(self, wrapped: bool):
+        image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+        parts = [f'Typed {_OPENAI_KEY}.', image]
+        result = ToolReturn(parts, metadata={'performed': 1}) if wrapped else parts
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        expected = ['Typed [redacted:openai_key].', image]
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(expected, metadata={'performed': 1}) if wrapped else expected
+        )
+
+    @pytest.mark.parametrize(
+        'result',
+        [
+            pytest.param(['secret plan', BinaryContent(data=b'png', media_type='image/png')], id='list'),
+            pytest.param(
+                ToolReturn(['secret plan', BinaryContent(data=b'png', media_type='image/png')]), id='return-value'
+            ),
+            pytest.param(
+                ToolReturn(
+                    ['Ran 1 action.', BinaryContent(data=b'png', media_type='image/png')], content='secret plan'
+                ),
+                id='content',
+            ),
+        ],
+    )
+    def test_text_beside_an_image_can_block_the_result(self, result: object):
+        def no_secrets(text: str) -> GuardrailResult:
+            return GuardrailResult.block('no secrets') if 'secret' in text else GuardrailResult.allow()
+
+        assert for_tool_result_text(no_secrets)(self._info(result)) == GuardrailResult.block('no secrets')
+
+    def test_an_image_with_clean_text_is_allowed(self):
+        result = ToolReturn(['Ran 1 action.', BinaryContent(data=b'\x89PNG', media_type='image/png')])
+        assert for_tool_result_text(redact_secrets)(self._info(result)) == GuardrailResult.allow()
+
+    @pytest.mark.parametrize('wrapped', [False, True], ids=['list', 'tool-return'])
+    def test_text_content_beside_an_image_is_refused(self, wrapped: bool):
+        """The model also sees a `TextContent`'s metadata, which the detector does not read."""
+        parts = [
+            TextContent(content='safe', metadata={'token': _OPENAI_KEY}),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+        result = ToolReturn(parts) if wrapped else parts
+
+        with pytest.raises(UserError, match='has no text payload'):
+            for_tool_result_text(redact_secrets)(self._info(result))
+
     def test_allowing_a_non_text_result_skips_its_content_too(self):
         """`on_other='allow'` is an opt-out for the whole result, not a partial scan.
 

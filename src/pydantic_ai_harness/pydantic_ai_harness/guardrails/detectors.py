@@ -36,12 +36,16 @@ from dataclasses import replace
 from typing import Literal
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolReturn
+from pydantic_ai.messages import ToolReturn, UserContent
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
+    checked_value as _checked_value,
+    content_list as _content_list,
+    detect_content_list_result as _detect_content_list_result,
+    detect_return_value as _detect_return_value,
     detect_tool_return_content as _detect_tool_return_content,
-    is_text_tool_return as _is_text_tool_return,
+    is_tool_return as _is_tool_return,
 )
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
@@ -427,8 +431,10 @@ def for_tool_result_text(
 ) -> Callable[[ToolResultInfo], GuardrailResult]:
     """Adapt a text detector to the result object `ToolGuardrail` supplies.
 
-    Plain string results are passed to `detector`. For a `ToolReturn` with a
-    string `return_value`, the detector also checks the text in its
+    Plain string results are passed to `detector`. A list of strings and media, such
+    as text beside an image, has its strings checked and its images kept, whether
+    it is the result or a `ToolReturn`'s `return_value`. For a `ToolReturn` with a
+    string or list `return_value`, the detector also checks the text in its
     model-directed `content`, both part by part and over each stretch of
     adjacent text parts joined, so a secret split across two of them is caught.
     The `ToolReturn` is rebuilt when either channel is redacted, retaining its
@@ -451,8 +457,10 @@ def for_tool_result_text(
                     'A text detector used with for_tool_result_text() must replace a tool result with text.'
                 )
             return verdict
-        if _is_text_tool_return(result):
-            return _tool_return_verdict(detector, result)
+        if (parts := _content_list(result)) is not None:
+            return _detect_content_list_result(detector, parts)
+        if _is_tool_return(result) and (value := _checked_value(result.return_value)) is not None:
+            return _tool_return_verdict(detector, result, value)
         if on_other == 'allow':
             return GuardrailResult.allow()
         raise UserError(
@@ -463,30 +471,27 @@ def for_tool_result_text(
     return guard
 
 
-def _tool_return_verdict(detector: TextDetector, result: ToolReturn[str]) -> GuardrailResult:
-    """Run `detector` over a `ToolReturn`'s string `return_value` and its `content`.
+def _tool_return_verdict(
+    detector: TextDetector, result: ToolReturn[object], value: str | list[UserContent]
+) -> GuardrailResult:
+    """Run `detector` over a `ToolReturn`'s `return_value`, given as `value`, and its `content`.
 
     The `ToolReturn` is rebuilt when either changed.
     """
-    # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
-    assert isinstance(result.return_value, str)
-    verdict = detector(result.return_value)
-    if verdict.action not in ('allow', 'replace'):
-        return verdict
-    return_value = verdict.replacement if verdict.action == 'replace' else result.return_value
-    if not isinstance(return_value, str):
-        raise UserError('A text detector used with for_tool_result_text() must replace a tool result with text.')
+    value_verdict, return_value = _detect_return_value(detector, value)
+    if value_verdict is not None:
+        return value_verdict
 
     content_verdict, content = _detect_tool_return_content(detector, result.content)
     if content_verdict is not None:
         return content_verdict
 
-    if verdict.action == 'replace' or content is not None:
-        return GuardrailResult.replace(
-            replace(
-                result,
-                return_value=return_value,
-                content=result.content if content is None else content,
-            )
+    if return_value is None and content is None:
+        return GuardrailResult.allow()
+    return GuardrailResult.replace(
+        replace(
+            result,
+            return_value=result.return_value if return_value is None else return_value,
+            content=result.content if content is None else content,
         )
-    return GuardrailResult.allow()
+    )
