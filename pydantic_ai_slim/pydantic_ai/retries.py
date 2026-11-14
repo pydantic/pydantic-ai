@@ -222,7 +222,8 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
                 except Exception:
                     # Read an error status's body, so the re-raised exception carries it and the connection returns
                     # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
-                    # exception the retry predicate decides on; the response is closed with whatever was read.
+                    # exception the retry predicate decides on; the response is closed whether or not the read
+                    # completed.
                     if response.is_error:
                         with suppress(Exception):
                             response.read()
@@ -335,7 +336,8 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
                 except Exception:
                     # Read an error status's body, so the re-raised exception carries it and the connection returns
                     # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
-                    # exception the retry predicate decides on; the response is closed with whatever was read.
+                    # exception the retry predicate decides on; the response is closed whether or not the read
+                    # completed.
                     if response.is_error:
                         # A cancelled read skips the close below: httpx2 closes the response as the read unwinds,
                         # and the default `httpx2.AsyncHTTPTransport` closes its connection under a cancellation
