@@ -91,6 +91,27 @@ class TestShellOnWindows:
         assert '[Log exceeded max_log_bytes=1000; earlier output was cleared.]' in checked
         assert 'x' * 1000 not in checked
 
+    async def test_stop_leaves_a_reused_pid_alone(self, project: Path) -> None:
+        """A wrapper that died without its status leaves its PID free; `stop_command` must not kill what reuses it."""
+        shell = Shell[None](tools=['start_command', 'stop_command'])
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'start_command', {'command': 'Start-Sleep 600'})
+        assert 'ID: ' in started, started
+        command_id = started.rsplit('ID: ', 1)[1].strip()
+        directory = project / '.pydantic-ai-harness' / 'shell' / command_id
+        pid = int((directory / 'handle').read_text().split()[0])
+        # As if Windows had given the wrapper's PID to a process started at another time.
+        (directory / 'wrapper.started').write_text('1')
+        try:
+            stopped = await call_tool([shell, workspace], 'stop_command', {'command_id': command_id})
+            assert '[stopped]' in stopped
+            alive = await call_tool(
+                [Shell[None](tools=['shell']), workspace], 'shell', {'command': f'Get-Process -Id {pid} | Out-Null'}
+            )
+            assert '"exit_code": 0}' in alive
+        finally:
+            await anyio.run_process(['taskkill', '/T', '/F', '/PID', str(pid)], check=False)
+
     async def test_stopping_a_background_command_ends_its_tree(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])
         workspace = WindowsWorkspace[None](project)

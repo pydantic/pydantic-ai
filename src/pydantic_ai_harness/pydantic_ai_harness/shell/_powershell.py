@@ -131,6 +131,8 @@ $wrapper = Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidd
   ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($supervisor)))
 while (-not (Test-Path -LiteralPath (Join-Path $dir 'status.json'))) { Start-Sleep -Milliseconds 100 }
 [IO.File]::WriteAllText((Join-Path $dir 'launch.ready'), '')
+# Its start time tells the wrapper from a later process that reuses its PID, which Windows does soon.
+[IO.File]::WriteAllText((Join-Path $dir 'wrapper.started'), "$($wrapper.StartTime.ToFileTimeUtc())")
 [IO.File]::WriteAllText((Join-Path $dir 'handle'), "$($wrapper.Id) -")
 [Console]::Out.Write("$($wrapper.Id) -")
 """
@@ -183,3 +185,17 @@ try {{
 def kill_command(pid: int) -> list[str]:
     """The argv that ends process `pid` and every process it started that is still its descendant."""
     return ['taskkill', '/T', '/F', '/PID', str(pid)]
+
+
+def kill_script(pid: int, directory: str) -> str:
+    """PowerShell that ends the job wrapper `pid`'s process tree, only if `pid` is still that wrapper.
+
+    A wrapper that died without publishing its status leaves its PID free for an unrelated process, so the
+    PID is killed only when its start time matches the one the launcher recorded; otherwise it exits
+    `MISSING_PROCESS`, as when no process has the PID.
+    """
+    return f"""$started = [IO.File]::ReadAllText((Join-Path {literal(directory)} 'wrapper.started'))
+try {{ $process = Get-Process -Id {pid} -ErrorAction Stop; $now = "$($process.StartTime.ToFileTimeUtc())" }}
+catch {{ exit {MISSING_PROCESS} }}
+if ($now -ne $started) {{ exit {MISSING_PROCESS} }}
+taskkill /T /F /PID {pid} | Out-Null"""
