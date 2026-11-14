@@ -1980,7 +1980,7 @@ This is one of [several layers that can retry](retries.md) during a run, each wi
 
 Pydantic AI enforces the output retry budget differently depending on how the model returns its final output:
 
-- **Text output path** (`output_type=str`, text-only outputs, empty or unusable model responses): a single global budget is shared across the whole run. Each invalid response consumes one unit of the budget; when it's exhausted, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Exceeded maximum output retries (N)'`.
+- **Text output path** (`output_type=str`, text-only outputs, empty or unusable model responses): a single global budget is shared across the whole run. Each invalid response consumes one unit of the budget; when it's exhausted, the run raises [`OutputRetriesExceeded`][pydantic_ai.exceptions.OutputRetriesExceeded], a subclass of [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], with message `'Exceeded maximum output retries (N)'`.
 - **Tool output path** ([`output_type=ToolOutput(...)`](output.md#tool-output), structured outputs): the output retry budget is the *default per-tool limit*. See [Tool Output](output.md#tool-output) for per-tool overrides via [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries].
 
 For how the budget appears inside [output validators](output.md#output-validator-functions) — including what `ctx.max_retries` and `ctx.retry` reflect on each path — see the [Output validators](output.md#output-validator-functions) section.
@@ -2092,7 +2092,7 @@ Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.
 
 ## Model errors
 
-If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
+If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]. When a retry limit is exceeded, the error is a subclass that says which one: [`ToolRetriesExceeded`][pydantic_ai.exceptions.ToolRetriesExceeded] when a tool ran out of retries, and [`OutputRetriesExceeded`][pydantic_ai.exceptions.OutputRetriesExceeded] when the model's output did.
 
 In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
