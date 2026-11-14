@@ -2,9 +2,10 @@
 
 A held call is put to the user as an `ask_user` question with three choices, so the terminal picker and
 the browser's question card both answer it; a typed answer denies the call with that reason. Whichever
-plugin answers questions binds `approval_handler` with its answerer. A call no handler answered, as in a
-session no one can be asked in, is denied by `DenyUnanswered`. A `SubAgents` delegation that the session's
-`Permissions` would not reach is refused outside `full` by `KeepDelegatesChecked`.
+plugin answers questions binds `approval_handler` with its answerer, a core `HandleDeferredToolCalls` whose
+handler is harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is
+denied by `DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused
+outside `full` by `KeepDelegatesChecked`.
 """
 
 import difflib
@@ -33,7 +34,7 @@ from pydantic_ai_harness.permissions import (
     PermissionMode,
     PermissionRequest,
     Permissions,
-    ask_permissions,
+    approval_ask,
     denial_message,
     permission_requests,
 )
@@ -136,11 +137,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
 def approval_handler(approve: Approver) -> HandleDeferredToolCalls[AgentDepsT]:
     """Answer the calls `Permissions` holds with `approve`, leaving other deferred calls to later handlers."""
-
-    async def handle(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests) -> DeferredToolResults | None:
-        return await ask_permissions(requests, approve)
-
-    return HandleDeferredToolCalls[AgentDepsT](handler=handle)
+    return HandleDeferredToolCalls[AgentDepsT](approval_ask(approve))
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:

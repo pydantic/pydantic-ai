@@ -24,7 +24,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
-| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with core `HandleDeferredToolCalls(approval_ask(approver))` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -414,7 +414,7 @@ from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
     Permissions,
-    ask_permissions,
+    approval_ask,
 )
 
 
@@ -428,7 +428,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         Permissions('auto'),
-        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+        HandleDeferredToolCalls(approval_ask(approve)),
     ],
 )
 ```
@@ -436,6 +436,9 @@ agent = Agent(
 Gotchas:
 
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
+- `approval_ask` takes a resume token, which durable runs on engines other than AWS Lambda (`AWSLambdaDurability`)
+  refuse; there, pass the two-parameter handler `lambda ctx, requests: ask_permissions(requests, approve)`. On
+  Lambda, `approval_ask` answers in place in a recorded step: keep the approver quick and set `timeout=...`.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.

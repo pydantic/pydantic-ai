@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
@@ -30,6 +31,7 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
     Permissions,
     RememberedApproval,
+    approval_ask,
     ask_permissions,
     permission_requests,
 )
@@ -82,11 +84,7 @@ def _agent(
     mode: PermissionMode | Callable[[RunContext[None]], PermissionMode],
     person: _Person | None = None,
 ) -> Agent[None, str | DeferredToolRequests]:
-    handler = (
-        []
-        if person is None
-        else [HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person))]
-    )
+    handler = [] if person is None else [HandleDeferredToolCalls[None](approval_ask(person))]
     return Agent[None, 'str | DeferredToolRequests'](
         model,
         deps_type=type(None),
@@ -226,6 +224,18 @@ class TestPermissions:
 
         assert await ask_permissions(requests, _Person()) is None
         assert permission_requests(requests) == []
+
+    async def test_approval_ask_leaves_other_approvals_pending(self, tmp_path: Path) -> None:
+        """`approval_ask` answers an empty result rather than `None`, so the handler does not wait on its token."""
+        person = _Person()
+        agent = _agent(tmp_path, _calls(('other', {})), 'read-only', person)
+        other = Tool(lambda: 'never runs', name='other', requires_approval=True)
+
+        result = await agent.run('go', toolsets=[FunctionToolset([other])])
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_name for call in result.output.approvals] == ['other']
+        assert person.asked == []
 
     async def test_approved_by_another_gate_runs_without_asking(self, tmp_path: Path) -> None:
         async def approve_all(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
