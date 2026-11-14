@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -2015,6 +2015,42 @@ async def test_deprecated_agent_executes_identified_dynamic_toolset_task(blockbu
     assert '42' in str(result.output)
     assert len(calls) == 1
     assert calls[0] is not None
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_deprecated_agent_holds_per_run_step_false_dynamic_toolset_for_the_run(blockbuster_enabled: bool) -> None:
+    """The deprecated wrapper resolves and enters an identified `per_run_step=False` dynamic toolset once per run.
+
+    Its tasks run in the flow's process, so they reuse the toolset the run holds, as under `PrefectDurability`,
+    instead of each building and entering their own.
+    """
+    assert blockbuster_enabled is False
+    counts = {'factory': 0, 'enter': 0}
+
+    class CountingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            counts['enter'] += 1
+            return await super().__aenter__()
+
+    async def get_price() -> str:
+        return '42'
+
+    def build(ctx: RunContext[None]) -> FunctionToolset[None]:
+        counts['factory'] += 1
+        return CountingToolset([get_price])
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_run_held_dynamic',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(build, per_run_step=False, id='deprecated_held')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await prefect_agent.run('Get the price')
+
+    assert '42' in str(result.output)
+    assert counts == {'factory': 1, 'enter': 1}
 
 
 # Test cache policies
