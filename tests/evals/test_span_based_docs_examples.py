@@ -1,195 +1,150 @@
+"""The docs' every-span `HasMatchingSpan` recipes fail on traces that violate their claim.
+
+`tests/test_examples.py` runs these docs blocks, but they only build evaluators, so it never checks what the queries
+match. These tests read each query from its docs page and evaluate it with `SpanTree.any`, which is all
+`HasMatchingSpan.evaluate` does. Each violating trace also holds a compliant span that an any-span query would match.
+Durations come from explicit `SpanNode` timestamps.
+"""
+
 from __future__ import annotations
 
-from time import sleep
+import ast
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
+from pytest_examples import find_examples
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from pydantic_evals.otel import SpanNode, SpanQuery, SpanTree
 
-    from pydantic_evals import Case, Dataset
-    from pydantic_evals.evaluators import HasMatchingSpan
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
 
-with try_import() as logfire_import_successful:
-    import logfire
+DOCS = Path(__file__).parents[2] / 'docs' / 'evals' / 'evaluators'
+START = datetime(2026, 1, 1, tzinfo=UTC)
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='pydantic-evals or opentelemetry-sdk not installed'),
-    pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed'),
+
+def docs_query(page: str, evaluation_name: str) -> SpanQuery:
+    """The `query` of the one `HasMatchingSpan(...)` call on a docs page with this `evaluation_name`."""
+    queries: list[SpanQuery] = []
+    for example in find_examples(DOCS / page):
+        for node in ast.walk(ast.parse(example.source)):
+            if not (
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'HasMatchingSpan'
+            ):
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            name = keywords.get('evaluation_name')
+            if isinstance(name, ast.Constant) and name.value == evaluation_name:
+                queries.append(TypeAdapter(SpanQuery).validate_python(ast.literal_eval(keywords['query'])))
+    assert len(queries) == 1, f'expected one {evaluation_name!r} recipe in {page}, found {len(queries)}'
+    return queries[0]
+
+
+@dataclass
+class Span:
+    name: str
+    children: tuple[Span, ...]
+    seconds: float
+
+
+def span(name: str, *children: Span, seconds: float = 0.01) -> Span:
+    return Span(name, children, seconds)
+
+
+def root(*children: Span) -> Span:
+    return span('task_execution', *children, seconds=1)
+
+
+def span_tree(trace: Span) -> SpanTree:
+    nodes: list[SpanNode] = []
+
+    def add(s: Span, parent_span_id: int | None) -> None:
+        span_id = len(nodes) + 1
+        nodes.append(
+            SpanNode(
+                name=s.name,
+                trace_id=1,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+                start_timestamp=START,
+                end_timestamp=START + timedelta(seconds=s.seconds),
+                attributes={},
+            )
+        )
+        for child in s.children:
+            add(child, span_id)
+
+    add(trace, None)
+    tree = SpanTree()
+    tree.add_spans(nodes)
+    return tree
+
+
+@dataclass
+class Recipe:
+    page: str
+    evaluation_name: str
+    compliant: list[Span]
+    violating: list[Span]
+
+
+def tools(calls: int) -> Span:
+    return span('running tools', *(span('search') for _ in range(calls)))
+
+
+RECIPES = [
+    Recipe(
+        page='span-based.md',
+        evaluation_name='safe_execution',
+        compliant=[root(span('search_tool'))],
+        violating=[
+            root(span('search_tool'), span('delete_database')),
+            root(span('step', span('delete_database'))),
+        ],
+    ),
+    Recipe(
+        page='span-based.md',
+        evaluation_name='fast_db_queries',
+        compliant=[
+            root(span('database_query', seconds=0.05), span('database_query', seconds=0.1)),
+            root(span('search_tool')),
+        ],
+        violating=[root(span('database_query', seconds=0.05), span('database_query', seconds=0.3))],
+    ),
+    Recipe(
+        page='span-based.md',
+        evaluation_name='no_circular_delegation',
+        compliant=[
+            root(span('master_agent', span('specialist_agent'))),
+            root(span('master_agent', span('specialist_agent', span('sub_agent')))),
+        ],
+        violating=[
+            root(span('master_agent', span('specialist_agent', span('master_agent')))),
+            root(span('master_agent'), span('master_agent', span('specialist_agent', span('master_agent')))),
+        ],
+    ),
+    Recipe(
+        page='span-based.md',
+        evaluation_name='reasonable_tool_usage',
+        compliant=[root(tools(5), tools(5))],
+        violating=[root(tools(1), tools(6))],
+    ),
+    Recipe(
+        page='built-in.md',
+        evaluation_name='llm_fast_enough',
+        compliant=[root(span('llm_call', seconds=1), span('llm_call', seconds=2))],
+        violating=[root(span('llm_call', seconds=1), span('llm_call', seconds=2.5))],
+    ),
 ]
 
 
-@pytest.fixture
-def real_clock_logfire() -> None:
-    """Configure logfire with real timestamps and an in-memory span exporter.
-
-    The duration thresholds in these recipe examples are only meaningful with a
-    real clock: `logfire.testing`'s `TimeGenerator` records span timestamps at
-    least one second apart, which would make every span exceed them.
-    """
-    logfire.configure(
-        send_to_logfire=False,
-        console=False,
-        additional_span_processors=[SimpleSpanProcessor(InMemorySpanExporter())],
-    )
-
-
-def test_span_based_recipes_reject_violating_traces(real_clock_logfire: None) -> None:
-    evaluators = [
-        HasMatchingSpan(
-            query={
-                'name_equals': 'task_execution',
-                'not_': {'name_contains': 'delete_database'},
-                'no_descendant_has': {'name_contains': 'delete_database'},
-            },
-            evaluation_name='safe_execution',
-        ),
-        HasMatchingSpan(
-            query={
-                'name_equals': 'task_execution',
-                'not_': {
-                    'and_': [
-                        {'name_contains': 'database'},
-                        {'not_': {'max_duration': 0.1}},
-                    ]
-                },
-                'no_descendant_has': {
-                    'and_': [
-                        {'name_contains': 'database'},
-                        {'not_': {'max_duration': 0.1}},
-                    ]
-                },
-            },
-            evaluation_name='fast_db_queries',
-        ),
-        HasMatchingSpan(
-            query={
-                'name_equals': 'task_execution',
-                'not_': {
-                    'and_': [
-                        {'name_contains': 'agent'},
-                        {'some_descendant_has': {'name_contains': 'agent'}},
-                        {'some_ancestor_has': {'name_contains': 'agent'}},
-                    ]
-                },
-                'no_descendant_has': {
-                    'and_': [
-                        {'name_contains': 'agent'},
-                        {'some_descendant_has': {'name_contains': 'agent'}},
-                        {'some_ancestor_has': {'name_contains': 'agent'}},
-                    ]
-                },
-            },
-            evaluation_name='no_circular_delegation',
-        ),
-        HasMatchingSpan(
-            query={
-                'name_equals': 'task_execution',
-                'not_': {
-                    'and_': [
-                        {'name_contains': 'tool'},
-                        {'min_child_count': 6},
-                    ]
-                },
-                'no_descendant_has': {
-                    'and_': [
-                        {'name_contains': 'tool'},
-                        {'min_child_count': 6},
-                    ]
-                },
-            },
-            evaluation_name='reasonable_tool_usage',
-        ),
-    ]
-
-    def task(scenario: str) -> str:
-        with logfire.span('task_execution'):
-            if scenario == 'compliant':
-                with logfire.span('search_tool'):
-                    pass
-                with logfire.span('fast_database_query'):
-                    pass
-                with logfire.span('master_agent'):
-                    with logfire.span('specialist_agent'):
-                        pass
-                with logfire.span('tool_execute'):
-                    with logfire.span('child_operation'):
-                        pass
-            else:
-                with logfire.span('delete_database'):
-                    pass
-                with logfire.span('slow_database_query'):
-                    sleep(0.15)
-                with logfire.span('master_agent'):
-                    with logfire.span('specialist_agent'):
-                        with logfire.span('master_agent'):
-                            pass
-                with logfire.span('tool_execute'):
-                    for child_index in range(6):
-                        with logfire.span(f'child_operation_{child_index}'):
-                            pass
-        return scenario
-
-    dataset = Dataset(
-        name='span_based_recipes',
-        cases=[
-            Case(name='compliant', inputs='compliant'),
-            Case(name='violating', inputs='violating'),
-        ],
-        evaluators=evaluators,
-    )
-    report = dataset.evaluate_sync(task, progress=False)
-
-    compliant, violating = report.cases
-    for evaluation_name in (
-        'safe_execution',
-        'fast_db_queries',
-        'no_circular_delegation',
-        'reasonable_tool_usage',
-    ):
-        assert compliant.assertions[evaluation_name].value is True
-        assert violating.assertions[evaluation_name].value is False
-
-
-def test_builtin_llm_fast_enough_rejects_slow_trace(real_clock_logfire: None) -> None:
-    evaluator = HasMatchingSpan(
-        query={
-            'name_equals': 'task_execution',
-            'not_': {
-                'and_': [
-                    {'name_equals': 'llm_call'},
-                    {'not_': {'max_duration': 2.0}},
-                ]
-            },
-            'no_descendant_has': {
-                'and_': [
-                    {'name_equals': 'llm_call'},
-                    {'not_': {'max_duration': 2.0}},
-                ]
-            },
-        },
-        evaluation_name='llm_fast_enough',
-    )
-
-    def task(is_slow: bool) -> str:
-        with logfire.span('task_execution'):
-            with logfire.span('llm_call'):
-                if is_slow:
-                    sleep(2.1)
-        return 'done'
-
-    dataset = Dataset(
-        name='builtin_llm_fast_enough',
-        cases=[
-            Case(name='fast_llm', inputs=False),
-            Case(name='slow_llm', inputs=True),
-        ],
-        evaluators=[evaluator],
-    )
-    report = dataset.evaluate_sync(task, progress=False)
-
-    assert report.cases[0].assertions['llm_fast_enough'].value is True
-    assert report.cases[1].assertions['llm_fast_enough'].value is False
+@pytest.mark.parametrize('recipe', [pytest.param(r, id=r.evaluation_name) for r in RECIPES])
+def test_docs_recipe_checks_every_span(recipe: Recipe):
+    query = docs_query(recipe.page, recipe.evaluation_name)
+    assert [span_tree(trace).any(query) for trace in recipe.compliant] == [True] * len(recipe.compliant)
+    assert [span_tree(trace).any(query) for trace in recipe.violating] == [False] * len(recipe.violating)

@@ -89,6 +89,19 @@ HasMatchingSpan(
 
 **Returns:** `bool` - `True` if any span matches the query
 
+### Checking every span
+
+`not_` negates a condition on one span, so `HasMatchingSpan(query={'not_': X})` passes whenever any span fails `X`,
+even if another span matches it. To check every span, anchor the query on the task's root span and put the
+violating condition under `no_descendant_has`, as `safe_execution` in [Verify Tool Usage](#verify-tool-usage) does:
+`{'name_equals': 'task_execution', 'no_descendant_has': {'name_contains': 'delete_database'}}`.
+
+This assumes the task wraps all its work in one root span, here `with logfire.span('task_execution'):`. Spans
+outside that root aren't checked, and the check fails if the root is missing. If the root span itself can violate
+the condition, also add it under `not_`, as the `no_errors` example in [Error Detection](#error-detection) does. To
+check every span without relying on a root, write a [custom evaluator](#custom-evaluators-with-spantree) that
+returns `not ctx.span_tree.any(query)`.
+
 ## SpanQuery Reference
 
 A [`SpanQuery`][pydantic_evals.otel.SpanQuery] is a dictionary with query conditions:
@@ -245,11 +258,10 @@ dataset = Dataset(
             evaluation_name='used_search',
         ),
 
-        # Root-anchored so a safe unrelated span cannot mask a dangerous call
+        # Must NOT call dangerous tool
         HasMatchingSpan(
             query={
                 'name_equals': 'task_execution',
-                'not_': {'name_contains': 'delete_database'},
                 'no_descendant_has': {'name_contains': 'delete_database'},
             },
             evaluation_name='safe_execution',
@@ -292,18 +304,14 @@ Ensure operations meet latency requirements:
 from pydantic_evals.evaluators import HasMatchingSpan
 
 evaluators = [
-    # No database query exceeds 100ms; check the task root and its descendants
+    # Every database query took at most 100ms
     HasMatchingSpan(
         query={
             'name_equals': 'task_execution',
-            'not_': {'and_': [
-                {'name_contains': 'database'},
-                {'not_': {'max_duration': 0.1}},
-            ]},
-            'no_descendant_has': {'and_': [
-                {'name_contains': 'database'},
-                {'not_': {'max_duration': 0.1}},
-            ]},
+            'no_descendant_has': {
+                'name_contains': 'database',
+                'not_': {'max_duration': 0.1},
+            },
         },
         evaluation_name='fast_db_queries',
     ),
@@ -377,7 +385,7 @@ evaluators = [
         evaluation_name='used_delegation',
     ),
 
-    # Made multiple LLM calls with retries
+    # An LLM call span has a retry and at least 3 descendant spans
     HasMatchingSpan(
         query={'and_': [
             {'name_contains': 'llm_call'},
@@ -566,20 +574,14 @@ evaluators = [
         evaluation_name='delegated_correctly',
     ),
 
-    # No agent span has both an agent ancestor and an agent descendant
+    # No circular delegation: the master agent never runs inside itself
     HasMatchingSpan(
         query={
             'name_equals': 'task_execution',
-            'not_': {'and_': [
-                {'name_contains': 'agent'},
-                {'some_descendant_has': {'name_contains': 'agent'}},
-                {'some_ancestor_has': {'name_contains': 'agent'}},
-            ]},
-            'no_descendant_has': {'and_': [
-                {'name_contains': 'agent'},
-                {'some_descendant_has': {'name_contains': 'agent'}},
-                {'some_ancestor_has': {'name_contains': 'agent'}},
-            ]},
+            'no_descendant_has': {
+                'name_equals': 'master_agent',
+                'some_ancestor_has': {'name_equals': 'master_agent'},
+            },
         },
         evaluation_name='no_circular_delegation',
     ),
@@ -603,23 +605,21 @@ evaluators = [
         evaluation_name='searched_before_answering',
     ),
 
-    # Assuming the task root is task_execution, no tool span has >5 direct children
+    # No tool span has more than 5 child spans (no loops)
     HasMatchingSpan(
         query={
             'name_equals': 'task_execution',
-            'not_': {'and_': [
-                {'name_contains': 'tool'},
-                {'min_child_count': 6},
-            ]},
-            'no_descendant_has': {'and_': [
-                {'name_contains': 'tool'},
-                {'min_child_count': 6},
-            ]},
+            'no_descendant_has': {
+                'name_contains': 'tool',
+                'not_': {'max_child_count': 5},
+            },
         },
         evaluation_name='reasonable_tool_usage',
     ),
 ]
 ```
+
+To cap the total number of tool calls in a run, use [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls].
 
 ## Best Practices
 
