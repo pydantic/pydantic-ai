@@ -381,6 +381,12 @@ class _Index:
                 if _last_name(value) == 'Annotated':
                     arguments = arguments[:1]
                 return frozenset[_ClassInfo]().union(*(self.value_classes(module, argument) for argument in arguments))
+            case ast.Name() | ast.Attribute():
+                match self.symbol(module, annotation):
+                    case _ModuleValue(module=alias_module, value=ast.expr() as value):
+                        return self.value_classes(alias_module, value)
+                    case _:
+                        return frozenset()
             case _:
                 return frozenset()
 

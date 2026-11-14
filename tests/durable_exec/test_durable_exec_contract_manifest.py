@@ -465,6 +465,14 @@ def fixture_repo(tmp_path: Path) -> Path:
                 _RESPONSES.get(key).text
 
 
+            _ProfilesByName = dict[str, Profile]
+
+
+            def through_a_mapping_alias(named: _ProfilesByName, pending: Pending, key: str) -> None:
+                named.get(key).supports_tools
+                pending.get(key).missing
+
+
             def local_import() -> None:
                 from pydantic_ai._run_context import RunContext as LocalContext
 
@@ -629,6 +637,7 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 [
                     'TemporalModel.request',
                     'iterate',
+                    'through_a_mapping_alias',
                     'through_a_mapping_field',
                     'through_a_mapping_method',
                     'through_a_mapping_parameter',
