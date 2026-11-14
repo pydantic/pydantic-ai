@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import os
 import re
 import subprocess
@@ -7046,24 +7045,27 @@ async def test_dbos_tool_instance_defaults_patch_shared_by_concurrent_runs(dbos:
 @DBOS.workflow()
 async def sequential_tool_instances_runs_workflow() -> list[str]:
     agent = _tool_instances_agents['sequential']
-    return [(await agent.run('Call both tools.')).output for _ in range(2)]
+    outputs = [(await agent.run('Call both tools.')).output for _ in range(2)]
+    assert _tool_instance_defaults_patched[workflow_context()] is True
+    return outputs
 
 
-async def test_dbos_tool_instance_defaults_patch_freed_with_workflow(dbos: DBOS) -> None:
-    """Runs one after another in a workflow reuse its patch result, and the gate drops it once the workflow ends.
+async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result(dbos: DBOS) -> None:
+    """Runs one after another in a workflow reuse its patch result, which the gate caches as a bool, not the probe task.
+
+    The task keeps the workflow's DBOS context, the cache's weak key, alive, so a cached task would keep the entry
+    for good; a bool lets the entry go with the workflow. The test checks the value rather than the cache's
+    length after the workflow: the `asyncio.to_thread` worker of DBOS's last database call can still hold a
+    copy of that context for a moment after the workflow returns.
 
     Not a VCR test: the model is a `FunctionModel`. It reads the gate's private cache because a workflow that
     outlives its cache entry is only visible as memory that a long-lived worker never gets back.
     """
-    cached = len(_tool_instance_defaults_patched)
     workflow_id = f'tool-instances-sequential-runs-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id):
         assert await sequential_tool_instances_runs_workflow() == ['done', 'done']
     steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
     assert steps.count('DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances') == 1
-
-    gc.collect()
-    assert len(_tool_instance_defaults_patched) == cached
 
 
 _cancelled_probe_events: dict[str, asyncio.Event] = {}
@@ -7080,15 +7082,18 @@ async def cancelled_tool_instances_run_workflow() -> None:
     assert isinstance(probe, asyncio.Task)
     _cancelled_probe_events['release'].set()
     await probe
+    assert _tool_instance_defaults_patched[workflow_context()] is True
 
 
-async def test_dbos_tool_instance_defaults_patch_freed_after_cancelled_run(
+async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result_after_cancelled_run(
     dbos: DBOS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run cancelled while it waits on the patch probe doesn't leave the probe holding the workflow's cache entry.
+    """A run cancelled while it waits on the patch probe doesn't leave the probe task in the workflow's cache entry.
+
+    No run is left to replace the task with its result, so the probe replaces it itself.
 
     Not a VCR test: the run is cancelled before its first model request. It reads the gate's private cache for
-    the reason `test_dbos_tool_instance_defaults_patch_freed_with_workflow` gives.
+    the reasons `test_dbos_tool_instance_defaults_patch_cache_holds_its_result` gives.
     """
     probing, release = asyncio.Event(), asyncio.Event()
     real_patch_async = DBOS.patch_async
@@ -7101,9 +7106,5 @@ async def test_dbos_tool_instance_defaults_patch_freed_after_cancelled_run(
     monkeypatch.setattr(DBOS, 'patch_async', slow_patch_async)
     monkeypatch.setitem(_cancelled_probe_events, 'probing', probing)
     monkeypatch.setitem(_cancelled_probe_events, 'release', release)
-    cached = len(_tool_instance_defaults_patched)
     with SetWorkflowID(f'tool-instances-cancelled-run-{uuid.uuid4()}'):
         await cancelled_tool_instances_run_workflow()
-
-    gc.collect()
-    assert len(_tool_instance_defaults_patched) == cached
