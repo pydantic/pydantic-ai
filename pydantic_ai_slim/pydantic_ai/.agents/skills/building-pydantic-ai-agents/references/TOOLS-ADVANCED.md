@@ -267,6 +267,17 @@ See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/too
 
 Use tool-level deferred loading when the agent has many tools and the model should discover individual tools on demand via `search_tools`.
 
+Choose which tools are searchable in one place with `ToolSearch(tools=...)`: `'all'`, a list of tool names, a metadata dict, or a callable (a `ToolSelector`). Output tools and the framework's `search_tools` and `load_capability` are never made searchable. A bare `ToolSearch()` defers nothing; it only configures how search runs.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+agent = Agent('openai:gpt-5.2', name='tool_search_agent', capabilities=[ToolSearch(tools='all')])
+```
+
+You can also mark individual tools, or a whole toolset with `.defer_loading()`; a tool is deferred if any of these selects it:
+
 ```python
 from pydantic_ai import Agent
 
