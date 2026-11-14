@@ -175,10 +175,16 @@ def _status_error(
     """The error for a Mistral API error status, classified by `parsed`, the error object its `body` holds."""
     code = parsed.get('code') if _utils.is_str_dict(parsed) else None
     error_type = parsed.get('type') if _utils.is_str_dict(parsed) else None
-    # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+    error_message = parsed.get('message') if _utils.is_str_dict(parsed) else None
+    # Mistral sends its numeric error codes as strings.
     code = str(code) if isinstance(code, str | int) else None
+    # Mistral sends a context window overflow with the type `invalid_request_prompt_too_long` (code `'3059'`).
+    # `'3051'` is its generic invalid arguments code, so it only means an overflow when the message says so.
     category = (
-        ModelContextWindowExceededError if code == '3051' else _model_errors.http_status_category(status_code, message)
+        ModelContextWindowExceededError
+        if error_type == 'invalid_request_prompt_too_long'
+        or (code == '3051' and isinstance(error_message, str) and 'maximum context length' in error_message.lower())
+        else _model_errors.http_status_category(status_code, message)
     )
     return ModelHTTPError.for_category(
         category,
