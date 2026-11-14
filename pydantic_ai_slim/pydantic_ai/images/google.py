@@ -6,7 +6,7 @@ from typing import Literal, assert_never, cast
 
 import httpx2
 
-from pydantic_ai._model_errors import connection_error, google_status_error, google_transport_error_fields
+from pydantic_ai._model_errors import connection_error, google_status_error, google_transport_status_error
 from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -245,15 +245,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-            body, status, message = google_transport_error_fields(e.response)
-            raise google_status_error(
-                self.model_name,
-                status_code=e.response.status_code,
-                status=status,
-                message=message,
-                body=body,
-                headers=dict(e.response.headers),
-            ) from e
+            raise google_transport_status_error(self.model_name, e.response) from e
         except httpx2.TransportError as e:
             # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
             timeout = isinstance(e, httpx2.TimeoutException)

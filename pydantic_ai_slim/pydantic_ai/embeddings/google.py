@@ -47,15 +47,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        body, status, message = _model_errors.google_transport_error_fields(e.response)
-        raise _model_errors.google_status_error(
-            model_name,
-            status_code=e.response.status_code,
-            status=status,
-            message=message,
-            body=body,
-            headers=dict(e.response.headers),
-        ) from e
+        raise _model_errors.google_transport_status_error(model_name, e.response) from e
     except httpx2.TransportError as e:
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)

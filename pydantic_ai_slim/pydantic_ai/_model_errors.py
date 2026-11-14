@@ -509,7 +509,7 @@ def transport_error_body(response: HTTPStatusResponse) -> tuple[object, dict[str
     once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
     in their connection error, though the provider did respond.
 
-    Returns the body, parsed as JSON, or its text when it isn't JSON, or `None` when it's empty or the transport
+    Returns the body, parsed as JSON, or its text when it isn't JSON or is `null`, or `None` when it's empty or the transport
     closed the response without reading it; the error object in it, which most APIs wrap as `{"error": {...}}`, or
     the body itself when it holds no `error`, or `{}` when it isn't an object; and the body's text.
     """
@@ -546,3 +546,16 @@ def google_transport_error_fields(response: HTTPStatusResponse) -> tuple[object,
     body, error, text = transport_error_body(response)
     status, message = error.get('status'), error.get('message')
     return body, status if isinstance(status, str) else None, message if isinstance(message, str) else text
+
+
+def google_transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `google_status_error` for an error status the HTTP transport raised, from `google_transport_error_fields`."""
+    body, status, message = google_transport_error_fields(response)
+    return google_status_error(
+        model_name,
+        status_code=response.status_code,
+        status=status,
+        message=message,
+        body=body,
+        headers=dict(response.headers),
+    )
