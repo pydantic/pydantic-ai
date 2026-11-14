@@ -399,7 +399,10 @@ class TestBuildSchemaTypes:
         arguments: JsonValue,
         minimum: int | None,
     ):
-        """A keyword-only parameter of a target taking `**kwargs` takes its value in the keyword form only, as the loader does."""
+        """A keyword-only parameter of a target taking `**kwargs` takes its value in the keyword form only.
+
+        The loader passes a short form's value positionally, which such a parameter rejects.
+        """
         name = capability.__name__
         spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{name: arguments}]}
         schema = AgentSpec.model_json_schema_with_capabilities([capability])
