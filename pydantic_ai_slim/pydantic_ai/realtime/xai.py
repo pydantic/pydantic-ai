@@ -434,6 +434,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
         manual_turns: bool = False,
+        session_config: dict[str, Any] | None = None,
         output_speech_timestamps: bool = False,
     ) -> None:
         if replayed_items is not None:
@@ -451,6 +452,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             model_name=model_name,
             model_name_getter=model_name_getter,
             manual_turns=manual_turns,
+            session_config=session_config,
         )
         # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
         # is a turn only if it did. With it on, xAI ignores a commit of ours altogether (no acknowledgement, no error;
@@ -916,6 +918,7 @@ class XaiRealtimeModel(RealtimeModel):
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
                 manual_turns=session_config['turn_detection'] is None,
+                session_config=session_config,
                 # Only where the session doesn't warn that it carries none: a profile can say the model reports none.
                 output_speech_timestamps=bool(
                     settings.get('output_speech_timestamps') and self._output_speech_timestamp_granularity(settings)

@@ -7,7 +7,7 @@ import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never, overload
+from typing import TYPE_CHECKING, Literal, assert_never, overload
 
 import anyio
 
@@ -49,12 +49,18 @@ from ..models import (
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
+    prepare_return_schemas,
+    resolve_request_tools,
 )
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import TextContext
+from .profiles import RealtimeModelProfile
 from .settings import ReconnectPolicy
+
+if TYPE_CHECKING:
+    from ..native_tools import AbstractNativeTool
 
 
 def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -152,6 +158,32 @@ def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) ->
         for position, part in enumerate(first_request.parts)
     ]
     return [*messages[:index], replace(first_request, parts=parts), *messages[index + 1 :]]
+
+
+def resolve_realtime_request_tools(
+    parameters: ModelRequestParameters,
+    profile: RealtimeModelProfile,
+    *,
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None = None,
+) -> ModelRequestParameters:
+    """Resolve the tools a realtime session gives the model: when it opens, and when a tool call reveals more.
+
+    Return schemas resolve as `Model.prepare_request` resolves them: cleared on tools that didn't opt in, kept for a
+    model that renders them natively (Gemini Live's function-declaration `response` schema), and put in the
+    description elsewhere. Then the native tool <-> local tool swap a standard request applies drops an unsupported
+    native tool for its local fallback, or the local tool for a supported native one, and raises the shared
+    `UserError` when an unsupported native tool has no fallback. A realtime model supports no native tools unless its
+    profile says so.
+
+    A realtime connection can't withhold a schema or announce a tool in history, so a deferred tool is `'withheld'`
+    until revealed, and `'visible'` after.
+    """
+    parameters = prepare_return_schemas(
+        parameters, supports_tool_return_schema=profile.get('supports_tool_return_schema', False)
+    )
+    return resolve_request_tools(
+        parameters, profile.get('supported_native_tools', frozenset()), unsupported_settings=unsupported_settings
+    )
 
 
 def resolve_advertised_tools(

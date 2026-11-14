@@ -10,6 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunUsage
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -27,6 +28,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import RealtimeModelProfile, RealtimeSessionErrorEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.toolsets import FunctionToolset
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import CassetteMessage, RealtimeCassette
@@ -202,6 +204,7 @@ async def test_audio_in_server_vad_turn(
         # Voice Live's session config takes `modalities: ['text']`, so text output is supported.
         supports_text_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
+        supports_tool_updates=True,
         emits_input_speech_events=True,
         output_speech_timestamp_granularity='word',
         synthesizes_turn_boundary=False,
@@ -364,6 +367,58 @@ async def test_tool_call_round(
     assert isinstance(final_part, TextPart)
     assert 'fog' in final_part.content.lower()
     assert session.usage.requests == 2
+
+
+async def test_deferred_capability_tools_are_revealed_mid_session(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """Voice Live takes new tools mid-session, so loading a deferred capability gives the model its tools.
+
+    The update carries only the tools: Voice Live's beta configuration has no `type` to send with them.
+    """
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(azure_voice_live=True, output_modality='text'),
+    )
+    assert model.profile.get('supports_tool_updates') is True
+    forecasts = FunctionToolset[None]()
+
+    @forecasts.tool_plain
+    async def get_forecast(city: str) -> str:
+        """Look up tomorrow's weather forecast for a city."""
+        return f'It will be sunny and 24 degrees in {city} tomorrow.'
+
+    agent: Agent[None, str] = Agent(
+        deps_type=type(None),
+        instructions='Answer in one short sentence. When the tool you need is in a capability, load it first.',
+        capabilities=[
+            Capability(id='weather', description='Weather forecasts.', toolsets=[forecasts], defer_loading=True)
+        ],
+    )
+    results: list[ToolReturnPart] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('What will the weather be in Paris tomorrow?')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                if isinstance(event, FunctionToolResultEvent):
+                    results.append(event.part)
+                elif isinstance(event, RealtimeTurnCompleteEvent) and len(results) == 2:
+                    break
+
+    assert [(part.tool_name, part.outcome) for part in results] == [
+        ('load_capability', 'success'),
+        ('get_forecast', 'success'),
+    ]
+    (update,) = [
+        frame for frame in sent_frames_containing(cassette, 'get_forecast') if frame['type'] == 'session.update'
+    ]
+    assert list(update['session']) == ['tools']
+    assert [tool['name'] for tool in update['session']['tools']] == ['load_capability', 'get_forecast']
+    answer = session.all_messages()[-1].parts[-1]
+    assert isinstance(answer, TextPart)
+    assert 'sunny' in answer.content.lower()
 
 
 async def test_message_history_seeding(

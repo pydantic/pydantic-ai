@@ -159,6 +159,7 @@ from .codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfileSpec
@@ -499,8 +500,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         prune_tool_items: bool = False,
         keep_tool_items: AbstractSet[str] = frozenset(),
         manual_turns: bool = False,
+        session_config: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
+        # The `session.update` the handshake configured the session with, which a re-dial sends again: `UpdateTools`
+        # rewrites its `tools` in place, so a reconnect advertises the tools revealed since.
+        self._session_config: dict[str, Any] = session_config if session_config is not None else {}
         # See `OpenAIRealtimeModelSettings.openai_prune_tool_items` and `openai_keep_tool_items`.
         self._prune_tool_items = prune_tool_items
         self._keep_tool_items = keep_tool_items
@@ -643,8 +648,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """Send content to the OpenAI Realtime API.
 
         Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `TextContext` (text added
-        without soliciting a reply), `BinaryImage`, `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
-        `CancelResponse`, and `TruncateOutput`.
+        without soliciting a reply), `BinaryImage`, `ToolResult`, `UpdateTools`, and the control verbs `CommitAudio`,
+        `ClearAudio`, `CreateResponse`, `CancelResponse`, and `TruncateOutput`.
         """
         input_index = self._inputs_received
         self._inputs_received += 1
@@ -715,8 +720,22 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._output_speech_clear_sent = True
             case TruncateOutput():
                 await self._truncate_output(content)
+            case UpdateTools():
+                await self._update_tools(content)
             case _:
                 raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _update_tools(self, content: UpdateTools) -> None:
+        tools = [tool_def_to_openai(tool) for tool in content.tools]
+        # Only the tools: the rest of the configuration stands, and once the model has spoken OpenAI refuses an
+        # update that sends its voice again. The GA configuration needs its `type`, which xAI's and Voice Live's lack.
+        session: dict[str, Any] = {'tools': tools}
+        if (session_type := self._session_config.get('type')) is not None:
+            session['type'] = session_type
+        # Kept before it goes out, so a re-dial after the send fails advertises them too.
+        self._session_config['tools'] = tools
+        # No waiting for `session.updated`: the frames that follow on this socket are taken after it.
+        await self._send_event({'type': SESSION_UPDATE_EVENT, 'session': session})
 
     async def _truncate_output(self, content: TruncateOutput) -> None:
         if content.item_id is None:
@@ -1891,6 +1910,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
                 keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
                 manual_turns=config_has_manual_turns(session_config),
+                session_config=session_config,
             )
             connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
             yield connection
@@ -2004,4 +2024,5 @@ class OpenAIRealtimeModel(RealtimeModel):
             prune_tool_items=settings.get('openai_prune_tool_items', False),
             keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             manual_turns=config_has_manual_turns(session_config),
+            session_config=session_config,
         )

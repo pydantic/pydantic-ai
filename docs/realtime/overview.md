@@ -282,10 +282,10 @@ fit for a product, two alternatives sit outside it:
 | Limitation | Tracking |
 | --- | --- |
 | SIP is not built in; bridge telephony through a provider such as Twilio. | [Deployment](deployment.md#siptelephony-bridge) |
-| Pydantic AI fixes a session's tools when it connects (OpenAI and xAI accept mid-session tool updates), so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
+| Gemini Live, Eleven Realtime, and ElevenLabs Agents keep the tools a session opened with, so `defer_loading=True` tools and tool-contributing deferred capabilities are [rejected](capabilities.md#deferred-capability-loading) there. Elsewhere they're [revealed mid-session](tools.md#tools-revealed-mid-session). | [#7191](https://github.com/pydantic/pydantic-ai/issues/7191) |
 | Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |
-| Dynamic native-tool functions are resolved once at connect. | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
+| Dynamic native-tool functions are resolved once at connect, and a dynamic toolset or `prepare_tools` hook that changes the function tools between turns doesn't change what the model is offered. | [#7251](https://github.com/pydantic/pydantic-ai/issues/7251) |
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | A session can't pause for tool approval: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves each request [during the call](tools.md#deferred-and-approval-required-tools), which can include awaiting a person's answer. | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |

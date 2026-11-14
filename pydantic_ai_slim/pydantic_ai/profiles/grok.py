@@ -165,6 +165,9 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # outstanding: verified live 2026-09-25, a question sent 3 seconds into a 15-second tool was
         # answered right away. The protocol has no setting that makes it wait.
         'async_tool_call_mode': 'always',
+        # A `session.update` with a new `tools` array mid-session takes effect, as on the OpenAI Realtime API it
+        # mirrors: a tool it adds is called from the next response on (checked live).
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         # Each transcript delta, of a few words to a sentence, says where it starts in its item's audio.
         'output_speech_timestamp_granularity': 'segment',
