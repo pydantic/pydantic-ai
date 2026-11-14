@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -1026,6 +1027,15 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
     id (or pin the clock) must not see each other's."""
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
+@pytest.fixture
+def restore_native_tool_types() -> Iterator[None]:
+    """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
+    registered = dict(NATIVE_TOOL_TYPES)
+    yield
+    NATIVE_TOOL_TYPES.clear()
+    NATIVE_TOOL_TYPES.update(registered)
 
 
 try:

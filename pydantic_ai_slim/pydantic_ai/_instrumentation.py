@@ -645,8 +645,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
     the same flat key it serializes to everywhere else.
     """
-    from pydantic_ai.native_tools import MCPServerTool
+    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, MCPServerTool
 
+    native_tool_types = tuple(NATIVE_TOOL_TYPES.values())
     url_ids = model_request_telemetry_url_ids(model_request_parameters)
     toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
     tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
@@ -656,7 +657,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         # Keep the established serializer, including its fallback, byte-for-byte for requests
         # outside the affected MCP paths.
         try:
-            return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+            return _model_request_parameters_adapter(native_tool_types).dump_python(
+                model_request_parameters, mode='json'
+            )
         except Exception:
             return serialize_any(model_request_parameters)
 
@@ -688,7 +691,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         _telemetry_mcp_url_tool_names=set(),
     )
     try:
-        return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')
+        return _model_request_parameters_adapter(native_tool_types).dump_python(safe_parameters, mode='json')
     except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(safe_parameters)
@@ -751,7 +754,15 @@ def _redact_mcp_instruction_parts(
 
 
 @cache
-def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+def _model_request_parameters_adapter(
+    native_tool_types: tuple[type[AbstractNativeTool], ...],
+) -> TypeAdapter[ModelRequestParameters]:
+    """Build the adapter once for each state of `NATIVE_TOOL_TYPES`, which `native_tool_types` snapshots.
+
+    The parameters' native tools serialize through a union of the registered types. A type registers when its class
+    is defined, which can be after the first request, and an adapter built before then can't serialize its instances
+    through their own schema.
+    """
     from pydantic_ai.models import ModelRequestParameters
 
     return TypeAdapter(ModelRequestParameters)

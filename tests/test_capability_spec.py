@@ -65,7 +65,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
-    NATIVE_TOOL_TYPES,
     AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -2806,15 +2805,6 @@ def test_native_tool_flat_form_schema_requires_kind():
     assert list(validator_for(schema)(schema).iter_errors(spec))
     with pytest.raises(ValueError, match="Failed to instantiate capability 'NativeTool'"):
         Agent.from_spec(spec)
-
-
-@pytest.fixture
-def restore_native_tool_types() -> Iterator[None]:
-    """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
-    registered = dict(NATIVE_TOOL_TYPES)
-    yield
-    NATIVE_TOOL_TYPES.clear()
-    NATIVE_TOOL_TYPES.update(registered)
 
 
 @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
