@@ -231,7 +231,7 @@ class TestSmartSearch:
         agent = search_agent(tmp_path, FunctionModel(malformed))
         result = await agent.run('find it', model=calls_smart_search(), usage_limits=UsageLimits(request_limit=3))
         [part] = tool_returns(result.all_messages())
-        assert 'UnexpectedModelBehavior' in str(part.content)
+        assert 'OutputRetriesExceeded' in str(part.content)
         assert len(judge_requests) == 1 and result.output == 'done'
 
     async def test_no_request_room_fails_the_search(self, tmp_path: Path) -> None:

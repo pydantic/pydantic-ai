@@ -24,7 +24,13 @@ from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelRetry,
+    OutputRetriesExceeded,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -3384,7 +3390,7 @@ class TestPublicPath:
 
         # The summary agent defaults to one output retry. With one request reserved for
         # the parent, limit 2 exhausts usage first; limit 3 exhausts output retries.
-        assert summary_errors == [UsageLimitExceeded if request_limit == 2 else UnexpectedModelBehavior]
+        assert summary_errors == [UsageLimitExceeded if request_limit == 2 else OutputRetriesExceeded]
         assert summary_calls == request_limit - 1
 
     async def test_capabilities_wired_into_agent(self):
