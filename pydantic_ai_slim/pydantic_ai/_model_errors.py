@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Protocol, cast
 
 import pydantic_core
@@ -44,14 +44,14 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
-    unavailable. A 400 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category in
-    the provider's own error code or message first.
+    unavailable. A 400, 413 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category
+    in the provider's own error code or message first.
     """
     if status_code in (401, 403):
         return ModelAuthenticationError
     if status_code == 404:
         return ModelNotFoundError
-    if status_code in (400, 422):
+    if status_code in (400, 413, 422):
         return ModelRequestRejectedError
     if status_code == 402:
         return ModelQuotaExceededError
@@ -123,11 +123,65 @@ def openai_compatible_category(
     if says_overloaded(code, error_type):
         return ModelOverloadedError
     if code == 'model_not_found':
-        # The Responses API sends it as a 400, the Chat Completions API as a 404.
+        # An error inside a stream carries no status, so only the code says what it is.
         return ModelNotFoundError
     if code == 'invalid_api_key':
         return ModelAuthenticationError
     return http_status_category(status_code, message) if status_code is not None else None
+
+
+def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
+    """Read an error response body that no SDK read, the way the provider SDKs read one.
+
+    Returns `text` parsed as JSON, or `None` when it isn't JSON; its `error` value, which OpenAI-compatible and Google
+    APIs send as `{"error": {...}}`, or the parsed object itself when it has no `error`, or `None` when it isn't an
+    object; and the string fields of that error object.
+    """
+    try:
+        parsed: object = pydantic_core.from_json(text) if text else None
+    except ValueError:
+        parsed = None
+    error = parsed.get('error', parsed) if is_str_dict(parsed) else None
+    fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+    return parsed, error, fields
+
+
+class MultiValueHeaders(Protocol):
+    """Response headers that can repeat a name, like `websockets`' `Headers`."""
+
+    def __iter__(self) -> Iterator[str]: ...
+
+    def get_all(self, key: str) -> list[str]: ...
+
+
+def joined_headers(headers: MultiValueHeaders) -> dict[str, str]:
+    """`headers` as a `dict`, with a repeated header's values joined as `httpx` joins them.
+
+    `dict()` of `websockets`' `Headers` raises `MultipleValuesError` on a repeated header, like two `Set-Cookie` lines.
+    """
+    return {name: ', '.join(headers.get_all(name)) for name in headers}
+
+
+def openai_compatible_response_error(
+    model_name: str, status_code: int, body: str | None, headers: Mapping[str, str]
+) -> ModelHTTPError:
+    """The error for an OpenAI-compatible error response that no SDK read, like a rejected WebSocket upgrade.
+
+    It gets the category, error code and error type the SDK's error for the same response gets, and keeps `body` as
+    the response text. A status below 400 isn't an error response, so it gets no category.
+    """
+    _, _, fields = parse_error_body(body)
+    code, error_type = fields.get('code'), fields.get('type')
+    category = openai_compatible_category(status_code, code, error_type, fields.get('message', body))
+    return ModelHTTPError.for_category(
+        category if status_code >= 400 else None,
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
 
 
 _ZAI_QUOTA_CODES = frozenset(
@@ -198,6 +252,27 @@ def google_exceeds_daily_quota(body: object) -> bool:
                 ):
                     return True
     return False
+
+
+def google_retry_after(error: ModelHTTPError) -> float | None:
+    """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
+
+    Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string of seconds, like
+    `'14s'` or `'0.5s'`; one that's absent, doesn't end in `s`, holds no number before it, or is negative or
+    infinite says nothing.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    for detail in google_error_details(error.body):
+        if isinstance(raw := detail.get('retryDelay'), str) and raw.endswith('s'):
+            try:
+                seconds = float(raw[:-1])
+            except ValueError:
+                continue
+            if 0 <= seconds < float('inf'):
+                return seconds
+    return None
 
 
 def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:

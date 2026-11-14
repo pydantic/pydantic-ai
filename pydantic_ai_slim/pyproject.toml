@@ -65,7 +65,8 @@ dependencies = [
     "pydantic-graph=={{ version }}",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.1.13",
+    # `genai-prices>=0.2.3` has Anthropic's fast mode price variants, which `provider_details['speed'] == 'fast'` selects.
+    "genai-prices>=0.2.3",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]

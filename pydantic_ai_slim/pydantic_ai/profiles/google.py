@@ -13,14 +13,17 @@ if TYPE_CHECKING:
     from ..realtime.google import GoogleRealtimeModelProfile
     from ..realtime.profiles import AsyncToolCallMode, RealtimeModelProfile
 
-GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
+GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH']
 """Native Gemini `thinking_level` values."""
 
-GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH')
+GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH')
 """The full thinking-level scale, cheapest first. The resolver's order map derives from this."""
 
-GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(GOOGLE_THINKING_LEVEL_SCALE)
-"""The full thinking-level scale as a set."""
+GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(('MINIMAL', 'LOW', 'MEDIUM', 'HIGH'))
+"""The levels assumed for a model without a documented level set: the scale without `XHIGH`.
+
+Only models whose `google_thinking_levels` list `XHIGH` take it; Gemini 3 models reject it with a 400.
+"""
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
 # See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
@@ -169,8 +172,8 @@ class GoogleModelProfile(ModelProfile, total=False):
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
-    Unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
-    scale is assumed. Unified thinking efforts snap to the nearest supported level.
+    Unset means [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS] is assumed: every
+    level but `XHIGH`. Unified thinking efforts snap to the nearest supported level.
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
@@ -210,7 +213,7 @@ class GoogleModelProfile(ModelProfile, total=False):
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the full `GOOGLE_THINKING_LEVELS` scale, except where only one API enforces
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where only one API enforces
     # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
     # does for `gemini-3.1-flash-image` on the Gemini API.
     # https://ai.google.dev/gemini-api/docs/thinking
@@ -225,13 +228,23 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
     # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
     ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Not probed live. Both thinking tables list `low`, `medium` and `high` for Gemini 4 Carbon:
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Verified live 2026-11-12 against the Gemini API: `LOW`, `MEDIUM`, `HIGH` and `XHIGH` are accepted, `MINIMAL`
+    # returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed; both thinking tables
+    # list `low`, `medium`, `high` and `xhigh` for Gemini 4 Hydrogen:
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
 _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Verified live 2026-09-16 against the Gemini Developer API: `gemini-3.8-live-extended-thinking`
     # answers `1007 Thinking level MINIMAL is not supported for this model` and accepts the other
-    # three. Live models not listed here take the full scale.
+    # three. Live models not listed here take the default `GOOGLE_THINKING_LEVELS`.
     ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Live model name prefixes mapped to the thinking levels they accept."""

@@ -369,7 +369,7 @@ class TestEagerCodeMode:
         assert calls == ['alpha', 'beta']
 
     async def test_monty_limits_apply_to_eager_fragments(self):
-        capability = CodeMode[None](eager=True, resource_limits={'max_duration_secs': 0.3})
+        capability = CodeMode[None](eager=True, resource_limits={'max_duration_seconds': 0.3})
         code = 'y = 0\nfor i in range(100_000_000):\n    y += i\nz = 1\nz'
 
         async with prepared_eager_toolset([], capability) as (capability, toolset, ctx, run_code):
