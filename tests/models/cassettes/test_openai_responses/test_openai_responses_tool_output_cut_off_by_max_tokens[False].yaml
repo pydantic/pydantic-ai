@@ -1,0 +1,186 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "691"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: List the 20 largest cities in the world.
+        max_output_tokens: 40
+        reasoning:
+          context: all_turns
+        tool_choice: required
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              cities:
+                items:
+                  $ref: "#/$defs/City"
+                type: array
+            required:
+            - cities
+            type: object
+            additionalProperties: false
+            $defs:
+              City:
+                properties:
+                  name:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - name
+                - country
+                type: object
+                additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1412"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0a56e37b1b39cbca006af3a5d5873487d19858fab2813fda5b
+        object: response
+        created_at: 1794352597
+        status: incomplete
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: null
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details:
+          reason: max_output_tokens
+        instructions: null
+        max_output_tokens: 40
+        max_tool_calls: null
+        model: gpt-5.4-mini-2026-03-17
+        moderation: null
+        output:
+        - id: fc_0a56e37b1b39cbca006af3a5d67d3c87d1b30a3421c76a8ca1
+          type: function_call
+          status: incomplete
+          arguments: "{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China\"},{\""
+          call_id: call_p9Lubnu3M7eomBNgiQxVtDhG
+          name: final_result
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: required
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: The final response which ends this conversation
+          name: final_result
+          output_schema: null
+          parameters:
+            properties:
+              cities:
+                items:
+                  $ref: "#/$defs/City"
+                type: array
+            required:
+            - cities
+            type: object
+            additionalProperties: false
+            $defs:
+              City:
+                properties:
+                  name:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - name
+                - country
+                type: object
+                additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 63
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 40
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 103
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-10T23:16:38.944797+00:00

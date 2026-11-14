@@ -71,6 +71,7 @@ from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHist
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
+    IncompleteToolCall,
     ModelAPIError,
     ModelContextWindowExceededError,
     ModelHTTPError,
@@ -432,6 +433,34 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_responses_tool_output_cut_off_by_max_tokens(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """Output tool arguments the token limit cut off raise right away instead of re-prompting the model with the same limit."""
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(model, output_type=ToolOutput(Cities), model_settings=OpenAIResponsesModelSettings(max_tokens=40))
+    prompt = 'List the 20 largest cities in the world.'
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(40\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                await result.get_output()
+        else:
+            await agent.run(prompt)
 
 
 async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):

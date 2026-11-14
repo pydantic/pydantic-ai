@@ -743,12 +743,13 @@ print(result.output)
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
-    regardless of finish reason: a tool call truncated mid-arguments is re-prompted like any other
+    regardless of finish reason: a function tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`). The exception is
+    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`). The exceptions are output that was cut off at
+    `'length'` into JSON that doesn't parse: an output tool call raises `IncompleteToolCall` right away, and
     [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
-    text cut off at `'length'` into JSON that doesn't parse, which raises `OutputTokenLimitExceeded` right away.
+    text raises `OutputTokenLimitExceeded` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned
     successfully, so an exception-based `fallback_on` can't catch them: not the default

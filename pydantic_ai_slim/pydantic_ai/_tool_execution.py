@@ -645,6 +645,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
             # path, which also handles `ToolFailedError`.
             assert isinstance(validated.validation_error, ToolRetryError)
+            # Re-prompting the model with the same token limit would only cut the arguments off again.
+            try:
+                self.ctx.state.check_incomplete_tool_call(call)
+            except exceptions.IncompleteToolCall as e:
+                return _OutputCallResult(call=call, args_valid=False, raise_exc=e)
             self.output_retries_increment += 1
             return _OutputCallResult(
                 call=call, args_valid=False, retry_part=tool_bound_retry_part(validated.validation_error)

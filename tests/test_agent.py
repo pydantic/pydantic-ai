@@ -5022,6 +5022,23 @@ def test_tool_exceeds_token_limit_but_complete_args():
     assert result.output == 'done'
 
 
+def test_tool_exceeds_token_limit_but_complete_non_object_args():
+    """Complete JSON wasn't cut off, so a function tool call whose args aren't an object isn't an `IncompleteToolCall`."""
+
+    def return_non_object_args(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('dummy_tool', args='["bar"]')], finish_reason='length')
+
+    agent = Agent(FunctionModel(return_non_object_args), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'dummy_tool' exceeded max retries count of 1") as exc_info:
+        agent.run_sync('Hello')
+    assert not isinstance(exc_info.value, IncompleteToolCall)
+
+
 def test_empty_response_with_finish_reason_length():
     def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[])
@@ -5154,6 +5171,85 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
 
     agent = Agent(FunctionModel(respond), output_type=TextOutput(parse))
     assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
+
+
+@pytest.mark.parametrize('mode', ['run', 'iter'])
+async def test_truncated_output_tool_call_raises_without_retry(mode: str):
+    """Output tool arguments the token limit cut off would be cut off again on a retry with the same limit."""
+    calls = 0
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "popu')], finish_reason='length'
+        )
+
+    agent = Agent(FunctionModel(truncated), output_type=ToolOutput(_City), retries=3)
+    settings = ModelSettings(max_tokens=10)
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        if mode == 'run':
+            await agent.run('Hello', model_settings=settings)
+        else:
+            async with agent.iter('Hello', model_settings=settings) as agent_run:
+                async for _ in agent_run:
+                    pass
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    'first',
+    ['{"name": "Paris"}', '["Paris", 2]', '{"name": "Paris", "population": 2}'],
+    ids=['schema', 'non_object', 'output_validator'],
+)
+def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(first: str):
+    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_name = info.output_tools[0].name
+        if len(messages) > 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, '{"name": "Paris", "population": 3}')])
+        return ModelResponse(parts=[ToolCallPart(tool_name, first)], finish_reason='length')
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            raise ModelRetry('Population is too small.')
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+def test_truncated_output_tool_call_does_not_override_valid_output_in_same_response():
+    """With `'exhaustive'`, a valid output tool call still wins over a later one the token limit cut off."""
+    calls = 0
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        tool_name = info.output_tools[0].name
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name, '{"name": "Paris", "population": 2}', tool_call_id='valid'),
+                ToolCallPart(tool_name, '{"name": "Lyon", "popu', tool_call_id='cut_off'),
+            ],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City), end_strategy='exhaustive')
+    result = agent.run_sync('Hello')
+    assert result.output == _City(name='Paris', population=2)
+    assert calls == 1
+    tool_returns = [part for part in result.new_messages()[-1].parts if isinstance(part, ToolReturnPart)]
+    assert [(part.tool_call_id, part.content) for part in tool_returns] == snapshot(
+        [('valid', 'Final result processed.'), ('cut_off', 'Output tool not used - output failed validation.')]
+    )
 
 
 def test_truncated_text_output_is_returned():
