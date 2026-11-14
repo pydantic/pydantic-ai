@@ -4,7 +4,8 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, assert_never, cast
+from functools import cached_property
+from typing import Any, Literal, assert_never, cast, get_args
 
 import httpx2
 import pydantic_core
@@ -56,6 +57,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.mistral import MistralModelProfile, MistralReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
@@ -210,12 +212,43 @@ _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     'xhigh': 'high',
     'max': 'high',
 }
-"""Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
+"""Maps the unified `thinking` setting to `reasoning_effort` when the profile sets no `mistral_reasoning_efforts`.
 
-Mistral only exposes `'high'` (full thinking) and `'none'` (thinking suppressed), so every
+Small 4 and Medium 3.5 accept only `'high'` (full thinking) and `'none'` (thinking suppressed), so every
 enabled level maps to `'high'`; only `thinking=False` maps to `'none'`. See
 https://docs.mistral.ai/capabilities/reasoning/.
 """
+
+_MISTRAL_REASONING_EFFORT_ORDER: tuple[MistralReasoningEffort, ...] = get_args(MistralReasoningEffort)
+"""Every `reasoning_effort` value, from least to most reasoning."""
+
+
+def _closest_reasoning_effort(
+    thinking: ThinkingLevel, accepted: frozenset[MistralReasoningEffort]
+) -> MistralReasoningEffort | MistralUnset:
+    """Map the unified `thinking` setting to the closest `reasoning_effort` the model accepts.
+
+    `thinking=False` maps to `'none'` if accepted, else the lowest accepted effort.
+    """
+    requested: MistralReasoningEffort
+    if thinking is False:
+        requested = 'none'
+    elif thinking in ('minimal', 'low'):
+        requested = 'low'
+    elif thinking == 'medium':
+        requested = 'medium'
+    # `True` asks for `'high'`, Mistral's recommended default.
+    elif thinking is True or thinking in ('high', 'xhigh', 'max'):
+        requested = 'high'
+    else:
+        assert_never(thinking)
+    order = _MISTRAL_REASONING_EFFORT_ORDER
+    accepted_in_order: list[MistralReasoningEffort] = [effort for effort in order if effort in accepted]
+    # The lowest accepted effort at or above the requested one, else the highest.
+    for effort in accepted_in_order:
+        if order.index(effort) >= order.index(requested):
+            return effort
+    return accepted_in_order[-1] if accepted_in_order else UNSET
 
 
 class MistralModelSettings(ModelSettings, total=False):
@@ -299,6 +332,11 @@ class MistralModel(Model[Mistral]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @cached_property
+    def profile(self) -> MistralModelProfile:
+        """The model profile."""
+        return cast(MistralModelProfile, super().profile)
 
     async def request(
         self,
@@ -671,15 +709,19 @@ class MistralModel(Model[Mistral]):
     def _translate_thinking(
         self,
         model_request_parameters: ModelRequestParameters,
-    ) -> Literal['none', 'high'] | MistralUnset:
+    ) -> MistralReasoningEffort | MistralUnset:
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
-        Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
-        `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
-        not even for `thinking=False`.
+        A model whose profile sets `mistral_reasoning_efforts` (Mistral Large 4) gets the closest effort it
+        accepts. Otherwise, a model with adjustable reasoning gets `'high'` or `'none'`, and a model that always
+        reasons with no effort to set (the dated `magistral` ids) receives nothing, not even for `thinking=False`.
         """
         thinking = model_request_parameters.thinking
-        if thinking is None or self.profile.get('thinking_always_enabled', False):
+        if thinking is None:
+            return UNSET
+        if (accepted := self.profile.get('mistral_reasoning_efforts')) is not None:
+            return _closest_reasoning_effort(thinking, accepted)
+        if self.profile.get('thinking_always_enabled', False):
             return UNSET
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 

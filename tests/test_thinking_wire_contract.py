@@ -324,7 +324,7 @@ CASES = [
         expect_warning='XHIGH is not a valid ThinkingLevel',
         match_body=True,
     ),
-    # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
+    # Mistral: Small 4 and Medium 3.5 take the binary `reasoning_effort` ('high'/'none');
     # dated (always-on) magistral ids must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
         id='mistral-small-thinking-high',
@@ -362,6 +362,31 @@ CASES = [
         model_name='magistral-medium-latest',
         thinking=False,
         present={'reasoning_effort': 'none'},
+        match_body=True,
+    ),
+    # Mistral Large 4 accepts `'low'`/`'medium'`/`'high'` and rejects `'none'`, so `thinking=False` sends its
+    # lowest effort.
+    WireCase(
+        id='mistral-large-4-disable',
+        provider='mistral',
+        model_name='mistral-large-4',
+        thinking=False,
+        present={'reasoning_effort': 'low'},
+        match_body=True,
+    ),
+    WireCase(
+        id='mistral-large-4-thinking-medium',
+        provider='mistral',
+        model_name='mistral-large-4',
+        thinking='medium',
+        present={'reasoning_effort': 'medium'},
+        match_body=True,
+    ),
+    WireCase(
+        id='mistral-large-4-unset-omits-effort',
+        provider='mistral',
+        model_name='mistral-large-4',
+        absent=('reasoning_effort',),
         match_body=True,
     ),
 ]
