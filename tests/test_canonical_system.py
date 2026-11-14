@@ -540,10 +540,18 @@ def test_canonical_system_stamp_round_trips():
     # A model the name doesn't identify may be Claude, so its responses stay acceptable to Claude by name.
     arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123'
     assert BedrockConverseModel(arn, provider=bedrock_provider())._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
-    response = thinking_response('openai-codex', canonical_system='openai')
-    dumped = ModelMessagesTypeAdapter.dump_python([response], mode='json')
-    assert dumped[0]['canonical_system'] == 'openai'
-    assert ModelMessagesTypeAdapter.validate_python(dumped) == [response]
+    # One that routes to GPT-5.6 is identified by its profile.
+    arn_gpt_5_6 = BedrockConverseModel(
+        arn, provider=bedrock_provider(), profile=BedrockModelProfile(bedrock_thinking_variant='openai_responses')
+    )
+    assert arn_gpt_5_6._canonical_system_stamp == 'bedrock'  # pyright: ignore[reportPrivateUsage]
+    responses: list[ModelMessage] = [
+        thinking_response('openai-codex', canonical_system='openai'),
+        thinking_response('bedrock', canonical_system='bedrock'),
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(responses, mode='json')
+    assert [message['canonical_system'] for message in dumped] == ['openai', 'bedrock']
+    assert ModelMessagesTypeAdapter.validate_python(dumped) == responses
 
 
 # Compaction: the trim, the boundary and the execution-availability window follow the same predicate.
