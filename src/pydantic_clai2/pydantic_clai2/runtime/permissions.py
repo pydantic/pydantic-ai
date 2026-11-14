@@ -9,13 +9,13 @@ session no one can be asked in, is denied by `DenyUnanswered`. A `SubAgents` del
 
 import difflib
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HandleDeferredToolCalls, WrapperCapability
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import (
@@ -27,6 +27,7 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
+from pydantic_ai_harness.deny_unanswered import DenyUnanswered
 from pydantic_ai_harness.permissions import (
     Approver,
     PermissionDecision,
@@ -34,7 +35,6 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
     Permissions,
     ask_permissions,
-    denial_message,
     permission_requests,
 )
 from pydantic_ai_harness.sub_agents import SELF_AGENT_NAME, SubAgents
@@ -71,12 +71,34 @@ def permissions_command(context: CommandContext, args: list[str]) -> str:
 def session_permissions(
     mode: Callable[[], PermissionMode],
 ) -> 'tuple[Permissions[AgentDepsT], DenyUnanswered[AgentDepsT], KeepDelegatesChecked[AgentDepsT]]':
-    """What every run of a session binds: `Permissions` reading `mode` on each call, and its two backstops.
+    """What a session binds: `Permissions` reading `mode` on each call, and its two backstops.
 
-    The runtime keeps them for the session, so approvals remembered for its conversations end with it.
+    The runtime keeps them for the session, so approvals remembered for its conversations end with it. It binds the
+    `DenyUnanswered` backstop only to runs no one can be asked in: see `unattended_only`.
     """
     permissions = Permissions[AgentDepsT](lambda ctx: mode())
-    return permissions, DenyUnanswered[AgentDepsT](), KeepDelegatesChecked[AgentDepsT](permissions=permissions)
+    return (
+        permissions,
+        DenyUnansweredInSession[AgentDepsT](),
+        KeepDelegatesChecked[AgentDepsT](permissions=permissions),
+    )
+
+
+@dataclass(kw_only=True)
+class DenyUnansweredInSession(DenyUnanswered[AgentDepsT]):
+    """`DenyUnanswered` that tells the model `/permissions full` lets a call `Permissions` held run.
+
+    Other held approvals keep `message`: `/permissions` only changes what `Permissions` holds.
+    """
+
+    async def handle_deferred_tool_calls(
+        self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        results = await super().handle_deferred_tool_calls(ctx, requests=requests)
+        if results is not None:
+            for held in permission_requests(requests):
+                results.approvals[held.call.tool_call_id] = ToolDenied(UNANSWERED)
+        return results
 
 
 @dataclass
@@ -113,34 +135,40 @@ class KeepDelegatesChecked(AbstractCapability[AgentDepsT]):
         return any(capability is self.permissions for capability in bound)
 
 
-@dataclass
-class DenyUnanswered(AbstractCapability[AgentDepsT]):
-    """Deny the calls `Permissions` holds that no handler before it answered, saying how to let them run."""
-
-    def get_ordering(self) -> CapabilityOrdering:
-        """After every handler that may ask the user."""
-        return CapabilityOrdering(position='innermost', wrapped_by=[HandleDeferredToolCalls])
-
-    async def handle_deferred_tool_calls(
-        self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
-    ) -> DeferredToolResults | None:
-        held = permission_requests(requests)
-        if not held:
-            return None
-        return DeferredToolResults(
-            approvals={
-                request.call.tool_call_id: ToolDenied(f'{denial_message(request)} {UNANSWERED}') for request in held
-            }
-        )
+class ApprovalHandler(HandleDeferredToolCalls[AgentDepsT]):
+    """Answers the calls `Permissions` holds by asking someone; a session that binds one is attended."""
 
 
-def approval_handler(approve: Approver) -> HandleDeferredToolCalls[AgentDepsT]:
+def approval_handler(approve: Approver) -> ApprovalHandler[AgentDepsT]:
     """Answer the calls `Permissions` holds with `approve`, leaving other deferred calls to later handlers."""
 
     async def handle(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests) -> DeferredToolResults | None:
         return await ask_permissions(requests, approve)
 
-    return HandleDeferredToolCalls[AgentDepsT](handler=handle)
+    return ApprovalHandler[AgentDepsT](handler=handle)
+
+
+def unattended_only(
+    permissions: Sequence[AgentCapability[AgentDepsT]], supplied: Sequence[AgentCapability[AgentDepsT]]
+) -> tuple[AgentCapability[AgentDepsT], ...]:
+    """`permissions` without the session's `DenyUnansweredInSession` when `supplied` has an `ApprovalHandler`.
+
+    An `ApprovalHandler` inside a `WrapperCapability`, such as the `PluginGuard` around a settings-built plugin
+    capability, counts too. An attended session leaves calls nobody handles, and questions, as they were,
+    instead of denying them.
+    """
+    capabilities: list[AbstractCapability[AgentDepsT]] = [
+        capability for capability in supplied if isinstance(capability, AbstractCapability)
+    ]
+    if not any(_is_approval_handler(capability) for capability in capabilities):
+        return tuple(permissions)
+    return tuple(capability for capability in permissions if not isinstance(capability, DenyUnansweredInSession))
+
+
+def _is_approval_handler(capability: AbstractCapability[AgentDepsT]) -> bool:
+    if isinstance(capability, ApprovalHandler):
+        return True
+    return isinstance(capability, WrapperCapability) and _is_approval_handler(capability.wrapped)
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:

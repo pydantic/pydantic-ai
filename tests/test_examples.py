@@ -130,7 +130,15 @@ class ExamplesConfig(BaseExamplesConfig):
 
 
 RUNNABLE_HARNESS_PAGES = frozenset(
-    {'artifact-scanning.md', 'aws-lambda.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
+    {
+        'artifact-scanning.md',
+        'aws-lambda.md',
+        'azure-durable-task.md',
+        'deny-unanswered.md',
+        'detect-loops.md',
+        'memory.md',
+        'permissions.md',
+    }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 

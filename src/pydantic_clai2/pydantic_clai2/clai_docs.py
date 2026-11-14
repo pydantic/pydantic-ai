@@ -43,6 +43,7 @@ _HARNESS_DOCS = (
     'coder',
     'compaction',
     'day_ai',
+    'deny_unanswered',
     'file_system',
     'github',
     'google_workspace',

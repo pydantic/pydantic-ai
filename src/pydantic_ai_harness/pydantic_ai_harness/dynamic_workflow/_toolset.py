@@ -33,6 +33,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
     from pydantic_monty import (
@@ -847,6 +848,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if usage_limits is None and self.forward_usage:
             # Shared usage is checked against the parent's limits, so they bound the whole tree.
             usage_limits = ctx.usage_limits
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
@@ -854,7 +857,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
-                capabilities=[serving_model],
+                capabilities=[serving_model, *([deny] if deny is not None else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:

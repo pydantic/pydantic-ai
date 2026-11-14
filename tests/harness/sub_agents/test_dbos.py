@@ -13,8 +13,12 @@ from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import DenyUnanswered
+from pydantic_ai_harness.ask_user import AskUser
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, TaskControl
 from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.harness._deferred_tools import QUESTION, call_then_echo
 from tests.harness.sub_agents._background import (
     WORKER_CALLS,
     EventKinds,
@@ -196,3 +200,29 @@ async def test_background_task_survives_recovery(dbos: DBOS) -> None:
         ]
         assert order.count('sub_agents.task_backgrounded') == 1
     assert WORKER_CALLS == ['worker'], 'recovery ran the background task again'
+
+
+async def test_parent_deny_unanswered_reaches_a_durable_child_in_the_workflow(dbos: DBOS) -> None:
+    """A delegate bound to `DBOSDurability` accepts the parent's forwarded `DenyUnanswered` inside the workflow."""
+    observed: list[str] = []
+    child_agent = Agent(
+        call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'child done', observed),
+        name='deny_child',
+        capabilities=[AskUser[object](answerer=None), DBOSDurability[object]()],
+    )
+    parent = Agent(
+        call_then_echo('delegate_task', {'agent_name': 'deny_child', 'task': 'ask'}, 'd1', 'parent done'),
+        name='deny_parent',
+        capabilities=[
+            DenyUnanswered[object](),
+            SubAgents[object](agents=[SubAgent(child_agent)]),
+            DBOSDurability[object](),
+        ],
+    )
+
+    @DBOS.workflow(name='deny_parent_workflow')
+    async def workflow() -> str:
+        return (await parent.run('delegate')).output
+
+    assert await workflow() == 'parent done'
+    assert observed == [DEFAULT_QUESTION_MESSAGE]

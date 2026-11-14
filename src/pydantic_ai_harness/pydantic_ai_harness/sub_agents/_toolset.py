@@ -50,6 +50,7 @@ from pydantic_ai_harness._sub_agent_output import (
     unresumable_output_message,
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -1325,7 +1326,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
         serving_model = ServingModelRecorder()
-        capabilities = self._child_capabilities(owner, record, serving_model, extra_capabilities)
+        capabilities = self._child_capabilities(ctx, owner, record, serving_model, extra_capabilities)
         own_budget, child_usage, usage_limits = self._child_budget(ctx, sub_agent, managed=managed or owner is not None)
 
         run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)
@@ -1385,13 +1386,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     def _child_capabilities(
         self,
+        ctx: RunContext[AgentDepsT],
         owner: DelegationTasks | None,
         record: DelegationTask | None,
         serving_model: ServingModelRecorder,
         extra_capabilities: Sequence[AbstractCapability[Any]],
     ) -> list[AgentCapability[AgentDepsT]]:
-        """The capabilities a child run gets: the shared ones, task control's, then `serving_model` and the extras."""
-        capabilities = list(self._shared_capabilities)
+        """The capabilities a child run gets.
+
+        The shared ones, the parent run's `DenyUnanswered`, task control's, then `serving_model` and the extras.
+        """
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
+        capabilities: list[AgentCapability[AgentDepsT]] = [
+            *self._shared_capabilities,
+            *([deny] if deny is not None else []),
+        ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
             capabilities.extend(owner.persistence_capabilities())
