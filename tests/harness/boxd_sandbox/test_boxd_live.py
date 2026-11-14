@@ -136,9 +136,8 @@ async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_a
         assert display is not None
         await display.screenshot()
         await backend.run(['sh', '-c', _TERMINAL], timeout=60)
-        with anyio.fail_after(30):
-            while (await backend.run(['sh', '-c', 'xdotool search --class xterm'], timeout=30)).exit_code:
-                await anyio.sleep(0.5)
+        # Not `--onlyvisible`: with no window manager, xdotool reports xterm's window unviewable while it takes input.
+        await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
 
         await display.act(Click(x=50, y=50))
         await display.act(TypeText(text='héllo 😀\n' + 'x' * 2_500 + '\n'))
