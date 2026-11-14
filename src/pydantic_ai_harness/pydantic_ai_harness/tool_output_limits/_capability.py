@@ -8,7 +8,7 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
@@ -754,19 +754,50 @@ def _with_handles(
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
-) -> dict[str, object]:
-    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
+) -> object:
+    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
+
+    A list or tuple stays a list, with the handles appended as one dict item: that is the
+    shape the AG-UI and Vercel AI adapters read UI events and chunks from, and both skip
+    items that are not events, so wrapping it in a dict would silently drop them. A single
+    event or chunk becomes a one item list for the same reason.
+    """
+    handles: dict[str, object] = {}
+    if value_handle is not None:
+        handles['overflow_handle'] = value_handle
+        handles['overflow_bytes'] = value_bytes
+    if content_handle is not None:
+        handles['overflow_content_handle'] = content_handle
+
+    if isinstance(existing, list | tuple):
+        items: list[object] = list(cast('list[object] | tuple[object, ...]', existing))
+        return [*items, handles]
+    if _is_ui_event(existing):
+        return [existing, handles]
+
     base: dict[str, object] = {}
     if is_mapping(existing):
         base.update({str(key): existing[key] for key in existing})
     elif existing is not None:
         base['original_metadata'] = existing
-    if value_handle is not None:
-        base['overflow_handle'] = value_handle
-        base['overflow_bytes'] = value_bytes
-    if content_handle is not None:
-        base['overflow_content_handle'] = content_handle
+    base.update(handles)
     return base
+
+
+def _is_ui_event(value: object) -> bool:
+    """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
+    try:
+        from ag_ui.core import BaseEvent
+    except ImportError:  # pragma: no cover
+        pass
+    else:
+        if isinstance(value, BaseEvent):
+            return True
+    try:
+        from pydantic_ai.ui.vercel_ai._utils import DATA_CHUNK_TYPES
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, DATA_CHUNK_TYPES)
 
 
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
