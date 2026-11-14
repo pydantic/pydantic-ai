@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 0.x: `Memory.store` defaults to `InMemoryMemoryStore`, the new name of `InMemoryStore` (#11321); it is the same class, so the default behaves identically.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13401"
+}
