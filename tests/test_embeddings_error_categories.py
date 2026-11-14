@@ -37,7 +37,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.embeddings import Embedder, EmbeddingModel
 
-from .conftest import try_import
+from .conftest import gave_up_on, try_import
 
 with try_import() as imports_successful:
     import httpx
@@ -433,16 +433,6 @@ async def test_http_provider_error_category(case: Case):
     assert exc.__cause__ is not None
 
 
-def _gave_up_on(handler: Handler) -> Handler:
-    """What a retrying transport raises once its `validate_response` rejected the error status `handler` answers."""
-
-    def gave_up(request: httpx2.Request) -> httpx2.Response:
-        response = handler(request)
-        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
-
-    return gave_up
-
-
 _GAVE_UP_TWINS = [
     case
     for case in CASES
@@ -467,7 +457,7 @@ async def test_transport_gave_up_status_error_category(case: Case):
         return (_categories(exc), exc.status_code, exc.provider_error_code, exc.provider_error_type, exc.retry_after)
 
     sdk_error = await error(case.handler)
-    gave_up_error = await error(_gave_up_on(case.handler))
+    gave_up_error = await error(gave_up_on(case.handler))
     assert summary(gave_up_error) == summary(sdk_error)
 
 

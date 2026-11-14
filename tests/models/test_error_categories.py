@@ -38,7 +38,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ..conftest import try_import
+from ..conftest import gave_up_on, try_import
 
 with try_import() as imports_successful:
     import grpc
@@ -2091,16 +2091,6 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     assert (exc.__cause__ is not None) == case.has_cause
 
 
-def _gave_up_on(handler: Handler) -> Handler:
-    """What a retrying transport raises once its `validate_response` rejected the error status `handler` answers."""
-
-    def gave_up(request: httpx2.Request) -> httpx2.Response:
-        response = handler(request)
-        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
-
-    return gave_up
-
-
 _TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
     _openai,
     _openrouter,
@@ -2153,7 +2143,7 @@ async def test_transport_gave_up_status_error_category(allow_model_requests: Non
         )
 
     sdk_error = await error(case.handler)
-    gave_up_error = await error(_gave_up_on(case.handler))
+    gave_up_error = await error(gave_up_on(case.handler))
     assert summary(gave_up_error) == summary(sdk_error)
 
 
