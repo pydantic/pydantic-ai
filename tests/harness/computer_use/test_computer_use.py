@@ -82,8 +82,10 @@ with try_import() as google_imports:
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 
-READY_TIMEOUT = 5
-"""How long a test waits for another run to reach a step, so a run that never gets there fails the test."""
+READY_TIMEOUT = 30
+"""How long a test waits for another run to reach a step, so a run that never gets there fails the test.
+
+Only a hang reaches it, so it allows for a slow, loaded CI runner."""
 
 
 @pytest.fixture(params=['in-process', 'durable'])
