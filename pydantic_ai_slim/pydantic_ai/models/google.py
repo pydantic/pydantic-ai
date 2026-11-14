@@ -2328,19 +2328,24 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
     if part.tool_response:
         return _map_tool_response(part.tool_response, provider_name)
     if inline_data := part.inline_data:
-        if part.thought:
-            # See the thought-image comment in `GeminiStreamedResponse._map_inline_data`.
-            return None
-        data = inline_data.data
-        mime_type = inline_data.mime_type
-        assert data and mime_type, 'Inline data must have data and mime type'
-        content = BinaryContent(data=data, media_type=mime_type)
-        return FilePart(content=BinaryContent.narrow_type(content))
+        return _map_inline_data_part(inline_data, part.thought)
     if _is_signature_only_part(part):
         # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
         # show, and both backends reject them when replayed ("Invalid thought signature").
         return None
     raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
+
+
+def _map_inline_data_part(inline_data: Blob, thought: bool | None) -> FilePart | None:
+    """Map an inline file, or return `None` for an interim image the model produced while thinking."""
+    if thought:
+        # See the thought-image comment in `GeminiStreamedResponse._map_inline_data`.
+        return None
+    data = inline_data.data
+    mime_type = inline_data.mime_type
+    assert data and mime_type, 'Inline data must have data and mime type'
+    content = BinaryContent(data=data, media_type=mime_type)
+    return FilePart(content=BinaryContent.narrow_type(content))
 
 
 def _character_index(text: str, byte_index: int) -> int | None:
