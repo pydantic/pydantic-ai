@@ -673,6 +673,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
     # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
     if model_name in {
         'gpt-5.6-sol',
@@ -682,6 +683,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-luna',
         'gpt-6-astra',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
     }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
         # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
