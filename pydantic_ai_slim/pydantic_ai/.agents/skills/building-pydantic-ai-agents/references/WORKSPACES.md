@@ -51,6 +51,9 @@ tool is tool output whatever its level. To disable workspace access
 for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
+`run(..., cwd=path)` starts one command in another existing directory (relative to the working directory)
+on any backend, by changing into it through `sh`; a missing one raises `FileNotFoundError`.
+
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
 components (native through `SupportsRealpath`, `readlink` in the shell otherwise). With neither, it
 only normalizes the text, so a path check built on it cannot see through symlinks.
@@ -91,8 +94,8 @@ in it; after `workspace='new'` nothing is carried forward.
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
 the concrete backend for provider-specific methods (not from workflow code under durable
-execution). Sandbox providers (Modal, E2B, Sprites, Daytona, boxd, local smolvm microVMs, local Docker containers, and self-hosted OpenSandbox servers), `SSHWorkspace` for a remote host, and `BubblewrapSandbox`
-for sandboxing another workspace's commands ship as capabilities in the
+execution). Sandbox providers (Modal, E2B, Sprites, Daytona, boxd, local smolvm microVMs, local Docker containers, and self-hosted OpenSandbox servers), `SSHWorkspace` for a remote host, and `BubblewrappedWorkspace`
+for confining another workspace's commands to its working directory ship as capabilities in the
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
 subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its `backend`
 fixture.

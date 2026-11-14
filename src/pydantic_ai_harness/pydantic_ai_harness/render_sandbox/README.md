@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[coder,render,anthropic]"
 ```
 
-The `coder` extra installs the coding tools. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-an-api-key), `RENDER_WORKSPACE_ID` to the `tea-...` ID of a [workspace](https://render.com/docs/workspaces) with Sandboxes access and billing configured, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra installs the coding tools. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-an-api-key), `RENDER_WORKSPACE_ID` to the `tea-...` ID of a [workspace](https://render.com/docs/team-members) with Sandboxes access and billing configured, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ Commands start in the sandbox's home directory. Pass `working_dir=` for another 
 
 ## Choose the tools
 
-`RenderSandbox` supplies the workspace only. Add [`Coder`](../coder/) for a coding agent, or the narrower [`Shell`](../shell/) and [`FileSystem`](../filesystem/).
+`RenderSandbox` supplies the workspace only. Add [`Coder`](../coder/) for a coding agent, or the narrower [`Shell`](../shell/) and [`FileSystem`](../file_system/).
 
 A string command runs under `/bin/sh -c`; a list runs as given. Standard input is empty, and a non-zero exit is a normal result. Output over 10 MiB raises `WorkspaceOutputLimitError` with the first 64 KiB of each stream and attempts to stop the command; redirect large output to a file. A command and its environment must fit in about 110 KB; write larger content with the file tools.
 

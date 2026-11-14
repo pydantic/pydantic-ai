@@ -83,7 +83,7 @@ ZERO_OUTPUT_ALERT_RATE = 0.5
 MIN_RUNS_FOR_RATE_ALERT = 5
 # A scheduled run has no path filter to legitimately skip on, so an agent that never
 # starts is a broken job graph. Every other trigger can skip by design — PR workflows
-# (`ui-security-review` only reviews UI-touching PRs) and manual dispatches gated on
+# (`CI Review` skips a head that has not passed `CI`) and manual dispatches gated on
 # their inputs — so alerting on those would be false noise. The static guard in
 # `agentic_workflow_guard.py` covers that failure mode at review time instead.
 UNCONDITIONAL_EVENTS = frozenset({'schedule'})
