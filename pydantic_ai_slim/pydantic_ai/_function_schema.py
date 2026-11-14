@@ -196,18 +196,7 @@ def function_schema(
         schema_context.fields, schema_context.var_kwargs_schema, core_config
     )
     schema = gen_schema.clean_schema(schema)
-    # noinspection PyUnresolvedReferences
-    schema_validator = create_schema_validator(
-        schema,
-        function,
-        function.__module__,
-        function.__qualname__,
-        'validate_call',
-        core_config,
-        config_wrapper.plugin_settings,
-    )
-    # PluggableSchemaValidator is api compatible with SchemaValidator
-    schema_validator = cast(SchemaValidator, schema_validator)
+    schema_validator = _schema_validator(schema, function, core_config, config_wrapper.plugin_settings)
     json_schema = schema_generator().generate(schema)
     revalidator = _by_name_revalidator(schema, function, core_config, config_wrapper.plugin_settings)
 
@@ -264,6 +253,27 @@ def function_schema(
     )
 
 
+def _schema_validator(
+    schema: core_schema.CoreSchema,
+    function: Callable[..., Any],
+    core_config: core_schema.CoreConfig,
+    plugin_settings: dict[str, object] | None,
+) -> SchemaValidator:
+    """A validator for `function`'s arguments `schema`, which installed pydantic plugins observe."""
+    # noinspection PyUnresolvedReferences
+    validator = create_schema_validator(
+        schema,
+        function,
+        function.__module__,
+        function.__qualname__,
+        'validate_call',
+        core_config,
+        plugin_settings,
+    )
+    # PluggableSchemaValidator is api compatible with SchemaValidator
+    return cast(SchemaValidator, validator)
+
+
 def _by_name_revalidator(
     schema: core_schema.CoreSchema,
     function: Callable[..., Any],
@@ -274,17 +284,7 @@ def _by_name_revalidator(
     by_name_schema = _read_arguments_by_name(schema)
     if by_name_schema is None:
         return None
-    validator = create_schema_validator(
-        by_name_schema,
-        function,
-        function.__module__,
-        function.__qualname__,
-        'validate_call',
-        core_config,
-        plugin_settings,
-    )
-    # PluggableSchemaValidator is api compatible with SchemaValidator
-    return cast(SchemaValidator, validator)
+    return _schema_validator(by_name_schema, function, core_config, plugin_settings)
 
 
 def _read_arguments_by_name(schema: core_schema.CoreSchema) -> core_schema.CoreSchema | None:
