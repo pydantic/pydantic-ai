@@ -26,7 +26,7 @@ from pydantic import (
     with_config,
 )
 from pydantic.errors import PydanticInvalidForJsonSchema
-from pydantic_core import PydanticOmit, to_jsonable_python
+from pydantic_core import PydanticOmit, SchemaError, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
@@ -301,9 +301,10 @@ def build_schema_types(
 
         # Short form: the single argument must accept a positional value.
         short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
-        object_rejecting_type = _object_rejecting_type(target, name, type_hints)
+        object_rejecting_type = None
         if len(short_type_hints) == 1 and short_type_hints.keys().isdisjoint(keyword_only_params):
-            [type_hint_type] = short_type_hints.values()
+            [type_hint_type] = map(_without_not_required, short_type_hints.values())
+            object_rejecting_type = _object_rejecting_type(target, name, type_hint_type)
             schema_types.append(_make_typed_dict('short_spec', name, {name: object_rejecting_type or type_hint_type}))
 
         # Keyword form: required for keyword-only or multiple parameters, or a sole parameter accepting an object.
@@ -347,6 +348,16 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     return type_hints, required_type_hints
 
 
+def _without_not_required(type_hint: object) -> object:
+    """`type_hint` without a `NotRequired` wrapper, so a short form's `Name` key stays required.
+
+    The name-only form covers a parameter with a default left out.
+    """
+    if typing.get_origin(type_hint) is NotRequired:
+        [type_hint] = typing.get_args(type_hint)
+    return type_hint
+
+
 def _accepts_var_keyword(target: Callable[..., object]) -> bool:
     return any(p.kind == p.VAR_KEYWORD for p in inspect.signature(target).parameters.values())
 
@@ -362,17 +373,17 @@ def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping
     return {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
 
 
-def _object_rejecting_type(target: Callable[..., object], name: str, type_hints: Mapping[str, Any]) -> object | None:
-    """The type of `target`'s sole spec parameter with string-keyed objects rejected, if its schema accepts an object.
+def _object_rejecting_type(target: Callable[..., object], name: str, type_hint: object) -> object | None:
+    """The short form's value type `type_hint` with string-keyed objects rejected, if its schema accepts an object.
 
     The loader reads a string-keyed dict in the short form as keyword arguments, so such a parameter takes those in the
     keyword form only. A YAML mapping with a non-string key stays a positional value. A target accepting `**kwargs`
-    keeps its schema. So does a parameter whose type has no JSON schema, since the schema's union drops that short form.
+    keeps its schema. So does a parameter whose type has no JSON schema, since the schema's union drops that short form,
+    or no core schema, so the full schema raises that error with its field path.
     """
-    if len(type_hints) != 1 or _accepts_var_keyword(target):
+    if _accepts_var_keyword(target):
         return None
-    [type_hint] = type_hints.values()
-    with suppress(PydanticOmit, PydanticInvalidForJsonSchema):
+    with suppress(PydanticOmit, PydanticInvalidForJsonSchema, SchemaError):
         json_schema = TypeAdapter(_make_typed_dict('short_spec', name, {name: type_hint})).json_schema()
         if _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {})):
             reject_objects = GetPydanticSchema(
