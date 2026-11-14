@@ -137,6 +137,19 @@ AGENT_START_HEALTH_CHECK = re.compile(
     r'python3\s+(?P=path)\s+check\b'
 )
 
+# The agent-start recheck's step id. Its `account` output selects the engine's Z.AI key.
+AGENT_START_HEALTH_STEP_ID = 'agent_start_health'
+# The primary and backup Coding Plan keys, which the gate, the recheck and the host record all receive.
+ZAI_KEYS = {
+    'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'ZAI_BACKUP_API_KEY': '${{ secrets.ZAI_BACKUP_API_KEY }}',
+}
+# The engine's provider credential: the backup key only when the recheck selected that account.
+ENGINE_CREDENTIAL = (
+    f"${{{{ steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account == 'backup' "
+    '&& secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}'
+)
+
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 
@@ -609,8 +622,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             missing.append('task identity available inside the agent sandbox')
         if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
             missing.append('the unchanged Z.ai model selected through Anthropic')
-        if env.get('ANTHROPIC_API_KEY') != '${{ secrets.ZAI_API_KEY }}':
-            missing.append('ZAI_API_KEY injection at the provider proxy')
+        if env.get('ANTHROPIC_API_KEY') != ENGINE_CREDENTIAL:
+            missing.append('injection of the account-selected Z.ai key at the provider proxy')
     return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')] if missing else []
 
 
@@ -1222,7 +1235,7 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
         )
         stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
         after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
-        recheck_name, replace_name, stop_name = AGENT_START_HEALTH_STEPS
+        recheck_name, replace_name, stop_name, account_stop_name = AGENT_START_HEALTH_STEPS
         # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
         named = (
             recheck is not None
@@ -1236,14 +1249,47 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
             and not step.get('continue-on-error')
             for step in after_recheck
         )
-        if recheck is None or gate_env is None or steps[recheck].get('env') != gate_env or not named or not stops:
+        keyed = (
+            recheck is not None
+            and steps[recheck].get('id') == AGENT_START_HEALTH_STEP_ID
+            and all(_as_mapping(gate_env).get(key) == value for key, value in ZAI_KEYS.items())
+        )
+        # A failed replacement leaves the gate's account in the artifact; the run must not go on under another one.
+        replace_id = next((step.get('id') for step in after_recheck if step.get('name') == replace_name), None)
+        account_condition = (
+            f"steps.{replace_id}.outcome == 'failure' && steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account "
+            '!= needs.provider_health.outputs.account'
+        )
+        guards_account = (
+            replace_id is not None
+            and _as_mapping(_as_mapping(jobs.get('provider_health')).get('outputs')).get('account')
+            == '${{ steps.health.outputs.account }}'
+            and any(
+                step.get('name') == account_stop_name
+                and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(account_condition)
+                and str(step.get('run', '')).rstrip().endswith('exit 1')
+                and not step.get('continue-on-error')
+                for step in after_recheck
+            )
+        )
+        if (
+            recheck is None
+            or gate_env is None
+            or steps[recheck].get('env') != gate_env
+            or not named
+            or not stops
+            or not keyed
+            or not guards_account
+        ):
             violations.append(
                 Violation(
                     str(lock),
                     'provider-health-agent-start',
                     'The agent job must rerun the default-branch provider-health check with the gate environment '
                     'before engine execution, then fail before inference unless it reports ready. The steps must '
-                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`.',
+                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`, the recheck its id '
+                    f'`{AGENT_START_HEALTH_STEP_ID}`, and the gate both Z.AI keys and an `account` output. A failed '
+                    "replacement must stop the job when the recheck's account differs from the gate's.",
                 )
             )
     return violations
@@ -1268,7 +1314,7 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
                     f'The `{HOST_RESULT_JOB}` job must follow the agent job, including a failed one, check out only '
                     "the default-branch controller, and download this run's `agent` artifact and health decision. "
                     'Its record step must run exactly the `record` command, skipped only when a download failed, with '
-                    'the gate identity and the Z.AI key, which nothing else in the job references. It must then '
+                    'the gate identity and the Z.AI keys, which nothing else in the job references. It must then '
                     'upload `run-result.json` with the health decision, and a failed record must not fail the run.',
                 )
             )
@@ -1295,7 +1341,7 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
     }
     record_command = (
         f'python3 -I {controller} record --agent-session agent/agent-session.jsonl '
-        '--output provider-health/run-result.json'
+        '--health-artifact provider-health/provider-health.json --output provider-health/run-result.json'
     )
     record = next(
         (
@@ -1328,7 +1374,7 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
         # A `shell` or `working-directory` would change what the exact command runs.
         and set(record_step) <= {'name', 'if', 'env', 'run'}
         and _normalized_condition(str(record_step.get('if', ''))) == _normalized_condition(downloaded)
-        and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
+        and all(record_env.get(key) == gate_env.get(key) for key in (*identity, *ZAI_KEYS))
         and not SECRETS_CONTEXT.search(str({**job, 'steps': steps[:record] + steps[record + 1 :]}))
         and any(
             str(step.get('uses', '')).startswith('actions/upload-artifact@')
@@ -1552,7 +1598,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Downloaded agent artifacts must be parsed only as input to the trusted controller, never executed as code.',
             )
         )
-    provider_keys: tuple[str, ...] = ('ZAI_API_KEY',)
+    provider_keys = tuple(ZAI_KEYS)
     workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
     job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
     if job_env.get('PYDANTIC_AI_RUN_ATTEMPT') != '${{ github.run_attempt }}':

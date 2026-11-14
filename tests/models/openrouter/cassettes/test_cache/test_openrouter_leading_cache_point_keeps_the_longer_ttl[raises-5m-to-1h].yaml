@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -44,7 +44,9 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -60,9 +62,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905548-u9mCm6MWkL2iV2NRS0Mw
+        id: gen-1793763661-F8y2DOhIAMqWyAnBmaWH
         object: chat.completion
-        created: 1792905548
+        created: 1793763661
         model: anthropic/claude-sonnet-5.5
         provider: Anthropic
         system_fingerprint: null
@@ -77,22 +79,26 @@ interactions:
             content: done
             refusal: null
             reasoning: |+
-              The user just wants the single word "done" as a reply, so I'll comply with that simple instruction.
+              I'm weighing whether to reply with just "done" as the user asks. Nothing was actually completed, so answering "done" would suggest work that didn't happen, and I'm considering how to balance following the request with not misleading them.
+
+              I'm still deciding whether to just reply "done" as asked. Nothing has actually been completed, so that word would imply work that didn't happen, and I'm weighing that against simply following the user's explicit request.
 
             reasoning_details:
             - type: reasoning.text
               text: |+
-                The user just wants the single word "done" as a reply, so I'll comply with that simple instruction.
+                I'm weighing whether to reply with just "done" as the user asks. Nothing was actually completed, so answering "done" would suggest work that didn't happen, and I'm considering how to balance following the request with not misleading them.
+
+                I'm still deciding whether to just reply "done" as asked. Nothing has actually been completed, so that word would imply work that didn't happen, and I'm weighing that against simply following the user's explicit request.
 
               format: anthropic-claude-v1
               index: 0
               signature: >-
-                CAQSwwYKEAgTGAI4AUIIdGhpbmtpbmcSDGRTU33VTRUZJFztCxoMv60zXXP+/74QFO1AIjC6b2rX681rwwmvKCEHkBy/RWmKi0qSDXDnhDaK1uvH0LhNzueHSFj1iYqUJFmzyckq4AVt6pFy5CuIPhN4BiUb41DfHSq3uSjEuOdvzOQ0FW2L8ammFWG5U0UBHU7jN7pyJBHvPaejAC9+46tiPp5tiACG5qP1SQTeTGPjXTz837FP8H6C3LOl5aQUUNjGQyujAvaRwxMKi0ZqmhPGRud90ekmAp9s1rTC1lEv/4udxCcIpXVhv84Nb7HhqdXsCD5g74/Bw8dFn/rFN9xSBzGGw1rp5G7/hMs1+a6JslDfWNmjkS7b3pKt/9nEI1ZYdX34Qxe+XqdjOR4a7OBjTLauzXIgmd1cLYauxN3p1diLjetK7slBRDVwdUgQANt4UhjaEwY6DLSAjCHh/etUtOACYXhAN/lLXYgZLafdX6LFI0IuCtp8HBz49XclpnXrWHuL4o4ooHJWwnWgdtWPBRxpKbYZ6/u0bO2u3JrdAkB+1sZCCJKFO2h7tkJGucs8qDksN97dWS89sL2Bm6uYsUQYRE/8nwqP2Svz/hCtYrJ7f/RpQ5wiAfNRORxM9nl4fb3/xUGAgYnJ7YzwFvafputhWK+p1zxB0Xa5LPBjW9x8/uDv5bdFxtP1TgfcVUHp2ic65jRkn7Ws+ugTmoHwbh9eitPzDF2dfyB5zvwjT3iu0XHgkMNUQcIwf+IKsqdsbm2Mwxtj6Dc2Veh6coRMgws321dd9ot/jVTdd+BZHDtGDOfyjuM5Is6wWsP5aqomgTZ8f7PLNG6dj7NfepIsMuJ6TlJ14ydfZJYfmZQ6MCdL/pNhZX78Gp3M1+583ErM0GSTo8RstQVE35MrCPaTgzded0nvuR8bgxT0GO+TtbOD/8LuGX/8vF1DvBVL6Bu+5zf9GSd4f7lsBxFbsTHZ17xmT3ZhdfD4jP0Qb9zTnWPmw2bbUn9UvOBNUIvZA+3YW66WbWhseo1XmWBlg4Mr2dxuOxkednDkC5We8Us9UHK40tOl19HkR6Tqg41qNWneiaiB2aQO/UasEh6R77NtGsHQtwnYGAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
+                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.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
         usage:
           prompt_tokens: 40
-          completion_tokens: 52
-          total_tokens: 92
-          cost: 0.0006
+          completion_tokens: 283
+          total_tokens: 323
+          cost: 0.00291
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -100,11 +106,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0006
+            upstream_inference_cost: 0.00291
             upstream_inference_prompt_cost: 0.00008
-            upstream_inference_completions_cost: 0.00052
+            upstream_inference_completions_cost: 0.00283
           completion_tokens_details:
-            reasoning_tokens: 49
+            reasoning_tokens: 280
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:19:10.327160+00:00
+  recorded_at: 2026-11-04T03:41:05.907782+00:00

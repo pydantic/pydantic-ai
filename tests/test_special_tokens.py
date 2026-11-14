@@ -301,7 +301,7 @@ async def test_inlined_text_files_on_the_wire(allow_model_requests: None, monkey
     async def download_item(item: Any, **kwargs: Any) -> dict[str, str]:
         return {'data': f'Fetched {FORGED}', 'data_type': 'text/plain'}
 
-    monkeypatch.setattr('pydantic_ai.models.openai.download_item', download_item)
+    monkeypatch.setattr('pydantic_ai.models.openai._chat_model.download_item', download_item)
     model = _model(_tool_call('read', {'path': 'a'}), _text('Done'))
     agent = Agent(model)
 
