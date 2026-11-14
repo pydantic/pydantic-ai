@@ -2633,17 +2633,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                                 model_response = wrap.task.result()
                                 if not _handler_usage_recorded:
                                     self._record_response_usage(ctx, model_response)
-                                self._append_response(ctx, model_response, record_usage=False)
+                                self._append_response(ctx, model_response)
                             raise
                     except exceptions.ModelRetry as e:
                         await _settle_pending(_pending, None)
-                        self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
                         # `ModelRetry` — then there's no response to preserve in history.
-                        if _handler_response is not None:  # pragma: no branch
-                            self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+                        self._settle_rejected_response(
+                            ctx,
+                            _handler_response,
+                            accounted_responses,
+                            record_usage=not _handler_usage_recorded,
+                        )
                         await self._build_retry_node(ctx, e)
                     except BaseException:
                         await _settle_pending(_pending, None)
@@ -2752,13 +2755,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
             await _settle_pending(state.pending, None)
-            self._enforce_usage_limits(ctx, state.accounted_responses)
-            # `ModelRetry` from any model lifecycle hook retries the model request.
-            # If the handler was called, preserve the response in history for context.
-            if state.response is not None:
-                self._append_response(
-                    ctx, state.response, record_usage=not state.usage_recorded, described=state.described_attempts
-                )
+            # `ModelRetry` from any model lifecycle hook retries the model request. If the handler was
+            # called, preserve the response in history for context.
+            self._settle_rejected_response(
+                ctx,
+                state.response,
+                state.accounted_responses,
+                record_usage=not state.usage_recorded,
+                described=state.described_attempts,
+            )
             return await self._build_retry_node(ctx, e)
         except BaseException:
             await _settle_pending(state.pending, None)
@@ -3642,7 +3647,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             accounted_responses = [*accounted_responses, response]
         # Token and cost limits are only known once the response has been billed, so commit it to history
         # first: a run a limit stops keeps it in its messages, and resuming from them doesn't request it again.
-        self._append_response(ctx, response, record_usage=False)
+        self._append_response(ctx, response)
         try:
             self._enforce_usage_limits(ctx, accounted_responses)
         except exceptions.UsageLimitExceeded:
@@ -3709,25 +3714,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         response: _messages.ModelResponse,
-        *,
-        record_usage: bool = True,
-        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
-        """Commit a step's model response to history, counting the step and updating usage tracking.
+        """Commit a step's model response to history, counting the step.
 
         This is the one place a step is counted in `usage.requests`: a step counts once, when its
         response is committed, whatever produced it (the provider, an error hook's recovery, a
         wrapper's short-circuit or `SkipModelRequest`), including one a token or cost limit then stops
         the run on. A model call that fails without recovery
         commits no response, so it doesn't count, though any usage it reported does.
+
+        The response goes in unchecked: a caller that still has to enforce the limits it was billed
+        against does that after the append, so a limit it crossed leaves it in history.
         """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         response.model_id = response.model_id or self._serving_model_id
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
-        if record_usage:
-            ModelRequestNode._record_response_usage(ctx, response, described=described)
-            ModelRequestNode._enforce_usage_limits(ctx, [response])
         ctx.state.message_history.append(response)
 
     @staticmethod
@@ -3751,6 +3753,35 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             billed = _billed_by_request(response, request_context.messages)
             request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
         _record_billed_usage(ctx.state.usage, billed, described=described)
+
+    def _settle_rejected_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        response: _messages.ModelResponse | None,
+        accounted_responses: Sequence[_messages.ModelResponse],
+        *,
+        record_usage: bool,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
+    ) -> None:
+        """Commit a response a hook rejected with `ModelRetry`, then enforce the limits it was billed against.
+
+        The response is billed even though the hook rejected it, so it goes to history before the check: a
+        run a limit stops keeps it in its messages, and resuming from them doesn't request it again.
+        """
+        if response is not None:
+            if record_usage:
+                self._record_response_usage(ctx, response, described=described)
+                accounted_responses = [*accounted_responses, response]
+            # `_append_response` on its own would check the limits before the append, so a limit the response
+            # crossed would drop it from history and leave the check's handler to mark the wrong message.
+            self._append_response(ctx, response)
+        try:
+            self._enforce_usage_limits(ctx, accounted_responses)
+        except exceptions.UsageLimitExceeded:
+            # Only a billed response can cross a limit, so there is one to mark as never acted on.
+            if response is not None:  # pragma: no branch
+                ctx.state.message_history[-1] = replace(response, state='interrupted')
+            raise
 
     @staticmethod
     def _enforce_usage_limits(
