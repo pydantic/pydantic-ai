@@ -453,9 +453,9 @@ class DelegationTasks:
 
     async def _write(self, record: DelegationTask) -> None:
         """Save `record` with its history, loading that back first when it is in the saved file only."""
-        if not _SAFE_ID.fullmatch(record.id):
-            raise ValueError('Invalid task identity')
         if self.directory is not None:
+            if not _SAFE_ID.fullmatch(record.id):
+                raise ValueError('Invalid task identity')
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
