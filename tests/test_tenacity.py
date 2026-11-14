@@ -286,14 +286,16 @@ class TestHTTPX2TenacityTransport:
             config=RetryConfig(stop=stop_after_attempt(1), reraise=True), wrapped=wrapped, validate_response=_reject
         )
 
-        async with httpx2.AsyncClient(transport=transport) as client, anyio.create_task_group() as tg:
-            tg.start_soon(client.get, 'http://example.com')
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await connection.reading_body.wait()
-            tg.cancel_scope.cancel()
+        async with httpx2.AsyncClient(transport=transport) as client:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(client.get, 'http://example.com')
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await connection.reading_body.wait()
+                tg.cancel_scope.cancel()
 
-        assert connection.closed
-        assert pool.connections == []
+            # Checked before the client closes, since closing it closes the pool and every connection in it.
+            assert connection.closed
+            assert pool.connections == []
 
 
 class TestLegacyHTTPXTransports:
