@@ -334,6 +334,53 @@ class _ValidationDeferral(Exception):
         super().__init__()
 
 
+def _refuse_unfinished_computer_call(tool: ToolsetTool[Any], ctx: RunContext[Any]) -> None:
+    """Refuse a `computer` call, as a retry the model sees, when the response it came in didn't finish normally.
+
+    A provider can return a finished call in a response it then cut off, filtered or failed (OpenAI and Anthropic both
+    say not to act on one). The latest response is the one whose calls run. A `None` finish reason passes: many models
+    never report one.
+    """
+    from .computer_use import COMPUTER_KIND
+
+    if tool.tool_def.tool_kind != COMPUTER_KIND.id:
+        return
+    response = next((m for m in reversed(ctx.messages) if isinstance(m, _messages.ModelResponse)), None)
+    if response is not None and (
+        response.state == 'incomplete' or response.finish_reason not in (None, 'stop', 'tool_call')
+    ):
+        raise ModelRetry('The response this call came in did not finish normally, so the computer did nothing.')
+
+
+def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
+    """Make a `computer` call carrying a provider's safety checks wait for approval.
+
+    Runs however the arguments were accepted (the schema, a hook's corrected arguments, or `SkipToolValidation`), so
+    no route runs the call unseen. The model adapter acknowledges the checks once the call has a result.
+    Judged by the tool that will run, not the kind stored on the call, which resumed history can set to anything.
+    """
+    from .computer_use import COMPUTER_KIND, _safety_checks  # pyright: ignore[reportPrivateUsage]
+
+    tool = validated.tool
+    if (
+        validated.ctx.tool_call_approved
+        or tool is None
+        or tool.tool_def.tool_kind != COMPUTER_KIND.id
+        or not _safety_checks(validated.call.provider_details)
+    ):
+        return validated
+    if isinstance(validated.deferral, CallDeferred) or tool.tool_def.kind == 'external':
+        # An approved call runs here, which an external or deferred call can't.
+        raise UserError(
+            f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need approval'
+            ' before it runs, but it is handed to an external or deferred executor that approval'
+            ' cannot reach. Run the computer tool in this process so approval can gate it.'
+        )
+    if isinstance(validated.deferral, ApprovalRequired):
+        return validated  # a hook already asked for approval
+    return replace(validated, deferral=ApprovalRequired())
+
+
 def _validate_hook_deferral_error(hook_name: str, error: CallDeferred | ApprovalRequired) -> UserError:
     """Build the error for a tool validation hook that deferred before the arguments were validated.
 
@@ -976,12 +1023,13 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             _name, tool = self._resolve_tool(call)
             ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
+            _refuse_unfinished_computer_call(tool, ctx)
             validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
-            return self._make_validation_success(call, tool, ctx, validated_args)
+            validated = self._make_validation_success(call, tool, ctx, validated_args)
         except SkipToolValidation as e:
             assert tool is not None
             # Hook asked us to skip validation entirely; accept the args it provided.
-            return self._make_validation_success(call, tool, ctx, e.validated_args)
+            validated = self._make_validation_success(call, tool, ctx, e.validated_args)
         except _ValidationDeferral as e:
             assert tool is not None
             if isinstance(e.deferral, ApprovalRequired) and tool.tool_def.kind == 'external':
@@ -998,7 +1046,7 @@ class ToolManager(Generic[AgentDepsT]):
             # consumed, no `on_tool_validate_error`) and the deferral is carried on the result for
             # `execute_tool_call` to raise, which routes it into the same deferred-call handling as
             # a deferral raised by the tool function.
-            return replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
+            validated = replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
         except (ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
@@ -1019,6 +1067,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated_args=None,
                 validation_error=self._wrap_error_as_failed(call.tool_name, call, e),
             )
+        return _require_safety_approval(validated)
 
     async def execute_tool_call(
         self,

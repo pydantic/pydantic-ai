@@ -15,6 +15,7 @@ import time
 import uuid
 import warnings
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -152,6 +153,7 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -169,6 +171,7 @@ from ..messages import (
     _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
@@ -537,6 +540,27 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
+        """The name of the function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call, or `None` if there is none.
+
+        A model adapter uses it to find the tool that runs a native tool's calls, through
+        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]. Unlike
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], it leaves out deferred
+        tools history hasn't revealed yet, as the check that decides whether a native tool is sent does.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = _tool_kind_id(kind)
+        return next(
+            (
+                t.name
+                for t in self.function_tools
+                if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+            ),
+            None,
+        )
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:
@@ -4063,6 +4087,47 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _executor_kinds(params: ModelRequestParameters, sent_ids: set[str]) -> Counter[str | None]:
+    """How many tools of each kind could run a native tool's calls: ones not deferred, or revealed by history.
+
+    A tool dropped because a native tool in `sent_ids` is sent in its place can't run any calls.
+    """
+    return Counter(
+        t.tool_kind
+        for t in params.function_tools
+        if (not t.defer_loading or t.name in params.revealed_tool_names) and t.unless_native not in sent_ids
+    )
+
+
+def _natives_with_executors(
+    params: ModelRequestParameters, natives: list[AbstractNativeTool]
+) -> list[AbstractNativeTool]:
+    """The native tools whose calls the request has exactly one tool of each needed kind to run.
+
+    An optional native tool without them is dropped; a required one raises `UserError`, as does one with more than one
+    tool of a kind.
+    """
+    executor_kinds = _executor_kinds(params, {t.unique_id for t in natives})
+    kept: list[AbstractNativeTool] = []
+    for native_tool in natives:
+        if missing := sorted(kind.id for kind in native_tool.executed_by if kind.id not in executor_kinds):
+            # Its calls would have no tool to run them.
+            if native_tool.optional:
+                continue
+            raise UserError(
+                f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
+                'and the request has none the model can call.'
+            )
+        if shared := sorted(kind.id for kind in native_tool.executed_by if executor_kinds[kind.id] > 1):
+            # Which of them ran a call would depend on the order of the tools.
+            raise UserError(
+                f'`{type(native_tool).__name__}` needs one tool of each of the kinds {shared} to run its calls, '
+                'and the request has more than one the model can call.'
+            )
+        kept.append(native_tool)
+    return kept
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4182,6 +4247,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
+    # After the drop above, so a tool kept only while that tool search is absent counts as an executor.
+    supported_natives = _natives_with_executors(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.

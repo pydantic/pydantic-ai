@@ -16,6 +16,7 @@ Pydantic AI supports the following native tools:
 - **[`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
+- **[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]**: Sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool as the provider's native computer use tool
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 - **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
@@ -765,6 +766,18 @@ in its place if one is provided, an `optional=True` tool is left out, and a
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209` or `web_fetch_20260318`.
+
+## Computer Tool
+
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind, such as the one Pydantic AI Harness's `ComputerUse` capability adds, as the provider's native computer use tool, which models are trained to use. Like the [Memory Tool](#memory-tool), the provider doesn't run its calls: the model adapter turns them into calls of the local tool, and the results back into the provider's format.
+
+The local tool is found by its kind, not its name (see [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]). If the request has no non-deferred tool of that kind, the native tool is left out when it is `optional`, and the request is refused when it isn't.
+
+A call the provider attaches safety checks to, such as OpenAI's `pending_safety_checks`, waits for [approval](deferred-tools.md#human-in-the-loop-tool-approval) before the local tool runs. The checks are on [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks]. [`ApprovalReviewer`](harness/approval-reviewer.md) (Harness) is shown only the call's arguments, not the checks, so leave the `computer` tool out of its `tools` if the checks should reach a person.
+
+A call of the `computer` kind runs only when the response it came in finished normally: a response cut off at the token limit, filtered or failed makes it a [retry](tools-advanced.md#tool-retries) telling the model the computer did nothing.
+
+`ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
 
 ## Memory Tool
 

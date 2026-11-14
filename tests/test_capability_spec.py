@@ -860,6 +860,22 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'ComputerTool': {
+                    'properties': {
+                        'kind': {'default': 'computer', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'display_size': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                            'title': 'Display Size',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['display_size'],
+                    'title': 'ComputerTool',
+                    'type': 'object',
+                },
                 'FileSearchProviderSettings': {
                     'additionalProperties': True,
                     'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
@@ -1729,6 +1745,7 @@ def test_model_json_schema_with_capabilities():
                                         {'$ref': '#/$defs/WebFetchTool'},
                                         {'$ref': '#/$defs/ImageGenerationTool'},
                                         {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/ComputerTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
                                         {'$ref': '#/$defs/AdvisorTool'},
