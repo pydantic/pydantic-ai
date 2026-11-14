@@ -202,6 +202,7 @@ def test_public_engine_builder_exports() -> None:
         'external_event_scope',
         'record_durable_unit',
         'replay_scope',
+        'model_error_retry_after',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
