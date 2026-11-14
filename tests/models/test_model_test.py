@@ -807,19 +807,19 @@ def test_boolean_schema_tool_args() -> None:
         (1, snapshot({'nullable': None, 'null_first': 'b', 'multi': 'bb', 'list': None, 'obj': None})),
     ],
 )
-def test_tool_type_list_args(seed: int, expected: dict[str, Any]) -> None:
+def test_tool_type_list_args(seed: int, expected: dict[str, object]) -> None:
     """The seed picks one member of a JSON Schema `type` list, as it picks an `anyOf` member.
 
     The picked type keeps the sibling keywords (`minimum`, `minLength`, `items`, `properties`), and type lists
     nested under `items` and an object property are generated the same way.
     """
-    calls: list[dict[str, Any]] = []
+    calls: list[dict[str, object]] = []
 
-    def lookup(**kwargs: Any) -> str:
+    def lookup(**kwargs: object) -> str:
         calls.append(kwargs)
         return 'ok'
 
-    schema = {
+    schema: dict[str, object] = {
         'type': 'object',
         'properties': {
             'nullable': {'type': ['string', 'null']},
