@@ -511,9 +511,6 @@ _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Anthropic documents `inference_geo` as not applicable on Bedrock, Vertex AI (Google managed) and Foundry, where the
-# endpoint or deployment decides the inference region. Claude Platform on AWS and Claude on Google Cloud (Anthropic
-# managed) take it, and their clients are `AsyncAnthropic` subclasses.
 # The Claude API rejects a `tool_use` with no `tool_result`, and a `tool_result` whose `tool_use_id` names no
 # `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The platform clients aren't verified to, so
 # `rejects_unpaired_tool_calls` stays off for them and their requests keep the history as translated.
@@ -523,6 +520,9 @@ _UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic documents `inference_geo` as not applicable on Bedrock, Vertex AI (Google managed) and Foundry, where the
+# endpoint or deployment decides the inference region. Claude Platform on AWS and Claude on Google Cloud (Anthropic
+# managed) take it, and their clients are `AsyncAnthropic` subclasses.
 _INFERENCE_GEO_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -1275,8 +1275,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
 
-        `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Vertex AI and Foundry
-        clients, which aren't verified to reject an unpaired tool call, unless the provider's profile already sets it.
+        `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
+        Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
+        profile already sets it.
         """
         client = self._provider.client
         profile = merge_profile(
