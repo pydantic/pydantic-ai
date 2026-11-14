@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -213,6 +213,7 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 
 
 def test_durability_codecs() -> None:
@@ -2014,6 +2015,42 @@ async def test_deprecated_agent_executes_identified_dynamic_toolset_task(blockbu
     assert '42' in str(result.output)
     assert len(calls) == 1
     assert calls[0] is not None
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_deprecated_agent_holds_per_run_step_false_dynamic_toolset_for_the_run(blockbuster_enabled: bool) -> None:
+    """The deprecated wrapper resolves and enters an identified `per_run_step=False` dynamic toolset once per run.
+
+    Its tasks run in the flow's process, so they reuse the toolset the run holds, as under `PrefectDurability`,
+    instead of each building and entering their own.
+    """
+    assert blockbuster_enabled is False
+    counts = {'factory': 0, 'enter': 0}
+
+    class CountingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            counts['enter'] += 1
+            return await super().__aenter__()
+
+    async def get_price() -> str:
+        return '42'
+
+    def build(ctx: RunContext[None]) -> FunctionToolset[None]:
+        counts['factory'] += 1
+        return CountingToolset([get_price])
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_run_held_dynamic',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(build, per_run_step=False, id='deprecated_held')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await prefect_agent.run('Get the price')
+
+    assert '42' in str(result.output)
+    assert counts == {'factory': 1, 'enter': 1}
 
 
 # Test cache policies
@@ -3972,6 +4009,28 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert calls == ['called']
     assert len(task_run_names) == 1
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_prefect_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    variant: Variant,
+) -> None:
+    """Parallel tool-call tasks list and call their tools through the toolset prepared once for the step.
+
+    `FunctionModel` drives it rather than a cassette: the race is between the tool-call tasks, after the model
+    response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'prefect_parallel_run_held_dynamic_{variant}', variant, state, PrefectDurability())
+
+    @flow(name=f'prefect_parallel_run_held_dynamic_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
 
 
 async def test_prefect_durability_task_name_assembly_sequence() -> None:

@@ -114,6 +114,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, without_admin_server
 from ..realtime_connections import InferredConnection
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
 pytest.importorskip('dbos')
@@ -5147,6 +5148,30 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
         return [result.output for result in results]
 
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    dbos: DBOS, variant: Variant
+) -> None:
+    """Parallel tool-call units list and call their tools through the toolset prepared once for the step.
+
+    A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit, as a
+    non-durable run shares it. `FunctionModel` drives it rather than a cassette: the race is between the
+    tool-call units, after the model response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'dbos_parallel_run_held_dynamic_{variant}', variant, state, DBOSDurability())
+
+    @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
 
 
 async def test_dbos_durability_nested_agent_in_tool_routes_to_inner_registrations(dbos: DBOS) -> None:

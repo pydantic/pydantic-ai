@@ -210,6 +210,8 @@ class JournalDurability(BaseDurabilityCapability[Any]):
         durable_unit_noun='unit',
         durable_container_noun='journal',
         codec=JSON_CODEC,
+        # Units run in this process, so a run-held dynamic toolset reaches them, as on DBOS and Prefect.
+        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-in-durable-unit'},
     )
 
     @property

@@ -89,6 +89,8 @@ def prefectify_dynamic_toolset(
         call_tool_operation=call_tool_operation,
         validate_args_operation=validate_args_operation,
         resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
-        lifecycle='enter-never',
+        # Prefect tasks run in the flow's process, so they can use a `per_run_step=False` toolset the
+        # run holds, matching `PrefectDurability.engine_spec`.
+        lifecycle='enter-in-durable-unit',
         durable_config=base_config,
     )

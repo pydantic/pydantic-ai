@@ -62,7 +62,11 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         codec=PGTaskCodec(),
         wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         # The first MCP step connects, so a replay whose MCP steps are all checkpointed never does.
-        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
+        toolset_lifecycles={
+            'function': 'enter-always',
+            'mcp': 'enter-in-durable-unit',
+            'dynamic': 'enter-in-durable-unit',
+        },
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
     )
     # pgtask has no non-retryable error type, so a serialization failure retries until `max_attempts` runs out.
