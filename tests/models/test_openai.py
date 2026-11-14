@@ -2048,6 +2048,7 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/toml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
+    assert _is_text_like_media_type('application/openapi+yaml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
     # Parameters (RFC 2045) are ignored: classification happens on the bare type.
@@ -2058,6 +2059,7 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/toml;charset=utf-8') is True
     assert _is_text_like_media_type('application/ld+json;charset=utf-8') is True
     assert _is_text_like_media_type('application/soap+xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/openapi+yaml;charset=utf-8') is True
     assert _is_text_like_media_type('application/pdf;charset=binary') is False
 
 
@@ -2161,6 +2163,83 @@ async def test_parameterized_structured_suffix_media_type_inlined(allow_model_re
 -----BEGIN FILE id="e4ad4d" type="application/ld+json;charset=utf-8"-----
 {"a": 1}
 -----END FILE id="e4ad4d"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_openapi_yaml_structured_suffix_inlined(allow_model_requests: None):
+    """A `+yaml` structured-suffix media type is inlined as text, like bare YAML is.
+
+    Unit test, not VCR: before `+yaml` counted as text-like the mapping raised
+    `Unsupported binary content type` before any request was made, so this pins the request
+    shape the mock client receives.
+    """
+    yaml_content = BinaryContent(data=b'openapi: 3.1.0\ninfo:\n  title: demo', media_type='application/openapi+yaml')
+
+    c = completion_message(ChatCompletionMessage(content='An OpenAPI document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', yaml_content])
+    assert result.output == snapshot('An OpenAPI document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="f455cb" type="application/openapi+yaml"-----
+openapi: 3.1.0
+info:
+  title: demo
+-----END FILE id="f455cb"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_parameterized_openapi_yaml_structured_suffix_inlined(allow_model_requests: None):
+    """A parameterized `+yaml` suffix media type is inlined as text, like its bare form is.
+
+    Unit test, not VCR: classification must look at the bare `application/openapi+yaml` essence,
+    so the structured-suffix branch keeps matching when RFC 2397 parameters are present.
+    """
+    yaml_content = BinaryContent.from_data_uri(
+        'data:application/openapi+yaml;charset=utf-8;base64,b3BlbmFwaTogMy4xLjAKaW5mbzoKICB0aXRsZTogZGVtbw=='
+    )
+
+    c = completion_message(ChatCompletionMessage(content='An OpenAPI document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', yaml_content])
+    assert result.output == snapshot('An OpenAPI document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="f455cb" type="application/openapi+yaml;charset=utf-8"-----
+openapi: 3.1.0
+info:
+  title: demo
+-----END FILE id="f455cb"-----\
 """,
                         'type': 'text',
                     },

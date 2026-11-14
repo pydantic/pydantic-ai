@@ -1327,6 +1327,7 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type.endswith('+json')
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
+        or media_type.endswith('+yaml')
         or media_type in ('application/x-yaml', 'application/yaml')
         # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
         or media_type == 'application/toml'
