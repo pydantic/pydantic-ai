@@ -337,6 +337,9 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
                     # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
                     # exception the retry predicate decides on; the response is closed with whatever was read.
                     if response.is_error:
+                        # A cancelled read skips the close below: httpx2 closes the response as the read unwinds,
+                        # and the default `httpx2.AsyncHTTPTransport` closes its connection under a cancellation
+                        # shield. A wrapped transport whose stream's `aclose()` awaits unshielded can stay open.
                         with suppress(Exception):
                             await response.aread()
                     await response.aclose()

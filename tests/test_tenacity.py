@@ -2,13 +2,14 @@ from __future__ import annotations as _annotations
 
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from datetime import UTC, datetime
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
 
 import anyio
+import httpcore2
 import httpx
 import httpx2
 import pytest
@@ -67,20 +68,41 @@ class _NetworkStream(httpx2.SyncByteStream, httpx2.AsyncByteStream):
         self.close()
 
 
-class _StalledStream(httpx2.AsyncByteStream):
-    """A response body whose download stalls until the reader is cancelled."""
+class _StalledConnection(httpcore2.AsyncNetworkStream):
+    """A connection that sends a 503's headers, then stalls its body until the reader is cancelled."""
 
     def __init__(self):
-        self.reading = anyio.Event()
+        self.reading_body = anyio.Event()
         self.closed = False
+        self._head = [b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 64\r\n\r\n']
 
-    async def __aiter__(self) -> AsyncIterator[bytes]:
-        self.reading.set()
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        if self._head:
+            return self._head.pop()
+        self.reading_body.set()
         await anyio.sleep_forever()
-        yield b''  # pragma: no cover
+        return b''  # pragma: no cover
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        pass
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class _StalledConnectionBackend(httpcore2.AsyncNetworkBackend):
+    def __init__(self, connection: _StalledConnection):
+        self.connection = connection
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[object] | None = None,
+    ) -> httpcore2.AsyncNetworkStream:
+        return self.connection
 
 
 def _reject(response: httpx2.Response) -> None:
@@ -247,22 +269,31 @@ class TestHTTPX2TenacityTransport:
         assert stream.iterated == iterated
         assert stream.closed
 
+    @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
     async def test_async_transport_closes_rejected_response_when_body_read_is_cancelled(self):
-        """Cancelling the error body's read still releases the connection (https://github.com/pydantic/pydantic-ai/issues/2724)."""
-        stream = _StalledStream()
+        """Cancelling the error body's read still closes the default transport's connection.
+
+        Otherwise each cancelled attempt would hold a pooled connection
+        (https://github.com/pydantic/pydantic-ai/issues/2724). `httpx2.AsyncHTTPTransport` takes no network backend,
+        so its pool is replaced with one on a stalled connection; the transport's own response stream still sits
+        between the read and that connection.
+        """
+        connection = _StalledConnection()
+        pool = httpcore2.AsyncConnectionPool(network_backend=_StalledConnectionBackend(connection))
+        wrapped = httpx2.AsyncHTTPTransport()
+        wrapped._pool = pool  # pyright: ignore[reportPrivateUsage]
         transport = AsyncHTTPX2TenacityTransport(
-            config=RetryConfig(stop=stop_after_attempt(1), reraise=True),
-            wrapped=httpx2.MockTransport(lambda request: httpx2.Response(503, stream=stream)),
-            validate_response=_reject,
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True), wrapped=wrapped, validate_response=_reject
         )
 
         async with httpx2.AsyncClient(transport=transport) as client, anyio.create_task_group() as tg:
-            tg.start_soon(client.get, 'https://example.com')
+            tg.start_soon(client.get, 'http://example.com')
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await stream.reading.wait()
+                await connection.reading_body.wait()
             tg.cancel_scope.cancel()
 
-        assert stream.closed
+        assert connection.closed
+        assert pool.connections == []
 
 
 class TestLegacyHTTPXTransports:
