@@ -674,7 +674,8 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
-    # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html
     if model_name in {
         'gpt-5.6-sol',
         'gpt-5.6-luna',
