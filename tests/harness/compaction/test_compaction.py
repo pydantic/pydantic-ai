@@ -2385,6 +2385,99 @@ class TestIterToolPairs:
         assert pairs[0].tool_name == 'g'
         assert pairs[0].order == 0
 
+    def test_reused_id_binds_to_the_call_that_precedes_its_return(self):
+        """Each return pairs with its own call, even when a later turn reuses the same id.
+
+        Ids are only unique within a response, so keeping one call per id would rewrite the earlier
+        pair's `call_part` with the later turn's call, and with it the tool name and file key that
+        strategies derive from it.
+        """
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            _read_return('c1', 'first'),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'second'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['a.py', 'b.py']
+        assert [p.call_position for p in pairs] == [(0, 0), (2, 0)]
+        assert [p.return_position for p in pairs] == [(1, 0), (3, 0)]
+
+    def test_reused_id_pairs_returns_fifo(self):
+        """Two calls repeating an id inside one response are answered by the two returns in order."""
+        call = ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='first', args='{}', tool_call_id='c1'),
+                ToolCallPart(tool_name='second', args='{}', tool_call_id='c1'),
+            ]
+        )
+        msgs: list[ModelMessage] = [
+            call,
+            _tool_return('first', 'c1'),
+            _tool_return('second', 'c1'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [p.tool_name for p in pairs] == ['first', 'second']
+
+    def test_retried_return_consumes_its_call(self):
+        """A retried return answers its call, so the next return pairs with its own call.
+
+        A retried outcome isn't emitted as a pair, but it does settle the pairing: leaving its call
+        queued would pair a later turn's return -- one reusing the id -- with that stale call, and
+        strategies would attribute the later return to the stale call's tool name or file key.
+        """
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='read_file', content='bad', tool_call_id='c1', outcome='retried')]
+            ),
+            _read_call('c1', 'a.py'),
+            _read_return('c1', 'second a'),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'b body'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['a.py', 'b.py']
+        assert [p.call_position for p in pairs] == [(2, 0), (4, 0)]
+        assert [p.return_position for p in pairs] == [(3, 0), (5, 0)]
+
+    def test_a_legacy_retry_prompt_consumes_its_call(self):
+        """A named `RetryPromptPart` settles its call, so a reused id doesn't pair with the stale one.
+
+        `_is_tool_reply` already treats it as answering the call -- a caller-built history can hold one
+        -- so leaving the call queued here would pair the next turn's return with it instead.
+        """
+        # TODO(v3): remove along with `RetryPromptPart`
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            ModelRequest(parts=[legacy_retry_prompt_part('bad args', tool_name='read_file', tool_call_id='c1')]),
+            _read_call('c1', 'a.py'),
+            _read_return('c1', 'second a'),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'b body'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['a.py', 'b.py']
+        assert [p.call_position for p in pairs] == [(2, 0), (4, 0)]
+        assert [p.return_position for p in pairs] == [(3, 0), (5, 0)]
+
+    def test_unanswered_call_does_not_pair_with_a_later_reuse_of_its_id(self):
+        """A call no reply answered before the next response is dropped when that response reuses its id.
+
+        A reply comes before the next response, so the earlier call was never answered (a run interrupted
+        before its tools ran, say). Left queued, it would pair with the later turn's return instead.
+        """
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            ModelRequest(parts=[UserPromptPart(content='continue')]),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'b body'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['b.py']
+        assert [p.call_position for p in pairs] == [(2, 0)]
+        assert [p.return_position for p in pairs] == [(3, 0)]
+
 
 # ---------------------------------------------------------------------------
 # ClearToolResults
@@ -2479,6 +2572,37 @@ class TestClearToolResults:
         result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         contents = _return_contents(result.messages)
         assert contents == ['[tool result cleared]', '[tool result cleared]', 'result content here']
+
+    async def test_reused_id_leaves_the_kept_pairs_alone(self):
+        """A turn reusing an older turn's `tool_call_id` doesn't make its result clearable.
+
+        `keep_pairs` counts pairs, so selecting the results to blank by id would also blank the kept
+        result of the newer turn that happens to reuse the id.
+        """
+        cap = ClearToolResults(max_messages=1, keep_pairs=1)
+        messages: list[ModelMessage] = [
+            *_pair('fn', 'tc1', 'oldest'),
+            *_pair('fn', 'tc2', 'middle'),
+            *_pair('fn', 'tc1', 'newest'),
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert _return_contents(result.messages) == ['[tool result cleared]', '[tool result cleared]', 'newest']
+
+    async def test_reused_id_clears_only_the_selected_call_args(self):
+        """`clear_tool_inputs` blanks the arguments of the cleared pairs, not every call reusing their ids."""
+        cap = ClearToolResults(max_messages=1, keep_pairs=2, clear_tool_inputs=True)
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='fn', args='{"q": 1}', tool_call_id='tc1')]),
+            _tool_return('fn', 'tc1', 'oldest'),
+            ModelResponse(parts=[ToolCallPart(tool_name='fn', args='{"q": 2}', tool_call_id='tc2')]),
+            _tool_return('fn', 'tc2', 'middle'),
+            ModelResponse(parts=[ToolCallPart(tool_name='fn', args='{"q": 3}', tool_call_id='tc1')]),
+            _tool_return('fn', 'tc1', 'newest'),
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert _call_args(result.messages) == ['{}', '{"q": 2}', '{"q": 3}']
 
     async def test_token_trigger(self):
         cap = ClearToolResults(max_tokens=5, keep_pairs=0)
@@ -2686,6 +2810,42 @@ class TestDeduplicateFileReads:
         rc = _make_request_context(messages)
         result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'second']
+
+    async def test_reused_id_keeps_the_latest_read(self):
+        """A read reusing an earlier read's id keeps its content; only the superseded read is blanked."""
+        cap = DeduplicateFileReads(file_key=_file_key)
+        messages: list[ModelMessage] = [
+            _read_call('tc1', 'a.py'),
+            _read_return('tc1', 'first a'),
+            _read_call('tc2', 'a.py'),
+            _read_return('tc2', 'second a'),
+            _read_call('tc1', 'b.py'),
+            _read_return('tc1', 'b body'),
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert _return_contents(result.messages) == ['[superseded file read]', 'second a', 'b body']
+
+    async def test_retried_read_does_not_supersede_the_latest_read(self):
+        """A retried read doesn't leave its call queued, so the retry's result can't be blanked.
+
+        With a reused `tool_call_id`, a queued retried call would make the next read's return pair
+        with it, and the only successful read of the retried file would be blanked as superseded.
+        """
+        cap = DeduplicateFileReads(file_key=_file_key)
+        messages: list[ModelMessage] = [
+            _read_call('tc1', 'a.py'),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='read_file', content='bad', tool_call_id='tc1', outcome='retried')]
+            ),
+            _read_call('tc1', 'a.py'),
+            _read_return('tc1', 'second a'),
+            _read_call('tc1', 'b.py'),
+            _read_return('tc1', 'b body'),
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert _return_contents(result.messages) == ['bad', 'second a', 'b body']
 
 
 # ---------------------------------------------------------------------------
