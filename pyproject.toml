@@ -240,10 +240,10 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
-# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
-# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
+# boxd 0.3.2 is the `boxd` floor: `BoxdSandbox(desktop=True)` drives the desktop with its `machines.computer`.
+# TODO(MichielMAnalytics): Remove after 2026-11-20 01:15 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
-boxd = "2026-10-27T23:56:00Z"
+boxd = "2026-11-13T01:15:00Z"
 # render 1.6.0 provides the stable Sandbox API used by RenderSandbox.
 # TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.

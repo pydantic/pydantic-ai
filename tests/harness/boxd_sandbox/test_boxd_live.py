@@ -31,12 +31,14 @@ import boxd
 import pytest
 from pytest_examples import CodeExample
 
+from pydantic_ai.computer_use import Click, Drag, Point, PressKeys, Scroll, TypeText
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.coder import Coder
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..display_contract_live import check_display_contract
 from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
 
 pytestmark = pytest.mark.boxd_live
@@ -67,9 +69,13 @@ async def client() -> AsyncIterator[boxd.AsyncBoxd]:
 
 
 @asynccontextmanager
-async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> AsyncGenerator[BoxdSandboxBackend]:
+async def _owned(
+    client: boxd.AsyncBoxd, working_dir: str | None = None, *, desktop: bool | tuple[int, int] = False
+) -> AsyncGenerator[BoxdSandboxBackend]:
     """Create a machine and delete it on the way out, even when the test deleted it already."""
-    backend = BoxdSandboxBackend(client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir)
+    backend = BoxdSandboxBackend(
+        client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir, desktop=desktop
+    )
     try:
         await backend.get_sandbox()
         yield backend
@@ -82,6 +88,68 @@ async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str)
     with anyio.fail_after(120):
         while (await client.machines.get(machine_id)).status != status:
             await anyio.sleep(0.5)
+
+
+async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions that the first computer call starts the machine's desktop, that it
+    stays at the size it was held at, and that a screenshot, a zoom and the pointer's position come back as the
+    display contract expects."""
+    async with _owned(client, desktop=(1440, 900)) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        assert await display.display_size() == (1440, 900)
+        await check_display_contract(display)
+
+
+async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumption that boxd presses the key names listed, as the keysym the driver
+    sends for each, alone and held with a modifier."""
+    names = [
+        *('enter', 'escape', 'tab', 'backspace', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown'),
+        *('up', 'down', 'left', 'right', 'space', 'printscreen', 'pause', 'menu', 'capslock', 'numlock'),
+        *('scrolllock', *(f'f{n}' for n in range(1, 25)), *(f'numpad{n}' for n in range(10)), 'numpad_enter'),
+        *('numpad_add', 'numpad_subtract', 'numpad_multiply', 'numpad_divide', 'numpad_decimal'),
+        *('volumemute', 'volumeup', 'volumedown', 'mediaplay', 'medianext', 'mediaprev'),
+        *('a', 'Z', '7', '+', '!', 'é', '\n', '\t', 'super'),
+    ]
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        for name in names:
+            await display.act(PressKeys(keys=(name,)))
+        await display.act(PressKeys(keys=('ctrl', 'shift', '+')))
+
+
+# Starts a terminal on the desktop that saves what is typed into it, as an agent would start a program.
+_TERMINAL = "setsid xterm -e sh -c 'cat > typed.txt' </dev/null >/dev/null 2>&1 &"
+
+
+async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_any_text(
+    client: boxd.AsyncBoxd,
+) -> None:
+    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, that typing reaches
+    the focused window as Unicode with a newline as Enter, and that actions past boxd's per-call limits
+    (characters typed, wheel clicks, key repeats, drag points) are split so boxd takes each part."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await backend.run(['sh', '-c', _TERMINAL], timeout=60)
+        # Not `--onlyvisible`: with no window manager, xdotool reports xterm's window unviewable while it takes input.
+        await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
+
+        await display.act(Click(x=50, y=50))
+        await display.act(TypeText(text='héllo 😀\n' + 'x' * 2_500 + '\n'))
+        await display.act(PressKeys(keys=('ctrl+d',)))
+        await display.act(Scroll(x=50, y=50, direction='down', amount=150))
+        await display.act(PressKeys(keys=('shift',), repeat=150))
+        await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
+
+        with anyio.fail_after(30):
+            while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 2:
+                await anyio.sleep(0.5)
+        assert typed.stdout == 'héllo 😀\n' + 'x' * 2_500 + '\n'
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:

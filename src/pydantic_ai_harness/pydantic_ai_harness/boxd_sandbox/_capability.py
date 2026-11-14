@@ -89,6 +89,10 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached machine; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the agent the machine's desktop, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+    `True` for 1280x800, or pass its `(width, height)`."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
@@ -113,6 +117,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> BoxdSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -130,11 +135,14 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=auto_suspend_timeout,
             working_dir=working_dir,
             env=env,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
         """Construct a lazy backend for an existing machine."""
-        return BoxdSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return BoxdSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a machine by id, whatever state it is in.
@@ -173,6 +181,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=self.auto_suspend_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
