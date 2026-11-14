@@ -552,19 +552,19 @@ from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness.experimental.acp import (
-    AcpSession,
-    AcpSessionConfig,
+    ACPSession,
+    ACPSessionConfig,
     InMemorySessionStore,
     run_acp_stdio_sync,
 )
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5')
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    return AcpSessionConfig(
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+    return ACPSessionConfig(
         deps=None,
         capabilities=[FileSystem[None](), Shell[None]()],
         workspace=LocalWorkspaceBackend(session.cwd),
@@ -577,7 +577,7 @@ if __name__ == '__main__':
     )
 ```
 
-`AcpSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
+`ACPSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
 `workspace` default to `None`, so an agent without file or shell tools needs no workspace.
 
 Gotchas: root tools at `session.cwd` through `session_config`, not a static `FileSystem`. Tools marked

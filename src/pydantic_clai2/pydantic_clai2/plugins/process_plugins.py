@@ -64,6 +64,7 @@ _LOGGER = logging.getLogger(__name__)
 MOVED_FACTORIES = {
     'pydantic_ai_harness.coder:Coder': 'pydantic_clai2.builtin_plugins.coder',
     'pydantic_ai_harness:Coder': 'pydantic_clai2.builtin_plugins.coder',
+    'pydantic_ai_harness.subagents:SubAgents': 'pydantic_ai_harness.sub_agents:SubAgents',
     'pydantic_clai2.sessions': 'pydantic_clai2.runtime.sessions',
     'pydantic_clai2.ask_user_menu:activate': 'pydantic_clai2.builtin_plugins.ask_user_menu',
     'pydantic_clai2.builtin_plugins.ask_user_menu:activate': 'pydantic_clai2.builtin_plugins.ask_user_menu',

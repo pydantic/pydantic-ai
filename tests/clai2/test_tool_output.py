@@ -11,7 +11,7 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import FunctionToolCallEvent
 from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
-from pydantic_ai_harness.filesystem import FileEditedEvent
+from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
