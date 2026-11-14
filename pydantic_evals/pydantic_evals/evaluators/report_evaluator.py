@@ -4,7 +4,7 @@ import inspect
 from abc import abstractmethod
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
@@ -60,4 +60,4 @@ class ReportEvaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         output = self.evaluate(ctx)
         if inspect.isawaitable(output):
             return await output
-        return cast('ReportAnalysis | list[ReportAnalysis]', output)
+        return output

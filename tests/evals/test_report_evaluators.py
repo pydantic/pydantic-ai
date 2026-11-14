@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -899,21 +899,31 @@ async def test_async_report_evaluator():
     assert result.value == 42
 
 
-async def test_dataset_evaluate_awaits_future_report_evaluator_result():
-    """A report evaluator returning a Future is resolved, not embedded as the analysis."""
+def _future_analysis() -> Awaitable[ReportAnalysis]:
+    future: asyncio.Future[ReportAnalysis] = asyncio.get_running_loop().create_future()
+    future.set_result(ScalarResult(title='Awaited', value=42))
+    return future
+
+
+def _task_analysis() -> Awaitable[ReportAnalysis]:
+    return asyncio.create_task(asyncio.sleep(0, result=ScalarResult(title='Awaited', value=42)))
+
+
+@pytest.mark.parametrize('make_awaitable', [_future_analysis, _task_analysis], ids=['future', 'task'])
+async def test_dataset_evaluate_awaits_report_evaluator_awaitable(
+    make_awaitable: Callable[[], Awaitable[ReportAnalysis]],
+):
+    """A sync `evaluate` returning a Future or Task has its result resolved into the report's analyses."""
 
     @dataclass
-    class FutureEvaluator(ReportEvaluator):
+    class AwaitableEvaluator(ReportEvaluator):
         def evaluate(self, ctx: ReportEvaluatorContext) -> Awaitable[ReportAnalysis]:
-            loop = asyncio.get_running_loop()
-            future: asyncio.Future[ReportAnalysis] = loop.create_future()
-            future.set_result(ScalarResult(title='Future Result', value=42))
-            return future
+            return make_awaitable()
 
     dataset = Dataset[TaskInput, str, None](
         name='test',
         cases=[Case(name='c1', inputs=TaskInput(text='a'))],
-        report_evaluators=[FutureEvaluator()],
+        report_evaluators=[AwaitableEvaluator()],
     )
 
     async def task(inputs: TaskInput) -> str:
@@ -921,41 +931,7 @@ async def test_dataset_evaluate_awaits_future_report_evaluator_result():
 
     report = await dataset.evaluate(task, progress=False)
 
-    assert len(report.analyses) == 1
-    result = report.analyses[0]
-    assert isinstance(result, ScalarResult)
-    assert result.title == 'Future Result'
-    assert result.value == 42
-
-
-async def test_dataset_evaluate_awaits_task_report_evaluator_result():
-    """A report evaluator returning a Task is resolved, not embedded as the analysis."""
-
-    async def task_analysis() -> ReportAnalysis:
-        await asyncio.sleep(0)
-        return ScalarResult(title='Task Result', value=7)
-
-    @dataclass
-    class TaskEvaluator(ReportEvaluator):
-        def evaluate(self, ctx: ReportEvaluatorContext) -> Awaitable[ReportAnalysis]:
-            return asyncio.ensure_future(task_analysis())
-
-    dataset = Dataset[TaskInput, str, None](
-        name='test',
-        cases=[Case(name='c1', inputs=TaskInput(text='a'))],
-        report_evaluators=[TaskEvaluator()],
-    )
-
-    async def task(inputs: TaskInput) -> str:
-        return 'x'
-
-    report = await dataset.evaluate(task, progress=False)
-
-    assert len(report.analyses) == 1
-    result = report.analyses[0]
-    assert isinstance(result, ScalarResult)
-    assert result.title == 'Task Result'
-    assert result.value == 7
+    assert report.analyses == snapshot([ScalarResult(title='Awaited', value=42)])
 
 
 def test_report_evaluator_build_serialization_arguments_with_default_factory():
