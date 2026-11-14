@@ -134,7 +134,7 @@ class _JobObjects:
             return None
         process = self._open_process(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
         try:
-            if process and self._assign(job, process):
+            if process and self._assign(job, process):  # pragma: no branch - refused only out of resources
                 return job
         finally:
             if process:
@@ -264,18 +264,9 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             stderr=PIPE,
             creationflags=_CREATE_NEW_PROCESS_GROUP,
         )
-        if (job := _job_objects().assign(process.pid)) is not None:
+        if (job := _job_objects().assign(process.pid)) is not None:  # pragma: no branch
             self._jobs[process.pid] = job
         return process
-
-    async def _program_error_result(
-        self, command: WorkspaceCommand, error: FileNotFoundError | PermissionError
-    ) -> CommandResult | None:
-        # `CreateProcess` names no file when the program is missing: the working directory was checked
-        # already, so the program is what is missing.
-        if error.filename is None and not isinstance(command, str):
-            error.filename = command[0]
-        return await super()._program_error_result(command, error)
 
     def _kill_tree(self, process: anyio.abc.Process) -> PermissionError | None:
         job = self._jobs.get(process.pid)
@@ -293,7 +284,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             await super()._close(process)
         finally:
             # Closing the handle leaves the processes running: a background job outlives a command that returned.
-            if (job := self._jobs.pop(process.pid, None)) is not None:
+            if (job := self._jobs.pop(process.pid, None)) is not None:  # pragma: no branch
                 _job_objects().close(job)
 
     @staticmethod

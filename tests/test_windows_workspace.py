@@ -79,7 +79,8 @@ class TestWindowsCommands:
     async def test_batch_files_are_refused_as_argv_programs(self, tmp_path: Path) -> None:
         """`cmd.exe` would parse their arguments as a command line, so `x&whoami` could run `whoami`."""
         (tmp_path / 'tool.cmd').write_text('@echo %*\n')
-        backend = WindowsWorkspaceBackend(tmp_path, env={'PATH': str(tmp_path)})
+        # A relative `PATH` entry names the current directory, which is never searched.
+        backend = WindowsWorkspaceBackend(tmp_path, env={'PATH': f'.;{tmp_path}'})
         explicit = await backend.run([str(tmp_path / 'tool.cmd'), 'x&whoami'])
         assert (explicit.exit_code, explicit.stdout) == (126, '')
         # On `PATH`, a batch file is passed over, as if it weren't there.
