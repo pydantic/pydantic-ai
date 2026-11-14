@@ -539,7 +539,8 @@ async def test_mcp_sampling_sends_the_summary_in_user_voice(allow_model_requests
         ('user', McpTextContent(type='text', text=FRAMED)),
         ('user', McpTextContent(type='text', text=QUESTION)),
     ]
-    assert create_message.call_args.kwargs['system_prompt'] == 'You are a concise assistant.'
+    system_prompt = create_message.call_args.kwargs['system_prompt']
+    assert system_prompt == f'{lookalike_note_announcement(system_role=False)}\n\nYou are a concise assistant.'
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')

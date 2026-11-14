@@ -18,11 +18,15 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias, TypeVar
 
 from pydantic_ai._utils import disable_threads
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import Agent, EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._request_timeout import RequestDeadline
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -32,6 +36,7 @@ __all__ = [
     'SegmentExecutor',
     'StreamedActivityResult',
     'StreamedModelRequestResult',
+    'agent_instrumentation_settings',
     'disable_threads',
     'consume_event_stream',
     'managed_model_scope',
@@ -40,6 +45,18 @@ __all__ = [
     'streamed_before_failing',
     'unwrap_model',
 ]
+
+
+def agent_instrumentation_settings(agent: AbstractAgent[Any, Any]) -> InstrumentationSettings | None:
+    """The instrumentation the agent's runs resolve, for a durable unit that has the agent but not the run.
+
+    An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
+    `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
+    """
+    explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
+    if explicit:
+        return explicit[-1].settings
+    return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
 
 @asynccontextmanager

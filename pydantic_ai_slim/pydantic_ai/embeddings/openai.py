@@ -2,6 +2,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+import httpx2
+
 from pydantic_ai import _model_errors, _utils
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models import check_allow_model_requests
@@ -153,6 +155,9 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         except APIConnectionError as e:
             timeout = isinstance(e, APITimeoutError)
             raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+            raise _model_errors.transport_status_error(self.model_name, e.response) from e
 
         embeddings = [item.embedding for item in response.data]
 

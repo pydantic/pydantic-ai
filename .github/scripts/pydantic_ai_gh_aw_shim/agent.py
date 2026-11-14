@@ -24,6 +24,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     WrapRunHandler,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.run import AgentRunResult
@@ -91,8 +92,13 @@ class WorkflowPolicy(AbstractCapability[object]):
             cli.run_deadline = None
             cli.wall_clock_caps.reset(cap)
             health = cli.provider_health()
-            if error is not None and not isinstance(error, asyncio.CancelledError):
-                health['failure'] = cli.failure_details(error)
+            failure = (
+                cli.failure_details(error)
+                if error is not None and not isinstance(error, asyncio.CancelledError)
+                else {}
+            )
+            if failure:
+                health['failure'] = failure
             result_metadata['provider_health'] = health
             # Retain the legacy launcher's DTO; protected capture authenticates the
             # same value through PAI_RESULT_METADATA in the canonical terminal record.
@@ -107,6 +113,9 @@ class WorkflowPolicy(AbstractCapability[object]):
                 output_tokens=ctx.usage.output_tokens,
                 cache_read_tokens=ctx.usage.cache_read_tokens,
                 cache_write_tokens=ctx.usage.cache_write_tokens,
+                failure_kind=failure.get('kind'),
+                http_status=failure.get('http_status'),
+                zai_error_code=cli.zai_error_code(error.body) if isinstance(error, ModelHTTPError) else None,
             )
 
 

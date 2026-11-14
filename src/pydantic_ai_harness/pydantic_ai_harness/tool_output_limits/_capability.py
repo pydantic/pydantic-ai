@@ -22,17 +22,18 @@ from pydantic_ai.messages import (
     ToolReturnContent,
     ToolSearchReturnPart,
     UserContent,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._models import is_request_response_model
-from pydantic_ai_harness._typeguards import is_mapping
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
-from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
+from pydantic_ai_harness.file_system import READ_FILE_KIND
+from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -51,7 +52,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         from pydantic_ai import Agent
         from pydantic_ai_harness.tool_output_limits import (
             Band,
-            LocalFileStore,
+            LocalFileOverflowStore,
             ToolOutputLimits,
             Spill,
             Summarize,
@@ -159,7 +160,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                         Band(over=20_000, action=Summarize()),
                         Band(over=5_000, action=Truncate()),
                     ],
-                    store=LocalFileStore(),
+                    store=LocalFileOverflowStore(),
                 )
             ],
         )
@@ -181,12 +182,12 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     tokenizer: Callable[[str], int] | None = None
     """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
 
-    store: OverflowStore | WorkspaceStore | None = None
+    store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
 
-    Defaults to a `WorkspaceStore` in the run's workspace. When the bands can spill and no store
+    Defaults to a `WorkspaceOverflowStore` in the run's workspace. When the bands can spill and no store
     has a workspace to write to, the run fails at its start: attach a workspace, or pass
-    `store=LocalFileStore()` to keep spills on this machine.
+    `store=LocalFileOverflowStore()` to keep spills on this machine.
     """
 
     strip_ansi: bool = False
@@ -207,13 +208,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'tool_output_limits'
 
-    _store: OverflowStore | WorkspaceStore = field(init=False, repr=False)
+    _store: OverflowStore | WorkspaceOverflowStore = field(init=False, repr=False)
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._store = self.store if self.store is not None else WorkspaceStore()
+        self._store = self.store if self.store is not None else WorkspaceOverflowStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
 
@@ -249,14 +250,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when a band can spill but no store has a workspace to write to."""
         store = self._store
         if (
-            isinstance(store, WorkspaceStore)
+            isinstance(store, WorkspaceOverflowStore)
             and store.workspace is None
             and not ctx.workspace.attached
             and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
         ):
             raise UserError(
                 "`ToolOutputLimits` spills oversized tool output to the run's workspace, but none is attached "
-                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileStore()` "
+                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileOverflowStore()` "
                 'to keep spills on this machine.'
             )
 
@@ -264,14 +265,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def _spills_to_run_workspace(self) -> bool:
         """Whether spills are files in the run's workspace, which the run's file tools can read.
 
-        Known from configuration: the default `WorkspaceStore` without a `workspace` of its own.
+        Known from configuration: the default `WorkspaceOverflowStore` without a `workspace` of its own.
         """
         store = self._store
-        return isinstance(store, WorkspaceStore) and store.workspace is None
+        return isinstance(store, WorkspaceOverflowStore) and store.workspace is None
 
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
-        return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
+        return store.bind(ctx.workspace) if isinstance(store, WorkspaceOverflowStore) else store
 
     # --- toolset ---
 
@@ -347,13 +348,18 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(return_value, BaseException):
             return original
-
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
+        new_value: object | None
+        items: list[object] = return_value if is_object_list(return_value) else [return_value]
+        if any(is_multi_modal_content(item) for item in items):
+            new_value, value_handle, value_bytes = await self._reduce_data_beside_files(ctx, call, bands, items)
+        else:
+            value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
+            value_bytes = len(value_unit.data)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
-        if value_text is None and content_text is None:
+        if new_value is None and content_text is None:
             return original
 
         return self._assemble(
@@ -361,12 +367,37 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return_value=return_value,
             content=content,
             metadata=metadata,
-            value_unit=value_unit,
-            value_text=value_text,
+            new_value=new_value,
             value_handle=value_handle,
+            value_bytes=value_bytes,
             content_text=content_text,
             content_handle=content_handle,
         )
+
+    async def _reduce_data_beside_files(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        bands: Sequence[Band],
+        items: list[object],
+    ) -> tuple[list[object] | None, str | None, int]:
+        """Reduce the data beside the files of a return value, which reach the model as files.
+
+        A lone data item is measured as itself and several as one JSON list. Core sends that data as text, so
+        a lone raw `bytes` item is measured as text too, not as a binary unit that `Truncate` would pass over.
+        When reduced, the result goes ahead of the files. Returns `(new_items, handle, data_bytes)`, with
+        `new_items` None when nothing was reduced.
+        """
+        files = [item for item in items if is_multi_modal_content(item)]
+        data = [item for item in items if not is_multi_modal_content(item)]
+        if not data:
+            return None, None, 0
+        value = data[0] if len(data) == 1 else data
+        unit = self._make_unit(to_text(value) if is_binary(value) else value, tool_name=call.tool_name, suffix='')
+        reduced, handle = await self._reduce(ctx, call, bands, unit)
+        if reduced is None:
+            return None, None, 0
+        return [reduced, *files], handle, len(unit.data)
 
     def _assemble(
         self,
@@ -375,9 +406,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return_value: ToolReturnContent,
         content: str | Sequence[UserContent] | None,
         metadata: object,
-        value_unit: _Unit,
-        value_text: str | None,
+        new_value: object | None,
         value_handle: str | None,
+        value_bytes: int,
         content_text: str | None,
         content_handle: str | None,
     ) -> object:
@@ -385,9 +416,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
+                new_metadata = _with_handles(metadata, value_handle, value_bytes, content_handle)
             wrapped_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text if value_text is not None else return_value,
+                return_value=new_value if new_value is not None else return_value,
                 content=content_text if content_text is not None else content,
                 metadata=new_metadata,
             )
@@ -396,10 +427,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         # A plain (non-`ToolReturn`) result has no separate content part.
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=new_value, metadata=_with_handles(None, value_handle, value_bytes)
             )
             return spilled_out
-        return value_text
+        return new_value
 
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""

@@ -32,7 +32,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, ModalSandboxNoToolsWarning
 
 from .._tool_calls import call_tools

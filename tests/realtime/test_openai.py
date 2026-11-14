@@ -2021,6 +2021,7 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     tool_call_id='call-image',
                     content=[
                         'done',
+                        {'temp': 20},
                         BinaryContent(data=b'result-image', media_type='image/png', identifier='result.png'),
                     ],
                 )
@@ -2047,7 +2048,7 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-image',
-                    'output': '["done","See file result.png."]',
+                    'output': '["done",{"temp":20},"See file result.png."]',
                 },
             },
             {

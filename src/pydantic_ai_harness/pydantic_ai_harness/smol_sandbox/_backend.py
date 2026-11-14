@@ -104,14 +104,16 @@ _HOST_UNAVAILABLE = frozenset(
 # `exec` keeps the argv literal and replaces the shell with the program. BusyBox and bash read a
 # program named like `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is
 # resolved to its path first. smolmachines 1.22 leaves a streamed command's stdin open, so it is
-# closed here.
-_EXEC_SCRIPT = """p=$1
-shift
-case $p in
--*/*) p=./$p ;;
--*) q=$(command -v -- "$p") || { printf 'sh: %s: not found\\n' "$p" >&2; exit 127; }; p=$q ;;
+# closed here. The command's `env` is the shell's own environment, and assigning a variable the
+# environment has changes what the program inherits, so the script assigns none on the usual path
+# and only a reserved name for a program named like an option.
+_EXEC_SCRIPT = """case $1 in
+-*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
+-*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
+*) exec "$@" </dev/null ;;
 esac
-exec "$p" "$@" </dev/null"""
+shift
+exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
 _EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.

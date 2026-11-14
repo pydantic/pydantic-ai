@@ -20,9 +20,10 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from typing import Literal
 
 import httpx2
 import pytest
@@ -92,19 +93,32 @@ def _sse(*chunks: dict[str, object]) -> httpx2.Response:
 
 
 def _model(
-    responses: list[httpx2.Response],
+    responses: Sequence[httpx2.Response | httpx2.HTTPStatusError],
     requests: list[dict[str, object]],
     *,
     model_name: str = _MODEL_NAME,
     vertex: bool = False,
+    raise_for_status: bool = False,
 ) -> GoogleModel:
-    """A model whose requests are answered with `responses` in order, and recorded in `requests`."""
+    """A model whose requests are answered with `responses` in order, and recorded in `requests`.
+
+    An `HTTPStatusError` is raised instead, as a retrying transport does for a status it gave up on. With
+    `raise_for_status`, a response event hook raises an error status as `HTTPStatusError` before google-genai reads it.
+    """
+    pending = list(responses)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(json.loads(request.content))
-        return responses.pop(0)
+        response = pending.pop(0)
+        if isinstance(response, httpx2.HTTPStatusError):
+            raise response
+        return response
 
-    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    async def check_status(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    event_hooks = {'response': [check_status]} if raise_for_status else None
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks=event_hooks)
     if vertex:
         return GoogleModel(model_name, provider=GoogleCloudProvider(api_key='test', http_client=client))
     return GoogleModel(model_name, provider=GoogleProvider(api_key='test', http_client=client))
@@ -505,17 +519,27 @@ async def test_per_request_input_limit_reads_the_first_request(
             await _run(agent, stream, usage_limits=usage_limits)
 
 
+@pytest.mark.parametrize('failure', ['status', 'transport-gave-up', 'event-hook'])
 @pytest.mark.parametrize('stream', [False, True])
-async def test_failed_continuation_request_raises(stream: bool, allow_model_requests: None):
+async def test_failed_continuation_request_raises(
+    stream: bool, failure: Literal['status', 'transport-gave-up', 'event-hook'], allow_model_requests: None
+):
     """A continuation request that fails fails the model request, as google-genai does not retry it.
 
-    Not streamed, the output of the requests before it is lost, though billed. Streamed, the run keeps what was
-    streamed as an interrupted response carrying the finished requests' usage.
+    That includes an `HTTPStatusError` raised by a retrying transport that gave up on the status, or by a response
+    event hook, which google-genai lets through unwrapped, from inside the stream too. Not streamed, the output of the
+    requests before it is lost, though billed. Streamed, the run keeps what was streamed as an interrupted response
+    carrying the finished requests' usage.
     """
     requests: list[dict[str, object]] = []
     error = {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}
-    responses = [*_two_requests(stream)[:1], httpx2.Response(503, json=error)]
-    agent = Agent(_model(responses, requests), model_settings={'max_tokens': 100_000})
+    failed: httpx2.Response | httpx2.HTTPStatusError = httpx2.Response(503, json=error)
+    if failure == 'transport-gave-up':
+        request = httpx2.Request('POST', 'https://generativelanguage.googleapis.com/')
+        failed = httpx2.HTTPStatusError('Server error 503', request=request, response=failed)
+    responses = [*_two_requests(stream)[:1], failed]
+    model = _model(responses, requests, raise_for_status=failure == 'event-hook')
+    agent = Agent(model, model_settings={'max_tokens': 100_000})
 
     with capture_run_messages() as messages, pytest.raises(ModelHTTPError) as exc_info:
         await _run(agent, stream)
