@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
+from typing_extensions import TypedDict
 
 from pydantic_ai import ToolsetTool, messages as _messages
 from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
@@ -52,6 +53,14 @@ _MODEL_OPERATION_IDS = (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspe
 
 _RETRY_AFTER_KEY = 'pydantic_ai_retry_after'
 """Marks what a model step returns instead of failing when a model error asked to wait before its next attempt."""
+
+
+class _RetryAfterWait(TypedDict):
+    """What a model step returns instead of failing when its error asked for a wait: a plain dict once recorded."""
+
+    pydantic_ai_retry_after: float
+    attempts: int
+
 
 _MINIMUM_RETRY_AFTER_CAP = 60.0
 """The shortest cap on a model error's `retry_after`, when the step's own backoff for the attempt is shorter."""
@@ -106,7 +115,7 @@ def _returning_retry_after(
             delay = model_error_retry_after(error, maximum=max(backoff, _MINIMUM_RETRY_AFTER_CAP))
             if delay is None:
                 raise
-            return {_RETRY_AFTER_KEY: delay, 'attempts': status.current_attempt + 1}
+            return _RetryAfterWait(pydantic_ai_retry_after=delay, attempts=status.current_attempt + 1)
         finally:
             _retry_after_attempts_before.reset(token)
 
@@ -117,8 +126,8 @@ def _retry_after_wait(payload: object) -> tuple[float, int] | None:
     """The wait and attempt count a model step returned instead of failing, if it did."""
     if not isinstance(payload, dict) or _RETRY_AFTER_KEY not in payload:
         return None
-    wait = cast(dict[str, Any], payload)
-    return wait[_RETRY_AFTER_KEY], wait['attempts']
+    wait = cast(_RetryAfterWait, payload)
+    return wait['pydantic_ai_retry_after'], wait['attempts']
 
 
 class SnapshotStepReservation:
