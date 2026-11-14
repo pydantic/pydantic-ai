@@ -651,7 +651,7 @@ The deadline bounds the agent run, not the workflow: a workflow's `execution_tim
 
 ### Counting Tokens Before a Request
 
-With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. Any other error from the count, a subclass of `UserError` included, fails the activity as it would fail a model request activity. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
 
 ### Suspended Turns and Background Mode
 
