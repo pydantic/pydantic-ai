@@ -442,7 +442,7 @@ dataset = Dataset(
             query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
-        # Every LLM call took at most 2s
+        # Every LLM call took at most 2s (assumes the task runs inside a 'task_execution' span)
         HasMatchingSpan(
             query={
                 'name_equals': 'task_execution',
