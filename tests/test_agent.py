@@ -4352,8 +4352,8 @@ def test_agent_run_id_empty_string_raises() -> None:
 async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
     """The pending request already carries `run_id` when `before_model_request` hooks see it.
 
-    The request is stamped again after hooks, so this pre-hook stamp is only observable
-    from inside a hook. Not a VCR test: in-memory framework behavior.
+    The request is stamped again after hooks, so a hook is where the pre-hook stamp shows, except for a resumed
+    tail that an `'asap'` drain keeps in history. Not a VCR test: in-memory framework behavior.
     """
     seen: list[str | None] = []
 
@@ -4363,8 +4363,14 @@ async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
 
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
     await agent.run('hi', run_id='run-pre-hook')
+    # A trailing request from `message_history`, as UI adapters send it, is stamped before hooks too.
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')])], run_id='run-from-history')
+    # It is still prior context, not a new message.
+    assert [type(message) for message in result.new_messages()] == [ModelResponse]
+    # One that already has a `run_id` keeps it.
+    await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')], run_id='run-earlier')])
 
-    assert seen == ['run-pre-hook']
+    assert seen == ['run-pre-hook', 'run-from-history', 'run-earlier']
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
