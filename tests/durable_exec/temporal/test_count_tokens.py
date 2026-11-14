@@ -22,6 +22,7 @@ try:
     from temporalio import activity, workflow
     from temporalio.client import Client, WorkflowHistory
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
@@ -159,15 +160,27 @@ class _CannotCountModel(FunctionModel):
         return await super().count_tokens(messages, model_settings, model_request_parameters)
 
 
+class _CountConfigError(UserError):
+    """An application's own `UserError`, which fails the count's activity as it would fail a model request's."""
+
+
 class _RejectedCountModel(FunctionModel):
+    kind = 'user_error'
+    error: UserError = UserError('This request cannot be counted.')
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
-        _count_attempts.append('user_error')
-        raise UserError('This request cannot be counted.')
+        _count_attempts.append(self.kind)
+        raise self.error
+
+
+class _MisconfiguredCountModel(_RejectedCountModel):
+    kind = 'user_error_subclass'
+    error = _CountConfigError('The app is misconfigured.')
 
 
 # Retries allowed, so a count error that Temporal retried would show up as a second attempt.
@@ -185,19 +198,31 @@ _rejected_count_agent = Agent(
     name='count_tokens_user_error',
     capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
 )
+_misconfigured_count_agent = Agent(
+    _MisconfiguredCountModel(_reply),
+    name='count_tokens_user_error_subclass',
+    capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
+)
+_count_error_agents = {
+    'not_implemented': _cannot_count_agent,
+    'user_error': _rejected_count_agent,
+    'user_error_subclass': _misconfigured_count_agent,
+}
 
 
 @workflow.defn
 class CountTokensErrorWorkflow:
     @workflow.run
     async def run(self, error: str) -> str:
-        agent = _cannot_count_agent if error == 'not_implemented' else _rejected_count_agent
         try:
-            await agent.run('hi', usage_limits=UsageLimits(count_tokens_before_request=True))
+            await _count_error_agents[error].run('hi', usage_limits=UsageLimits(count_tokens_before_request=True))
         except NotImplementedError as e:
             return f'NotImplementedError: {e}'
         except UserError as e:
             return f'UserError: {e}'
+        except ActivityError as e:
+            assert isinstance(e.cause, ApplicationError)
+            return f'ActivityError: {e.cause.type}: {e.cause.message}'
         return 'counted'  # pragma: no cover
 
 
@@ -206,22 +231,24 @@ class CountTokensErrorWorkflow:
     [
         (
             'not_implemented',
-            'NotImplementedError: Token counting ahead of the request is not supported by FunctionModel',
+            'NotImplementedError: Token counting ahead of the request is not supported by _CannotCountModel',
         ),
         ('user_error', 'UserError: This request cannot be counted.'),
+        ('user_error_subclass', 'ActivityError: _CountConfigError: The app is misconfigured.'),
     ],
 )
-async def test_count_tokens_errors_reach_the_workflow_as_themselves(client: Client, error: str, expected: str):
+async def test_count_tokens_errors_fail_the_count_once(client: Client, error: str, expected: str):
     """A model that can't count, or a request it rejects, fails the count once, with the error the model raised.
 
-    `NotImplementedError` is what Pydantic AI Harness falls back on when a nested agent's model can't count.
+    `NotImplementedError` is what Pydantic AI Harness falls back on when a nested agent's model can't count. A
+    `UserError` subclass carries more than its message, so it fails the activity as it would fail a model request's.
     """
     _count_attempts.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[CountTokensErrorWorkflow],
-        plugins=[AgentPlugin(_cannot_count_agent), AgentPlugin(_rejected_count_agent)],
+        plugins=[AgentPlugin(agent) for agent in _count_error_agents.values()],
     ):
         output = await client.execute_workflow(
             CountTokensErrorWorkflow.run,
