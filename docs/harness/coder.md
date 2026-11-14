@@ -245,10 +245,9 @@ accessible to commands in a local workspace.
 ## Instructions
 
 The default instructions are short: match the surrounding code's style, structure, and imports; read
-files with `read_file`; make deliverables self-contained for a clean directory, with only the files
-they include; confirm each stated requirement and edge case explicitly; use every field the provided
-data supplies; check behavior with heredocs rather than new files; and finish long-running work before
-replying.
+files with `read_file`; confirm each stated requirement and edge case explicitly; check behavior with
+heredocs rather than new files; and finish long-running work before replying. Guidance that only helps
+on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 
 `autonomy` sets how far the agent works on its own:
 
@@ -335,6 +334,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
+`Coder`'s default instructions no longer ask for self-contained deliverables checked from a clean directory, or for a solution that uses every field of the provided data. Bind `BenchmarkInstructions()` next to `Coder` to keep them (see [Benchmarking](#benchmarking)).
+
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
 `Coder` now turns off strict mode for its own tools; pass `strict=None` to keep the provider's default (see [Strict tool schemas](#strict-tool-schemas)).
@@ -346,13 +347,13 @@ This release makes the workspace the single place that decides where an agent wo
 - **Pass the command environment.** Commands used to inherit your whole environment (`Coder` removed LLM API keys from it). Now they get only your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, plus the workspace's `env` and `Shell(env=)`. Pass what they need, such as an SSH agent socket, a `gh` token or proxy settings, with `LocalWorkspace('.', env={...})` (see [The command environment](#the-command-environment)).
 - **`denied_env_patterns` does not filter `LocalWorkspace(env=)`.** It only drops names from `Shell(env=)`, so don't pass all of `os.environ` to the workspace.
 - **`FileSystem(root_dir=)`** defaults to the working directory and resolves relative values from it. It must contain the working directory, symlinks that lead outside it are refused, and `root_dir='/'` turns the checks off.
-- **Harness files moved into the working directory.** Tool-output spills and Shell background-job files are under `.pydantic-ai-harness/` (git-ignored) instead of `$TMPDIR`. Spills in `.pydantic-ai-harness/tool-output/` are never pruned; delete the directory when you no longer need them. `ToolOutputLimits(store=LocalFileStore())` keeps spills in a temp directory on this machine, without a workspace.
+- **Harness files moved into the working directory.** Tool-output spills and Shell background-job files are under `.pydantic-ai-harness/` (git-ignored) instead of `$TMPDIR`. Spills in `.pydantic-ai-harness/tool-output/` are never pruned; delete the directory when you no longer need them. `ToolOutputLimits(store=LocalFileOverflowStore())` keeps spills in a temp directory on this machine, without a workspace.
 - **Background commands outlive the run.** `start_command` jobs are no longer killed when the run ends, so a later run in the conversation can check them; stop them with `stop_command` or your own cleanup.
 - **Local file and shell tools need a POSIX host.** `LocalWorkspace` does not run on Windows; use a sandbox capability there, or WSL.
 - **Skills** are read from the workspace at run start and loaded as deferred capabilities. [`Skills(workspace=LocalWorkspaceBackend('/app'))`](skills.md) reads them from somewhere else.
-- **[`Researcher`](researcher.md)** spills oversized tool results to the workspace instead of `$TMPDIR`, so it needs one too. A web-only agent can keep the old behaviour with `Researcher(store=LocalFileStore())`.
+- **[`Researcher`](researcher.md)** spills oversized tool results to the workspace instead of `$TMPDIR`, so it needs one too. A web-only agent can keep the old behaviour with `Researcher(store=LocalFileOverflowStore())`.
 - **Sub-agent definitions** are read from the workspace at run start, and `~/.agents/agents/` is no longer read. [`SubAgents(workspace=LocalWorkspaceBackend('/app'))`](subagents.md) reads them from somewhere else.
-- **[Memory's `FileStore`](memory.md)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
+- **[Memory's `FileMemoryStore`](memory.md)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileMemoryStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
 - **Capability Creation** runs only when the workspace is a writable `LocalWorkspace`.
 - **Durable runs in flight.** Adding a workspace changes what a durable run records at its start, so Temporal and DBOS runs started before the change no longer replay. Let them finish or version the deployment first; see the workspace guide's [Durable execution](../workspace.md#durable-execution) section.
 
@@ -364,11 +365,33 @@ With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` 
 
 ## Benchmarking
 
-See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/TERMINAL_BENCH.md)
-for running Coder inside Harbor, pinning the adapter and harness, and inspecting trial results.
+A benchmark verifier grades only the files a task asked for, in a clean directory, and benchmark data
+is built so that every field matters. Neither holds for everyday work in a project, so `Coder` leaves
+that guidance out. Benchmark runs opt in by binding `BenchmarkInstructions` next to `Coder`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import BenchmarkInstructions, Coder
+
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[LocalWorkspace('.'), Coder(), BenchmarkInstructions()],
+)
+```
+
+It tells the agent to make deliverables self-contained and check them from a clean directory, and to use
+every field the provided data supplies. `delegate_task`'s `self` delegate re-runs the same agent, so it
+gets this guidance too. It adds no spans of its own; on an instrumented run, the guidance appears with the
+other instructions. Record whether a run used `BenchmarkInstructions` with its score.
+
+See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/TERMINAL_BENCH.md) for running Coder
+inside Harbor, pinning the adapter and harness, and inspecting trial results.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/coder/).
 
 ## API reference
 
 ::: pydantic_ai_harness.coder.Coder
+
+::: pydantic_ai_harness.coder.BenchmarkInstructions

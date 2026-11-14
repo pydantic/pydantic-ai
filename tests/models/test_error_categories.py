@@ -266,8 +266,8 @@ def _gave_up(
 ) -> Handler:
     """What a retrying transport raises once its `validate_response` rejected the last attempt's status.
 
-    With `read=False`, the response's body was never read, as when the transport closes a response from the network
-    that its `validate_response` rejected.
+    With `read=False`, the response's body was never read, as when the transport failed to read the body of a response
+    from the network that its `validate_response` rejected.
     """
 
     def handler(request: Any) -> Any:
@@ -2165,6 +2165,54 @@ async def test_model_fallback_after_retrying_transport_gives_up(
     [attempt] = result.response.failed_attempts or []
     assert attempt.outcome == 'error'
     assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
+
+
+@pytest.mark.parametrize(
+    ('make_model', 'status_code', 'body', 'categories', 'retry_after'),
+    [
+        pytest.param(
+            _retrying_google,
+            429,
+            _GEMINI_FREE_TIER_RATE_LIMIT,
+            {ModelHTTPError, ModelRateLimitError},
+            14.0,
+            id='google-retry-info',
+        ),
+        pytest.param(
+            _retrying_openai,
+            503,
+            {'error': {'message': 'The server is overloaded.', 'type': 'server_error', 'code': None}},
+            _OVERLOADED,
+            None,
+            id='openai-overloaded',
+        ),
+    ],
+)
+async def test_retrying_transport_gave_up_keeps_streamed_error_body(
+    allow_model_requests: None,
+    make_model: Callable[[httpx2.AsyncClient], Model],
+    status_code: int,
+    body: dict[str, Any],
+    categories: set[type[ModelAPIError]],
+    retry_after: float | None,
+):
+    """A status the retrying transport gave up on keeps its body, and so the category and wait parsed from it.
+
+    The body is a stream, like one from the network, so nothing has read it when `validate_response` rejects it.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, stream=httpx2.ByteStream(json.dumps(body).encode()))
+
+    agent = Agent(make_model(_retrying_client(handler)), model_settings={'max_retries': 0})
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    exc = exc_info.value
+    assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} == categories
+    assert exc.status_code == status_code
+    assert exc.body == body
+    assert exc.retry_after == retry_after
 
 
 def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:

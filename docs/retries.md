@@ -461,6 +461,8 @@ model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http
 agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
+Before retrying or re-raising an error status, the transport reads the response body, so the error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body] and what Pydantic AI parses from it: the error category, like an overloaded provider's [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], and, for Google, the wait in [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. Each rejected attempt therefore downloads its error body, and once the download completes, its connection goes back to the pool. A success status your `validate_response` rejects is closed without reading its body. If reading an error body fails, the transport closes the response and still raises the exception from your `validate_response`, and the error's `body` is `None`.
+
 ### Performance considerations
 
 - Retries add latency to requests, especially with exponential backoff

@@ -54,10 +54,10 @@ from pydantic_ai_harness.code_mode import (
     SpeculativeCallEvictedEvent,
     SpeculativeCallMissedEvent,
 )
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.permissions import Permissions
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
