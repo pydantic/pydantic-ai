@@ -689,13 +689,23 @@ def test_falsy_const_tool_args() -> None:
 
 
 @pytest.mark.parametrize(
-    'name,ref',
+    'name,ref,expected',
     [
-        pytest.param('from', '#/properties/from', id='plain'),
-        pytest.param('from address', '#/properties/from%20address', id='percent-encoded'),
+        pytest.param(
+            'from',
+            '#/properties/from',
+            snapshot([{'from': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}]),
+            id='plain',
+        ),
+        pytest.param(
+            'from address',
+            '#/properties/from%20address',
+            snapshot([{'from address': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}]),
+            id='percent-encoded',
+        ),
     ],
 )
-def test_json_pointer_ref_tool_args(name: str, ref: str) -> None:
+def test_json_pointer_ref_tool_args(name: str, ref: str, expected: list[dict[str, Any]]) -> None:
     """A local JSON-pointer `$ref` is followed like a `$defs` one when generating tool arguments.
 
     The MCP TypeScript SDK sends this shape for a zod v3 tool `{ from: Address, to: Address }`: the reused
@@ -726,7 +736,7 @@ def test_json_pointer_ref_tool_args(name: str, ref: str) -> None:
     )
 
     Agent(TestModel(), tools=[tool]).run_sync('hello')
-    assert calls == [{name: {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}]
+    assert calls == expected
 
 
 def test_list_form_items_tool_args() -> None:
