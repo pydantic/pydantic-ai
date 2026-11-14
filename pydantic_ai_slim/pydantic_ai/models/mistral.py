@@ -335,6 +335,7 @@ class MistralModel(Model[Mistral]):
 
     @cached_property
     def profile(self) -> MistralModelProfile:
+        """The model profile."""
         return cast(MistralModelProfile, super().profile)
 
     async def request(
@@ -712,9 +713,8 @@ class MistralModel(Model[Mistral]):
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
         A model whose profile sets `mistral_reasoning_efforts` (Mistral Large 4) gets the closest effort it
-        accepts. Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
-        `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
-        not even for `thinking=False`.
+        accepts. Otherwise, a model with adjustable reasoning gets `'high'` or `'none'`, and a model that always
+        reasons with no effort to set (the dated `magistral` ids) receives nothing, not even for `thinking=False`.
         """
         thinking = model_request_parameters.thinking
         if thinking is None:

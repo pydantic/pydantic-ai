@@ -3993,11 +3993,12 @@ async def test_reasoning_effort_not_sent_for_always_on_model(
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'mistral-large-4'])
+async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None, model_name: str) -> None:
     """Without any thinking config, reasoning_effort should be UNSET."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -4005,24 +4006,34 @@ async def test_reasoning_effort_not_sent_without_config(allow_model_requests: No
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-async def test_reasoning_effort_stream_with_unified_thinking(allow_model_requests: None) -> None:
-    """Unified thinking='high' should pass reasoning_effort='high' in streaming mode."""
+@pytest.mark.parametrize(
+    'model_name, thinking, expected',
+    [
+        pytest.param('mistral-small-latest', 'high', 'high', id='small-4-high'),
+        pytest.param('mistral-large-4', False, 'low', id='large-4-disable'),
+    ],
+)
+async def test_reasoning_effort_stream_with_unified_thinking(
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected: str
+) -> None:
+    """Unified `thinking` maps to the same `reasoning_effort` in streaming mode as in `request`."""
     stream = [text_chunk('hello '), text_chunk('world', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking='high')) as result:
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking=thinking)) as result:
         text = await result.get_output()
     assert text == 'hello world'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected
 
 
-async def test_reasoning_effort_stream_not_sent_without_config(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'mistral-large-4'])
+async def test_reasoning_effort_stream_not_sent_without_config(allow_model_requests: None, model_name: str) -> None:
     """Without any thinking config, reasoning_effort should be UNSET in streaming mode."""
     stream = [text_chunk('hello', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     async with agent.run_stream('hello') as result:
@@ -4080,7 +4091,11 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
 async def test_large4_requested_efforts_map_to_closest_supported_level(
     allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str
 ) -> None:
-    """Large 4 accepts `'low'`/`'medium'`/`'high'` and can't turn reasoning off, so `thinking=False` sends `'low'`."""
+    """Large 4 accepts `'low'`/`'medium'`/`'high'` and can't turn reasoning off, so `thinking=False` sends `'low'`.
+
+    A unit test, so every level on both ids is pinned without a recording each; `test_thinking_wire_contract.py`
+    records the `False`, `'medium'` and unset cases against the API.
+    """
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -4105,7 +4120,10 @@ async def test_reasoning_efforts_profile_override(
     thinking: ThinkingLevel,
     expected_reasoning_effort: str,
 ) -> None:
-    """A user's `profile=` overrides the provider's `mistral_reasoning_efforts`."""
+    """A user's `profile=` overrides the provider's `mistral_reasoning_efforts`.
+
+    A unit test: these effort sets come only from a user `profile=`, which no Mistral model serves to record.
+    """
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(
@@ -4121,7 +4139,10 @@ async def test_reasoning_efforts_profile_override(
 
 
 async def test_empty_reasoning_efforts_omits_reasoning_effort(allow_model_requests: None) -> None:
-    """A profile that accepts no `reasoning_effort` value sends none."""
+    """A profile that accepts no `reasoning_effort` value sends none.
+
+    A unit test: an empty effort set comes only from a user `profile=`, which no Mistral model serves to record.
+    """
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(
