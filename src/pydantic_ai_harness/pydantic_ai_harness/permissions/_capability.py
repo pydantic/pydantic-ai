@@ -23,7 +23,7 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai_harness._durable import in_durable_context
-from pydantic_ai_harness.filesystem._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
+from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.

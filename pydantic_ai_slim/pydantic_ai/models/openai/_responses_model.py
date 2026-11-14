@@ -9,7 +9,7 @@ import warnings
 from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import cached_property
 from random import random
 from types import TracebackType
@@ -146,6 +146,7 @@ from .. import (
 )
 from .._decode_errors import check_json_response, map_decode_errors
 from .._sdk_retries import with_max_retries
+from .._tool_call_ids import stored_tool_call_id
 from .._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ._caching import (
     CACHE_SETTINGS_KEYS,
@@ -208,7 +209,6 @@ from ._response_fields import (
     map_usage,
     response_refusal,
     response_status_to_state,
-    response_tool_call_id,
 )
 from ._responses_streaming import OpenAIResponsesStreamedResponse
 from ._settings import (
@@ -837,7 +837,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
         # Before trimming, as in `_build_responses_request_params`: an output acknowledges its call's checks.
-        calls = computer_calls_by_id(messages)
+        calls = computer_calls_by_id(self._restore_response_scoped_tool_call_ids(messages))
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'),
             messages,
@@ -1150,7 +1150,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise response_error(
                 self.model_name, error.code, error.message, error_type=response_error_type(error), in_stream=False
             )
-        items = self._map_output_items(response, model_settings, model_request_parameters)
+        timestamp = _now_utc()
+        items = self._map_output_items(response, model_settings, model_request_parameters, timestamp)
         refusal_text = response_refusal(response)
 
         finish_reason: FinishReason | None = None
@@ -1189,7 +1190,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             usage=map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
-            timestamp=_now_utc(),
+            timestamp=timestamp,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             canonical_system=self._canonical_system_stamp,
@@ -1203,8 +1204,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response: responses.Response,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        timestamp: datetime,
     ) -> list[ModelResponsePart]:
-        """Map the output items of a non-streamed response to parts."""
+        """Map the output items of a non-streamed response, stamped with `timestamp`, to parts."""
         tool_search_output_call_ids = tool_search_call_ids_by_output(response)
         tool_search_outputs = {
             tool_search_output_call_ids[item.id]: item
@@ -1222,7 +1224,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case responses.ResponseOutputMessage():
                     items.extend(self._map_output_message(item, model_settings))
                 case responses.ResponseFunctionToolCall():
-                    items.append(self._map_function_tool_call(item, response.id))
+                    items.append(self._map_function_tool_call(item, response.id, timestamp))
                 case responses.ResponseCodeInterpreterToolCall():
                     items.extend(self._map_code_interpreter_call(item))
                 case responses.ResponseFunctionWebSearch():
@@ -1237,7 +1239,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
                 case responses.ResponseComputerToolCall():
-                    items.extend(self._map_computer_call(item, response.id, model_request_parameters))
+                    items.extend(self._map_computer_call(item, response.id, timestamp, model_request_parameters))
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
@@ -1285,7 +1287,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 citations=citations,
             )
 
-    def _map_function_tool_call(self, item: responses.ResponseFunctionToolCall, response_id: str) -> ToolCallPart:
+    def _map_function_tool_call(
+        self, item: responses.ResponseFunctionToolCall, response_id: str, timestamp: datetime
+    ) -> ToolCallPart:
         # When the Responses API wraps a discovered deferred tool in a namespace
         # (tool-search flow), it requires the namespace to be round-tripped on
         # subsequent turns. Preserve it via `provider_details`.
@@ -1295,26 +1299,33 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return ToolCallPart(
             item.name,
             item.arguments,
-            tool_call_id=response_tool_call_id(item.call_id, self._call_id_scope(response_id)),
+            tool_call_id=stored_tool_call_id(
+                item.call_id,
+                response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                provider_response_id=response_id,
+                timestamp=timestamp,
+            ),
             id=item.id,
             provider_name=self.system,
             provider_details=fn_provider_details,
         )
 
-    def _call_id_scope(self, response_id: str) -> str | None:
-        """The response a tool call ID is scoped to, for a provider whose call IDs repeat across responses."""
-        return response_id if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False) else None
-
     def _map_computer_call(
         self,
         item: responses.ResponseComputerToolCall,
         response_id: str,
+        timestamp: datetime,
         model_request_parameters: ModelRequestParameters,
     ) -> list[ModelResponsePart]:
         """The `computer` tool's call, or nothing when the request has no `computer` tool to run it."""
         if not (computer_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
             return []
-        call_id = response_tool_call_id(item.call_id, self._call_id_scope(response_id))
+        call_id = stored_tool_call_id(
+            item.call_id,
+            response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+            provider_response_id=response_id,
+            timestamp=timestamp,
+        )
         return [map_computer_call(item, computer_name, call_id, self.system)]
 
     def _map_code_interpreter_call(
@@ -1392,9 +1403,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             background = True
             initial_state = 'suspended'
 
-        tool_call_ids_are_response_scoped = self.profile.get(
-            'openai_responses_tool_call_ids_are_response_scoped', False
-        )
+        tool_call_ids_are_response_scoped = self.profile.get('tool_call_ids_are_response_scoped', False)
         is_websocket = False
         if self._websocket_stream is not None:
             from ._responses_websocket import ResponsesWebSocketStream
@@ -1522,7 +1531,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
         # checks even when the call itself stays in the stored response or conversation, as OpenAI's guide shows.
-        calls = computer_calls_by_id(messages)
+        calls = computer_calls_by_id(self._restore_response_scoped_tool_call_ids(messages))
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -2621,13 +2630,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
         # across a second compaction in probing, so each freshly built window plants it explicitly.
         messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
+        messages = self._restore_response_scoped_tool_call_ids(messages, previous_response_id=previous_response_id)
         profile = self.profile
-        response_scoped_tool_call_ids = profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
         context = _ResponsesMapMessagesContext(
             messages=messages,
             model_request_parameters=model_request_parameters,
-            response_scoped_tool_call_ids=response_scoped_tool_call_ids,
-            response_id=previous_response_id if response_scoped_tool_call_ids else None,
             send_item_ids=model_settings.get(
                 'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
             ),
@@ -2725,7 +2732,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     async def _map_tool_return_part(self, part: ToolReturnPart, context: _ResponsesMapMessagesContext) -> None:
         call_id = _guard_tool_call_id(t=part)
         call_id, _ = split_combined_tool_call_id(call_id)
-        call_id = provider_response_tool_call_id(call_id, context.response_id)
         computer_call = context.computer_calls.get(part.tool_call_id)
         if part.tool_call_id in context.computer_call_ids or (
             # A call not replayed here is in the stored response (`previous_response_id` or a
@@ -2779,7 +2785,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response_context = _ResponsesMapModelResponseContext(
             message=message,
             same_endpoint=same_endpoint,
-            response_from_same_provider=message.provider_name == self.system and same_endpoint,
             response_start=len(context.openai_messages),
         )
         response_parts: Sequence[ModelResponsePart] = message.parts
@@ -2799,11 +2804,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 response_context.response_start,
                 responses.EasyInputMessageParam(role='user', content='\n\n'.join(response_context.carried_thinkings)),
             )
-        context.response_id = (
-            message.provider_response_id
-            if context.response_scoped_tool_call_ids and response_context.response_from_same_provider
-            else None
-        )
 
     def _map_response_part(
         self,
@@ -2815,11 +2815,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         from_same_provider = response_context.same_endpoint and (
             item.provider_name == self.system or (item.provider_name is None and message.provider_name == self.system)
         )
-        response_id_from_same_provider = response_context.same_endpoint and (
-            message.provider_name == self.system
-            or (message.provider_name is None and item.provider_name == self.system)
-        )
-        response_context.response_from_same_provider |= response_id_from_same_provider
         # Two distinct gates. For native tool items whose state lives server-side
         # (web search, code interpreter, image generation, MCP), the item ID *is*
         # the replay payload, so `should_send_item_id` decides whether those items
@@ -2836,7 +2831,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     item,
                     response_context,
                     context,
-                    response_id_from_same_provider=response_id_from_same_provider,
                     should_send_item_id=should_send_item_id,
                 )
             case NativeToolCallPart():
@@ -2924,19 +2918,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response_context: _ResponsesMapModelResponseContext,
         context: _ResponsesMapMessagesContext,
         *,
-        response_id_from_same_provider: bool,
         should_send_item_id: bool,
     ) -> None:
         call_id = _guard_tool_call_id(t=item)
         call_id, id = split_combined_tool_call_id(call_id)
-        call_id = provider_response_tool_call_id(
-            call_id,
-            response_context.message.provider_response_id
-            if context.response_scoped_tool_call_ids and response_id_from_same_provider
-            else None,
-        )
         id = id or item.id
         context.replayed_call_ids.add(item.tool_call_id)
+        # A provider can reuse a call ID in a later response, so the latest call with it decides how its result goes.
+        context.computer_call_ids.discard(item.tool_call_id)
 
         if computer_call := self._replayed_computer_call(
             item, call_id, context, should_send_item_id=should_send_item_id
@@ -3439,8 +3428,6 @@ class _ResponsesMapMessagesContext:
 
     messages: list[ModelMessage]
     model_request_parameters: ModelRequestParameters
-    response_scoped_tool_call_ids: bool
-    response_id: str | None
     send_item_ids: bool
     store_disabled: bool
     client_tool_search_active: bool
@@ -3469,7 +3456,6 @@ class _ResponsesMapModelResponseContext:
 
     message: ModelResponse
     same_endpoint: bool
-    response_from_same_provider: bool
     response_start: int
     message_item: responses.ResponseOutputMessageParam | None = None
     reasoning_item: responses.ResponseReasoningItemParam | None = None
@@ -3587,13 +3573,6 @@ def split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         return call_id, id
     else:
         return combined_id, None
-
-
-def provider_response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Restore a response-scoped provider tool-call ID from its normalized form."""
-    if response_id is None:
-        return tool_call_id
-    return tool_call_id.removeprefix(f'{response_id}:')
 
 
 def uploaded_file_to_response_content(
