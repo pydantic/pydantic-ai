@@ -332,8 +332,10 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
     type has no JSON form, since no spec entry can then load `target`.
     """
-    hints = get_function_type_hints(target)
-    hints.pop('return', None)
+    parameters = inspect.signature(target).parameters
+    # A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
+    # `init=False` dataclass field.
+    hints = get_function_type_hints(target, include_keys=set(parameters))
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
     type_hints = {k: fv for k, v in hints.items() if (fv := filter_serializable_type(v)) is not None}
@@ -341,7 +343,7 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
 
     required_type_hints: dict[str, Any] = {}
 
-    for p in inspect.signature(target).parameters.values():
+    for p in parameters.values():
         # Skip self/cls (unbound instance/class methods) and *args/**kwargs
         if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
             type_hints.pop(p.name, None)

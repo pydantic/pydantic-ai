@@ -80,7 +80,7 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             arguments = None
         elif len(raw_arguments) == 1:
             # The compact tuple form passes the value as the first positional argument.
-            first_field = fields(self)[0]
+            first_field = next(field for field in fields(self) if field.init)
             key = next(iter(raw_arguments))
             value = raw_arguments[key]
             if key == first_field.name and not first_field.kw_only and not serializes_as_string_keyed_dict(value):
@@ -102,6 +102,7 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         """
         raw_arguments: dict[str, Any] = {}
         for field in fields(self):
+            # A spec holds `__init__` arguments; `__post_init__` or the default restores an `init=False` field.
             if not field.init:
                 continue
             value = getattr(self, field.name)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -90,26 +91,42 @@ with try_import() as imports_successful:
             return len(ctx.output) >= self.minimum[1]
 
     @dataclass
-    class InitFalseEvaluator(Evaluator[str, str, str]):
-        value: str
-        derived: str = field(init=False)
+    class InitFalsePattern(Evaluator[str, str, str]):
+        """`__post_init__` compiles `pattern` from the constructor arguments, which are all a file holds."""
+
+        source: str
+        ignore_case: bool = False
+        pattern: re.Pattern[str] = field(init=False, repr=False)
 
         def __post_init__(self) -> None:
-            self.derived = f'derived:{self.value}'
+            self.pattern = re.compile(self.source, re.IGNORECASE if self.ignore_case else 0)
 
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
-            return ctx.output == self.derived
+            return self.pattern.fullmatch(ctx.output) is not None
 
     @dataclass
-    class InitFalseDefaultEvaluator(Evaluator[str, str, str]):
-        value: str
-        derived: str = field(default='default', init=False)
+    class InitFalseDefault(Evaluator[str, str, str]):
+        """`__post_init__` replaces the default of `label`, which `__init__` doesn't take."""
+
+        minimum: int
+        label: str = field(default='unset', init=False)
 
         def __post_init__(self) -> None:
-            self.derived = f'derived:{self.value}'
+            self.label = f'at least {self.minimum}'
 
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
-            return ctx.output == self.derived
+            return len(ctx.output) >= self.minimum
+
+    @dataclass
+    class InitFalseFirst(Evaluator[str, str, str]):
+        """`calls` is declared before `minimum`, the parameter a short-form value goes to."""
+
+        calls: int = field(default=0, init=False)
+        minimum: int = 0
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            self.calls += 1
+            return len(ctx.output) >= self.minimum
 
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
@@ -117,6 +134,17 @@ with try_import() as imports_successful:
 
         def evaluate(self, ctx: ReportEvaluatorContext[str, str, str]) -> ScalarResult:
             return ScalarResult(title='Configured value', value=self.value)
+
+    @dataclass
+    class InitFalseReport(ReportEvaluator[str, str, str]):
+        value: float
+        title: str = field(init=False)
+
+        def __post_init__(self) -> None:
+            self.title = f'Configured {self.value}'
+
+        def evaluate(self, ctx: ReportEvaluatorContext[str, str, str]) -> ScalarResult:
+            return ScalarResult(title=self.title, value=self.value)
 
     @dataclass(frozen=True)
     class RoundTripCase:
@@ -127,6 +155,7 @@ with try_import() as imports_successful:
         schema_forms: frozenset[str]
 
     KEYWORD_FORMS = frozenset({'spec', 'spec_params'})
+    INIT_FALSE_PATTERN_FORMS = frozenset({'short_spec'}) | KEYWORD_FORMS
     ROUND_TRIP_CASES: dict[str, RoundTripCase] = {
         'KeywordOnly': RoundTripCase(KeywordOnly(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
         'KeywordOnlyField': RoundTripCase(KeywordOnlyField(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
@@ -143,6 +172,14 @@ with try_import() as imports_successful:
             {'minimum': {'length': 4}},
             frozenset({'short_spec'}) | KEYWORD_FORMS,
         ),
+        'InitFalseShortForm': RoundTripCase(InitFalsePattern(source='h.llo'), 'h.llo', INIT_FALSE_PATTERN_FORMS),
+        'InitFalseKeywordForm': RoundTripCase(
+            InitFalsePattern(source='HELLO', ignore_case=True),
+            {'source': 'HELLO', 'ignore_case': True},
+            INIT_FALSE_PATTERN_FORMS,
+        ),
+        'InitFalseDefault': RoundTripCase(InitFalseDefault(minimum=4), 4, frozenset({'short_spec'})),
+        'InitFalseFirst': RoundTripCase(InitFalseFirst(minimum=4), 4, frozenset({'short_spec'})),
     }
 
     @dataclass(frozen=True)
@@ -183,10 +220,17 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'Positional',
         'PositionalWithKeywordOnlyDefault',
         'ObjectPositional',
+        'InitFalseShortForm',
+        'InitFalseKeywordForm',
+        'InitFalseDefault',
+        'InitFalseFirst',
     ],
 )
 def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'], evaluator_name: str):
-    """File persistence retains constructor names without changing existing positional short forms."""
+    """File persistence retains constructor names without changing existing positional short forms.
+
+    A file holds `__init__` arguments only, so an `init=False` field is left out and rebuilt on load.
+    """
     case = ROUND_TRIP_CASES[evaluator_name]
     evaluator = case.evaluator
     evaluator_type = type(evaluator)
@@ -279,37 +323,35 @@ def test_keyword_only_report_evaluator_file_round_trip(tmp_path: Path, fmt: Lite
     assert report.analyses == [ScalarResult(title='Configured value', value=4.0)]
 
 
-@pytest.mark.parametrize('fmt', ['json', 'yaml'])
-def test_evaluator_init_false_field_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml']) -> None:
-    evaluator = InitFalseEvaluator(value='configured')
-    dataset = Dataset[str, str, str](name='round-trip', cases=[Case(inputs='hello')], evaluators=[evaluator])
-    path = tmp_path / f'dataset.{fmt}'
-    dataset.to_file(path, custom_evaluator_types=[InitFalseEvaluator])
+def test_init_false_state_changed_by_a_run(tmp_path: Path):
+    """State an evaluator changes while it runs stays out of a file saved after the run."""
+    evaluator = InitFalseFirst(minimum=4)
+    dataset = Dataset[str, str, str](name='after-run', cases=[Case(inputs='hello')], evaluators=[evaluator])
+    dataset.evaluate_sync(lambda value: value)
+    assert evaluator.calls == 1
+    path = tmp_path / 'dataset.yaml'
+    dataset.to_file(path, custom_evaluator_types=[InitFalseFirst])
 
-    raw = yaml.safe_load(path.read_text())
-    assert raw['evaluators'] == [{'InitFalseEvaluator': 'configured'}]
-
-    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseEvaluator])
-    assert loaded.evaluators == [evaluator]
-    loaded_evaluator = loaded.evaluators[0]
-    assert isinstance(loaded_evaluator, InitFalseEvaluator)
-    assert loaded_evaluator.derived == 'derived:configured'
+    assert yaml.safe_load(path.read_text())['evaluators'] == [{'InitFalseFirst': 4}]
+    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseFirst])
+    assert loaded.evaluators == [InitFalseFirst(minimum=4)]
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])
-def test_evaluator_init_false_default_field_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml']) -> None:
-    evaluator = InitFalseDefaultEvaluator(value='configured')
-    assert evaluator.derived == 'derived:configured'
-    assert evaluator.derived != 'default'
-    dataset = Dataset[str, str, str](name='round-trip', cases=[Case(inputs='hello')], evaluators=[evaluator])
+def test_init_false_report_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml']):
+    """Report evaluators leave `init=False` fields out of a file, like case evaluators."""
+    evaluator = InitFalseReport(value=4.0)
+    dataset = Dataset[str, str, str](
+        name='report-round-trip', cases=[Case(inputs='hello')], report_evaluators=[evaluator]
+    )
     path = tmp_path / f'dataset.{fmt}'
-    dataset.to_file(path, custom_evaluator_types=[InitFalseDefaultEvaluator])
+    dataset.to_file(path, custom_report_evaluator_types=[InitFalseReport])
 
     raw = yaml.safe_load(path.read_text())
-    assert raw['evaluators'] == [{'InitFalseDefaultEvaluator': 'configured'}]
-
-    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseDefaultEvaluator])
-    assert loaded.evaluators == [evaluator]
-    loaded_evaluator = loaded.evaluators[0]
-    assert isinstance(loaded_evaluator, InitFalseDefaultEvaluator)
-    assert loaded_evaluator.derived == 'derived:configured'
+    assert raw['report_evaluators'] == [{'InitFalseReport': 4.0}]
+    schema = json.loads((tmp_path / 'dataset_schema.json').read_text())
+    assert list(validator_for(schema)(schema).iter_errors(raw)) == []
+    loaded = Dataset[str, str, str].from_file(path, custom_report_evaluator_types=[InitFalseReport])
+    assert loaded.report_evaluators == [evaluator]
+    report = loaded.evaluate_sync(lambda value: value)
+    assert report.analyses == [ScalarResult(title='Configured 4.0', value=4.0)]

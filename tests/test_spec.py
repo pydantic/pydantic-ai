@@ -1,11 +1,12 @@
 """Tests for the shared _spec.py module."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Protocol, Self
+from dataclasses import dataclass, field
+from typing import Annotated, Any, ClassVar, Literal, Protocol, Self
 
 import pytest
-from pydantic import BaseModel, GetPydanticSchema, JsonValue, ValidationError
+from inline_snapshot import snapshot
+from pydantic import BaseModel, GetPydanticSchema, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import SchemaError
 from typing_extensions import TypeAliasType
 
@@ -581,6 +582,51 @@ class TestBuildSchemaTypes:
         registry = {'MultiParam': MultiParam}
         types = build_schema_types(registry)
         assert len(types) >= 1
+
+    def test_dataclass_target_omits_non_init_annotations(self):
+        """A class target's `ClassVar` and `init=False` annotations name no parameter, so no spec form takes them.
+
+        Evals pass an evaluator class itself as its schema target.
+        """
+
+        @dataclass
+        class Stateful:
+            kind: ClassVar[str] = 'stateful'
+            threshold: int
+            label: str = 'x'
+            derived: str = field(init=False)
+
+        types = build_schema_types({'Stateful': Stateful})
+        assert [TypeAdapter(t).json_schema() for t in types] == snapshot(
+            [
+                {
+                    'additionalProperties': False,
+                    'properties': {'Stateful': {'title': 'Stateful', 'type': 'integer'}},
+                    'required': ['Stateful'],
+                    'title': 'short_spec_Stateful',
+                    'type': 'object',
+                },
+                {
+                    '$defs': {
+                        'spec_params_Stateful': {
+                            'additionalProperties': False,
+                            'properties': {
+                                'threshold': {'title': 'Threshold', 'type': 'integer'},
+                                'label': {'title': 'Label', 'type': 'string'},
+                            },
+                            'required': ['threshold'],
+                            'title': 'spec_params_Stateful',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'Stateful': {'$ref': '#/$defs/spec_params_Stateful'}},
+                    'required': ['Stateful'],
+                    'title': 'spec_Stateful',
+                    'type': 'object',
+                },
+            ]
+        )
 
     def test_custom_schema_target(self):
         def my_factory(name: str, count: int = 1) -> None: ...  # pragma: no cover
