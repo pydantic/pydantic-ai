@@ -108,6 +108,7 @@ Tool names that aren't Python identifiers are renamed for the kernel: an MCP too
 Tools are defined in the kernel as synchronous functions with keyword-only parameters, and listed with their signatures in `run_code`'s description. Each call goes back to the agent over the kernel's Jupyter stdin channel and runs through Pydantic AI like a direct tool call: arguments are validated, capability hooks run, and approval or deferral handlers apply. Calls run one at a time; the kernel waits for each result.
 
 - A call that fails raises `ToolCallError` in the kernel, with the tool's error message. Code can catch it.
+- A sandboxed tool can't take the name of a Python builtin such as `list`, `open` or `print`: it would be defined in the kernel namespace ahead of the builtin, so the model's own `open(...)` would call the tool. `IPythonCodeMode` raises `UserError` for such a name, as `CodeMode` does. Rename the tool, or give a toolset whose names you don't control a prefix with `toolset.prefixed(...)`.
 - `max_tool_calls` (default 100) bounds the calls one `run_code` call makes. A call past it raises `ToolCallError`.
 - Nested calls count toward the run's [`tool_calls_limit`](../agent.md#usage-limits), together with the `run_code` call. A call that would exceed it ends the run with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
 - When a tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-returns), the code gets its `return_value`. Its `content` is sent to the model alongside the `run_code` result, in call order.

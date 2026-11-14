@@ -5,6 +5,7 @@ Kept free of any sandbox or kernel dependency, so each capability's optional ext
 
 from __future__ import annotations
 
+import builtins
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -32,6 +33,16 @@ the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
 
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+
+BUILTIN_NAMES = frozenset(dir(builtins))
+"""Every CPython builtin, which no sandboxed tool may be named after.
+
+Code is resolved against the sandbox's builtins, so a tool called `open` or `print` never runs as
+the model intends: Monty looks the builtin up first and the tool is unreachable, while the IPython
+kernel puts the tool in the namespace ahead of the builtin, so the model's own `open(...)` calls the
+tool. All of CPython's builtins, not just the current sandbox's set, so a builtin added later
+cannot take over a tool that works today.
+"""
 
 
 def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
@@ -98,6 +109,11 @@ def partition_callable_tools(
             raise UserError(
                 f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
                 f'meta-tool. Rename your tool to avoid conflicts.'
+            )
+        if safe_name in BUILTIN_NAMES:
+            raise UserError(
+                f'Tool name {name!r} is a Python builtin, so code in the sandbox cannot call the tool by that '
+                'name. Rename the tool, for example with `toolset.prefixed(...)` or `toolset.renamed(...)`.'
             )
         if safe_name in callable_defs:
             existing = sanitized_to_original.get(safe_name, safe_name)
