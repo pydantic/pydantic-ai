@@ -59,6 +59,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -1809,6 +1810,15 @@ class _HeartbeatProbeModel(FunctionModel):
         await asyncio.sleep(0.01)
         return ModelResponse(parts=[TextPart('compacted')])
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        await asyncio.sleep(0.01)
+        return RequestUsage(input_tokens=1)
+
 
 _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
@@ -1897,6 +1907,7 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__model_count_tokens': [request_params, None],
             f'{prefix}__model_cancel_suspended_response': [
                 _CancelParams(
                     response=ModelResponse(parts=[TextPart('suspended')]),

@@ -451,6 +451,7 @@ class TestAzureDurableTaskDurability:
             'compat__model.request',
             'compat__model.request_stream',
             'compat__model.compact_messages',
+            'compat__model.count_tokens',
             'compat__model.cancel_suspended_response',
             'compat__capability__compat.operation',
             'compat__capability__workspace.call',
@@ -508,6 +509,7 @@ class TestAzureDurableTaskDurability:
                 '8b6d0ca92d02859d',
                 '688888820165bdcf',
                 '4a56fe7a73fcb1b6',
+                'd579555674f2835a',
             ]
         }
         assert all(len(name) == 100 for name in names)
