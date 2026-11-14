@@ -424,6 +424,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
     gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol). `openai_model_profile` leaves it off,
     because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
+    these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
     On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
     accepted effort rather than `'none'`, so it is not a way out there."""
 

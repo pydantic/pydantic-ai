@@ -2667,7 +2667,7 @@ async def test_chat_completions_tools_with_reasoning_rejected_before_send(
             await agent.run('What is the temperature in Tokyo?')
 
     assert str(exc_info.value) == snapshot(
-        'OpenAI rejects function tools while reasoning is enabled on gpt-6-luna over Chat Completions. Use `OpenAIResponsesModel`, or disable reasoning with `thinking=False` instead.'
+        "OpenAI rejects function tools while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or disable reasoning with `thinking=False` instead."
     )
     assert get_mock_chat_completion_kwargs(mock_client) == []
 

@@ -540,7 +540,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):
             remedy = ', or disable reasoning with `thinking=False`' if supports_reasoning_effort_none(profile) else ''
             raise UserError(
-                f'OpenAI rejects function tools while reasoning is enabled on {self.model_name} over Chat '
+                f'OpenAI rejects function tools while reasoning is enabled on {self.model_name!r} over Chat '
                 f'Completions. Use `OpenAIResponsesModel`{remedy} instead.'
             )
 
