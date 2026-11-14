@@ -11,7 +11,24 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. E2BSandbox's get_workspace hook gives the run an E2B cloud sandbox as ctx.workspace, so each command and file operation goes over the E2B API, authenticated with E2B_API_KEY, and runs in the sandbox as the user account; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) kills it. When sandbox_timeout runs out, 1 hour by default, E2B pauses the sandbox with its files, and the next run with the ref resumes it.](../img/harness/e2b-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: E2B Sandbox: your agent's commands run in an E2B cloud sandbox
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. Via ctx.workspace, E2BSandbox's get_workspace gives the run an E2B cloud sandbox over the E2B API with E2B_API_KEY, paused at its timeout and killed by destroy(ref). A later run reattaches with the WorkspaceRef in the message history or result.workspace.ref and resumes the sandbox if paused.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        e2b["E2BSandbox()<br/>get_workspace gives<br/>the run an E2B sandbox"]:::capability
+    end
+    sandbox["E2B cloud sandbox<br/>paused at its timeout,<br/>killed by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| e2b
+    ref -.->|"a later run reattaches<br/>and resumes it if paused"| e2b
+    e2b <-->|"E2B API, E2B_API_KEY"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install
 
@@ -73,7 +90,7 @@ For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Shell(), FileSystem()])

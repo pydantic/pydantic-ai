@@ -160,13 +160,13 @@ cat > "$home/bin/clai-demo" <<'EOF'
 set -e
 cd "$PROJECT"
 git checkout -q . && git clean -qfd
-clai2 config set model demo:tour > /dev/null
-clai2 config reset run.speculative_code_mode > /dev/null
+# `clai2 config` refuses run settings, since the agent can run it too; this is the user's own setup.
+python -c "from pydantic_clai2.config.settings_store import SettingsStore as S; s = S(); s.set('model', 'demo:tour'); s.reset('run.speculative_code_mode')"
 clai2 config reset display.theme > /dev/null
 exec clai2 "$@"
 EOF
 chmod +x "$home/bin/clai-demo"
-run clai2 config set model demo:tour > /dev/null
+run python -c "from pydantic_clai2.config.settings_store import SettingsStore; SettingsStore().set('model', 'demo:tour')"
 
 # Saved sessions for the browser, made headless in each project.
 (cd "$other" && run clai2 -p 'Add retry with backoff to the orders client' > /dev/null)

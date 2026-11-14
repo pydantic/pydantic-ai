@@ -16,6 +16,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
+    PluginSettings(id='refinement', factory='pydantic_clai2.builtin_plugins.refinement'),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
     PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),

@@ -35,7 +35,7 @@ async def generate_dataset(
     dataset_type: type[Dataset[InputsT, OutputT, MetadataT]],
     path: Path | str | None = None,
     custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
-    model: models.Model | models.KnownModelName = 'openai:gpt-5.2',
+    model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
     n_examples: int = 3,
     extra_instructions: str | None = None,
 ) -> Dataset[InputsT, OutputT, MetadataT]:
