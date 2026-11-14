@@ -110,7 +110,20 @@ def test_get_first_param_type_annotation_type_error():
         (0.1, snapshot([[1, 2, 3]])),
     ],
 )
-async def test_group_by_temporal(interval: float | None, expected: list[list[int]]):
+def test_group_by_temporal(interval: float | None, expected: list[list[int]], monkeypatch: pytest.MonkeyPatch):
+    """Group the same items the same way on every OS and runner.
+
+    `None` never debounces, and a zero window always emits the buffered item on the next poll,
+    which fires immediately: neither outcome depends on how the producer's sleeps line up with a
+    window, so those two run against real sleeps. A positive window does depend on it: an item
+    whose wake lands on the window deadline joins the current group or starts a new one depending
+    on scheduler jitter, which flaked this test on ~40% of runs on Windows (the deadline arrived
+    before the item's wake as often as after it). So the grouping runs on a virtual clock, like
+    `test_group_by_temporal_first_window_starts_on_first_item`, and the driver only ever moves it
+    to the next pending timer, which fixes the order the producer's wakes and the window deadlines
+    fire in.
+    """
+
     async def yield_groups() -> AsyncIterator[int]:
         yield 1
         await asyncio.sleep(0.02)
@@ -119,9 +132,27 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         yield 3
         await asyncio.sleep(0.02)
 
-    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
-        groups: list[list[int]] = [g async for g in groups_iter]
-        assert groups == expected
+    async def collect() -> list[list[int]]:
+        async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+            return [g async for g in groups_iter]
+
+    if not interval:
+        assert asyncio.run(collect()) == expected
+    else:
+        with contextlib.closing(SimulatedLoop()) as loop:
+            monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=loop.time))
+            groups = loop.create_task(collect())
+            while not groups.done():
+                loop.run_until_idle()
+                if groups.done():
+                    break
+                # A pending `asyncio.wait` always leaves a timeout timer behind, so a done task
+                # with no timer left cannot happen; fail rather than spin if it does.
+                deadline = loop.next_timer()
+                if deadline is None:  # pragma: no cover
+                    pytest.fail(f'{groups!r} is not done but the loop has no pending timer')
+                loop.advance_clock(deadline - loop.time())
+            assert groups.result() == expected
 
 
 def test_group_by_temporal_first_window_starts_on_first_item(monkeypatch: pytest.MonkeyPatch):
