@@ -4544,7 +4544,13 @@ async def test_openai_image_generation_status_error(
     status_code: int,
     headers: dict[str, str] | None,
     error: dict[str, str | None],
-    expected_error: type[ModelRateLimitError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError]
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ]
     | None,
     expected_retry_after: float | None,
     edit: bool,
