@@ -111,7 +111,7 @@ The public [`DurabilityEngineSpec`][pydantic_ai.durable_exec.DurabilityEngineSpe
 declarative engine surface in one immutable object. Its required fields name the engine, durable
 unit, and durable container. Its optional fields select the codec, wrapped toolset kinds, lifecycle
 policy, upgrade compatibility, durable discovery, sequential tool execution, unsupported runtime
-toolsets, per-tool configuration key, and whether a run inside the container may take a
+toolsets, per-tool configuration key, the errors a [durable sleep](#durable-sleeps) suspends with, and whether a run inside the container may take a
 [`CancellationToken`][pydantic_ai.CancellationToken] (only safe on a container loop that rejects
 delivery from other threads; see the field's docs). The default lifecycle policy enters function and MCP
 toolsets for every run and never enters dynamic toolsets.
@@ -342,6 +342,45 @@ Code inside a durable unit, such as a tool, can't wait: the wait has to be recor
 itself. `wait_for_external_event` rejects a call made inside
 [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope] before it reaches your waiter, so
 run each unit's body in that scope.
+
+## Durable sleeps
+
+A run waits between polls of a model's server-side job, such as an
+[OpenAI background response](../models/openai.md#background-mode) or a [batch](../batch.md), which
+can take hours. In the durable context, `BaseDurabilityCapability.wrap_run` routes these waits to
+[`durable_sleep`][pydantic_ai.durable_exec.BaseDurabilityCapability.durable_sleep]. Override it with
+the engine's durable timer, so a wait holds no process and a recovered run doesn't wait again through
+time that already passed. It's only called in container code: in a durable unit's body, the wait
+stays a plain sleep.
+
+Some engines wait by ending the container's current attempt with an error, and run it again once
+the timer fires, replaying the journal up to the wait. List those errors in
+`DurabilityEngineSpec.suspension_error_types`: when one of them ends a wait, the job the run is
+waiting on is left running for the replayed run to continue, instead of being cancelled as on other
+errors. On such an engine, a nested agent run without a durability capability of its own, such as one
+in a tool, waits with a plain sleep too: its model requests aren't recorded, so a container woken
+from the suspension would make them again.
+
+```python {title="durable_sleep.py" test="skip" lint="skip"}
+class MyEngineDurability(BaseDurabilityCapability):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='My engine',
+        durable_unit_noun='step',
+        durable_container_noun='task',
+        suspension_error_types=(my_engine.Suspend,),  # (1)!
+    )
+
+    async def durable_sleep(self, seconds: float) -> None:
+        await my_engine.current_task().sleep(f'{self.name}__sleep', seconds)
+```
+
+1. The error `my_engine`'s sleep raises to end the attempt until its timer fires.
+
+An engine without a durable timer doesn't override `durable_sleep`, and its waits stay plain sleeps in
+the container's process: the process has to stay up for the wait, and a recovered run waits again. Say
+so in the engine's documentation. An engine whose container runs on an event loop of its own may not
+need an override: [Azure Durable Task](../harness/azure-durable-task.md)'s orchestration loop turns
+every `asyncio` timer, plain sleeps included, into a durable timer.
 
 ## Replays and telemetry
 

@@ -40,6 +40,13 @@ tool config key, and cancellation-token policy deliberately. Use `IDENTITY_CODEC
 itself. Use `JSON_CODEC` when the integration must reduce values to JSON-compatible payloads before
 journaling them.
 
+Override `durable_sleep` with the engine's durable timer, so the waits between polls of a background
+response or a batch hold no process and recovery doesn't repeat them. If the timer suspends the
+container by raising, list that error in `engine_spec.suspension_error_types`, so the job being
+waited on is left running for the replayed run. An engine without a durable timer doesn't override
+it and keeps plain in-process sleeps: say so in its docs, with what it costs (the process stays up,
+recovery waits again).
+
 Persisted operation names are compatibility data, independent of Python class names. Prefer
 `JournalOperationNamer` when its convention fits. Otherwise implement `DurableOperationNamer` and
 keep its output stable. Before refactoring agent, model, toolset, or capability identity, pin the
@@ -117,9 +124,8 @@ Read the diff: a new entry is a new dependency an engine took on core.
 `tests/durable_exec/test_workflow_side_determinism.py` fails when a module in its workflow-side set
 directly calls a clock, a random source, a sleep, a thread, a task-completion wait, an environment
 read or I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
-supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
-`set_agent_graph_sleep` (Prefect and the Harness engines do not yet:
-[#11178](https://github.com/pydantic/pydantic-ai/issues/11178)). When the call is safe, mark it
+supplies. For a delay, await `_agent_graph_sleep`, which `BaseDurabilityCapability.wrap_run` routes
+through `set_agent_graph_sleep` to the engine's `durable_sleep`. When the call is safe, mark it
 with `# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test
 docstring is the reference for the workflow-side modules, the pragma rules, and what the test does
 not see, which needs a workflow-level test.

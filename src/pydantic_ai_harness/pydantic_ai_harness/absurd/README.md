@@ -99,6 +99,7 @@ call. Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__model.request_stream` | one streamed model request segment |
 | `{name}__model.compact_messages` | one model message-compaction operation |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
+| `{name}__sleep` | a wait before checking again on a response the model provider is still working on, such as a batch |
 | `{name}__capability__{capability_id}.{operation}` | an operation contributed by another capability |
 | `{name}__function_toolset__{id}.validate_args` | running a function tool's `args_validator` |
 | `{name}__function_toolset__{id}.call_tool:{tool}` | a function tool call |
@@ -129,10 +130,9 @@ These are not checkpointed and run again on replay:
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
   final response is replayed to the caller, one event per part.
-- Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a request and each check on its batch are
-  steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
-  the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
-  already did.
+- The waits between checks of a background response or a [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution) batch are
+  Absurd sleeps: the task is suspended until a wait is over, so no worker holds it while a batch is
+  processed. When Absurd wakes the task, its run passes the waits it already did straight away.
 
 ## Parallel execution
 

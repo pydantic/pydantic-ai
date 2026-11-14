@@ -3,13 +3,16 @@
 `running_task_context` spawns and claims a task and enters its `AsyncTaskContext`, so the agent
 runs as it would inside a handler. `reenter_running_task` fails that run and re-claims the task,
 as Absurd does on a retry: the new context is hydrated from the checkpoints in Postgres, so a
-replay is Absurd's own. `checkpoints` reads the checkpoint table back.
+replay is Absurd's own. `wake_sleeping_task` moves Absurd's clock past a sleeping task's wake time
+and claims it, as a worker does once the time has come. `checkpoints` reads the checkpoint table
+back.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import pytest
 
@@ -81,6 +84,20 @@ async def reenter_running_task(absurd: AsyncAbsurd, task_id: str) -> AsyncGenera
     assert task['task_id'] == task_id
     async with _entered(absurd, task) as ctx:
         yield ctx
+
+
+@asynccontextmanager
+async def wake_sleeping_task(absurd: AsyncAbsurd, task_id: str, now: datetime) -> AsyncGenerator[AsyncTaskContext]:
+    """Set Absurd's clock to `now`, past the sleeping task's wake time, and enter the run it claims."""
+    conn = _conn(absurd)
+    await conn.execute("SELECT set_config('absurd.fake_now', %s, false)", (now.isoformat(),))
+    try:
+        [task] = await absurd.claim_tasks(batch_size=1)
+        assert task['task_id'] == task_id
+        async with _entered(absurd, task) as ctx:
+            yield ctx
+    finally:
+        await conn.execute("SELECT set_config('absurd.fake_now', '', false)")
 
 
 async def checkpoints(absurd: AsyncAbsurd, task_id: str) -> dict[str, JsonValue]:

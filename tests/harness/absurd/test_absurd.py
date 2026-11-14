@@ -8,6 +8,7 @@ disambiguation and checkpoint storage are Absurd's own.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anyio
@@ -16,9 +17,11 @@ import pytest
 pytest.importorskip('absurd_sdk')
 pytest.importorskip('fastmcp')
 
+import absurd_sdk
 from absurd_sdk import (
     AsyncAbsurd,
     JsonValue,
+    SuspendTask,
     TaskContext,
     _current_task_context,  # pyright: ignore[reportPrivateUsage]
 )
@@ -52,7 +55,8 @@ from pydantic_ai_harness.absurd._operation_backend import (
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
 
-from ._task import checkpoints, reenter_running_task, running_task_context
+from .._background_job import BackgroundJobModel
+from ._task import checkpoints, reenter_running_task, running_task_context, wake_sleeping_task
 
 
 def _make_model(counter: dict[str, int] | None = None, text: str = 'ok') -> FunctionModel:
@@ -815,3 +819,50 @@ class TestCodeMode:
         # The `run_code` body re-runs on replay, but its `search` call is served from the checkpoint.
         assert first.output == second.output == 'done: results for x'
         assert calls['calls'] == 1
+
+
+class TestDurableSleep:
+    async def test_wait_suspends_the_task_and_recovery_does_not_wait_again(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each wait between polls of a background job is an Absurd sleep, which suspends the task and keeps the job.
+
+        Once Absurd's clock has passed the wake time, the woken run replays the requests from their checkpoints, passes
+        the recorded sleeps straight away, and continues the same job, until it's ready.
+        """
+        model = BackgroundJobModel(delay=60, checks=2)
+        agent = Agent(model, name='a', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd) as ctx:
+            with pytest.raises(SuspendTask):
+                await agent.run('go')
+        assert list(await checkpoints(absurd, ctx.task_id)) == ['a__model.request', 'a__sleep']
+        assert (model.requests, model.cancelled) == (1, [])
+
+        later = datetime.now(UTC) + timedelta(hours=1)
+        monkeypatch.setattr(absurd_sdk, '_get_current_time', lambda: later)
+        async with wake_sleeping_task(absurd, ctx.task_id, later):
+            with pytest.raises(SuspendTask):
+                await agent.run('go')
+        assert list(await checkpoints(absurd, ctx.task_id)) == [
+            'a__model.request',
+            'a__sleep',
+            'a__model.request#2',
+            'a__sleep#2',
+        ]
+        assert (model.requests, model.cancelled) == (2, [])
+
+        latest = later + timedelta(hours=1)
+        monkeypatch.setattr(absurd_sdk, '_get_current_time', lambda: latest)
+        async with wake_sleeping_task(absurd, ctx.task_id, latest):
+            result = await agent.run('go')
+
+        assert result.output == 'ready'
+        assert (model.requests, model.cancelled) == (3, [])
+        assert list(await checkpoints(absurd, ctx.task_id)) == [
+            'a__model.request',
+            'a__sleep',
+            'a__model.request#2',
+            'a__sleep#2',
+            'a__model.request#3',
+        ]

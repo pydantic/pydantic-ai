@@ -47,6 +47,7 @@ from pydantic_ai_harness.pgtask._context import _occurrences  # pyright: ignore[
 from tests.durable_exec.counting_mcp import counting_mcp_server
 
 from ...conftest import try_import
+from .._background_job import BackgroundJobModel
 from ._task import PGTaskDatabase, checkpoints, run_in_task
 
 with try_import() as code_mode_available:
@@ -889,3 +890,31 @@ class TestCodeMode:
 
         await run_in_task(pgtask_db, body, attempts=2)
         assert calls['calls'] == 1
+
+
+class TestDurableSleep:
+    async def test_wait_suspends_the_task_and_recovery_does_not_wait_again(self, pgtask_db: PGTaskDatabase) -> None:
+        """Each wait between polls of a background job is a pgtask sleep, which suspends the task and keeps the job.
+
+        The worker runs the task again once the wake time has passed: the run replays the requests from their
+        checkpoints, passes the recorded sleeps straight away, and continues the same job, until it's ready.
+        """
+        model = BackgroundJobModel(delay=0.05, checks=2)
+        agent = Agent(model, name='a', capabilities=[PGTaskDurability()])
+        outputs: list[str] = []
+
+        async def body(attempt: int) -> None:
+            outputs.append((await agent.run('go')).output)
+
+        # The first two runs suspend at a sleep, so only the third one finishes.
+        task_id = await run_in_task(pgtask_db, body, attempts=3)
+
+        assert outputs == ['ready']
+        assert (model.requests, model.cancelled) == (3, [])
+        assert list(await checkpoints(pgtask_db, task_id)) == [
+            ('a__model.request', 0),
+            ('a__sleep', 0),
+            ('a__model.request', 1),
+            ('a__sleep', 1),
+            ('a__model.request', 2),
+        ]

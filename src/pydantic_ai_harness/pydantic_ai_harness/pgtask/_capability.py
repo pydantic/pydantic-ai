@@ -21,7 +21,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._context import ENGINE_NAME, current_task_steps
+from ._context import ENGINE_NAME, TaskSuspended, current_task_steps
 from ._operation_backend import PGTaskCodec, PGTaskOperationBackend
 
 PGTaskParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
@@ -35,8 +35,10 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by checkpointing its I/O into pgtask steps.
 
     Run the agent inside a pgtask task handler: every model request, MCP call, and function tool call
-    becomes a step, so a retried task resumes from the last completed step. Outside a task nothing is
-    saved, but tool calls still follow `parallel_execution_mode`.
+    becomes a step, so a retried task resumes from the last completed step. The waits between polls
+    of a background response or a `BatchModelRequests` batch are pgtask sleeps, which suspend the
+    task until they're over. Outside a task nothing is saved, but tool calls still follow
+    `parallel_execution_mode`.
 
     Example:
         ```python {test="skip"}
@@ -64,6 +66,7 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         # The first MCP step connects, so a replay whose MCP steps are all checkpointed never does.
         toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        suspension_error_types=(TaskSuspended,),
     )
     # pgtask has no non-retryable error type, so a serialization failure retries until `max_attempts` runs out.
 
@@ -96,6 +99,13 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return current_task_steps() is not None
+
+    async def durable_sleep(self, seconds: float) -> None:
+        """Wait with a pgtask sleep, which suspends the task until it's over, so no worker holds it meanwhile."""
+        steps = current_task_steps()
+        # Only called in the durable context, which guarantees a task.
+        assert steps is not None
+        await steps.sleep(f'{self.name}__sleep', seconds)
 
     def get_durable_operation_backend(self) -> PGTaskOperationBackend:
         return PGTaskOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)

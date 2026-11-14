@@ -2128,9 +2128,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Use a custom async sleep function for agent-graph delays during the context.
 
         By default the agent graph uses `anyio.sleep` when it needs to wait during a run (e.g. between
-        polls of a suspended/background model response). Durable execution integrations (e.g. Temporal and
-        DBOS) register their engine's durable sleep here so delays survive workflow replays and don't
-        waste activity time.
+        polls of a suspended/background model response). Durability capabilities register their engine's
+        durable sleep here for their runs, from
+        [`BaseDurabilityCapability.durable_sleep`][pydantic_ai.durable_exec.BaseDurabilityCapability.durable_sleep],
+        so delays survive workflow replays and don't waste activity time.
         """
         with _agent_graph.set_agent_graph_sleep(sleep_func):
             yield

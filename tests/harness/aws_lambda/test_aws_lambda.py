@@ -17,7 +17,7 @@ from aws_durable_execution_sdk_python import (
     durable_execution,  # pyright: ignore[reportUnknownVariableType]
 )
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
-from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError
+from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError, SuspendExecution
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 from inline_snapshot import snapshot
@@ -26,7 +26,13 @@ from opentelemetry.sdk.metrics.export import ExponentialHistogramDataPoint, Hist
 
 from pydantic_ai import Agent, RunContext, RunUsage
 from pydantic_ai._run_context import get_current_run_context
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ModelFallback, durable_operation
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    Instrumentation,
+    ModelFallback,
+    durable_operation,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -52,6 +58,8 @@ from pydantic_ai_harness.aws_lambda import (
     run_durable,
 )
 
+from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from .._background_job import BackgroundJobModel
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
 
@@ -1805,3 +1813,60 @@ class TestReplayTelemetry:
         run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first.operations))
 
         assert _span_names(capfire) == snapshot(['execute_tool live', 'invoke_agent a'])
+
+
+def _run_until_done(agent: Agent[None, str]) -> tuple[str, list[FakeDurableContext]]:
+    """Invoke the handler again after every suspension, with the waits it suspended on over, as Lambda does."""
+    contexts = [FakeDurableContext()]
+    while True:
+        try:
+            return run_durable(lambda: agent.run('go'), context=contexts[-1]).output, contexts
+        except SuspendExecution:
+            contexts[-1].elapse_waits()
+            contexts.append(FakeDurableContext(journal=contexts[-1].operations))
+
+
+class TestDurableSleep:
+    def test_batch_waits_suspend_the_invocation(self) -> None:
+        """Each wait between checks of a batch is a Lambda wait: the invocation ends, and the next one continues the batch.
+
+        The wait is rounded up to Lambda's one-second minimum, the batch is neither cancelled nor submitted again, and
+        no step a suspended invocation completed runs again.
+        """
+        model = SlowBatchTestModel(pending_checks=1)
+        agent = Agent(
+            model, name='batch', capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), AWSLambdaDurability()]
+        )
+
+        output, contexts = _run_until_done(agent)
+
+        assert output == 'success (no tool calls)'
+        assert (len(model.created), model.status_checks, model.canceled) == (1, 2, [])
+        assert [ctx.invoked for ctx in contexts] == [['batch__model.request']] * 3
+        assert [(operation.name, operation.wait_seconds) for operation in contexts[-1].operations] == [
+            ('batch__model.request', None),
+            ('batch__sleep', 1),
+            ('batch__model.request', None),
+            ('batch__sleep', 1),
+            ('batch__model.request', None),
+        ]
+
+    @pytest.mark.parametrize('checkpointed', [True, False])
+    def test_nested_run_in_a_tool_waits_in_process(self, checkpointed: bool) -> None:
+        """A nested run in a tool waits in process: no Lambda wait, so the invocation isn't suspended.
+
+        A checkpointed tool runs in a step, during which no other durable operation can be made. A tool opted out of
+        checkpointing runs again on every invocation, and so would the nested run's requests if a wait suspended it.
+        """
+        agent = Agent(tool_then_text(), name='a', capabilities=[AWSLambdaDurability()])
+
+        @agent.tool_plain(metadata=None if checkpointed else {'aws_lambda': False})
+        async def act() -> str:
+            return (await Agent(BackgroundJobModel(delay=0.01, checks=1)).run('go')).output
+
+        output, contexts = _run_until_done(agent)
+
+        assert output == 'done'
+        assert len(contexts) == 1
+        tool_steps = ['a__function_toolset__<agent>.call_tool:act'] if checkpointed else []
+        assert contexts[0].step_names == ['a__model.request', *tool_steps, 'a__model.request']
