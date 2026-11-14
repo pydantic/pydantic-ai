@@ -374,6 +374,17 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 `ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
 doesn't retry them either, as they're in `non_retryable_model_errors` by default.
 
+Match model errors by type, with `except` or `isinstance`, or by a `ModelHTTPError`'s `status_code`, not by
+comparing the class name, as in `type(error).__name__ == 'ModelHTTPError'`. A later version may raise an error as a
+more specific category, which `except ModelHTTPError` still catches but a name comparison doesn't. A Temporal retry
+policy's `non_retryable_error_types` can only match names, so it sees every categorized error as `ModelHTTPError` or
+`ModelAPIError`; see [Activity Retries](../durable_execution/temporal.md#activity-retries).
+
+!!! tip "Logging error class names to Logfire"
+    Logfire's [default scrubbing](https://pydantic.dev/docs/logfire/instrument/python/scrubbing/) redacts any value
+    you log whose text matches a pattern like `auth`, so a class name like `ModelAuthenticationError` logged as an
+    attribute shows up as `[Scrubbed due to 'Auth']`. The `exception.type` on Pydantic AI's own spans isn't scrubbed.
+
 ### HTTP errors {#handling-http-errors}
 
 When a provider returns a 4xx or 5xx response, the error is a
