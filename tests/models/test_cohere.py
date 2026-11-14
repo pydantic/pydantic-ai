@@ -20,6 +20,8 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -1260,13 +1262,13 @@ async def test_stream_event_edge_cases(allow_model_requests: None):
                 )
             ),
         ),
-        # MessageEnd with no delta: guard clause skips entirely.
         # ToolPlanDelta with an empty delta: guard clause skips entirely.
         ToolPlanDeltaV2ChatStreamResponse(delta=None),
         ToolPlanDeltaV2ChatStreamResponse(delta=ChatToolPlanDeltaEventDelta(message=None)),
         ToolPlanDeltaV2ChatStreamResponse(
             delta=ChatToolPlanDeltaEventDelta(message=ChatToolPlanDeltaEventDeltaMessage(tool_plan=None))
         ),
+        # MessageEnd with no delta: guard clause skips entirely.
         MessageEndV2ChatStreamResponse(delta=None),
         # MessageEnd with a delta but no finish_reason and no usage.
         MessageEndV2ChatStreamResponse(delta=ChatMessageEndEventDelta(finish_reason=None, usage=None)),
@@ -1572,9 +1574,13 @@ def cohere_over_transport(replies: Sequence[dict[str, object]], sent: list[httpx
 
 
 async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests: None):
+    """A non-streamed `tool_plan` lands in history and goes back as `tool_plan` beside its tool call.
+
+    Not a VCR test: recording one needs a Cohere API key, so a mock transport answers and reads the outgoing JSON.
+    """
     plan = 'I will use the get_temperature tool to find the temperature in Paris.'
     sent: list[httpx.Request] = []
-    tool_call = {
+    tool_call: dict[str, object] = {
         'id': 'get_temperature_1',
         'type': 'function',
         'function': {'name': 'get_temperature', 'arguments': '{"city": "Paris"}'},
@@ -1616,13 +1622,29 @@ async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests
 
 
 ROLL_DIE_CALL = ToolCallPart(tool_name='roll_die', args='{}', tool_call_id='roll_die_1')
-ROLL_DIE_CALL_JSON = {'id': 'roll_die_1', 'type': 'function', 'function': {'name': 'roll_die', 'arguments': '{}'}}
+ROLL_DIE_CALL_JSON: dict[str, object] = {
+    'id': 'roll_die_1',
+    'type': 'function',
+    'function': {'name': 'roll_die', 'arguments': '{}'},
+}
 ROLL_DIE_RETURN = ModelRequest(parts=[ToolReturnPart(tool_name='roll_die', content='4', tool_call_id='roll_die_1')])
 
 
 @pytest.mark.parametrize(
     'response_parts,follow_up,expected',
     [
+        pytest.param(
+            [ThinkingPart(content='I will roll the die.', id='tool_plan', provider_name='cohere'), ROLL_DIE_CALL],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                    'tool_plan': 'I will roll the die.',
+                }
+            ),
+            id='own-tool-plan',
+        ),
         pytest.param(
             [ThinkingPart(content='Let me reason.', signature='sig', provider_name='anthropic'), ROLL_DIE_CALL],
             ROLL_DIE_RETURN,
@@ -1693,12 +1715,21 @@ async def test_thinking_replayed_as_tool_plan_only_for_own_plan_with_tool_calls(
     follow_up: ModelRequest,
     expected: dict[str, object],
 ):
-    """Only Cohere's own tagged plan, beside tool calls, goes back as `tool_plan`; other thinking keeps its mapping."""
+    """Only Cohere's own tagged plan, beside tool calls, goes back as `tool_plan`; other thinking keeps its mapping.
+
+    Not a VCR test: each case hand-builds a history to reach one mapping branch, which no recording holds.
+    The history is dumped and loaded first, which pins the stored `id` and `provider_name` the replay keys on.
+    """
     sent: list[httpx.Request] = []
     agent = Agent(cohere_over_transport([{'content': [{'type': 'text', 'text': 'Done.'}]}], sent))
 
-    history = [ModelRequest.user_text_prompt('Roll a die.'), ModelResponse(parts=response_parts), follow_up]
-    await agent.run(message_history=history)
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Roll a die.'),
+        ModelResponse(parts=response_parts),
+        follow_up,
+    ]
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    await agent.run(message_history=stored)
 
     assert json.loads(sent[0].content)['messages'][1] == expected
 

@@ -475,7 +475,7 @@ class CohereModel(Model[AsyncClientV2]):
         thinking: list[str] = []
         tool_plans: list[str] = []
         tool_calls: list[ToolCallV2] = []
-        has_tool_calls = any(isinstance(part, ToolCallPart) for part in message.parts)
+        has_tool_calls = bool(message.tool_calls)
         for item in message.parts:
             match item:
                 case TextPart():
