@@ -2187,8 +2187,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 6
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 7
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2206,8 +2206,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 8
+    # 5 base activities + call/validation activities for both function toolsets
+    assert len(bound.temporal_activities) == 9
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2287,8 +2287,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 8
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once)
+    assert len(bound.temporal_activities) == 9
 
 
 def test_durability_activity_config_not_mutated():

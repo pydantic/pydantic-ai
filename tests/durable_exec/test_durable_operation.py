@@ -43,7 +43,9 @@ from pydantic_ai.durable_exec._operation import (
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
     ModelCompactMessagesParams,
+    ModelCountTokensId,
     ModelRequestId,
+    ModelRequestParams,
     NoCacheIdentity,
     OperationConfigRole,
     ToolsetCallToolId,
@@ -57,6 +59,7 @@ from pydantic_ai.durable_exec._operation_backend import (
     CallableOperationBackend,
     DurableOperationBackend,
     RegisteredOperationBackend,
+    in_durable_unit,
 )
 from pydantic_ai.durable_exec._operation_names import DurableOperationNamer, JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import (
@@ -81,8 +84,13 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult, StreamedModelRequestResult
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.durable_exec._utils import (
+    CountTokensResult,
+    DurableModel,
+    StreamedActivityResult,
+    StreamedModelRequestResult,
+)
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     DocumentUrl,
     FileUrl,
@@ -104,11 +112,12 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace
 
 from ..workspace_fakes import FakeWorkspace
@@ -122,6 +131,8 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.cancel_suspended_response.registered',
     'compat__model.compact_messages',
     'compat__model.compact_messages.registered',
+    'compat__model.count_tokens',
+    'compat__model.count_tokens.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
     'compat__function_toolset__functions.validate_args',
@@ -137,6 +148,7 @@ PREFECT_OPERATION_NAMES = {
     'Model Request (Streaming): test',
     'Cancel Suspended Response: test',
     'Compact Messages: test',
+    'Count Tokens: test',
     'Handle Stream Event',
     'Call Tool: function_tool',
     'Validate Tool Args: function_tool',
@@ -149,6 +161,7 @@ DBOS_OPERATION_NAMES = {
     'compat__model.request_stream',
     'compat__model.cancel_suspended_response',
     'compat__model.compact_messages',
+    'compat__model.count_tokens',
     'compat__event_stream_handler',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
@@ -162,6 +175,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_request_stream',
     'agent__compat__model_cancel_suspended_response',
     'agent__compat__model_compact_messages',
+    'agent__compat__model_count_tokens',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
     'agent__compat__toolset__<agent>__validate_args',
@@ -437,6 +451,8 @@ def _ids() -> list[DurableOperationId]:
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         ModelCompactMessagesId(None, model_name='test'),
         ModelCompactMessagesId('registered', model_name='test'),
+        ModelCountTokensId(None, model_name='test'),
+        ModelCountTokensId('registered', model_name='test'),
     ]
 
 
@@ -468,6 +484,7 @@ def test_prefect_operation_names() -> None:
         _ids()[13],
         _ids()[14],
         _ids()[15],
+        _ids()[17],
     ]
     namer = PrefectOperationNamer()
     actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
@@ -502,6 +519,7 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
         _ids()[13],
         _ids()[14],
         _ids()[15],
+        _ids()[17],
     ]
     namer = DBOSOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
@@ -534,6 +552,7 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
         ModelRequestId(None, streaming=True, model_name='test'),
         ModelCancelSuspendedResponseId(None, model_name='test'),
         ModelCompactMessagesId(None, model_name='test'),
+        ModelCountTokensId(None, model_name='test'),
         EventStreamHandlerId(),
         ToolsetCallToolId('function', toolset_id='<agent>'),
         ToolsetValidateToolArgumentsId('function', toolset_id='<agent>'),
@@ -584,6 +603,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         durability.request_activity,
         durability.request_stream_activity,
         durability.compact_messages_activity,
+        durability.count_tokens_activity,
         durability.event_stream_handler_activity,
         durability.cancel_suspended_response_activity,
     ]
@@ -606,6 +626,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         durability.request_activity: (_RequestParams, ModelResponse),
         durability.request_stream_activity: (_RequestParams, StreamedModelRequestResult),
         durability.compact_messages_activity: (_CompactMessagesParams, ModelResponse),
+        durability.count_tokens_activity: (_RequestParams, CountTokensResult),
         durability.event_stream_handler_activity: (_EventStreamHandlerParams, type(None)),
         durability.cancel_suspended_response_activity: (_CancelParams, type(None)),
     }
@@ -703,6 +724,47 @@ async def test_temporal_backend_dispatches_compact_messages(monkeypatch: pytest.
     assert summary == 'compact messages: test:test'
 
 
+async def test_temporal_backend_dispatches_count_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The count's activity carries the request's wire parameters and is summarized for the Temporal UI."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(TestModel(), name='count-dispatch', capabilities=[TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    expected = CountTokensResult(usage=RequestUsage(input_tokens=3))
+    dispatched: list[tuple[Callable[..., object], Sequence[object], object]] = []
+
+    async def execute_activity(
+        activity: Callable[..., object], *, args: Sequence[object], **config: object
+    ) -> CountTokensResult:
+        dispatched.append((activity, args, config['summary']))
+        return expected
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
+    assert operations is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')])]
+    result = await operations.count_tokens(
+        ModelRequestParams(
+            None,
+            messages=messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            run_context=ctx,
+        )
+    )
+
+    assert result == expected
+    activity, args, summary = dispatched[0]
+    assert activity is durability.count_tokens_activity
+    assert isinstance(args[0], _RequestParams)
+    assert args[0].messages == messages
+    assert summary == 'count tokens: test:test'
+
+
 async def test_temporal_compaction_payload_round_trips_live_durable_model() -> None:
     pytest.importorskip('temporalio')
     from temporalio.contrib.pydantic import pydantic_data_converter
@@ -726,12 +788,15 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     async def cancel_segment(response: ModelResponse) -> None:
         pass
 
+    async def count_segment(request: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
+
     model = DurableModel(
         TestModel(),
         request_segment=request_segment,
         request_stream_segment=stream_segment,
         compact_messages_segment=compact_segment,
         cancel_suspended_response_segment=cancel_segment,
+        count_tokens_segment=count_segment,
     )
     agent = Agent(TestModel(), name='compact-converter', capabilities=[TemporalDurability()])
     durability = TemporalDurability.from_agent(agent)
@@ -795,6 +860,8 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'cancel'
         case ModelCompactMessagesId():
             return 'compact'
+        case ModelCountTokensId():
+            return 'count'
         case CapabilityOperationId():
             return 'capability'
         case EventStreamHandlerId():
@@ -815,6 +882,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         ModelRequestId(None, streaming=False, model_name='model'),
         ModelCancelSuspendedResponseId(None, model_name='model'),
         ModelCompactMessagesId(None, model_name='model'),
+        ModelCountTokensId(None, model_name='model'),
         CapabilityOperationId('capability', operation='operation'),
         EventStreamHandlerId(),
         ToolsetGetToolsId('function', toolset_id='tools'),
@@ -826,6 +894,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         'model',
         'cancel',
         'compact',
+        'count',
         'capability',
         'event',
         'tools',
@@ -921,12 +990,15 @@ async def test_durable_model_compact_messages_dispatches_operation(
 
     async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
 
+    async def unused_count(request_context: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
+
     model = DurableModel(
         TestModel(),
         request_segment=unused_request,
         request_stream_segment=unused_stream,
         compact_messages_segment=compact_messages_segment,
         cancel_suspended_response_segment=unused_cancel,
+        count_tokens_segment=unused_count,
     )
     request_context = ModelRequestContext(
         model=model,
@@ -963,12 +1035,15 @@ async def test_durable_model_replays_streamed_segment_results() -> None:
 
     async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
 
+    async def unused_count(request: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
+
     model = DurableModel(
         TestModel(),
         request_segment=unused_request,
         request_stream_segment=stream_segment,
         compact_messages_segment=unused_compact,
         cancel_suspended_response_segment=unused_cancel,
+        count_tokens_segment=unused_count,
     )
 
     replays: list[tuple[list[ModelResponseStreamEvent], ModelResponse]] = []
@@ -1019,6 +1094,38 @@ async def test_base_durable_model_compact_messages_dispatches_bound_operation() 
 
     assert await durability.wrap_model_request(ctx, request_context=request_context, handler=handler) == response
     assert durability.calls[0][0] == 'compact__model.compact_messages'
+
+
+async def test_count_tokens_before_request_runs_in_its_own_durable_unit() -> None:
+    """The count a usage limit asks for runs in its own durable unit, ahead of the request, and enforces the limit.
+
+    Through the shared base every engine builds on; the engine suites check their own units.
+    """
+    counted_in_unit: list[bool] = []
+
+    class CountingModel(TestModel):
+        async def count_tokens(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> RequestUsage:
+            counted_in_unit.append(in_durable_unit())
+            return RequestUsage(input_tokens=5)
+
+    agent = Agent(CountingModel(), name='count', capabilities=[JournalDurability()])
+    durability = JournalDurability.from_agent(agent)
+    assert durability is not None
+
+    result = await agent.run('hi', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True))
+    assert result.output == 'success (no tool calls)'
+    assert [name for name, _, _ in durability.calls] == ['count__model.count_tokens', 'count__model.request']
+    assert counted_in_unit == [True]
+
+    durability.calls.clear()
+    with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 4'):
+        await agent.run('hi', usage_limits=UsageLimits(input_tokens_limit=4, count_tokens_before_request=True))
+    assert [name for name, _, _ in durability.calls] == ['count__model.count_tokens']
 
 
 async def test_dbos_compact_messages_operation_dispatches_step() -> None:
