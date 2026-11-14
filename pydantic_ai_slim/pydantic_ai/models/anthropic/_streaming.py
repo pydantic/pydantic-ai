@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import pydantic_core
 from anthropic import AsyncStream
 from anthropic.types.beta import (
     BetaAdvisorToolResultBlock,
@@ -43,10 +44,12 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
+from ...exceptions import UnexpectedModelBehavior
 from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
+from ._computer import NativeComputer, takes_no_input
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -91,6 +94,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
+    _native_computer: NativeComputer | None = None
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_server_tool_use_indices: set[int] = field(default_factory=set[int], init=False)
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
@@ -101,6 +105,18 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
+    # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started when
+    # another block or the response's end follows a member, so no later part's event comes before it.
+    _computer_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
+    _computer_started: int = field(default=0, init=False)
+    """How many of the batch's calls the `computer` call last started held."""
+    _computer_input: list[str] = field(default_factory=list[str], init=False)
+    # Calls whose input didn't arrive whole, and the other tools called between the batch's calls.
+    _computer_incomplete: set[str] = field(default_factory=set[str], init=False)
+    _computer_between: list[str] = field(default_factory=list[str], init=False)
+    _computer_split: dict[str, list[str]] = field(default_factory=dict[str, list[str]], init=False)
+    # Only a response that reached its end is known to hold every call it made.
+    _ended: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -108,6 +124,33 @@ class AnthropicStreamedResponse(StreamedResponse):
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
                 for event_ in self._map_event(event):
                     yield event_
+            native_computer = self._native_computer
+            if (
+                native_computer
+                and not self._ended
+                and (self._computer_blocks or native_computer.answers(self._current_block))
+            ):
+                # The stream stopped early: a call after the ones that arrived may be missing, and they run as one.
+                # OpenAI doesn't raise here: its computer calls each arrive whole, while these toolset calls are a batch.
+                raise UnexpectedModelBehavior(
+                    'The response ended before Claude finished its computer use calls, so none of them ran.'
+                )
+            for event_ in self._start_computer_batch():
+                yield event_
+
+    def _start_computer_batch(self) -> Iterator[ModelResponseStreamEvent]:
+        native_computer = self._native_computer
+        if native_computer and len(self._computer_blocks) > self._computer_started:
+            self._computer_started = len(self._computer_blocks)
+            yield self._parts_manager.handle_part(
+                vendor_part_id=self._computer_blocks[0]['id'],
+                part=native_computer.call_part(
+                    self._computer_blocks,
+                    self.provider_name,
+                    incomplete=self._computer_incomplete,
+                    split=self._computer_split,
+                ),
+            )
 
     def _map_event(self, event: BetaRawMessageStreamEvent) -> Iterator[ModelResponseStreamEvent]:
         match event:
@@ -123,6 +166,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                 yield from self._map_content_block_stop(event)
             case BetaRawMessageStopEvent():
                 self._current_block = None
+                self._ended = True
             case _:  # pragma: no cover
                 pass
 
@@ -156,6 +200,16 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._current_block = current_block = event.content_block
+        native_computer = self._native_computer
+        if native_computer and native_computer.answers(current_block):
+            self._computer_input = []
+            if self._computer_between:
+                self._computer_split[current_block.id] = self._computer_between
+                self._computer_between = []
+            return
+        yield from self._start_computer_batch()
+        if self._computer_blocks and isinstance(current_block, BetaToolUseBlock):
+            self._computer_between.append(current_block.name)
         match current_block:
             case BetaTextBlock() if current_block.text:
                 yield from self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=current_block.text)
@@ -301,6 +355,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     signature=delta.signature,
                     provider_name=self.provider_name,
                 )
+            case BetaInputJSONDelta() if self._native_computer and self._native_computer.answers(self._current_block):
+                self._computer_input.append(delta.partial_json)
             case BetaInputJSONDelta():
                 yield from self._parts_manager.handle_tool_call_delta_events(
                     vendor_part_id=event.index,
@@ -358,7 +414,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                 citations=citations,
             )
         current_block = self._current_block
-        if event.index in self._ignored_server_tool_use_indices:
+        native_computer = self._native_computer
+        if native_computer and native_computer.answers(current_block):
+            yield from self._map_computer_block_stop(native_computer, current_block)
+        elif event.index in self._ignored_server_tool_use_indices:
             self._ignored_server_tool_use_indices.remove(event.index)
         elif isinstance(current_block, BetaMCPToolUseBlock):
             yield from self._parts_manager.handle_tool_call_delta_events(vendor_part_id=event.index, args='}')
@@ -378,6 +437,31 @@ class AnthropicStreamedResponse(StreamedResponse):
                     part=finalize_streamed_tool_search_call_part(existing),
                 )
         self._current_block = None
+
+    def _map_computer_block_stop(
+        self, native_computer: NativeComputer, current_block: BetaToolUseBlock
+    ) -> Iterator[ModelResponseStreamEvent]:
+        # A member that takes input and streamed none was cut off before it.
+        computer_input_json = ''.join(self._computer_input) or ('{}' if takes_no_input(current_block.name) else '')
+        computer_args: Any
+        try:
+            computer_args = pydantic_core.from_json(computer_input_json)
+        except ValueError:
+            # Cut off mid-input, as at `max_tokens`: what parsed is kept to send back, but none of it runs, as a
+            # missing field such as a held key would change what the rest does.
+            self._computer_incomplete.add(current_block.id)
+            try:
+                computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
+            except ValueError:  # not even the start of a value, such as `n` of `null`
+                computer_args = {}
+        block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
+        if native_computer.is_toolset:
+            self._computer_blocks.append(block)
+        else:
+            yield self._parts_manager.handle_part(
+                vendor_part_id=block['id'],
+                part=native_computer.call_part([block], self.provider_name, incomplete=self._computer_incomplete),
+            )
 
     async def close_stream(self) -> None:
         await self._response.source.close()

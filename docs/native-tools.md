@@ -784,6 +784,7 @@ A call of the `computer` kind runs only when the response it came in finished no
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | On models whose profile sets [`openai_supports_computer_tool`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_computer_tool]. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
+| Anthropic | ✅ | On models whose profile sets [`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version], as the computer use tool or toolset that version names. See [Anthropic computer use](models/anthropic.md#computer-use). |
 
 ## Memory Tool
 
