@@ -1960,7 +1960,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _counts_tokens_in_durable_unit(self) -> bool:
         """Whether a count ahead of a request runs in its own durable unit, rather than where the run runs.
 
-        Temporal answers `False` while replaying a history recorded before counts ran in an activity.
+        An engine answers `False` for a run it recorded while counts ran where the run runs, so the run replays as
+        recorded.
         """
         return True
 

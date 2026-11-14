@@ -568,7 +568,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 
     def _counts_tokens_in_durable_unit(self) -> bool:
-        # Histories recorded before counts ran in an activity counted in workflow code, and replay the same way.
         return workflow.patched(_DURABLE_COUNT_TOKENS_PATCH)
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
