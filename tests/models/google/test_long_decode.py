@@ -20,7 +20,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Literal
@@ -108,6 +108,24 @@ def _model(
     When `repeat_last_response` is enabled, extra requests repeat the last scripted response, copying an HTTP response
     so each attempt gets a fresh instance.
     """
+    handler = _scripted_response_handler(responses, requests, repeat_last_response=repeat_last_response)
+
+    async def check_status(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    event_hooks = {'response': [check_status]} if raise_for_status else None
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks=event_hooks)
+    if vertex:
+        return GoogleModel(model_name, provider=GoogleCloudProvider(api_key='test', http_client=client))
+    return GoogleModel(model_name, provider=GoogleProvider(api_key='test', http_client=client))
+
+
+def _scripted_response_handler(
+    responses: Sequence[httpx2.Response | httpx2.HTTPStatusError],
+    requests: list[dict[str, object]],
+    *,
+    repeat_last_response: bool,
+) -> Callable[[httpx2.Request], httpx2.Response]:
     pending = list(responses)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -124,19 +142,51 @@ def _model(
                     request=request,
                 )
         else:
-            response = pending.pop(0)
+            raise AssertionError('Received more requests than scripted responses')
         if isinstance(response, httpx2.HTTPStatusError):
             raise response
         return response
 
-    async def check_status(response: httpx2.Response) -> None:
-        response.raise_for_status()
+    return handler
 
-    event_hooks = {'response': [check_status]} if raise_for_status else None
-    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks=event_hooks)
-    if vertex:
-        return GoogleModel(model_name, provider=GoogleCloudProvider(api_key='test', http_client=client))
-    return GoogleModel(model_name, provider=GoogleProvider(api_key='test', http_client=client))
+
+def test_scripted_response_handler_repeats_last_response() -> None:
+    requests: list[dict[str, object]] = []
+    response = httpx2.Response(503, content=b'failure')
+    handler = _scripted_response_handler([response], requests, repeat_last_response=True)
+    request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+    retry_request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+
+    assert handler(request) is response
+    repeated_response = handler(retry_request)
+
+    assert repeated_response is not response
+    assert repeated_response.status_code == response.status_code
+    assert repeated_response.content == response.content
+    assert repeated_response.request is retry_request
+    assert requests == [{}, {}]
+
+
+def test_scripted_response_handler_repeats_last_error() -> None:
+    requests: list[dict[str, object]] = []
+    request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+    response = httpx2.Response(503, request=request)
+    error = httpx2.HTTPStatusError('503', request=request, response=response)
+    handler = _scripted_response_handler([error], requests, repeat_last_response=True)
+
+    for _ in range(2):
+        with pytest.raises(httpx2.HTTPStatusError, match='503'):
+            handler(request)
+
+
+def test_scripted_response_handler_rejects_unexpected_request() -> None:
+    requests: list[dict[str, object]] = []
+    handler = _scripted_response_handler([httpx2.Response(200, content=b'{}')], requests, repeat_last_response=False)
+    request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+
+    handler(request)
+    with pytest.raises(AssertionError, match='Received more requests than scripted responses'):
+        handler(request)
 
 
 async def _run(
