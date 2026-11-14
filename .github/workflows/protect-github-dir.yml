@@ -1,3 +1,4 @@
+# description: Fails a pull request when an external contributor changes files under .github/.
 name: Protect .github
 
 # Files under `.github/` — workflows, composite actions, and the scripts they run —
@@ -21,11 +22,18 @@ on:
     # changes, and the verdict is a diff against that base: without it a green check
     # survives a base switch that changes which files the PR actually touches.
     types: [opened, synchronize, reopened, edited]
+  # A required check has to report on the merge group's commit, or the queue stalls. The
+  # verdict is the PR's own diff and author, settled on its head before it could be
+  # enqueued, so the guard passes the merge group without judging it again.
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
 concurrency:
-  group: protect-github-dir-${{ github.event.pull_request.number }}
+  # A merge group has no PR number. Keyed on the number alone, every group would share one
+  # concurrency group and cancel the group building before it.
+  group: protect-github-dir-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}
   cancel-in-progress: true
 
 jobs:
@@ -42,12 +50,19 @@ jobs:
       - name: Block external changes to .github/
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_STATE: ${{ github.event.pull_request.state }}
         run: |
           set -euo pipefail
+
+          # See the `merge_group` trigger: there is no PR here to judge.
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            echo "Merge group: each PR was judged on its head before it was enqueued."
+            exit 0
+          fi
 
           echo "PR #${PR_NUMBER} by ${PR_AUTHOR}"
 

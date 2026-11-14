@@ -1,3 +1,7 @@
+---
+description: "Use provider-executed native tools (formerly builtin tools) in Pydantic AI: web search, code execution, web fetch, image generation, file search, MCP and more."
+---
+
 # Native Tools
 
 Native tools are provided and executed by LLM providers, while [common tools](common-tools.md) are custom implementations executed by Pydantic AI.
@@ -18,6 +22,8 @@ Pydantic AI supports the following native tools:
 
 These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
+The calls and results show up in the model's response as [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Text the model writes before a native tool call is treated as commentary rather than output, unless no text follows the last native tool call: some providers, like Google with Gemini 2.5, report the searches that grounded a response after its text.
+
 !!! warning "Provider Support"
     Not all model providers support native tools. If you use a native tool with an unsupported provider, Pydantic AI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
 
@@ -25,6 +31,31 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
 
 !!! tip "Provider-adaptive capabilities"
     For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation you enable with `local=`, so your agent works across providers without code changes. Two work differently: `ImageGeneration` also enables built-in fallbacks with `fallback_image_model=` or `fallback_subagent_model=`, and `MCP` runs locally by default and opts into native MCP with `native=True`.
+
+Provider-independent options are fields on the native tool. When a provider has extra options,
+pass them to the tool's `provider_settings` field under the key for the model class. The outer dictionary
+and each provider's entry are `TypedDict`s, so type checkers and IDEs can validate and complete both
+levels. Each model reads only the options it knows from its own entry; like
+[model settings](agent.md#model-run-settings), anything else is ignored rather than rejected.
+
+The key follows the model class you use, not who makes the underlying model: Claude through
+`OpenRouterModel` reads the `openrouter` entry, not `anthropic`, and `OpenAIChatModel` pointed at OpenRouter's
+API reads neither. The provider's API judges whether a value is one it accepts. Settings that restrict what a
+tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
+must not run the tool without them.
+
+To keep the local fallback of a provider-adaptive capability, pass the configured tool to its `native=` argument,
+for example `WebSearch(native=WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}))`.
+
+Some single-provider options used to be top-level fields, such as `ImageGenerationTool.quality`. Those fields
+still work but are deprecated: set the option in `provider_settings` instead, and read it from there too. The old
+field holds only a value set on it directly, so `ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}).quality`
+is still the default `'auto'`. Setting the same option to different values in both places raises a
+[`UserError`][pydantic_ai.exceptions.UserError].
+
+See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
+[OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
+[OpenRouter advisor settings](models/openrouter.md#advisor).
 
 ### Google tool combinations
 
@@ -50,7 +81,7 @@ async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
     )
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[NativeTool(prepared_web_search)],
     deps_type=dict,
 )
@@ -72,6 +103,8 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+The function is called for each model request, with the model about to receive it as `ctx.model`, so it can decide by that model's provider or profile. When the [`ModelFallback`](capabilities/model-fallback.md) capability moves a request to another model, the function is called again with that model as `ctx.model`, so each model gets the tool it would get on its own.
+
 !!! note "Returning `None` under a `fallback_subagent_model`"
     Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_subagent_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
 
@@ -89,7 +122,7 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
-| Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. See [Google tool combinations](#google-tool-combinations). |
+| Google | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
@@ -105,7 +138,7 @@ making it ideal for queries that require up-to-date data.
 from pydantic_ai import Agent, WebSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeTool(WebSearchTool())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeTool(WebSearchTool())])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -116,13 +149,15 @@ _(This example is complete, it can be run "as is")_
 
 With Anthropic, the number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
 
-With OpenAI, you must use their Responses API to access the web search tool.
+With Google, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost], without deducting Google's free grounding allowance.
+
+With OpenAI, you must use their Responses API to access the web search tool. The number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]. Pages the model opens or searches within don't count as searches.
 
 ```py {title="web_search_openai.py"}
 from pydantic_ai import Agent, WebSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(WebSearchTool())])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[NativeTool(WebSearchTool())])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -140,7 +175,7 @@ from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         NativeTool(
             WebSearchTool(
@@ -176,29 +211,45 @@ _(This example is complete, it can be run "as is")_
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `provider_settings.anthropic.response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `provider_settings.openrouter.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
+
+Google supports none of these parameters.
+
+#### Restricting parameters {#restricting-parameters}
+
+`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` restrict what the search may do, so
+Pydantic AI doesn't send the tool without them. When one is set and the model can't apply it (a ❌ above), the tool is
+treated as unsupported by that model: a [local fallback](capabilities/overview.md#provider-adaptive-tools) runs in its
+place if one is provided, an `optional=True` tool is left out, and otherwise a
+[`UserError`][pydantic_ai.exceptions.UserError] names the settings. The other parameters only tune results and are
+left out on models that don't support them.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Search Tool Versions"
-    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web search tool version from the model profile and Anthropic client: `web_search_20260209`
-    for models and platforms that support Anthropic's dynamic-filtering web tools, and
-    `web_search_20250305` otherwise.
-    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
-    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
-    On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
+    For Anthropic, Pydantic AI selects the web search tool version from the model profile and
+    Anthropic client: `web_search_20260209` for models and platforms that support Anthropic's
+    dynamic-filtering web tools, and `web_search_20250305` otherwise.
+    Anthropic-specific web search settings select `web_search_20260318`; see [Web tool settings](models/anthropic.md#web-tool-settings).
+    By default the model can call `web_search_20260209` and `web_search_20260318` from a server-side code execution sandbox.
+    On the Anthropic API, Pydantic AI turns that off when you ask for citations, unless the request
+    needs code execution; to turn it off otherwise, for example for Zero Data Retention, see
+    [Web Tool Callers](models/anthropic.md#web-tool-callers).
+    Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
+    use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
+    On Vertex AI, `WebSearchTool` uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
+    Without dynamic filtering, `response_inclusion` has no effect, so it keeps `web_search_20250305` on Vertex.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
-    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
-    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
-    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209` or `web_search_20260318`.
 
 ## X Search Tool
 
@@ -213,7 +264,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('xai:grok-4.3', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('{{ xai:medium }}', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -233,7 +284,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'xai:grok-4.3',
+    '{{ xai:medium }}',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -273,7 +324,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
-| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. Not available on the [Amazon Bedrock](models/anthropic.md#aws-bedrock) clients (`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), where using it raises a [`UserError`][pydantic_ai.exceptions.UserError]. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -288,7 +339,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 from pydantic_ai import Agent, CodeExecutionTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeTool(CodeExecutionTool())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeTool(CodeExecutionTool())])
 
 result = agent.run_sync('Calculate the factorial of 15.')
 print(result.output)
@@ -333,7 +384,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[NativeTool(CodeExecutionTool())],
     output_type=BinaryImage,
     model_settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
@@ -369,7 +420,7 @@ async def main():
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
-        'anthropic:claude-sonnet-4-6',
+        '{{ anthropic:medium }}',
         capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='anthropic')]))],
     )
 
@@ -402,7 +453,7 @@ async def main():
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
-        'openai-responses:gpt-5.2',
+        'openai-responses:{{ openai:medium.name }}',
         capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='openai')]))],
     )
 
@@ -436,8 +487,8 @@ The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enable
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5.2`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
-| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-3-pro-image` and `gemini-3.1-flash-image`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
+| OpenAI Responses | ✅ | Full feature support. Only supported by models newer than GPT-5.2. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
+| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `{{ google:image.name }}`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
@@ -454,7 +505,7 @@ Generated images are available on [`ModelResponse.images`][pydantic_ai.messages.
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(ImageGenerationTool())])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[NativeTool(ImageGenerationTool())])
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -472,7 +523,7 @@ Image generation with Google [image generation models](https://ai.google.dev/gem
 ```py {title="image_generation_google.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('google:gemini-3-pro-image')
+agent = Agent('{{ google:image }}')
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -490,7 +541,7 @@ The `ImageGenerationTool` can be used together with `output_type=BinaryImage` to
 ```py {title="image_generation_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
+agent = Agent('openai-responses:{{ openai:medium.name }}', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -507,19 +558,23 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             ImageGenerationTool(
-                action='generate',
-                background='transparent',
-                input_fidelity='high',
-                model='gpt-image-2',
-                moderation='low',
+                provider_settings={
+                    'openai': {
+                        'action': 'generate',
+                        'background': 'transparent',
+                        'input_fidelity': 'high',
+                        'model': '{{ openai:image.name }}',
+                        'moderation': 'low',
+                        'partial_images': 3,
+                        'quality': 'high',
+                    }
+                },
                 output_compression=100,
                 output_format='png',
-                partial_images=3,
-                quality='high',
                 size='1024x1024',
             )
         )
@@ -538,8 +593,8 @@ Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> 
 results in an error, and if you also set `size` it must match the computed value.
 
 The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
-image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
-`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+image or edit one already in context. Set `provider_settings.openai.action` to `'generate'` or `'edit'` to force either
+behavior. You can also set `provider_settings.openai.model` to select the underlying image generation model; this does not
 change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
@@ -549,7 +604,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'google:gemini-3-pro-image',
+    '{{ google:image }}',
     capabilities=[NativeTool(ImageGenerationTool(aspect_ratio='16:9'))],
     output_type=BinaryImage,
 )
@@ -567,7 +622,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'google:gemini-3-pro-image',
+    '{{ google:image }}',
     capabilities=[NativeTool(ImageGenerationTool(aspect_ratio='16:9', size='4K'))],
     output_type=BinaryImage,
 )
@@ -584,15 +639,15 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 
 | Parameter | OpenAI | Google |
 |-----------|--------|--------|
-| `action` | ✅ (auto (default), generate, edit) | ❌ |
-| `background` | ✅ | ❌ |
-| `input_fidelity` | ✅ | ❌ |
-| `moderation` | ✅ | ❌ |
-| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
+| `provider_settings.openai.action` | ✅ (auto (default), generate, edit) | ❌ |
+| `provider_settings.openai.background` | ✅ | ❌ |
+| `provider_settings.openai.input_fidelity` | ✅ | ❌ |
+| `provider_settings.openai.moderation` | ✅ | ❌ |
+| `provider_settings.openai.model` | ✅ (an OpenAI image model ID, such as `{{ openai:image.name }}`) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) |
 | `output_format` | ✅ | ✅ (Google Cloud only) |
-| `partial_images` | ✅ | ❌ |
-| `quality` | ✅ | ❌ |
+| `provider_settings.openai.partial_images` | ✅ | ❌ |
+| `provider_settings.openai.quality` | ✅ (`gpt-image-2` and earlier models reject `xhigh` and `max`) | ❌ |
 | `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 
@@ -628,7 +683,7 @@ allowing it to pull up-to-date information from the web.
 from pydantic_ai import Agent, WebFetchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('google:gemini-3-flash-preview', capabilities=[NativeTool(WebFetchTool())])
+agent = Agent('{{ google:medium }}', capabilities=[NativeTool(WebFetchTool())])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 print(result.output)
@@ -646,14 +701,15 @@ from pydantic_ai import Agent, WebFetchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         NativeTool(
             WebFetchTool(
                 allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
                 max_uses=10,
-                enable_citations=True,
-                max_content_tokens=50000,
+                provider_settings={
+                    'anthropic': {'enable_citations': True, 'max_content_tokens': 50000}
+                },
             )
         )
     ],
@@ -677,29 +733,38 @@ _(This example is complete, it can be run "as is")_
 | `max_uses` | ✅ | ❌ |
 | `allowed_domains` | ✅ | ❌ |
 | `blocked_domains` | ✅ | ❌ |
-| `enable_citations` | ✅ | ❌ |
-| `max_content_tokens` | ✅ | ❌ |
+| `provider_settings.anthropic.enable_citations` | ✅ | ❌ |
+| `provider_settings.anthropic.max_content_tokens` | ✅ | ❌ |
+| `provider_settings.anthropic.use_cache` | ✅ | ❌ |
+| `provider_settings.anthropic.response_inclusion` | ✅ | ❌ |
+
+As with [web search](#restricting-parameters), `max_uses`, `allowed_domains`, and `blocked_domains` restrict what the
+tool may do: on a model that can't apply one that is set, the tool is treated as unsupported, so a local fallback runs
+in its place if one is provided, an `optional=True` tool is left out, and a
+[`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Fetch Tool Versions"
-    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
-    for models and platforms that support Anthropic's dynamic-filtering web tools, and
-    `web_fetch_20250910` otherwise.
-    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
-    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
-    `AsyncAnthropicVertex`.
+    For Anthropic, Pydantic AI selects the web fetch tool version from the model profile and
+    Anthropic client: `web_fetch_20260209` for models and platforms that support Anthropic's
+    dynamic-filtering web tools, and `web_fetch_20250910` otherwise.
+    Anthropic-specific web fetch settings select `web_fetch_20260318`; see [Web tool settings](models/anthropic.md#web-tool-settings).
+    By default the model can call `web_fetch_20260209` and `web_fetch_20260318` from a server-side code execution sandbox.
+    On the Anthropic API, Pydantic AI turns that off when you ask for citations, unless the request
+    needs code execution; to turn it off otherwise, for example for Zero Data Retention, see
+    [Web Tool Callers](models/anthropic.md#web-tool-callers).
+    `WebFetchTool` is unavailable on the Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock`,
+    `AsyncAnthropicBedrockMantle` or `AsyncAnthropicVertex`.
     See the
     [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
-    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
-    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
-    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209` or `web_fetch_20260318`.
 
 ## Memory Tool
 
@@ -765,7 +830,7 @@ class FakeMemoryTool(BetaAbstractMemoryTool):
 
 fake_memory = FakeMemoryTool()
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeTool(MemoryTool())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeTool(MemoryTool())])
 
 
 @agent.tool_plain
@@ -794,7 +859,7 @@ The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS, not on Amazon Bedrock. |
 | OpenRouter | ✅ | Works with any executor model. |
 | OpenAI | ❌ | |
 | Google | ❌ | |
@@ -812,15 +877,15 @@ from pydantic_ai import AdvisorTool, Agent
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
-    capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8'))],
+    '{{ anthropic:medium }}',
+    capabilities=[NativeTool(AdvisorTool(model='{{ anthropic:large.name }}'))],
 )
 
 result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
 print(result.output)
 ```
 
-For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. Pydantic AI sends `forward_transcript=false`; `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and the Anthropic caching setting are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
 With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
@@ -831,7 +896,8 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
 | `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
-| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+| `provider_settings.anthropic.caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+| `provider_settings.openrouter.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
 
 ## MCP Server Tool
 
@@ -865,7 +931,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -894,7 +960,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -927,7 +993,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -962,7 +1028,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -1003,7 +1069,7 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_file_search_results`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_file_search_results] [model setting](agent.md#model-run-settings). |
 | Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Mapped to xAI collections search. Requires collection IDs. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], enable the [`XaiModelSettings.xai_include_collections_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_collections_search_output] [model setting](agent.md#model-run-settings). |
-|| Google Cloud | ❌ | Not supported |
+| Google Cloud | ❌ | Not supported; the same limitation applies to Google routes through the [Pydantic AI Gateway](gateway.md). |
 | Anthropic | ❌ | Not supported |
 | Groq | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |
@@ -1012,11 +1078,13 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
 
+Set [`max_num_results`][pydantic_ai.native_tools.FileSearchTool.max_num_results] to cap how many results a search returns. OpenAI Responses sends it as `max_num_results` (1 to 50), and xAI as the collections search `limit`. Without it, each provider applies its own default.
+
 ### Usage
 
 #### OpenAI Responses
 
-With OpenAI, you need to first [upload files to a vector store](https://platform.openai.com/docs/assistants/tools/file-search), then reference the vector store IDs when using the `FileSearchTool`.
+With OpenAI, you need to first [upload files to a vector store](https://developers.openai.com/api/docs/guides/tools-file-search), then reference the vector store IDs when using the `FileSearchTool`.
 
 ```py {title="file_search_openai_upload.py" test="skip"}
 import asyncio
@@ -1027,7 +1095,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 
 
 async def main():
-    model = OpenAIResponsesModel('gpt-5.2')
+    model = OpenAIResponsesModel('{{ openai:medium.name }}')
 
     with open('my_document.txt', 'rb') as f:
         file = await model.client.files.create(file=f, purpose='assistants')
@@ -1054,7 +1122,7 @@ asyncio.run(main())
 
 With Gemini, you need to first [create a file search store via the Files API](https://ai.google.dev/gemini-api/docs/files), then reference the file search store names.
 
-```py {title="file_search_google_upload.py" test="skip"}
+```py {title="file_search_google_upload.py" test="skip" gateway_toggle="skip"}
 import asyncio
 
 from pydantic_ai import Agent, FileSearchTool
@@ -1063,11 +1131,12 @@ from pydantic_ai.models.google import GoogleModel
 
 
 async def main():
-    model = GoogleModel('gemini-3-flash-preview')
+    model = GoogleModel('{{ google:medium.name }}')
 
     store = await model.client.aio.file_search_stores.create(
         config={'display_name': 'my-docs'}
     )
+    assert store.name is not None
 
     with open('my_document.txt', 'rb') as f:
         await model.client.aio.file_search_stores.upload_to_file_search_store(
@@ -1101,7 +1170,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4.3',
+        '{{ xai:medium }}',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 
@@ -1112,7 +1181,7 @@ async def main():
 asyncio.run(main())
 ```
 
-xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. These map to the `max_num_results`, `instructions`, and `retrieval_mode` fields on [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
+xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. Result count is configured with `max_num_results`; the xAI-specific `instructions` and `retrieval_mode` options belong under `provider_settings.xai`. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
 
 ```py {title="file_search_xai_options.py" test="skip"}
 import asyncio
@@ -1123,14 +1192,18 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4.3',
+        '{{ xai:medium }}',
         capabilities=[
             NativeTool(
                 FileSearchTool(
                     file_store_ids=['collection_abc123'],
                     max_num_results=5,
-                    instructions='Focus on up-to-date, highly relevant documents.',
-                    retrieval_mode='semantic',
+                    provider_settings={
+                        'xai': {
+                            'instructions': 'Focus on up-to-date, highly relevant documents.',
+                            'retrieval_mode': 'semantic',
+                        }
+                    },
                 )
             )
         ],
@@ -1143,6 +1216,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Citations
+
+See [Citations](citations.md) for provider support and how to consume normalized web and document citations.
 
 ## API Reference
 

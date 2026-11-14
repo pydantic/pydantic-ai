@@ -1,0 +1,46 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 2a57a8e3-78c0-4baa-8a86-7936851f1493
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "984"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Fill in the form.
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: Form
+                schema: "{\"properties\":{\"field_0\":{\"default\":\"\",\"type\":\"string\"},\"field_1\":{\"default\":\"\",\"type\":\"string\"},\"field_2\":{\"default\":\"\",\"type\":\"string\"},\"field_3\":{\"default\":\"\",\"type\":\"string\"},\"field_4\":{\"default\":\"\",\"type\":\"string\"},\"field_5\":{\"default\":\"\",\"type\":\"string\"},\"field_6\":{\"default\":\"\",\"type\":\"string\"},\"field_7\":{\"default\":\"\",\"type\":\"string\"},\"field_8\":{\"default\":\"\",\"type\":\"string\"},\"field_9\":{\"default\":\"\",\"type\":\"string\"},\"field_10\":{\"default\":\"\",\"type\":\"string\"},\"field_11\":{\"default\":\"\",\"type\":\"string\"},\"field_12\":{\"default\":\"\",\"type\":\"string\"}},\"type\":\"object\",\"additionalProperties\":false}"
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "78"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        message: "The model returned the following errors: Schema is too complex."
+  recorded_at: 2026-10-26T22:03:34.573332+00:00

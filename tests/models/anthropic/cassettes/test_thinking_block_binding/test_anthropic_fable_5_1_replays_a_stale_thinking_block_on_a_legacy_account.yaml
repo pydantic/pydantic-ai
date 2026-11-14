@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,73 +11,102 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '266'
+      - "257"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Think about it, then say what 17*23 is.
-          type: text
-        role: user
-      model: claude-fable-5-1
-      stream: false
-      system:
-      - text: You are a helpful assistant. Answer briefly.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Think it through, then say what 4817 * 2963 is.
+            type: text
+        model: claude-fable-5-1
+        stream: true
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly.
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1337'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-0620f5bd71d42dac47e9adeb69312445-374ac79180e9f627-01
+      - 00-09828647b5337ae7264a8fb8d8ba71ca-0957f20204190210-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDIJALwd6/x86gclRvxoMKzunhbIN9PfMyTi5IjD0rGJ8st9cj71WY/MTqA6EKC3q9R4VssSZwtEtb680G/DaaNX5b07QIa7hbWdankIqnAOh/R7gyIkp39ekTH4jhA4bzHoODqTQvmUULG/Fcy8MBB1y2ZgoWb8yT8TmGmy1/krzs/Zx8rJz8zT8Telf6ZicF4Bp7SvzzrsFkdyMZTuioITeMZbeLcOdCiBntM5te5Z2vFbDYJHSLhj0WiiUyEcVwbZfxhrkltJJ1sCrJlDiogtU8+/2LRCPBT3OERb37xgYGfw0hYmSGa7MNogGmB0P0h2i6yFnptaFF/eF+RL+30rglrDY5RvQ4XDnir0iVBIReMgYPDBd0IjY/leXxrzbIuT3vRC3Wm2Tb/2eHViRLqd4/8mAwogY1FjyYNDF6F8vOAaj3XVScN4bJ9fCbh9+uMyvY23UCx8W6RAnA5/mnE0Z0Srws0J0eWdHxq83eA9NABBrikDBJgNqVl/+8YGsTzbjbgNcPWj7G95UHuVsGEZoKt2FRw+hTtHBqoeGEH7cu1IH2gWk3Sx1LtN/CKHK77I9m+PGkb+CqNWOeVcSUou4jK0cuSwgJZ9Uiey+MsFd624KQgbtAMj3Mub1ALWWeBY453iyQV+4uQDKGAE=
-        thinking: ''
-        type: thinking
-      - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**.
-        type: text
-      id: msg_011Cedu3ywBS4aXbmoczciTw
-      model: claude-fable-5-1
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 41
-        output_tokens: 67
-        output_tokens_details:
-          thinking_tokens: 30
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-1","id":"msg_011CfY4cBCzFzwr33xJkMh5U","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS4gUKEAgSGAI4AUIIdGhpbmtpbmcSDCP609ThtyA3xhjYWxoM2fUZ0U5yjWN/qO7BIjDdQy4dC8rP8I+7anS1N/5FxQUc0WM/NecIbMOTBwjBdYXR5nxNuffEdPWkfyoHOEYq/wRcKbXy0ZMdcAR8XS27iV8zb1Xm/aGo24gaeSGeXB31ByfsmHt4DMgFOaEgcnwczXCSdq2PF+gjhVcFf9lQo03HotsIjPaPRDuVD0QNVPezgaX8Nc/TUq///X22POZkngdzloT0087/n8t2aqh3jn+ehfqxVCZ697hHFQHYpMs07Kk/PXWPo17twPvcKVLLAhcFo1zl9mT9XJYNurTsWVs0LXoStKC97FcHRjEUPWQpR1gZrDWZy2Rr8z6/ap+FhOVi+HvLTurbCXsoelz2kY5ilfz8JkB8uukniblcvUQR73zaQ4UynUVPkkjGUXGvT5+dniSBKj9g1AqEJJjSTkAw3VH004Ph7fo1OelRwFEop9qaHgMHV1wRNR1oDr4qgkcjgXo3DYO8lQjPtopAj+dRJv5CBBnExrsIXBJMw8YJdQ7TMjTPoeipey8GgrajZ8FPYiBx/fxE8KQhMWHA0Njmj8SMs9ZVybooM9nuo3Bov1nJaV2nAhii3kkCgUDyYLR1f2sVx2uvwsgycmwGsj0za3d2VfT5dQLiysjggPxgQgI/fveF1Y8rrKrkHY8EndzBn9oPjXZ6+SnamCAfOVdG64WGfjlyw1gupip80YnEBCag7f9xS1iYGgfZTknYQQ4ICfDfebfy8YQUlcGbYF+BSH8Kkr/3FeBKX86NjxKVMVvXLE9e/Ol+XEgQ+rtxVLyz1Ovagxa8Z9hXMlsXCiet9ERo9XPQ8BUFZV3n+TpXiDdChfGQjGOrOI6OrQ8vG0y6lXKQfjWhnJmhzhIR41K8WBVzApvXCKEVHeshjj6MsaRzbSbb8iaMcij7ZEjyBJud3nGXsdn9iOBz75jreqUYAQ=="}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"4817 "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"× 2963 = 4"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"817 × 3000 −"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 4817 × 37 "}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"= 14,451,000 "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"− 178,229 = **"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"14,272,771**"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1  }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":177,"output_tokens_details":{"thinking_tokens":126}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-29T16:41:12.372617+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -83,78 +115,87 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1238'
+      - "1534"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Think about it, then say what 17*23 is.
-          type: text
-        role: user
-      - content:
-        - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDIJALwd6/x86gclRvxoMKzunhbIN9PfMyTi5IjD0rGJ8st9cj71WY/MTqA6EKC3q9R4VssSZwtEtb680G/DaaNX5b07QIa7hbWdankIqnAOh/R7gyIkp39ekTH4jhA4bzHoODqTQvmUULG/Fcy8MBB1y2ZgoWb8yT8TmGmy1/krzs/Zx8rJz8zT8Telf6ZicF4Bp7SvzzrsFkdyMZTuioITeMZbeLcOdCiBntM5te5Z2vFbDYJHSLhj0WiiUyEcVwbZfxhrkltJJ1sCrJlDiogtU8+/2LRCPBT3OERb37xgYGfw0hYmSGa7MNogGmB0P0h2i6yFnptaFF/eF+RL+30rglrDY5RvQ4XDnir0iVBIReMgYPDBd0IjY/leXxrzbIuT3vRC3Wm2Tb/2eHViRLqd4/8mAwogY1FjyYNDF6F8vOAaj3XVScN4bJ9fCbh9+uMyvY23UCx8W6RAnA5/mnE0Z0Srws0J0eWdHxq83eA9NABBrikDBJgNqVl/+8YGsTzbjbgNcPWj7G95UHuVsGEZoKt2FRw+hTtHBqoeGEH7cu1IH2gWk3Sx1LtN/CKHK77I9m+PGkb+CqNWOeVcSUou4jK0cuSwgJZ9Uiey+MsFd624KQgbtAMj3Mub1ALWWeBY453iyQV+4uQDKGAE=
-          thinking: ''
-          type: thinking
-        - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**.
-          type: text
-        role: assistant
-      - content:
-        - text: And times two?
-          type: text
-        role: user
-      model: claude-fable-5-1
-      stream: false
-      system:
-      - text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Think it through, then say what 4817 * 2963 is.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAQS4gUKEAgSGAI4AUIIdGhpbmtpbmcSDCP609ThtyA3xhjYWxoM2fUZ0U5yjWN/qO7BIjDdQy4dC8rP8I+7anS1N/5FxQUc0WM/NecIbMOTBwjBdYXR5nxNuffEdPWkfyoHOEYq/wRcKbXy0ZMdcAR8XS27iV8zb1Xm/aGo24gaeSGeXB31ByfsmHt4DMgFOaEgcnwczXCSdq2PF+gjhVcFf9lQo03HotsIjPaPRDuVD0QNVPezgaX8Nc/TUq///X22POZkngdzloT0087/n8t2aqh3jn+ehfqxVCZ697hHFQHYpMs07Kk/PXWPo17twPvcKVLLAhcFo1zl9mT9XJYNurTsWVs0LXoStKC97FcHRjEUPWQpR1gZrDWZy2Rr8z6/ap+FhOVi+HvLTurbCXsoelz2kY5ilfz8JkB8uukniblcvUQR73zaQ4UynUVPkkjGUXGvT5+dniSBKj9g1AqEJJjSTkAw3VH004Ph7fo1OelRwFEop9qaHgMHV1wRNR1oDr4qgkcjgXo3DYO8lQjPtopAj+dRJv5CBBnExrsIXBJMw8YJdQ7TMjTPoeipey8GgrajZ8FPYiBx/fxE8KQhMWHA0Njmj8SMs9ZVybooM9nuo3Bov1nJaV2nAhii3kkCgUDyYLR1f2sVx2uvwsgycmwGsj0za3d2VfT5dQLiysjggPxgQgI/fveF1Y8rrKrkHY8EndzBn9oPjXZ6+SnamCAfOVdG64WGfjlyw1gupip80YnEBCag7f9xS1iYGgfZTknYQQ4ICfDfebfy8YQUlcGbYF+BSH8Kkr/3FeBKX86NjxKVMVvXLE9e/Ol+XEgQ+rtxVLyz1Ovagxa8Z9hXMlsXCiet9ERo9XPQ8BUFZV3n+TpXiDdChfGQjGOrOI6OrQ8vG0y6lXKQfjWhnJmhzhIR41K8WBVzApvXCKEVHeshjj6MsaRzbSbb8iaMcij7ZEjyBJud3nGXsdn9iOBz75jreqUYAQ==
+            type: thinking
+          - text: 4817 × 2963 = 4817 × 3000 − 4817 × 37 = 14,451,000 − 178,229 = **14,272,771**
+            type: text
+        - role: user
+          content:
+          - text: And times two?
+            type: text
+        model: claude-fable-5-1
+        stream: true
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '550'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-c54c58259b49780b44bae62148458802-456ed54bb6e0c139-01
+      - 00-cb016897bda64a87434d71cccfc65464-114f8f230699bc36-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: 391 × 2 = **782**.
-        type: text
-      id: msg_011Cedu4Ki4XpDFyXmNDfDCm
-      model: claude-fable-5-1
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 127
-        output_tokens: 13
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-1","id":"msg_011CfY4cW2pXXSxXArhQSKDN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":241,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"14"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":",272,771 × 2"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" = **28,545,542"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":241,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20,"output_tokens_details":{"thinking_tokens":0}} }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T16:41:14.208977+00:00

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1082'
+      - '1128'
       content-type:
       - application/json
       host:
@@ -40,6 +40,8 @@ interactions:
           type: noul
         customer.angry:
           instructions:
+            context:
+            - 'Customer: About the customer.'
             field: customer.angry
             goal: Triage a support ticket.
             question: Is the customer angry?
@@ -60,19 +62,19 @@ interactions:
   response:
     headers:
       content-length:
-      - '422'
+      - '423'
       content-type:
       - application/json
     parsed_body:
       answers:
         areas.account:
-          noul: 0.76
+          noul: 0.77
           type: noul
         areas.billing:
           noul: 0.97
           type: noul
         areas.bug:
-          noul: 0.6
+          noul: 0.57
           type: noul
         customer.angry:
           noul: 0.99
@@ -88,7 +90,7 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 561
+        input_tokens: 576
         output_tokens: 118
     status:
       code: 200

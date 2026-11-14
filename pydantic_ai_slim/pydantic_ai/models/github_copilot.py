@@ -15,10 +15,8 @@ try:
     from openai import AsyncOpenAI
     from openai.types import chat
 
-    from .openai import (
-        OpenAIChatModel,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel
+    from .openai._chat_completions import LenientChatCompletion
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the GitHub Copilot model, '
@@ -68,7 +66,7 @@ class GitHubCopilotModel(OpenAIChatModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
-    def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:
+    def _validate_completion(self, response: chat.ChatCompletion) -> LenientChatCompletion:
         # Copilot's Chat Completions envelope leaves out required OpenAI fields, and which ones
         # depends on the model: GPT ids omit `object` and `created`, Anthropic ids omit `object` and
         # each choice's `index`. The openai SDK builds responses without validating, so they arrive
@@ -81,10 +79,10 @@ class GitHubCopilotModel(OpenAIChatModel):
         # the choice itself is taken positionally as `chunk.choices[0]`. That delta index is present
         # on both families, tool calls included. A missing delta index would not raise here; it
         # would silently merge parallel tool calls' argument fragments.
-        payload = response.model_dump()
+        payload = response.model_dump(warnings=False)
         # Unconditional: `object`'s type admits exactly one value, so there is nothing to overwrite.
         payload['object'] = 'chat.completion'
         for index, choice in enumerate(payload.get('choices') or []):
             if choice.get('index') is None:
                 choice['index'] = index
-        return _ChatCompletion.model_validate(payload)
+        return LenientChatCompletion.model_validate(payload)

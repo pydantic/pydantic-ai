@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -26,11 +27,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class VLLMProvider(_OpenAICompatibleProvider):
+class VLLMProvider(_OpenAISDKProvider):
     """Provider for local or remote vLLM API."""
 
     @property
@@ -96,7 +97,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
         qwen3_coder_profile = None
         if bare_name.startswith('qwen3-coder'):
             qwen3_coder_profile = OpenAIModelProfile(
-                openai_supports_tool_choice_required=True,
+                supports_forced_tool_choice=True,
                 openai_supports_strict_tool_definition=True,
             )
 
@@ -108,7 +109,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
         # - File content parts and native tool return schemas are not supported.
         # - Some chat templates served by vLLM reject more than one leading system message.
         #   See https://github.com/pydantic/pydantic-ai/issues/5812.
-        # The gpt-oss family opt-out for `openai_supports_tool_choice_required` survives the merge because
+        # The gpt-oss family opt-out for `supports_forced_tool_choice` survives the merge because
         # vLLM ignores `tool_choice='required'` for gpt-oss.
         # See https://github.com/vllm-project/vllm/issues/44216.
         return merge_profile(
@@ -124,6 +125,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
                 supports_json_object_output=True,
                 native_output_requires_schema_in_instructions=True,
             ),
+            special_token_route_profile('vllm', model_name),
         )
 
     @overload

@@ -36,6 +36,8 @@ exclude_path = ["CONTRIBUTING.md"]
 # Login-gated or bot-blocking hosts that return non-2xx to automated checks even
 # though the links are valid in a browser; not worth failing the run over.
 exclude = [
+  # Private repository: unauthenticated checks return 404.
+  '^https://github\.com/pydantic/unified-docs(?:[/?#]|$)',
   "platform\\.openai\\.com",
   "openai\\.com",
   "console\\.mistral\\.ai",

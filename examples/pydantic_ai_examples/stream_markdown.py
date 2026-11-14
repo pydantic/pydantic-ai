@@ -16,19 +16,20 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.models import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent()
+agent = Agent(capabilities=[Caching()])
 
 # models to try, and the appropriate env var
 models: list[tuple[KnownModelName, str]] = [
-    ('google:gemini-3-flash-preview', 'GEMINI_API_KEY'),
-    ('openai:gpt-5-mini', 'OPENAI_API_KEY'),
-    ('groq:llama-3.3-70b-versatile', 'GROQ_API_KEY'),
+    ('google:gemini-3.8-flash', 'GEMINI_API_KEY'),
+    ('openai:gpt-6-luna', 'OPENAI_API_KEY'),
+    ('groq:openai/gpt-oss-120b', 'GROQ_API_KEY'),
 ]
 
 

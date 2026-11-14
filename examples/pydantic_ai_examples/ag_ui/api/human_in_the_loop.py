@@ -13,6 +13,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent(
@@ -27,6 +28,7 @@ agent = Agent(
         - If not accepted, ask the user for more information, DO NOT use the `generate_task_steps` tool again
         """
     ),
+    capabilities=[Caching()],
 )
 
 

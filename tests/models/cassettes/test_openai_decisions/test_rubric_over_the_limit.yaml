@@ -1,0 +1,116 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "678"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        input: Checkout is down for every customer.
+        questions:
+        - type: choice
+          name: severity
+          instructions: "{\"field\": \"severity\", \"question\": \"How severe is the problem?\", \"goal\": \"Rate a support ticket.\"}"
+          choices:
+          - value: "0"
+            description: 0 of 10
+          - value: "1"
+            description: 1 of 10
+          - value: "2"
+            description: 2 of 10
+          - value: "3"
+            description: 3 of 10
+          - value: "4"
+            description: 4 of 10
+          - value: "5"
+            description: 5 of 10
+          - value: "6"
+            description: 6 of 10
+          - value: "7"
+            description: 7 of 10
+          - value: "8"
+            description: 8 of 10
+          - value: "9"
+            description: 9 of 10
+          - value: "10"
+            description: 10 of 10
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "271"
+      server-timing-total:
+      - "271.808"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        answers:
+        - type: choice
+          name: severity
+          choice: "10"
+          probabilities:
+          - value: "0"
+            probability: 0.0
+          - value: "1"
+            probability: 0.01
+          - value: "2"
+            probability: 0.0
+          - value: "3"
+            probability: 0.0
+          - value: "4"
+            probability: 0.0
+          - value: "5"
+            probability: 0.0
+          - value: "6"
+            probability: 0.0
+          - value: "7"
+            probability: 0.01
+          - value: "8"
+            probability: 0.04
+          - value: "9"
+            probability: 0.25
+          - value: "10"
+            probability: 0.69
+          confidence: 0.66
+        usage:
+          input_tokens: 247
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 247
+  recorded_at: 2026-10-07T08:16:55.925069+00:00

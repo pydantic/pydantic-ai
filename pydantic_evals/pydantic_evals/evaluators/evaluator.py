@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import inspect
 from abc import abstractmethod
-from collections.abc import Awaitable, Mapping
-from dataclasses import dataclass
-from typing import Annotated, Any, Generic, cast
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import KW_ONLY, dataclass
+from typing import Annotated, Any, Generic, TypeAlias, cast
 
 from pydantic import Field
 from typing_extensions import TypeVar
 
-from .._utils import run_until_complete
+from .._utils import get_function_serialization_name, get_unwrapped_function_name, run_until_complete
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -20,8 +20,10 @@ __all__ = (
     'EvaluationScalar',
     'Evaluator',
     'EvaluatorFailure',
+    'EvaluatorFunc',
     'EvaluatorOutput',
     'EvaluatorSpec',
+    'FunctionEvaluator',
 )
 
 EvaluationScalar = bool | int | Annotated[float, Field(allow_inf_nan=False)] | str
@@ -250,3 +252,105 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
             return await output
         else:
             return cast(EvaluatorOutput, output)
+
+
+EvaluatorFunc: TypeAlias = Callable[
+    [EvaluatorContext[InputsT, OutputT, MetadataT]], EvaluatorOutput | Awaitable[EvaluatorOutput]
+]
+"""A plain sync or async function that can be used as an evaluator.
+
+It takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] and returns the same
+[`EvaluatorOutput`][pydantic_evals.evaluators.EvaluatorOutput] as
+[`Evaluator.evaluate`][pydantic_evals.evaluators.Evaluator.evaluate]. Functions are accepted wherever
+evaluators are, and are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
+"""
+
+
+@dataclass(repr=False)
+class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
+    """An evaluator that calls a plain sync or async function.
+
+    You rarely need to construct this yourself: a function passed wherever evaluators are accepted is
+    wrapped automatically. Construct it explicitly to set an `evaluation_name` or `version`, or to pass a function to
+    [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator].
+
+    In a dataset file, a function evaluator is identified by the function's name, so a dataset saved with one can
+    be loaded again by passing the function in `custom_evaluator_types`, see
+    [Saving Function Evaluators](../../evals/evaluators/custom.md#saving-function-evaluators).
+
+    Example:
+    ```python
+    from pydantic_evals.evaluators import EvaluatorContext, FunctionEvaluator
+
+
+    def is_polite(ctx: EvaluatorContext[str, str]) -> bool:
+        return 'please' in ctx.output.lower()
+
+
+    evaluator = FunctionEvaluator(is_polite, evaluation_name='politeness', version='v2')
+    ```
+    """
+
+    function: EvaluatorFunc[InputsT, OutputT, MetadataT]
+    """The function to call with the evaluator context."""
+    _: KW_ONLY
+    evaluation_name: str | None = None
+    """The name to use for the function's result in reports. Defaults to the function's name."""
+    version: str | None = None
+    """The version tag to record on the function's results, see
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]."""
+
+    def evaluate(
+        self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]
+    ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:
+        return self.function(ctx)
+
+    # `EvaluatorFunc` allows any awaitable (e.g. an `asyncio.Task`), not just the coroutines the base class handles.
+    def evaluate_sync(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
+        output = self.evaluate(ctx)
+        if inspect.isawaitable(output):
+            return run_until_complete(output)
+        return output
+
+    async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
+        output = self.evaluate(ctx)
+        if inspect.isawaitable(output):
+            return await output
+        return output
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name or self._function_name()
+
+    def get_evaluator_version(self) -> str | None:
+        return self.version
+
+    def as_spec(self) -> EvaluatorSpec:
+        # Used as the `source` of every result, so this must not raise like serialization does.
+        # Like the built-in evaluators, the spec names the evaluator itself and carries any `evaluation_name` override.
+        return EvaluatorSpec(
+            name=self._function_name(),
+            arguments={'evaluation_name': self.evaluation_name} if self.evaluation_name else None,
+        )
+
+    def _function_name(self) -> str:
+        try:
+            return get_unwrapped_function_name(self.function)
+        except AttributeError:
+            # Callables like `operator.attrgetter(...)` have no `__name__`.
+            return type(self.function).__name__
+
+    def _serialization_spec(self) -> EvaluatorSpec:
+        name = get_function_serialization_name(self.function)
+        if name is None:
+            raise TypeError(
+                f'Function evaluator {self.get_default_evaluation_name()!r} cannot be serialized, as it is identified '
+                'by its name, which only a plain function defined with `def` has, not a lambda, bound method, '
+                '`functools.partial` or other callable. To save a dataset to a file, use a plain function or an '
+                '`Evaluator` subclass instead.'
+            )
+        options = {'evaluation_name': self.evaluation_name, 'version': self.version}
+        arguments = {key: value for key, value in options.items() if value is not None}
+        return EvaluatorSpec(name=name, arguments=arguments or None)
+
+    def __repr__(self) -> str:
+        return f'{type(self).__name__}({self.get_default_evaluation_name()})'

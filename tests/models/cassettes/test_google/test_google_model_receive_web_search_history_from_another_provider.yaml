@@ -1,429 +1,868 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '347'
+      - "318"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What are the latest news in the Netherlands?
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - allowed_domains: null
-        blocked_domains: null
-        max_uses: null
-        name: web_search
-        type: web_search_20250305
-        user_location: null
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What are the latest news in the Netherlands?
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tools:
+        - name: web_search
+          type: web_search_20260209
+          max_uses: null
+          allowed_domains: null
+          blocked_domains: null
+          user_location: null
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '37614'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=288
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-0d9f678362acf11dd313317b11dc4ab4-8a1b17eb678e8003-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: srvtoolu_01Dxy4ugoHrbUnKWyPQA5Jmm
-        input:
-          query: Netherlands news today
-        name: web_search
-        type: server_tool_use
-      - content:
-        - encrypted_content: EvIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAOqwqPjfeNTedZnphoMxYKKTsAgebW9ekcdIjAPOoKRpnNszmV4ldkuHwdSnD0bczx4eDDrF4xgGXHxwapyC1oqNgjlFqbvxf3ot7Eqdj5FMxvFjhbuSUeCI/kz+/Ki0q55tDlv33v2zmPX9b8Dgy3LpmJmlDoxGocj5MgumJpp+Kk25xTki5khXZWLwy4V+wcCfkpXbE3hiR68IsibTZn359RYux6jYRyhcaxuKLqpvwYxvgTNtchJCjBO3U9NGw+38EwYAw==
-          page_age: 1 day ago
-          title: DutchNews.nl brings daily news from The Netherlands in English
-          type: web_search_result
-          url: https://www.dutchnews.nl/
-        - encrypted_content: EuIICioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMSkUyyVonUy5nVoAhoMaLw5JltwQDTWM10wIjDyvis8XeCQmtPfODQ0z9yOfN5s/K9mMNXZafl7zS3hgaNOZ6C+mQDh0aeCAU+9+tMq5QeIR/zKcrA0gVa66830at8x50JAlOyoZuLzdRViFYEOpO6WUUTYHiyeOfy85fWnQlbNDyb4o5opqzLTz8xnpkaJCQdm+0a5+deO+s9ZoYkWruChlbYE/Tb3mnZwNnnCDOO36uVfPlNxnW8zTcn4zOws5P2vVR7BF/52lxbA937yFOwpZm+pa/cslygQyXbhOiItTKVsGIpB5hqtQ+B59ZtVzJCq0FxjZ8UmXCWSHLxqBHC58tWu3UIS7+UX0fgA566ykRAoVWjzYUD28AHYRo8m+I3YYK2/fvVxYmKjSO5SXXEe5VLliNzM92vvT/yJSY5uF2NTTTbeGShX/CwYg+nnIIFTCcyvdMhjvX0BC7w19hp44igN9/DrzVDu2TEXJHZ9a1VLvkLh64WcB4A+QcNlc/UWS5L7fePj0e6JF2Be4WeYoAQMYZdu/e0TnkDtiB/AmeEWpcB7/cNvOkC1WSaw308HjYhuIVA2/dol+8iRuPzrz1BkoAcOPCtqnIiJbJ9mo0QcLWcWt87JwdjS8D6b6xL7GEOq5lsW6+UYZTOTIB4DeQ9RkdSazFtD9S7cMZOwftJNmq/2ZLYoCpgWR0rSFbX98Bt2NuGSb1eezpnjH5xj/Ki5XuvX/vLZnAo+EN2Tz32Pt0JHsYiMqQxW4eLKlzuEyIt6pUlR0AbNZa81Ig8HrDow2XMc8USIEM7MglZrRmxTXd0wPK1q2fQt+y81JTl0pdZRD98JCb7ByJ0DTIjRxdCmtXtx8J88KXCIOzY8VAC9sySOmFYPMrD5SlpdVFw8cmfvtdorgS/Im6rprx14T/Els+WDU53VxPLlU1jOk17VT+pLaaVWCwfZH56VNwaLX45iao/iKIYzXE4K/GFO1Sr6e1GEySagqWsIpY7UItxa+g+yA5J37U+5Awspr9EDMzpCyToSeUYaLCgxXSsYED3Py9DGxEQFHgX1gonr4PacUdrZpJ4Px55qTmr8Qjmw/S9yiImvEondwP43CJLyjkqR4/8RMSfdFWXEjqMRN1HxFZw3MyqBNh31E+uN89jk8yvzGX9AzDY7zzj7gthZ0xD9E+VxvcnZJcWdN7DjiDHkDzHfdDwB0ZO+/8+TyQ5SDUmyK9qcJiIJMqajKiVZ8k36K8/SRkQ+oCg0f3zSN6yO7+ygszpIbFmvvHx8g2SghT/LaRCiMau53Yhtd61isOc5JeOWku8cxk2IzIoOhJfBP43q0YY53dss96o7p+ZjsvPtE9W5IsF7kAN2gynxX0cr6RcJXCJuQd70w4CmaISAPhbtmfpY6VIy1+eLoaSOHVXV2qv3mMrpnJZn1zrPn3JOGAM=
-          page_age: 3 days ago
-          title: NL Times | Netherlands news in English
-          type: web_search_result
-          url: https://nltimes.nl/
-        - encrypted_content: EosJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDluMRLfvQkgvdOx4xoMV06n+njiqjM9qnBqIjCToTVnWpHlAO470aS4AVLpcANGxICP/TDI/CoazDq0bmzyd/cMtmBEUdZLwXn/llMqjggiTYG9Hy8G0bmsl3TU75wVt8fSwZ06PueJOPA056vO/8sL2w0ZzRIOlRlWEqy1xmor/rc62USao3jXe33ci/7V46PyMZzg7dW1l0epTEzD6nxHH1Uu8gSWtkvnlA7TeFzFzxnGW0uKK4SnsUdZHYIsmRKp6YCUD51Ln6+7TzMnH9RgO7vndQOrUPS2VF/X0eSeHZ6YorOZsxsB88CaBa6KEARzbuv9Ml+4JqXmu18+j8vklVj38sNqLVLIP/IX1wjqTSra93bOPQQzBOtqnqK4iemR7sYyZiJaGMMf2ddouuWW/cYimkaaIIIkxMEsh/ywXQBciagnfCSvh9vwQI9hPAbxruqeLk17FOl2y2khtXeECgHVMYsrs6LRMGagIth42ycidSw4Mvov7+eAfkvZEcm0vv2f74Vp6Vm5wh+0mK5iVhrKDk1jcFQgLlA/SdebanSY/2iw767+r+y/yCf9AVx1A4L4rQa3bcNu41irD2t/EDLG6Ew3lRZtm+gqqP5zLjCAa0FTlAOp8FJlq3ZtPJtEdQBE3/B7D+TtI7hKdROm2w4pRfh6wQ36jyKjtdko0Cbf4+Wyh7Ct2BVTcb/znLjHwghzHAJ/cigWoGFi0eobmv3Rl/old2qoZWLcBpO9AQSWAo1xEBLE+V1eMPNSUz5PPOaVI3/iwdzFa8YtkpnTnjHL6FzqRcTd5/m5lTsJmyaNpVhe/wezsdUdlmCLj+VrhbNxdyewOab3AbcQBd0gs9dUsAVhI6/VHNlf7AUD0+f5pwVvGMu4oHF9ykRP2Kdy/ZOFK1g2YEXqO8Baoo3DBSKdjcU0cGwnCXOcTZb5xBnrI6s4Q0A88k+w0beiWgL5h/T+S0+q6N40G9ylDWptpH3k4ZCwEI41vm6uxdwKJie0/c6O2ENYnaPPgU4NN/QPuu1f3UzS1QnZHWVAm1tMphRTo5BrebgIP7rHXeOHkdu5fbvP6tc4xGW5D+MAD/wUn11+r20ZuFCRSFTPC81DomML/4eGw6UrGxhLv16t2oEt8w773igMPPZNOnd7AX0CXQUNKBBwB1tDTFtpGKLOLwonxu/GXft4lcku/MM10Kdv+okyoqk0Wu9my4vXMNcsEKccUgAeIeH325qxBQ5XvO1XdMnoBNJ9GSkDhBSZZ+5Aw2H/T/vmNtO5HZ1gXfoCFA0Nm7DlXLJDQeZhOlbaZD3evHaaFakesqfKHcCbGBQwkZbun4SHdZ384VstBoQDXoh9sDbTOJLj1g0kn/drYQFglFu2EO96lkVhZnq7PnLf0+llnPsEwmI/ankas7en/t+rB1iubf6HKvfLV4H/yb53vwwIpaJeV9d+5khYnbla9Q7c3p5SnbXQBZ2c5gftu2itNtk1s5Mk3PYYAw==
-          page_age: 1 month ago
-          title: Netherlands | Netherlands | Today's latest from Al Jazeera
-          type: web_search_result
-          url: https://www.aljazeera.com/where/netherlands/
-        - encrypted_content: EvkGCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFk9X/YESen9kV9I8RoMBrFINGkBany3KtQVIjC9qaR0mr/VF7QHZ6JlDh8twx/2CNeadJHHfjSNIs7r931aX1LE/OoW8yoII1ugV5Iq/AX6jUMWpxxh5BxlVhm9U0cZ3hlsazACMwzBRAUUjSi9dOxLK1I259ALhqOJa8jQUr7VfXnEbKM86I50S1It0Tw4x2wi2rvnw/s3BUcMXIh2KJC82B2MblmI9APmbyT4jQxdyBHOZxF8IuR8AZ5iFicE35OpSUZJKGiT8EzpITFX2C0ujZ5Ts+H9z9Jx02f6r34lCU+0k8yPysbtpQriKne8WG5Pk+2sXxRhLZb+5D2AWZaRODBfN9NM92vjKbZayyRTqsTOVPzLI6olSj8vstU86dosVJfdORSZiz3cp4wWfpJjEceDPiKsmadtCYBwKoxuWBPeaBSKILSFLbAZIfFUzBTD6LyVnYCwFAxQLntHqBhNB2Ogwt8I7Pp/E+C5YwFcLim9gUtZ3XVOMh8p/xldUm7gNBMRtIfll1wE42gb0L63YMbY1k24ZVa172cWh+5kqkfM0D6nJMqvecaxk7wWLlOXk7uXBJyWOIwc+JIQ4EWRsLDPhxZ439N/442RC/r/K39+5jJSONZAdsoFJQi+f0lqrGwGL5vpB8eSztrhv3FPU8HUDlmP3Da3lscUeaSTsi4vDg5H/wf7/hRTjFXnPCPmDrKOdGJEyZ/Nb/Ap/ijnOuAEHI7aSD1J7GIpiUwX1nCrfOSbL6e4/AOC3ryVSUTcnWXSjMT7YOL3/u3mFXDRE+KqSOJmq9E4UpTzPG5sdMdDD0NOUOVX1N/tplx8pvHTLNO/koDam1vDVvJNx+vOleMtja8eRyiEbQUJOTQ+qU0gmsKHXoAuYxVPsQib7ALhNOWDQt3it4GOCzP4+B8ymzH/nrp/D/zLE2T8RZkw3tH8DKbsuNPHaJ39UhVTB4WYObZsI0+svf4vJ6wqXYZ4XeFZ4uJ8qruMVPSuF26DjlD/mr7ya4YWAdtlBAhgdwRZ9mh+lVWOua+LDQDm9Sh8NbrOYcEolSRnZPTSaBV4lIsF+jZMyb54NMnYehtWZh8+oE7gGoRAviLvOWSyzg20XrxptvdnMbApMhgD
-          page_age: July 18, 2025
-          title: Latest | Government.nl
-          type: web_search_result
-          url: https://www.government.nl/latest
-        - encrypted_content: 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
-          page_age: June 25, 2025
-          title: Find all the latest news about netherlands | euronews
-          type: web_search_result
-          url: https://www.euronews.com/news/europe/netherlands
-        - encrypted_content: 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
-          page_age: null
-          title: Expat Info News in the Netherlands | IamExpat
-          type: web_search_result
-          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
-        - encrypted_content: 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
-          page_age: null
-          title: News for expats in the Netherlands | IamExpat
-          type: web_search_result
-          url: https://www.iamexpat.nl/dutch-news-articles?type=news
-        - encrypted_content: EsQCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLQO6tIpUnda2YseTBoMvTQ9mSIH3zH0mCRzIjBbjD2e+dVmUQFHPO/P+g4wcaRV1Zh10vw5IdBHg0dQA6dE5sTvAyCB23HfmMmiPsgqxwGsu0J2re8WTquhC1e8994X6KtshBBzJGQNGcfN+vmrD0MrnVLhG822+vCT+ZNj3qLMBgOe7bWcFhKpY4vUp7f0F94Iitq5Nd4rYvzroZJQZ145sInM2Sk8G41pGlWzoLM0W86KPKpMgXmvyl2qaiqdnV4FlUQwcn8ruC32JqDO4hDtpOZAR0nQrSnUq2H1fvFh/uWuHtXNIj6aSHMB12O/HgVkKvZcofr4/gPINPPexe2xDMD+m8pf75+KZ4Vc4GpRRsIVcuP7GAM=
-          page_age: 1 month ago
-          title: Politics Archives - DutchNews.nl
-          type: web_search_result
-          url: https://www.dutchnews.nl/category/politics/
-        - encrypted_content: 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
-          page_age: null
-          title: Netherlands news - Today’s latest updates - CBS News
-          type: web_search_result
-          url: https://www.cbsnews.com/tag/netherlands/
-        - encrypted_content: Ep0WCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNToWjcdXzVM9FpXNhoMUEwGtd4rUyWjWz0HIjCYFgpjFE8Ea+QJ9s5230Wcr+gsAPVtWUHWr2Q0KIgHLG3XfgTIebeJfMDOykg/NRMqoBWW9ihGJV/KhPzcATLyZxBs0G3gf5LVbAezPFG7BIpniGXv6DmM1V0fKzvTEXtRhu3lgQkulaJ6KS+vSLRnRDOxfJDoGM9Dlcy9LvLufvsWnqmO9npQ3IuSjf3rbArcUu7gLXDbzO5+eLOxaiZbBF2LCM3zr5l0w+VjMhJqS4R71qJmhc3avKEYKgTAtdPO3XNZ8OWLQw0AE3wvlioOnidubSW1Gmd9p3bqTmQKVxh9NmmgyeCgzTI7SM0NFuZqcbqM9gSQ3pd1GSNFapR/6iHToo9DRJyFalRHwvLZa2LCyvigmmrWiBLnnssr9OIPwyhJ2dVypJZ5yCB3LNryY8IfXjxV8j8VUT0cZBwot3r2zrPH4c0PHDeNn0giTML9KYHts4e1iFUf4QeW0uu5rqbrJHvGqJGqKQiXqc2dEfwNDhRdcqFEGEq6jU9Oq91R6CxQyGfiIWWpQE51oP3P7UzZFC/CRtMidw+WJ6xbXQCj500QCLVWXRUSPtcHr+98CscBk1TL17XbURudV3kJNZj/+kecdeJdvwYjOBa49wQ+Q1/3S4y1KCIBJtMJZi6S3nwaevAE0wW88sd0ghzrIDC8JTPl06bTZc2kO/+5MWRlO6kh+JJFEr6/JtdVDaKctol6n/F7KcmI+0uHBe1Rncg/oE5g4VQ16iUonmwZ3T+4dWwII/ofTAmE5FqPlPc+HK6UDPx4Kn7hBbe+xbh8F6va+KxIa/tl3HSrlBMh2ceWFltQQdoOgJ8d+SRcEA7XhTGYkwwYnRLyKqGv3IZQDdBaT4v/Lydu5ZXHRRhSZ5uL+V3H04AJvTaPx55GbknUZE0cxM2ypWPUg2Pm0eEa0fVU+C5pLBdlLsiiz95DwCnTvu7mrpXyT5gFNL3lqcQltVGvwgqxW5GJcNZ9yyZFTLhKq+JCJv2W4FnIXfmuo4rFg41xv1btMt8NW3+I2TXjF6AobkqVywK/5zXN/zi1tGABugvbd4EKUUCUfa5GTTWV/CtaWZdPc8S/GFVux1S/BV1wfG8OKrUWPPmiM9KF5imCyMwdxWp4WUN+sL5DtGUhZ8Gh5oIHAYzLdJ1Sa27y383UAR5z5tnIZKdPWH3HHzhcPxyUEKVhTn+EmMxVZBSmDQEoZi1CR1u7Qd437SUYRh6R7rEsZ0U6Yu9dKFK635x8yMQDViYReIHLSmlCDtS8Zs6SvOGuVa0yIM3p0R96fv3+VJLZMiwq3kpc45ciC3ot1hSk5iP5XrNuXIFLGPwBDs3zY40GuQfGnIW4XO9y3W8ik82JoTcjcWJRBdy44ghsl7pYdfBkYpbcnPqjIfBWnA9Rvf5wOhb8E4Ye9SLTPwDRJfP2PCBxcVRepNmDUrl2dYDyDS/MFDXWC/kaHx1OnNwI8x4rwt/A/2LG1gw8ilR8uGuWhekbmj/TATvXbFY9brVNJqCKKao6I9OP5lJRvi5Ts9ZaCXWRUSEqs08jpQHHMDUqsm/pR+lfShK21rqSeS+jmlH9+NdCsvpF3Q2+AzNAdHY+pEKyuUR7++A29BemJCY/OQ3LYKS1CjNwkFtbnPXnKKSIQKucVe5Ed27IWVpjN+Rur38uIuxmtM/edXFfaBTGgszJudmQWnKxqdSlJ5DdKRUDAbtjQ84jSA6KLJMdYDWbLE1vk4IdPo2LUoZ0K9Xk29lno571/Gb5EKRaCBDppvHXihW2DYeAdifWjnkvdCBK3FwlHcZ4mZaGlDGRKqRUvheSiBJ7UAjXxXGTs/Py8Apj3vfh5lBrSDr284P8JJm0GTvE/xL4SO8njws/C4FXeaWH1xyfzYdLLaCsyp3sRBzpGJawsOWTGFCye/o9OEakbZb1eQnlsXW+cw6m6qv1uI/pZQpP7Xk3nftSKKYK/EiXn+blgLBmfqHfIjmVHrXmZWkshBSNGNaqQGhuWtU57VLt4yBbClaUf188yqZ9sVTHUAN4Z7bqjrU0k7rZ6wj3PHTVtYijHpy8R1Ha4l/VCROafrqbyv70HZ/YD1FIaRx0qvPadRy0kHCcgczlNbN8QEHY3KG0wA2imhE6YfQMYyxcxkTXfgJUOK3wecnTlzbROfPGmSeBtTLT8TCmQIHVR1DOVkzJtjJhzcZ+l7xXgexMCK/kzXsfAnFgG711zUOIo5q/a0MKgnpZIqISS+ZXBit0agB9jmS+TYU5pz4ZjqqxtqEmrQTrIhyuBqqZGhbW+d9Qq5dsPWFrb49xKtnQy9oJMtUklpj7zws9w06WK/o1SR9u6N/vy+1ACouYHLqNWcKqPcLX+H+qZPKBUHBmfQxinxVeIAy2v6RAX1+pURTL8JPX5LwOC/Rlev9NA358bR2qEOhGdsrHnU41mGq1Ma11hcnzLPhYeAG7cOd0hJFrg+NCVFweVMTWgreUpCBcxN4fvZSJ1ggcRciH7fWL23sso53ddsXTCZaG35ICFvas+IEGiVgjGcZolY4bxWRszP2m5cxfgDcSasU05R5sNaptELOuJSopCllcQB12c8rknNTkCkYbyeEEyuw8pCN8i8/RXLoXjpTsyyExBnUbB8Hvr+iFpbe3sc5zGoM60x7lbeAfe5neQ244SmrOpaQBe9ethf8hOtCzNXOfUK6g+mp20k/Yoa9dvt8HoMABt73baoXY3f1CApDSpnwujvBz4YDmG31VLiIOv6a5lBunVTD4p/xGFaGgEUO4EYsyJ+qXBFYVG9j5Q8FZZNiQlqk0Rf2EJkW+znRUXzqKSj2jQ/y8zI8EPEw6bXAxqwAUaS4lNDKs9OAt9yYDif52mWWiOyzJ7YOVN1wgmWdcOy3pRLmEptL930mj/Ais3ke9WT1sIYBafwOExbZpqvVU/9G7Bx31VElNZ8LbkD9SF+at1UIGZO+Q86g61pW5asloBqkiWVAE0xLsQjgfoIeMD9cfvqMsIgp1Y+mtmi2Hejn51Wm+tZtCasvlC6t7eXzwVYRW4YzXNF9Lw+e12ESbYHzGpVkKRLxYglhp6NsFP5AGJrnOZp8w8PiZzFJorErJPI1XIrNPvPdo+2g7uouFsam1qTukv0p9eopAc4wpGliI0plK+djs9ahwZt27UfPF4y5eGv7mVXkVWTVL+Bj/9RolOuACjnQRuYlH1yKXZZ+i0PnToYnsW8wtBobb3DbC+Yc6BrgbD3Y0XZO7g3VqphX6J5Q9N4N2ejeOXqF5ahQNx7FxbEAerUCq8zG+sErxbp+p8c/vmeJWVEhiLNNdW4pUTeE8gUH3Y0QXyMplQ+Cvzb/62M3f/zHYC4VAvtUiwgnwOxm4RpW1RSxMXsNsy8z2NqkyE44G/hpkExusx/cyGGLkSqmVG7/c3HrUG0804i1J1t953/Rl7aVN6xQObmb8b3Gc/OChsu3y2/6WRjuhLG0bieAFGj0t7blv3ikrT1GZp4r748htJeVD3+BJXFmQEZLqvo00DYF7hOY3WT9BhBt1eu390Gi2E1+qAa2oMRETnHLUKLL51zh65aRcrD2vGN/tNHsqqbQX+mnpb/6lS2O/b8LvP4Lhs963Q+oDewI4Gq1gYp7BBOtWLSl24Qva4xFxVSudbo7tmtD0a3HmK9Z/41ZKklIsj7kI9xJCm4LY/uC5Pvdw2shROCuURKSJpeSQ8WsUDpOpDhgD
-          page_age: 1 week ago
-          title: Netherlands News | Latest Holland News - NewsNow
-          type: web_search_result
-          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
-        tool_use_id: srvtoolu_01Dxy4ugoHrbUnKWyPQA5Jmm
-        type: web_search_tool_result
-      - text: |
-          Based on the latest news from the Netherlands, here are some key recent developments:
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPspmKaK3PqLhA7o5Hwp","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":5979,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
 
-          ## Weather and Public Safety
-        type: text
-      - citations:
-        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
-            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
-          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAwqgNNOaRr1sbnCChoM802iz8dfWBX4aUvBIjDx26XOVmdj3CKatm7G09VpZ9NMNtoFKM0W7Hk3u7LoNsrsf4rw9sOKf1YRJm2gWQcqE+Vlf11KLKJ+Upj3p5u2iLEClVUYBA==
-          title: NL Times | Netherlands news in English
-          type: web_search_result_location
-          url: https://nltimes.nl/
-        text: The Netherlands is experiencing windy and wet weather, with a code yellow strong winds warning issued for the
-          coast
-        type: text
-      - text: '. '
-        type: text
-      - citations:
-        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
-            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
-          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOqnY4t2MRd2dnlsVRoMmnFk0Wqg8/8YGQXaIjBrr/GVRoONxoeZQTM0FueY1JNjKC7SzAov5eIZCHXlU9jQxRYGP7S4iyPaKooR6acqE4aha0FsbzD+Xgnj4kbk1SD+HB0YBA==
-          title: NL Times | Netherlands news in English
-          type: web_search_result_location
-          url: https://nltimes.nl/
-        text: A sailing charter crashed into a freighter off the Harlingen coast, injuring five school children
-        type: text
-      - text: |
-          .
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01LDUYaqaaJaSZ4kbDj7bVw1","name":"code_execution","input":{}}  }
 
-          ## Political and Economic News
-        type: text
-      - citations:
-        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
-            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
-          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBX4V5nZHDLJ9PzeSRoMo126SLawOY/383dUIjCJL5hj8KWOXsX/Z4cr4OQF3XO/XW35moKTsCmHY4XTIE2TlXhYrEVKzOE8vsSw/xEqE5YIvOmthCtaWzjAiJk8gKKVlRAYBA==
-          title: NL Times | Netherlands news in English
-          type: web_search_result_location
-          url: https://nltimes.nl/
-        text: Budget Day in the Netherlands is approaching, with MPs expected to face windy weather conditions during the
-          event
-        type: text
-      - text: '. '
-        type: text
-      - citations:
-        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
-            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
-          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDP3Ekna3d8aY5O5gZxoMpzSHJPHSZH/KKwhdIjCydXMzDx2Ss3zQksvEi7Nuh2ECSEIPDRB8FHh0EkEyDtTkJu0BrZZSwpm9mEvjvEsqEwojL9tz89nM5W8GW7sOfb/kI0wYBA==
-          title: NL Times | Netherlands news in English
-          type: web_search_result_location
-          url: https://nltimes.nl/
-        text: There are concerns about political gridlock and costs driving Dutch firms to relocate abroad, according to entrepreneurs
-        type: text
-      - text: |+
-          .
+        event: ping
+        data: {"type": "ping"}
 
-        type: text
-      - citations:
-        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
-            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
-          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCHSKcjhpsySpKCHDBoMOpzI/Wynstp1fnDVIjBqGHBNariopYpiH3JqCd7Q6bYxJFVquV+n29rVBFumCnxAJ3J0OTKdA6r42v2NfJAqE9IpXoIO4EHXamx5D+QZgAlujlIYBA==
-          title: NL Times | Netherlands news in English
-          type: web_search_result_location
-          url: https://nltimes.nl/
-        text: Voters have little confidence in politics and don't expect improvement
-        type: text
-      - text: |
-          , reflecting ongoing political challenges in the country.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
 
-          ## Energy and Infrastructure
-        type: text
-      - citations:
-        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
-            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
-          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJtqpDVkrDniP5EcRBoMqcMLuPj0zsL12kJRIjAaggJ4GDMBhqe1lVCV8j5XDSbu4FKIgXeI6l/CJ8P8CahphMsa4/0FEk5GbvhKiBkqExNNf/FS7xUA3y5NXXYSI6bZUuQYBA==
-          title: NL Times | Netherlands news in English
-          type: web_search_result_location
-          url: https://nltimes.nl/
-        text: Dutch electricity production rose 7% in the first half of 2025
-        type: text
-      - text: |
-          , showing positive growth in the energy sector.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"r ="}              }
 
-          ## Transportation and Travel
-        type: text
-      - citations:
-        - cited_text: Create a free IamExpat account to bookmark content for later, apply for jobs & properties, create email
-            alerts, and more!Create your account · The Net...
-          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLa/O8c6PjQMbY8EbxoML0ABpYBM+L/nj8BpIjB3BYxXk+QM6kPfJXaeptU/zhD4MJFo5FgETBBeGWOiMeLBHSDnqvxG5p3q8F7RQPYqFkQHsbJyLyWhfeOASVCcDU6hPbCZh44YBA==
-          title: Expat Info News in the Netherlands | IamExpat
-          type: web_search_result_location
-          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
-        text: KLM has cancelled more than 100 flights due to a ground staff strike
-        type: text
-      - text: '. On a more positive note, '
-        type: text
-      - citations:
-        - cited_text: Create a free IamExpat account to bookmark content for later, apply for jobs & properties, create email
-            alerts, and more!Create your account · The Net...
-          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDXhsEkh7LzptlEgfxoMKOcsZvITQ8tXVaEoIjDrUKV3ReRNvnOZTOsYpWGbApA92v+RpymNbWklOBNDbcqiVaznkKgs02yZZpQ36C0qFiQEqoRbDG4kvjZwDIljUpqr4CLD4NMYBA==
-          title: Expat Info News in the Netherlands | IamExpat
-          type: web_search_result_location
-          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
-        text: a skatepark has opened over the roof of an Amsterdam highway tunnel
-        type: text
-      - text: |
-          .
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" await web_search({\\\"query\\\":"}           }
 
-          ## Recent Policy Changes
-        type: text
-      - citations:
-        - cited_text: Code Yellow issued as the Netherlands braces for thunderstorms on Wednesday · Dutch health insurers
-            to help GPs open new practices as shortage continu...
-          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGBPOjRqUOVSYB86gxoMcFtld1jr4wNxvFlAIjDhXugkhH4D6TXYLXIlQbY4ayBXHGiKFX5n9zfte8nLFUMlycLb7k8+P0yj+wDx8pEqFF4JgErap9jbxcpRiJFnO0EO6ymJGAQ=
-          title: Expat Info News in the Netherlands | IamExpat
-          type: web_search_result_location
-          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
-        text: The Netherlands is introducing a helmet requirement for e-bike riders under 18
-        type: text
-      - text: '. '
-        type: text
-      - citations:
-        - cited_text: Code Yellow issued as the Netherlands braces for thunderstorms on Wednesday · Dutch health insurers
-            to help GPs open new practices as shortage continu...
-          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDceXOdTOIO4u4DZZRoMCHwTkvYLPvJUC3zzIjDcjUsjXIMKtgIZZV1lps3+ZtpmNTHAoZjJ6DPn0JoaTXu0WZQRAesv3DYHhjAYyTkqFNhjNQqrT20czC6Iwy97A0SPQOt3GAQ=
-          title: Expat Info News in the Netherlands | IamExpat
-          type: web_search_result_location
-          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
-        text: NS (Dutch Railways) has begun alerting passengers about emptier trains with push notifications
-        type: text
-      - text: |
-          .
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" \\\"Netherlands news today"}   }
 
-          ## International Relations
-        type: text
-      - citations:
-        - cited_text: Final round of talks on compensation mechanism for Ukraine reportedly begins in The Hague Ukrainska
-            Pravda 20h ... Netherlands declares far-right Isra...
-          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHI5eIXLhRRBAAMKCBoMuxJY0HcHE5T+Ut9AIjCuZfQUrKGsKN7VLy1kFqWItO1kzKCCdHLDSiwe/KtN4USY9n4T+nOsvbtJnwKYiwsqFH1d6oQnIOD6UioFOyv4pQz2HT2/GAQ=
-          title: Netherlands News | Latest Holland News - NewsNow
-          type: web_search_result_location
-          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
-        text: The Netherlands has declared far-right Israeli ministers persona non grata
-        type: text
-      - text: ', and '
-        type: text
-      - citations:
-        - cited_text: 'Netherlands condemns Israeli strike on Doha, urges respect for state sovereignty The Peninsula 7h ...
-            Strong mag. '
-          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGgMCVkxh5oIv9WUlxoMrRQBwOkq1ffzVZx2IjBCB2nT7J4UlRO2ne9OQiVOPo5pJK6zHWEDyDDHHW0Oi/wRCRY4umK6cKGhFZcx8yoqFJO7WkH+eAhNTkNXcdKn/c1p1LMdGAQ=
-          title: Netherlands News | Latest Holland News - NewsNow
-          type: web_search_result_location
-          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
-        text: the country has condemned an Israeli strike on Doha, urging respect for state sovereignty
-        type: text
-      - text: |
-          .
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\\"})\\nfor x in r["}           }
 
-          ## Business and Innovation
-        type: text
-      - citations:
-        - cited_text: Final round of talks on compensation mechanism for Ukraine reportedly begins in The Hague Ukrainska
-            Pravda 20h ... Netherlands declares far-right Isra...
-          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDK31ibPz7qj4LvGVERoM2jfy/yji/4uh3oh7IjDefivmev/jhIe8oGqc97ynymHG4Rt2o8rgdh7DLOKt8yNfz3V7Tki6WwWlUtuGK8oqFEzFk6MsBPEGwx3Yio8JARHl6QRdGAQ=
-          title: Netherlands News | Latest Holland News - NewsNow
-          type: web_search_result_location
-          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
-        text: Several Dutch companies are making headlines, including Amsterdam-based Naq raising €6M for healthcare compliance
-          and LeydenJar raising €23M for battery technology
-        type: text
-      - text: |-
-          .
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":8]:\\n    print("}               }
 
-          These developments reflect the Netherlands' ongoing challenges with weather, political confidence, and international relations, while also showing growth in energy production and continued innovation in business and infrastructure.
-        type: text
-      id: msg_01Hge8MF8vgC9ym5hwfroics
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 10809
-        output_tokens: 644
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 1
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"x['title'], x['url"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"'], x."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"get('page_age'))"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\n    print(x['content']["}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":500"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"]."}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"replace(\\\""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\\\n\\\",\\\" \\\"))\\n    "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"print('"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"--"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"')"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01Umf376i4G7rgh8aWdBYKRq","name":"web_search","input":{"query":"Netherlands news today"},"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_01LDUYaqaaJaSZ4kbDj7bVw1"}}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01Umf376i4G7rgh8aWdBYKRq","content":[{"type":"web_search_result","title":"Netherlands news - Today’s latest updates - CBS News","url":"https://www.cbsnews.com/tag/netherlands/","encrypted_content":"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","page_age":"1417 days ago"},{"type":"web_search_result","title":"DutchNews.nl brings daily news from The Netherlands in English","url":"https://www.dutchnews.nl/","encrypted_content":"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","page_age":"0 days ago"},{"type":"web_search_result","title":"Find all the latest news about Netherlands","url":"https://www.euronews.com/news/europe/netherlands","encrypted_content":"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","page_age":"269 days ago"},{"type":"web_search_result","title":"NL Times","url":"https://nltimes.nl/","encrypted_content":"EvQICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDKvMdGTtm35byHqyZhoM/irsNfryqXITGFroIjCXPqgkPqWvDpC/vxuMYg7gBesEoc6W06+daXENho98Oc1cvRyWxFe6OytLNmdOFh4q9wepnx7arxKwOuX0Shrc+e80MQJ1dDl55QEFRHCjV7R+/8ui0pzqtQY4iE9KpiSeUEaIpb62zu9IyrY+pfLwH0weKpRimpUZ+VnMALlU5H6hosun+nwFwOL1ndbW/pU2rhywgiDH1CxqbOKNVLSNVN0TYb6A6L1CuYv233gr1PcZsregbJjLiAkusZMjaGJXzuscak6MDY1Zo53TKx7vFR22oUi8o+kdw2dc3XiassYUi+1MYQSBJAB9DDTY6BIlx07TbmAq4kF4FXhLoO1bmhl9lIpOiQLfVnA+XZIeiaIdPdRdfhDhEIM7R+tKJznUx68UsFP++vQd6fbB+LIsckgr2iRjicUdvr/45rHvkbuzvhB1Fgbe+SjaOGRB4fXgYdOVT4ODwoH0QhIrnSXaX7DIwGSTIrNfiWhy8SgTtu8O2M85K4px81bbquCaIRSJCYybVtdjs6uz/+yf3s47hxoNOk7g3kwdWjZi8h63paadyJmwaeBOMItIiGk5c9wqKSllz+iiPeDIMUgRTXD44kXnqsMnW9QPLbpi9qXGKrLrgouzzzu/9RheWbNeXTFrvXNUGDSuOPMa3r/9A+j1TNe9yP+6cc8xO6HvPiim3k+4HRSJx64hGbkk2RX0mCx6rMfaPFSCXvCz5yId0MLAvh2ORJlYGIzWwOIT9SdFEF7R1hFXC25dcaKagUoKApoDqMVi6XGZWcNmF8RMI/uvuTETyuI0xKVT0aKNONsnLpCz40vleel1yAbLM0BZRmnfyEQZ8EBFeA2heFn03ThPqBm+2un/QHGZArtrmqIgNxJrb5pdpqJ0l3ZWhxWmkP0loJyaNLMSLYehpv1sr4hoIG8sxa1HyepXtRDdStLK11NC0h9YvIBYmvlyeu1ENwQ6u2vhQ0cu1iKcsEReMhieYkBC5tUzbgoFJ4IlVJxtJ8Sj08uJkTVo6KhAiqSTrqxNInjhrU5JI2qsk9U+5wqlia2FF2s6APP69PgccgBJvv6MptqBT2jVZWbmGt0EInONDxoz5FTF6OcthHR0vi89f9N3Z0J93eunJLcd1mAO/1cmozFvw1lZpK9gOXp/ikazNkDfhzeAEK4RriEPLCJFIaPTaW3lWctn+6X4HnH/XCFXDeAFY4Ig/7Zu7CjL2kYD5NC970esJMoCIHQJujl031hdXkgV+8koqglZUrY6F7GFNSLHMucx6xK5GBdHeuyEssO8D8uqgMRSN7fCI7ornvaEieLYnbTNuOnPcxM2PKSfu8RI04OLhKx78QB779lumGO3QB2Uag1SjGRBlLXkxWY5gG8rKaaP31FLjsHkEsBnczYor2Ic/Jg0ClVmEltfYtpsIkeU9ej5GAM=","page_age":"3 days ago"},{"type":"web_search_result","title":"Netherlands News","url":"https://www.newsnow.co.uk/h/World+News/Europe/Western+Europe/Netherlands","encrypted_content":"EukICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLxn6JHRzelQd0rdDxoM1Ur2xuqbRR0n/kA6IjBsB+xoJNnu0MoZOTIrwtJES4KW3MKpW4lqHt3VLw1H3T3Md1KSwsBHl1x+ZSlvCYwq7AeXWOBc7XFqMkhhFOYYGE8RJhs5IaEiA3ueyse3SPW8R8EPqUrKXgYX4HZ4OJ5t1UTQ+lYCSlgG6dM19sjSxeL0lUvhs5pN8ZnpXolIWNJ9x7N9KmrR1otDs1mYuDItO6bN83XqBNjx9QWjFXdVJsfPXNB9YtDf2+GlGKgvPLm9V0omeIUgWtLpurJ2s8sdWv3u6Aj9li2gSV7MQX6BF6njqIcMBIC2WxKbwwu8W4Xkkd3lF1lp4TkYh7qW2KAvJfG4dUCsysTvSrujbXVwqMjUHTFq0oKaVz6lptAdULouEBvL1pkqrOqbvVrSyeNNAkyCXBsb173zyAzIefBb1m6hH54R+yYmxYZsRSCuIXdxTb72sh7xO++xQHVaEUPTkTm2O4KUZhb0UK8zPp+VamL7DrB0azQuwae/YLNuLcp+yjGxzJpocPi583JMssyuwCTt7GIJDSIMqBfElRqOfsj79bzSi742s6TzYA7I92o5RsEQPFrL5JkUll9+wNaw8pBx3XLagVsRdqhn5I59TBlcw0/AbB38yVD1zqyglFkEAJx/x7RUFL3doOi0p5AcYwRnXKGeTmVifapJ3k0CySKqQg6J1SitkoisUsTjtRo2vVGGr3ccnuk9QSm3iE/gWJe5tWZW4V0hOnAcEtg4Gqov0DHlZoIEExvLChEsVryKyHp+N40t/DknSsVIHb5hBgRwXk87c1x0p9Xgnwf8DTHZym5GtLCVfjvtUii7ctjb3iReov3YEeckT9Yj4Ns9HM0FKjPKQaUaDMQqxSQvu6CW/c1JpfICYaKu9Gkn1qOT1PkU9kFCY+e7554wyYqAvT2C23wfe4b1fKHcyd7k8t5sHuDGKoLEyvQdCIo/g0YZF7HpNq4FFhQeJeOPnyRnAre3qhfD7AjomBvLsrQgJV+E/IH4cZwWL6ixrgcceNKALwVAmVrFBSbFXrSLvfBdURWgvqiARkGxXMIlYmlXeZSW40fka7maQnv/MCFlppiIy7VAlGzd/q0k8nzQEvlwQK0sKRrpkjp8BkMb2Da/4GPIsPKyozeimG7x1Beb2ZTMxg48TPeveOms+zSJawX3V1y/i5N4B7MMyShJ7V01X//Fl4xkSkueVn6RQZSFRe91iNRmZDxHEYa/tHKSgCD5hJRDGslUHkl2DrYDKmo8x6VQTxcQe4p7inQ9iEmeq9P5bRN19RulcJ1reqB2CNWqOWSEhzXtihVapif1ogEQBkjJr4/8ckaxiEMmzXG52KKYlLwo174Copy/EXsbvIRNFGL96ZOzutn/9TNtmVlwraDERygqU0SqgVtgjhqb4nkkH4rWH7N7wf5UviIjNRgD","page_age":"40 days ago"},{"type":"web_search_result","title":"Netherlands News","url":"https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands","encrypted_content":"Ep4ICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLRxjUudNFJUFzjPVBoMSRENrzIsiPEt5fEXIjDAxWsgbK1Si5CBScJ4K0intDu3YObos0hwWmZqMtDDF9eS1rSxOFADjEFSpkNTDDUqoQcI4WyC2HS1nIW3pRAMm483XIgPAxIvuroDJl84OZzsgm1RUtSBHVWIMy9cr4KVaeEWyRgELeiniNC12qkJNj68ter1OSyxZ5FoyO2DqnrEQZ3UqwB1RGE74jsHZ4dBLnyJUtgbg/JpY6BIGU/+13gGfk7Nop49tPHz00BIy/4x2/wlwnAYJPjsglwtR/1HRZZiez4IE0M+Wus8L6JqUpOKvVIUuGYVo71RCSZON9NKJzgpF1M3zvBl5vwlFAXMK2l1QnC1cmH0wUWMKf0quYRnx8ahgla/vOszg0R1hkuVkmyJSwL42Odn62WCcvNcL6D9V5xY7uNIG/iwjjCQClhEKjVO3w7vi/yAizL8G4dsTC6+Q13w8pg4vr7KaRriLvxKUQCiL0ePQNOmyqBVF0hZ30TEBpZ0U3d+akKGNoHgy+PKyJhpUlxT+6KqyKdOJgobOBGwmXsZf5wUv+DKUjfeRt5rGKa08fnBZ0DNsISM4qUsZLe6jWJj0S6rq2pZrCfb2Vgv2NGvaaDP1OW2gXs43CoPwakp7tb513BQptF9GOtxoUWbl0KCnCzdeHOixxPnWZoNbU0P9PD2DAiGP+RIwv6qIgDzhYgqqjPXApbuKagK3A+MIURA5Yzkx1wf84MMSwu+nDQtVkjpY3RbL8VM5Z4FTI3TedJ8cbgWMm14Qwi1Vg/039rWQT99wE25W2tx58tO+6pfd+ReG2cpKny+MepCuX5Tg12ZafOkq0IwfLpUTw7KGhbSp8Rct1t95Elxznfdqe8utQNP0a6bHx4LSojTJhQXNsYSEMTsZyL/sv7uA4nETTb0tNivoWp77/+44NoG6WWqbKHIreW6K8KhSQt+WtxAn91OkUeM3WLH1VftrCQ0vRlzCGzcKUW0xQthOSM5OJkHvOSDF1ZrBZQQlkWT5Omqm9rz+Oot3L/uiiPYsSkX1NZ1xAlROImKaRMk4ZqepkQh/lVfAP4Ub5A80C663H9ChYOMyH1xR/qtbV+RgQonduP8mSRWjwl4acp4dRm6imOv2p/WpIQSzdChFbiDk9VbL8UFAZVsCk8i+GIw3SoVwDTuueiFBZ4J20DJlgVjI/ls9FRrtrwu+qpLvHtZxrCSHUDZu39r5RTGKRVKlWJYYXTvt+Kv6XKrhi2NwZSpW7f6PrG8FbMLWs5jbjUACXvVQ8Kr4NYr+Ns5u1KsRsAO2X6EGRoK+7970oGDNFZT8fdmmV3FiS64hj4XJhgD","page_age":"160 days ago"},{"type":"web_search_result","title":"www.euronews.com","url":"https://www.euronews.com/index.php/tag/news?p=237","encrypted_content":"Es8ICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDG8GTHd1MOoXc/cF5xoMEsrbBiIUG1fvOPVpIjBDIBtfW/nlMcw39NryUz7Em6l2d/+c+r+bt0B4yO/BoEP9odSGoeOgC9wgmn2jLsYq0gf3wQbzjlcT7chaXvcQasL5+HpwflNP5g3S9VRiT4pO0Y0XMsOTXKUdrrhhF/iz8AlTjOJKtDV8v1RIQZQgn2JHjb/Gu/y/ZxRa5gWzRnH1OWL6hSHNzCPq45HczHhGmG9z61ysZMyEzSr5uXzNSqUkX8PiWDg1YIc9f58/jO11HdqzxViDwV6mLeRLOIjYN97imYjeYzMXE3WdZ4hNQDMP2HzVE0l3DOEx3gRHYQThvzUDictkDa7j4095NvCo/0RlqfjGKLPC4wH7B6d4+8NBDmCEqE0+G63attIWWWLQ/4nsSLNzo8Wc5wbSuqHj0zNLH5ID75D91TTU/yTz2QLrzBOsruiKWOzFplWGN8Emt9ou6HU9N1zGJOIKqTS8Kq5Gb/9IvX7R0TAA+RE4kjbVgof0pTW7fi235zcxXJyFP0w3lRgS9H5UNPg78jD2w2F2BDGV3mrbqhTsozg5Kc+v1agfUq6WFyWGW0NNb9FWFF8XTfzI7D1gixjiU1giPDINV1UrhMxK4Th4Hahov3wc+Q6m6p5v+XcF+Ylzxk+FQvvrQ/npfY1+PLtxnE7BgUgM/8SGmOZm1ZHTjc8nHbhMXzMy5aoIOuThpDu+Q6olw3gWI/t1a9OtXQI0fL0WO9qZPgYEL4Z21Bi3c8h+E1S7UQln8EA/+1IST2LmvlWNa9ao9JiXps/gUAQu0sqMUNGfpMvTcfiINlvzGeYWwO8JpilT1z1vr1DGpsdOpZBsW6Z8bVvE+SUZJVs0NvfGzxDgU75j5vHPkaiFWcnhXbp4fqPSmR0RujV9C1Mo7oVTclApfN7anqIEFmMVl8/zwbqokdvtXZxqgVlERkVs+2xOBCf16QbWZLiuRYJA19NPb/1IEs7YosrDSAkQJjkJ2N1zi9R0bl4tk0bMG3bMY7/7etRCUV2fs+unJS6Olh/p1NX/6okge3a75g3OeY/swmRQ1GNtgIBeP2qclYF5Fxtc2t1aWUYOgoP+cMoBtwJVfiAYLpjR6smKT+5OgizcgdScU7Y3WgDyG4PbVa/wgNr0Zde2HG6BgqjnDCylY6dbE7S/O0dSoKRWqegXC2YDE4Yo6T2+YLScuKOGxuMYEFu7vGT0x2UJOx4Ati9DrrdR1oY8XGujKPiQ2H9pQrdYHiKMSCR9mnX0NfzaQ0xz03es5psBar+DE0+tYpt3I2A/nT6aE3r6Pu56Pi3u+j9tNhvh4tojAm845qm5iItICI025Rau3OAmaw6JdjuYghJFm19vwyf+BhNfnFUtnLY82r2Ghrik3dIjSqnMHUzzAhZX134YAw==","page_age":null},{"type":"web_search_result","title":"Top nu.nl competitors & alternatives","url":"https://ahrefs.com/websites/nu.nl/competitors","encrypted_content":"EvcHCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDPSdJff/Aq6BJOABWBoML7wvwrZ047MswobRIjAaiVf4KMvk91MqGHPXmXH0V+L7UCCH4Bu1XXR2sqLUm3Prc9od5CuiLYw2lWeHe4cq+gaj969iMwkaXTMt/GtTeeVrWr+LuJGj0NTI3shv6ctafBu9lFhjvDx4dVS7v4Mg6fv2nnonT435tIAvAewvNlRM+JTtGnH9AtuuQSJWrOXtpA+drJemKB4KuSeMPH0Wej0ObZL2lf8WuqpYRzs7GmYqdP8GyPUofnNIA+wcQpSgLET5IH0UtK2FugJ2XSKNsslbn5feCZNq+R9L4OgtEUK96gkWsNcyk513BHysCBeo6P9cMrUhvsT4IZie5bi0bWoAWhJ1QUoE4obKv+/WYGL9CqACH+YkPfz7x0h3aqpVa37uO1fvy6yGJgZc03yvHr9gErnnSEfkXyC2Aa7s0gV12gdp1gFFIMM4ehAOzfqgR4WVQAvOFdXzP3fPR+6Fb/4/hLs2vJHiR/hED6hSvTH1qRFKJtl4Fl5PG2n8wIPvr6O8vW4kVQ72xkUzNFm9sWmtoLw5k3kbwPc6OPpvbDha/VveLR+3kfP2GE03W8fAG0SEeZm7UxhcC/uqzjPpr837e22tKJDnyw+s5BJOgkSvgjotydpzSFgGGB/ogVzbDRERy3cpcZuymftc435vBM7rFmvHoh1nDlKg9/Hjkp7NAE4PVNr0zVoJl7Xk+wk2Yue8o3N6Pv+6IE7oj5vlCgl75/NkFgp2r6Lkh4IJs1bOBDf+MPz/yHNQr4j7hLnB9tCnr2y76n+SFImVxbBrl4Q7kZBFOzTFE+rdUpkYayph1o3IKiZAfoEWys4S7cYde7w8mJ24wO+s4OTy+x3mKOl1AQqxbt3BVrCTwAkyjiTSnlkNCRxkiNA0aIGWPeRWM/E8mpfrFr0i4Q3OHFrMV78kV93wIQujszhV+n7AyeXNxyV+PErz57RFU4FvNKljdEdpDatnntNdiaWvKBA9D93i2AfUh2uJP1Evk1xNFh3AjdhBOkE7ZpCnF+7rxarctc4zpxhw16tJdGq1j39p3nw2X/1I9xAtZ6rcakUn7XUV1jH+RmZHcgOBoFy9Y/vI4WVzduTlTsKx37pEfznik7KajMUvEUAxWUem9i5WuYhoDC67uG3JqRrKvR9c0yxZJ9Z0CPt6PRDv6Fbn/hN3C7CsRQEtMln7qzNpxv3zHeHDoJS9cOkUG8Zy1zaimISZPbKc7siDiV/l6tRf25w16BuLzllu+36T/CnIrU/ciO1PP2feD+tUoVAwmRgD","page_age":null},{"type":"web_search_result","title":"Netherlands Netherlands","url":"https://www.npr.org/tags/167114823/netherlands/archive","encrypted_content":"Es8ICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDB/SyyX7+BQ8kFyzmRoMGM2qOXTCO6YQa9tDIjAnOKghD3xqu9pjetWzPe2NGa8jp+KAz8CZy0ZsxDFk15dD2fQP44RkkBhiHPmFvuIq0gc8kdXN8Nl5+++XYs5uXVMameeH6aW1v+2UT7S/Rd9q9e3abnq4LpEfLglhdDZijNn2iurjvlkMVe1PbPZdslSliW1clY4vjWz006rH2KLzyPuHC7MwT5uVq/CRiE6N97e7yOXLS7D58XGb3TNnTpMw7W9nWo3cGA3Ads9v+zfxP2Dw3QJtV+QY/Bn8iUqMUGYyJ9QPPQ0gyRgX0RkvvjpWuxcKnuLa9khjQq2p4JbPv6OJVL/QwA4BIgqYttsobLcr5yFH53Om1Oo1IlDLm4FA8skuCj0M6grmEUkDGo1TT0S/7w8JlGVkioKCYoSUPwbgYj4TKkO32gEPhzSn6drh1b2DyFpG1DaL54rWdwmHuETCTUaj9PTBlnbcqhbGQtPxspwbZidHPzKHjtKplET9tpv9Ck7zChPP9D6CpRFlF8cG7JCYx0qxvjgPfQwujrAw2FsZiNVaoVanIVn2B/+w/mUEFImuZJrtJ9vm7ynsLiNBLf0NXYzbcKWo0WMstMGIg3J/taVio4Eqhdh7w1NGSiDyP56T3b9P1GzF33rarrOh3jCeNvhm62GquksKxK5D5XpBUhCaf7B6BS6cJh0e5E3M5aJXvcuNDveJbQA2ZtihBVaI7RqWz/ePvp4kE6dh/rVvVkVwgjgA2GhBAlZ8X3aSHEnq2RuA9wGi/11W7WaFOu2lHDFn1dv15OS2exl2jN+sg7k7opTrywbZw91POUmHtyAqOVB2ssmyuZ2D4aW3iubmYx0SLjNkoQNBribA9vo39ISUdpM5otz9ePddBzPBjc0hASHRfdx+rU3u/hFcloPww9Ta7y1TI2mSTr75omFEJe7+wVAqUv5WcB+P3yrKaT8V6RT6z2cUeRUSg8l3WGc66eAgCGiC5NsgLNvGF/zcOru+z5XrDCDhC8AkdliKG/5Txcduwad0fyCu+oiwLAuAAG92u/u4q9cCK/9RJyEp7GofSRV2998ttJ4fpghxCYb94EfnK9MhvhXd9ghylFw9r9KHxlkouSttO5CGY2sHs9DOq6UjesxKSGwFygC0Hkh4+uecMTOWQb8bjOy6gTE0Pf1CNMhoBafdSzMwzKhmcVk4ef4BVRSAbyqWtVtaaxyj38N+SJ0ftptu5Pi6ZQP4n3ORmRdzJ/skP0hREm0vq03ZIEGGeKxYHW1l4MTeCLwvEKN8omc+FMOD2ehpbpX7hQJMHGjyy+F55jiQLKXMEtvU30+voc3H92iZDMVveykEmp2Mh/aXhsDdhmS1/jWdoY5BmcQWl8sC5JFvJit8y5Mt9xH7duAW2GpbDZMYAw==","page_age":null}],"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_01LDUYaqaaJaSZ4kbDj7bVw1"}}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_01LDUYaqaaJaSZ4kbDj7bVw1","content":{"type":"encrypted_code_execution_result","encrypted_stdout":"Eo4BCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDKYLmF7zZ5lbb8Fv8hoMSdMtwh//seUK4g2qIjC6lI/bkve7N+SvqTvhoaEf8MoyFIxcIMAHwQ3AxJw49vmwojgjMiJHb80nKZa8g2AqEmCAedGgg8lx8Jpa5krfDRFS+hgD","stderr":"Traceback (most recent call last):\n  File \"/usr/local/lib/python3.11/asyncio/runners.py\", line 190, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.11/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.11/asyncio/base_events.py\", line 654, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/tmp/srvtoolu_01LDUYaqaaJaSZ4kbDj7bVw1/cell.py\", line 10, in <module>\n    print(x['title'], x['url'], x.get('page_age'))\n          ~^^^^^^^^^\nTypeError: string indices must be integers, not 'str'\n","return_code":1,"content":[]}}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"server_tool_use","id":"srvtoolu_01LtwT1UMJqv7c33tLtzsVHv","name":"code_execution","input":{}}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"print(type("}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"r),"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" str(r)[:1"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"500])"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"\"}"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_01LtwT1UMJqv7c33tLtzsVHv","content":{"type":"code_execution_result","stdout":"<class 'str'> [{\"type\": \"web_search_result\", \"title\": \"Netherlands news - Today\\u2019s latest updates - CBS News\", \"url\": \"https://www.cbsnews.com/tag/netherlands/\", \"content\": \"Watch CBS News. Netherlands. 5 EU nations planning to follow U.S. with deportations to third countries. Five European countries are moving ahead with plans to send rejected asylum applicants to \\\"return hubs\\\" in countries outside the bloc under ...\\n\\n## Dutch police arrest alleged FBI hacker\\nDutch national police have arrested an alleged member of a cybercriminal organization who they say bragged about hacking the FBI. CBS News' Lana Zak reports.\\n\\n- Sep 29\\n\\n## Severely disabled toddler euthanized in the Netherlands under new rules\\nDutch doctors decided to euthanize a child just under the age of 2 under new rules allowing the procedure for children suffering unbearably.\\n\\n- Sep 29\\n\\nodyssee-1.jpg\\n\\n## Trump-shaped ecstasy pills are potentially lethal, Dutch institute says\\nEcstasy pills shaped to look like President Trump contain a high concentration of the chemical PMMA, which could potentially be lethal, a Dutch institute said.\\n\\n- Aug 29\\n\\nGermany Pride Parade\\n\\n\\n\\n## Amsterdam bans advertising for meat and fossil fuels in public places\\nThe city, known for its tolerance of some drugs and sex work, no longer allows ads for airlines, cruises, beef, chicken, pork or fish products.\\n\\n- May 5\\n\\nEconomy And Business In Poland\\n\\n## Tesla wins Dutch approval to use self-driving features, a first for Eu\n","stderr":"","return_code":0,"content":[],"abort_reason":null}}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"server_tool_use","id":"srvtoolu_016BxjXVBpfnLLabtDMguKDt","name":"code_execution","input":{}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"import json\\nr=json.lo"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"ads(r)\\nfor i"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":",x in enumerate("}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"r):\\n    print(i,"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"x['title'],x['url"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"'],x.get('page_"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"age'))\\n    print(x"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"['content'][:700"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"].replace(\\\"\\\\n\\\",\\\""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":" \\\"))\\n    print('--')"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\\nr2="}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"json.loads(await web_"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"search({\\\"query\\\":"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\\\"Dutch government c"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"abinet news this week N"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"L Times"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\\\"}))\\nfor i,x"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":" in enumerate(r2"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"):\\n    print("}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"i,x['title'],x"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"['url'],x.get('"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"page_age'))\\n    print"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"(x['content'][:700"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"].replace(\\\"\\\\n\\\",\\\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":" \\\"))"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\\n    print('--')"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"\"}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"server_tool_use","id":"srvtoolu_01NSx3Ku1gVu9GE9G8c3enTV","name":"web_search","input":{"query":"Dutch government cabinet news this week NL Times"},"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_016BxjXVBpfnLLabtDMguKDt"}}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01NSx3Ku1gVu9GE9G8c3enTV","content":[{"type":"web_search_result","title":"D66, VVD, and CDA finalize ministerial lineup in new Dutch cabinet","url":"https://nltimes.nl/2026/02/05/d66-vvd-cda-finalize-ministerial-lineup-new-dutch-cabinet","encrypted_content":"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","page_age":"262 days ago"},{"type":"web_search_result","title":"Council of Ministers (Netherlands)","url":"https://en.wikipedia.org/wiki/Council_of_Ministers_(Netherlands)","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"Record 7 in 10 Dutch dissatisfied with Jetten I Cabinet ahead of budget day","url":"https://nltimes.nl/2026/09/05/record-7-10-dutch-dissatisfied-jetten-cabinet-ahead-budget-day","encrypted_content":"EucLCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDMJhhgnTOYzH2XmDexoMa3ACOay3ihRqdXrNIjCQDOR/66FCuBhd81QH3PidwVq18HaJzGPF0lKgBYd1Oq9tJB23FchHN2YrKbGOnUUq6gqceARLVlDOwfTlmVU2ChC92gfQrpV9XWfFKUKf2qprtVVlMwk+an55DDWIgwKvC4wsi3e2muheMmuL95jDRxEqFUxwvBYSqZg8uWIwM8/QWT+535rggwW5v232fKawQJOLwP5yVvkqnYgGxJIJTnFmsIvo2hi9hYb538DO1E9Mhot5F29K1RPRRpM2B5G7UBOIY6y/xy+yTKNpiRArjydBSeMCEyOAFgM5SXXqa0vQsUGTuQ8oqVyKTlL2M2NPCfRSEhUdlpVrtQgjeCXAW7sJId9y70Pl6k+mGjR9Sy3nlfpT7DwopeWDEiMkS6/HKPhrHFtjznAHW+SHnbITV+havDWJhLY9HkO9z/rTNI786jiMALNgkCA/FB32ZH3Za0fIbzPjECQ/lEo5muN4aGV1mXmLrKON9Yk12vOMcH/c5Mp45h6a03qEe6MXBN3d2XO5MTCnpymjAW3IrvQlRe5I+xLcNZqfDKf4gY3bRV5Z45bZ+kmom1kozoO2wvMZjxLKUI7h4Rss3E/0xuKDBmjSN4wmalrQ0J+vOkov0epl/JNCM2vTwk9j99tz6f1qGRJEGyQ6RXfm7MP+o6lCjOSKQ/1sUFKQvmo6PrK0PKBKmKeWxkXotlGgLjgmEm0rfIg99xh0xYIRDQPp9iZG70l3TYQ8t/D3i5GtbDJHMAMt4AxUAmU4odxHH90fY0fS4dKrZup1Ta+M/9GYTYBCKpB6Gg9+1lsLyDFnfrTtdV2GkcpWBUvaz3pn21a2ACI3WHNuaIeFXihICkb3gxoyfdYmplBxVSiYFCDQJ17OxDWXynaH4KjjJUuFKchommt8lmAUXow80QZvYH/zuqTZGPWL/0T6tE90IupsFYz1wOR7s32kaGMzJazRP0grzU3mpTV5Sr0uqj58ljjSVMNuaurwIF6qpw4joHMUXeWmJ8fT/yWh92wR0FQhWP3gtMbYv9EY8WWsmLA/WaMU+5+njN/kKOwf0myoc1qmuJxwLfSVeotfnbXFPaE+jqWHLC+AVEIOMCPM34/zyJ29+yQiDIfHP/fztQf61I4ZfoK9SeB3jZBrz0I7uc95yIWOebgoM6GvRC6T43iKPuCmtUAKg7s+kX4wBPypLiobennWuB5umWYiLSrAzM2SmkeBoC85xPxjIHm0bzIakwnvAbtcILsTq5G55uwDj1We4YIQl57Nm70vISk+/6sEwky3UgbMVs6P4YtetP+ntRROpc4hxIWEKx/2q06FERO3D2VWM+Rfs7gQr40zo7rP+AfT2kYAm9bJ+v/QqDM0UbdZTtLO9Uix9DHX8r68Ec8AQJROhhYvVA7Wfeeeza8Uuoh3fExr5g7W6xfbSjqrlOA5VepfWvFfs4VqzDZj/4Z7TKAOAulTEkaYyvTLfI8bva4drBBS9DLBd0bjxmRLitAsHhI61jSjnaSDrRFrFn/vAP4Q9+Reh8JU8r9yHoKUscbiTMFJZmtvhS3O2j3UygmtpNSEgjC/SaxI070TCR7tmQNmKJMp7n5dM3K4KydmWhYU32Hwi+GreCxsuCGwgZoCyB61lqYeynwFw8UF+3gEvrvn8v9YmI2spU+ZzBbrA73Ll2V9AgJ5JOIX8G3F5j6ULGgMGQY3MUHdzirLpKFMP35ciwHswNEIYBNmeMhGPMr1CJZigggbzCgE0LpwbuxJMiXJcoNeXWRE04IXOkXdB00tGwfMLQV1TcY7dB84mW9ynaXrTIzlEA9b9UtGVLVYUrh4p/agWUrMO29plX1k6BU0lCrWEhswbZcYD/DiGnReKC7K47xtTaFS7p67Dy9LKDRgXUNwfmGB5ytJYQ7caN4auP3YhSnpQJiAGv7FRb8YAw==","page_age":"50 days ago"},{"type":"web_search_result","title":"Dutch lawmakers press Cabinet to rescue nearly bankrupt seal center in Lauwersoog","url":"https://nltimes.nl/2026/10/15/dutch-lawmakers-press-cabinet-rescue-nearly-bankrupt-seal-center-lauwersoog","encrypted_content":"EuEKCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDNoOLB7w34thR8DKMhoMRTXX1fhu7D1r3Zl9IjDjjEyuWhH0hm7m2YC752SUXK0L/hRlgaXOR1sQUj4Q5woTtquaNxfk1tPm1IHq6bYq5Akyl6Dgv3683rGTBnUq8KtoRmnAQe5VwVUFtFBESz+tgnWxihzj+JEPOXZznnDko70rwC4eazHEZiA4GtwH9ZfNLnEU1BLM2OPBGd5AWt+H1OobQAWOjDg+0ZHQQljn0bPAqgmQjykByPROTvNxGRRw2IWxfEWWbmoPRzyvkkyYBi/d8qzzFRQa1HWG5LkU12+b+abd8iuVWuDIacaBdVa+RFMbZ13Tq9L+bMZ9cClSY8ArNSoBHbiUn7p28uHD6Lb0zK5lxUEySTFoBPWGLet8n7BCKFyocE7Wg4RwgEsw4UOaUby/vCuhueEbULER3ZjKSlJ437Qpy03yYckcjBrcaZAveRl9ioxxma6F/iTc+9QzIzNVqoJC+PJULlmF6Y04QHIU61FoRRv5hr8hSyswrEKJIOrl1vmarWQZXFqoCgSQB37lI0jbJ9p15hCo/wyh3at8gFmSVkP88tS+3DwPOzW151NmQ+3i+CChuc+qXa7GQbBCivkjtWMBH4F6Pnw+FkZLTZhuaywu8bR9B+h5KMIZIjWYt+N79vezMHVzR/ngLLtNY9sM0Ga/TpdkDxzRbrFs8mRTnrXmBwYR9JObSMyoYCJfGdJ7JLX9D/z/V67Z56fjdhZYNzsNuoIa27vmRN9cb9dtZfdER2oPqHYBxbmpkEZ2eQ1e5afhI8tFUMniW8ABLqYQCvqvGM9cY1CqHnW/HoT8cT0nrUKtyvyTTqXsT/26qYMGe3ENEsh/K6tKk2tCjSCsF8526cvSWgPojTUSbHLBd40iYeeD5vjPDTzdPtAsyVuWD5oY1CNr+98JXuGvAhByRInCsIJkqZio7NFiPzum6L4R7C3SlUwy3dZy5vhZvcTtl5MIy0DWPP8IEWvbdN2AXznRN1CNK7t53yRUzUOksNbl8371pSKmIQb2FheRau38W4wtA9j9ZqiT1wtk20HLy0GIxS3PfPwNBvFEnSV53R06I2cSMi7CHRZA+eMyJoLh4M/Q5jEw/+GPmpZ79yldnGIgbnVb3NTjyUDdfy/ZbkCMnT5uxXU8sAbCrGwHc6IUNotUhjQgBc+nOFLssLW6lU/Sps2absUu2vq1X/elqM5NI2rIy178N390UfDK3FnR7RO47mo3VreZQQ+ZiiHHzi05dQtgFChH7RyBkuipdrQ6yzaUq3TM/RiEjVmVn8ew4fjSp51YD3eU5cTZd1zPH1DIaNFtwH9AZubjoHY+SiTU7W8Q3bPGKrfWdoKmeOofgeSQUb+tqSG+TLNxXZeDsNqZfT9fIxBIIWo+Eur8oCHGnFs72ocQNDYabEJ6jZFZi1LFoYce4YwtnFHigUzLu1CiBaV0zi2QZIAJmykssRzk1W7HdbtTUdey++noI6L1GzSIBgU2xuH680NmdGZxxYbAEi0BsFhOATCmlL3lYVmDLG6n5664VrRSqi9RlsIjMdOezWVbuEgVD1wayJIFPxyGifIE+qxLxzbUkKhvKfimPmQSF/LSLH4lNzycZrsytkO6kyWYRUjCGru8LNMhwFjzMP8AEyCOi52ZOwOg+PM9WTYFyM3JYF1Un8EbOQMIfDVoSHwcraDuxzGUS4DrBZXk8jxo91wMFHinMriaesKa2GJ3ihcbvDrX3jMBQYXBqEthIgA5+JvS/TozSgZk5sz2t52GwpB4YGT3GAM=","page_age":"10 days ago"},{"type":"web_search_result","title":"Dutch government can't afford to limit interest on student loans to 2.5% as promised","url":"https://nltimes.nl/2026/10/23/dutch-government-cant-afford-limit-interest-student-loans-25-promised","encrypted_content":"EtkICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDC7mP+Nk1ysL1CMWdRoMjHx5FXgysuBRxp3PIjAkGRLVlV0SlV2EGrsl5kgIRB9pFF2n++xy8cXUlvMzkOXVWnOrvM+ccNxPNyUu5tkq3AdcvqU8sDan0rvUJil5zylYJy68Kxmlz1fAHkLhShgZi/62XmbH4dr/eDrdHg6EUkzKB/2W+pmsMDHAug7fzKmaFMjOSDBZjCR/3QrjN+hTBo5APGZ6UfWusm4cqRR5v4YT9gN/sBfIx43ih71HkrlC7jceHPCcAl1BcyRTQWEo4AVONnTVbjyhXwV4XmzYRiF3OZss8NQhDuwG64qSkQRbRvjfNXO7iC46DLlKbitiFfTFfh0pGNc7uf/228crS0il4xx33Z1RLTSYNkvyhucDrxxISNz/e+uuLxYY2cbvcLLSIqY44FJNgpGkVbKKbSz9PVJmzePnGnzGVrYt8/L3AWIHGpfvEL4ZdnlBjydyCDMqSCmQdSayeUc55Kkz26PumEQzT10cIVSAvc4LWB2l/hWplvF1oIhSSV1ZHNRS+PBFF2ubzXc0ODI+3AO8y+54Oza4FD69XdHvabVWRYXRJV4yVsFXYA/H5+crfj3FkpKYcmTwyHf9wx1DUdZVxhZ15qAt/YQkC9rf0IL7VVU5tZU2r8BrTd6b7LCphLAGOWuRtEKtPJVFPEhgr2MD7s5ulM8X2vknP0UaGzUy7KaT3lAMHbB+RnAr4t4aYsKQKS6kOOviUcQC6OLzLiD3oogAIJ1/VIf88u07kcNlp8xkGjXpPlBsMTFULkp7FQqfeB0uLKPbBeZXs951mM7KvjM7PS+OuXS8Yc5wOvgpnooEWS/IAsQxnt0+xNPxF3DPoHgs50uMyAeN7VRzhfMSLC9AWLPRq+ZN8HC8WoTAjE63WVo673/Uy/HKtVghfdPOnjrilAnFjs1Mqf4bPSjYvGkPcHMYy1UIMmhxi0r3tYVFg8hD+lmVQSBktkZXTXmaKJEsI8gf+MyqXLsJSbfKZthIjIYUG9w6exuMDXV0Yx7sLX6QFzU8gHZ8s6UR70rMAuA+WUK9rRLT6wZnXjk9EJJCLuuARU0L3kPv1o31UzbtBnq2J6Ch/1EiDR7KksSjlmW2PsusLgfqZ7NFHyVdfs0g3ZvnGUhclnFxzpl2SQvuDXyiWHDf3mIkDI/UT2KsMJTRlPCvqKROQ4iwTtloGeOhFpDMvGfu1UL9lL/hgk5RZWbmY0N+zvxm4X08/OVds0xTlIw4GX3cQGUSNuwIbQCkBFqs31TQBUW6awOH+pfZA4KvqkDBhLZffJP8+HpJm0kXZgFDKWCKBN+hWTFQyjqJWRGQqqHlVSW7nAdazItFVGMnXScswDVz8JN/6P9q1VOSaB7B9LP6cOQEViOk1BDO89KLnV/CvMJN1b/Xcce5sqvU8hvuFvMHhh3sGAM=","page_age":"2 days ago"},{"type":"web_search_result","title":"87% of Dutch livestock farmers lose faith in future over nitrogen rules","url":"https://nltimes.nl/2026/10/15/87-dutch-livestock-farmers-lose-faith-future-nitrogen-rules","encrypted_content":"EssICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDK3v0iln/kWa0MtptxoM5yRkmsbbaVTAsywxIjDmWqFaOgrttEUxBnExagFa8todqSVnzVoZLjz0myZaBOBjcCUJ5gch2AgAmphqO+sqzgcDw7ROQp4RTLbARgZlJbW2EJXp+0pSqW+ZAEaC0g/JKcfAWDS+mpl2W3Bq5U29H6nn66sbxpD/OZG4zhpmLzG2d8iP/TIY5F678SH9BV1ah2jHU5+AnK2cE8skF4r5J2PeY0OrjpPTWmddxWTFvNIWGXModWjDw7/9O1k8H+U7sIBfeb7JIQBMEhsF330cv5ye0eRTgqbZIUm2P54f1W+1XMhlt3L9avq2Ui6LRdVxtAkfEXrcFQ7PLOuVWT2enw8FoizriyGhS+KkCohDGxb829v5sNHKls29HivCzY6OGpIR9pp3rRt2xYXZoPL9BrrS1sUeQuvKdOZ25YIQ82knEB7+vGN6qeHfHlGtCTt0cdAUWn9qyuiOcNwpc6nq8sSya0EujyOYmJwzX/CK7RnUXTd/4cshGKFoSudzUfoFSLj1J1ohx6qpjkeXZlZ7he7CqxEp3SjcT8hjFil2K8ttk3Uko0i0fF2afoohLGFeuJ2P5D3es2WbKwPT08B9WHKmxT5n3+31NiEa6MOl8uVcxKMpn+MqmAPOuELITZL9wPir4YP5D4LasDQET7xSbNfOiyTGNh5rvjFVQ0h4Fz0aqM4gjxN9wnS8U48xkbBhC3Vgug5Emlbvs+k0uUZus26ZmHLBudzG9eQvKRH+vd3TmmS85O3uBBsInOVN4MrTnGhRYMgdwCuwRjWoC3QcTnjAurceDu8LnxlhVW7jDtfpSRJnXFZRe0zq11fYyeH6AQVQyam4fui1wWnhSAqPFuPWSPgOYXR4bDYEyfDlSDIm3SU1DlE69OsyNnHtYVvv/tbHCgy6zQ9J9U/uevbypAt8hdz62MQfPBizG5ng/7pfCMeBxK6oTL2FrppwhvUn5PhT/10lOmOkgtPyRkUkAQKeVZ0O6cfrIFuJ1/ZnhZoSYf4ZH+D1hT9clcFMkflQ86IzL1wCD6P7AWQ0IhdSmjXtPj0Sc9sHaYgtuQjv8oRFs8Mn+loyKwPfJ0EluqEg+RJP3Ylqrf0rlNBNmneKMYPHs5kIdAoIo27k42W6rlZ/vfoPBcaKoMlYH4mdonzf1rlXdt2e/uqB57OVoQoCIdBe6QKvPaLQscHhWTqilfyfqk/KaM/4heJGezNxy272KNCbmxpkAOcmSVLSZ9VNBoNuJcLrZDO3pozojZwUwP9HdAeyXn5FXGoOSysPVRptFwJkodFOmRlZKkq/8XIaYT0CrnzOHc0bTmacptdgjwUIO4+Bip2XD7nAevnQhT3rX/CMFCmsdi+Au95PVRzLBm1A7o4DwpxKWx4tCrFnahgD","page_age":"10 days ago"},{"type":"web_search_result","title":"Layoffs to hit civil servants working at three Dutch ministries: Report","url":"https://nltimes.nl/2026/10/20/layoffs-hit-civil-servants-working-three-dutch-ministries-report","encrypted_content":"ErUICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDDcrvrVuSHu3ifFhpxoMjGtL3Tl44Phv1EsaIjAeJEGh92+6R5zNoBd59guirAgRmXsjdeLGEufI4lLuF845bKcXW0N2FpV/ExAwnIwquAfuXIUnF5EgwQT0Y9SUz8gl0kkWly1nU29PuHC/lw1DuJ+TRjaZjgi9I+EniW5bw88k/VtLMhXcKK3l2WnbgH/bKSEX6y5cdbPjaC9DwlyzTpAAKMTqobXxwdHG6EjXfd5bo7PiCKUYTiIOKxjJUXoPHahNjcUhQETNzMt1WURBUtiKIMJM5TH/VLVovc708dou1RFSctu2/82CUDrt/XviuEyM9QW0W2uoW4VhXteGL3jZLjp3dUJO/VPiEBKPbNLrBn40J7CSBrocgey2uknbZ4je2Uvq3mrcpRiMLrAPqCZcM4TzRdwsdOjFcoSi7Lf3KQCtJvfVWEp9gMCYMdZQG9Bu5anY/BbD8scOu0VH+56jt+8r6T9o4EPDs5+DU4RLFlAteXRTkVoTJrA49dV+iim9QfhWK2emms4Xoj40T1t9Rh5eBc2yGPdVXoETbjizMBLGCoS27n5eXa0plLt7LQrARpHw1HYLNut+ZyuOG5LP+QS5QNige1f14NW8yPAvQoq8aZRAbwLc1UkKrzJ4d92/lv6XLUt4An5h7gVSpgh97iMbYN5BYjfbrCcddTG5GndmdyzbbRsZ7Yjj0mioq+WgTFyLyRTZijuhrdp/glPJQUjrXBi4HQc1pSD6GyWiY0SbxFt/grzkP3bfsF2gIHHCSgdYCIQ9WWrM1tRSdT8PHsMqqY2og/QnI64N50TIe+UGXioTFFiJuEpzuUqfyEb7cLFvllJq0u9AbhT2s43DBW02NiHFxW0yIvikgxc1g2T3z57lLiN7H1trjjf4Jecno0fHXSGaoD18BdgEbcDH7OT9Xa4WlRdGXtafI+eXtYlcexB8iFj92XlRx+tQdxxhjIjIB4tXo2YvtsK85JhegL2S71WMCKpmDxPA/3bkAG3TUlLIHmR3NDr6uQesSGEfYHrEJrifqoUT4sEGNHNDHkrmQBd2OrAgalAiIHMGmu6UClA+MlC4fT1l1Wdoc6HvJQkr6h0PLtlbQdTQGuJ+IAhZTXTJNCi8Aa2gIwxFDBpWyxSDpQxImJghprefIhHON4aQw4lXOWFnF10SaMfu6mmvSepmFOgdHiyaC2/oP32OrGUjsiF6wu1ZfA65cCHefmNMvw0I6mBLKq107oz06GL9ncqoVU22+Fns3W+ZGdOQQFgUB1am6GB1vxosjSl/iSP4oeaFXx1t3q87tosRn7aAn+MCBT7L5Iwys7HjIAjc49WMR/RkSiei9Y8PbzhfAGycGX6MRTsML1VzcqNc5+qcNiQuGAM=","page_age":"5 days ago"},{"type":"web_search_result","title":"Dutch Cabinet's €3.4 Billion Civil Service Cuts Put Jobs at Risk at Three Ministries, NRC Reports","url":"https://www.jobsnhire.com/articles/60241/20261023/dutch-cabinets-eur34-billion-civil-service-cuts-put-jobs-risk-three-ministries-nrc-reports.htm","encrypted_content":"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","page_age":"2 days ago"},{"type":"web_search_result","title":"Dutch government again blocks sale of DigiD provider Solvinity to U.S. company","url":"https://nltimes.nl/2026/10/13/dutch-government-blocks-sale-digid-provider-solvinity-us-company","encrypted_content":"EosFCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCXqBPH4bXPKcpisvhoMMvu9MUJ+fxYwc2tAIjCtZN7lhJreIUg3RyEe1XxrIZIyp1XB/OiOwqiLLA2OXPpdrKJ8tw3HtAr7ixOgFgEqjgTe5PhiQ1ns4yF3a7BVKMe+bfx8ZwNOQghgWbRMkpyQ5QJCCTSlcmogBvwlnBABPvlxJMgIp88uKDYxZqFjxZWxBswIlk8bjzwx4aWyjqab59ej0z3XeLaAzY7Y8Qm/g/9MavxB3N8EkM8Xn9ijwmkf3bnD06N1YJe9fyPN3gVdzC3Q1Nv/No4yr1993DVf7WuzGAG/a/wWjU3ySokbZUV79fb2a+M/YzG1M1OSug7uouJc8A3pEQwObIncxTNhPFLUvz9nuNhvKkjXalQQgwzNlM+kdL5I55bEqxn7kIe1ZldBh+jhX5u33JOAG6ut8IRAR8AQQf4RbIHYFc4uqKMzXN45ejtVcBonD1uTy+wA8EDIt9M6uathZ4brXMDBf9fN40cmo3NiobvpIgYtwq6dMSOvEo87BgDxCVxQK53WCxSt6uA6lcLCcHSDAM9I9Inhdpz0L5MOBQOz90HOKc+DowaSv2k+OQAtIiwpMaUOxQui0hrmESCtmD/QywJJzmH6Glwoz6l510l+4lFGXbvA60OcMfAmHm5T6KJ40lDjuLn+7NA21QsHwBd6/I36BeJSWoEVe2rk11NkZrJ0dNiNl8RpJ/vY8lF4NQGR29xJgbc5JprLnZbOtFqEL4AVaOdd1PXYQvHKl+FqEwS5pjFujiVRfw55tubk/Og+DL5DsZNLnFh9iA2JvYt6cPLPGAM=","page_age":"12 days ago"}],"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_016BxjXVBpfnLLabtDMguKDt"}}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":9,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_016BxjXVBpfnLLabtDMguKDt","content":{"type":"encrypted_code_execution_result","encrypted_stdout":"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","stderr":"","return_code":0,"content":[]}}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":9      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":10,"content_block":{"type":"thinking","thinking":"","signature":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"thinking_delta","thinking":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"signature_delta","signature":"CAQSxgYKEAgTGAI4AUIIdGhpbmtpbmcSDC1fPTjr88dGOKICXRoMDoHhWH+Vk6b8a8ZBIjCQN9ab4OohraPDixtWIHXI+PSfiMmapAdhUB1Zs8GUiUBpHih8/XIcK5wOwPTTeYcq4wXV1cGjRBeI11vfYMHhwc9FW5HkpeHAtZ+en5UqfQuq9IjN/bIhoyM/PD4KK8DU7a++47cUNuS45dJdXFky6FZ0EniOZ9Vxi1slclfs4pqRN7nx+3UfIRJACuavHqV8SOClLEfbsoeWR5v68emwt9PthRSBoLnNGfTbasJuHc4mQqv3fSxfnLiT/9JTBDrq7LYF64s9N8fGM/agp5oyAAvfI4ogK98r0OjTSQdXaKJ+AHSo/7EkJa2TNyTbP8IkAg6eL66K+lweO9nh3D/uX05iXvwF7yU6n640SVvFtwYkoJECn3iOCMi3s9kk1QxcfzdkOmkATTbxfPBnuLdQSyX+qhNL5hAslTXN0kiI62qTxl3IONZ25RQieWCgKsFJihmD+CkMKVDVNH9bZYRGXcvdQjv+K8kCAC+RsZlPtUiNIHwj6bM88dgZk3Jnrn6FRIPaY+GNRocAoGb9gIgZoLyaXpNpmc/Rm8dJsw+lCxG1dLLYuZLhFbk492jSUfSYCrCCl/kPeOCt88wAapfTwZ8nvM/+joPLVRznn5yBRMP0ZKKVG/YEjL4etePoyn+M9mOitU+qTvZDU4ddTvWQ4HW577h+KCLKBCj7cNnI6pWjSz8wXkvsfydj7jN+RBk0sn+jcWmyV2YyHktHYaVOe6YQQqIAWh9tIkn5GelspuwCvNdeQ0/8hmPpUctnkrwsqkRghgeQM9ks06OW1p7qGPgmijs/91uNkZMmxivZF/QDvfYUbLaML20SyAt9DYm+0v96ncVgQew80W9yk0IChcYvOLGZ+4ZlNWforVczs2bn3amFer8ssNshqprBl1odGFBCZJTqW36tl65gu4h6phksE71moVISPUMUiqx8J5vG51dweco9ggGtGKL9aJ1xrcRlQ7vXEHwAHg4fdNNmDI9XQsDYsUKZSriTSRyL/Hf/RZQV5KDMs4vNS1VUiGpbQxN2j5sP7jtcsbMR/wbRgHkB47t+GAE="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":10   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":11,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"Here are"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the latest"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Dutch head"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"lines I"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" found."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" The most recent items are from around"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" 25 "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"October 2026,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" m"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ain"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ly from NL Times and D"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"utchNews.nl."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n\n**We"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ather and trav"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"el**\n-"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Storm Boelo's"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" high winds for"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ced dozens of fl"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ight cancellations at Sch"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"iphol on"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" 25 October."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n- The clocks go"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" back an hour this"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Sunday.\n\n**Polit"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ics and government ("}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"Jetten I"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Cabinet:"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" D66, VVD and C"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"DA)**\n- The c"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"abinet says"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" it can't afford to c"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ap student-"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"loan interest at the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" prom"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ised 2.5%. The"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" national"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" student union LSVB cri"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ticised"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" this"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":".\n- N"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"RC reports that"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" civil servants at three "}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ministries face the bi"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ggest risk of"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" job losses."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" The cabinet pl"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ans to cut €3.4"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" billion from central"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" government, and the details"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" are due by the end of the"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" month.\n- A record"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" 7 in 10 "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"Dutch people"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" are dissatisfied with"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the cabinet, according to"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" an early-September poll."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n- The government again blocked the"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" sale of"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Solvinity, the company"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" behind DigiD, to"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" a US"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" bu"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"yer. A court had"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" earlier ruled the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" cabinet was allowed"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" to ban the takeover."}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n- The cabinet is"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" postponing the large"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Zuidasdok project"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" in Amsterdam,"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" an"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Amsterdam alder"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"man has"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" warned of rising costs."}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" DutchNews."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"nl also reports that several"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" major infrastructure projects"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" have been shelved to free"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" up €18 billion for rep"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"airs.\n- Law"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"makers are pressing the"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" cabinet to rescue"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the n"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"early bankrupt se"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"al cent"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"re in Lauwerso"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"og.\n\n**Society"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"**"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n- A survey found 87"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"% of Dutch livest"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ock farmers have"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" lost faith in their"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" future because of nitrogen"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" rules."}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n- Police"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" arrested a 27-year"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"-old man over"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the explosion at a bar"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"bershop in Vla"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ardingen. The"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" area"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" has se"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"en shootings and explosions"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" lin"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ked to a"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" feud between barbershops."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n- A"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" major fire bro"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ke out at a car scrap"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"yard in Zoeterm"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"eer. The same site bur"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ned last"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" February.\n- Eleven"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" people f"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ell ill after tasting water"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" on"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" a t"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"our of"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the Grolsch brew"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ery in Enschede."}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"\n\n**Sport"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"**\n- In"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Eredivisie,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Twente be"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"at AZ with late goals"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":".\n\n**Other**\n-"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Eg"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"y"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ptian protests shut the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" Dutch embassy over"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" the"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" arrest of a Sis"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"i loyalist, according to"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" DutchNews.nl"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":".\n\nThese"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" come"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" from search"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" snippets, so some"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" details are"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" thin. For full"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" st"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ories, see"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" n"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"ltimes.nl, d"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"utchnews.nl or"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" n"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"os.nl. I can look"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" further"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" into any of these topics if you"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" want."} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":11}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01SXne1sycenMKE3AcngKRAi","expires_at":"2026-10-26T01:09:38.096496Z"}},"usage":{"input_tokens":32962,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1288,"output_tokens_details":{"thinking_tokens":77},"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0}}     }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-10-26T00:09:54.888923+00:00
 - request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
     headers:
       accept:
-      - '*/*'
+      - "*/*"
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '2522'
+      - "2441"
       content-type:
       - application/json
       host:
       - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: What are the latest news in the Netherlands?
-        role: user
-      - parts:
-        - text: |
-            Based on the latest news from the Netherlands, here are some key recent developments:
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What are the latest news in the Netherlands?
+          role: user
+        - parts:
+          - text: |-
+              Here are the latest Dutch headlines I found. The most recent items are from around 25 October 2026, mainly from NL Times and DutchNews.nl.
 
-            ## Weather and Public Safety
-        - text: The Netherlands is experiencing windy and wet weather, with a code yellow strong winds warning issued for
-            the coast
-        - text: '. '
-        - text: A sailing charter crashed into a freighter off the Harlingen coast, injuring five school children
-        - text: |
-            .
+              **Weather and travel**
+              - Storm Boelo's high winds forced dozens of flight cancellations at Schiphol on 25 October.
+              - The clocks go back an hour this Sunday.
 
-            ## Political and Economic News
-        - text: Budget Day in the Netherlands is approaching, with MPs expected to face windy weather conditions during the
-            event
-        - text: '. '
-        - text: There are concerns about political gridlock and costs driving Dutch firms to relocate abroad, according to
-            entrepreneurs
-        - text: |+
-            .
+              **Politics and government (Jetten I Cabinet: D66, VVD and CDA)**
+              - The cabinet says it can't afford to cap student-loan interest at the promised 2.5%. The national student union LSVB criticised this.
+              - NRC reports that civil servants at three ministries face the biggest risk of job losses. The cabinet plans to cut €3.4 billion from central government, and the details are due by the end of the month.
+              - A record 7 in 10 Dutch people are dissatisfied with the cabinet, according to an early-September poll.
+              - The government again blocked the sale of Solvinity, the company behind DigiD, to a US buyer. A court had earlier ruled the cabinet was allowed to ban the takeover.
+              - The cabinet is postponing the large Zuidasdok project in Amsterdam, and an Amsterdam alderman has warned of rising costs. DutchNews.nl also reports that several major infrastructure projects have been shelved to free up €18 billion for repairs.
+              - Lawmakers are pressing the cabinet to rescue the nearly bankrupt seal centre in Lauwersoog.
 
-        - text: Voters have little confidence in politics and don't expect improvement
-        - text: |
-            , reflecting ongoing political challenges in the country.
+              **Society**
+              - A survey found 87% of Dutch livestock farmers have lost faith in their future because of nitrogen rules.
+              - Police arrested a 27-year-old man over the explosion at a barbershop in Vlaardingen. The area has seen shootings and explosions linked to a feud between barbershops.
+              - A major fire broke out at a car scrapyard in Zoetermeer. The same site burned last February.
+              - Eleven people fell ill after tasting water on a tour of the Grolsch brewery in Enschede.
 
-            ## Energy and Infrastructure
-        - text: Dutch electricity production rose 7% in the first half of 2025
-        - text: |
-            , showing positive growth in the energy sector.
+              **Sport**
+              - In the Eredivisie, Twente beat AZ with late goals.
 
-            ## Transportation and Travel
-        - text: KLM has cancelled more than 100 flights due to a ground staff strike
-        - text: '. On a more positive note, '
-        - text: a skatepark has opened over the roof of an Amsterdam highway tunnel
-        - text: |
-            .
+              **Other**
+              - Egyptian protests shut the Dutch embassy over the arrest of a Sisi loyalist, according to DutchNews.nl.
 
-            ## Recent Policy Changes
-        - text: The Netherlands is introducing a helmet requirement for e-bike riders under 18
-        - text: '. '
-        - text: NS (Dutch Railways) has begun alerting passengers about emptier trains with push notifications
-        - text: |
-            .
-
-            ## International Relations
-        - text: The Netherlands has declared far-right Israeli ministers persona non grata
-        - text: ', and '
-        - text: the country has condemned an Israeli strike on Doha, urging respect for state sovereignty
-        - text: |
-            .
-
-            ## Business and Innovation
-        - text: Several Dutch companies are making headlines, including Amsterdam-based Naq raising €6M for healthcare compliance
-            and LeydenJar raising €23M for battery technology
-        - text: |-
-            .
-
-            These developments reflect the Netherlands' ongoing challenges with weather, political confidence, and international relations, while also showing growth in energy production and continued innovation in business and infrastructure.
-        role: model
-      - parts:
-        - text: What day is tomorrow?
-        role: user
-      generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+              These come from search snippets, so some details are thin. For full stories, see nltimes.nl, dutchnews.nl or nos.nl. I can look further into any of these topics if you want.
+          role: model
+        - parts:
+          - text: What day is tomorrow?
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
   response:
+    status: 200
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '811'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=862
+      - gfet4t7; dur=8308
       transfer-encoding:
       - chunked
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -0.2537533132041373
-        content:
-          parts:
-          - text: |
-              To give you an accurate answer, I need a little more information. What is today's date?
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |-
+                To answer accurately, it depends on whether you mean relative to the previous message or in the real world:
 
-              Once I know today's date, I can easily tell you what tomorrow will be.
-          role: model
-        finishReason: STOP
-      modelVersion: gemini-2.0-flash
-      responseId: ndnJaNP6FqLjqtsPh97wwQs
-      usageMetadata:
-        candidatesTokenCount: 41
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 41
-        promptTokenCount: 376
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 376
-        totalTokenCount: 417
-    status:
-      code: 200
-      message: OK
-version: 1
+                * **Based on the date mentioned in the previous response (October 25):** Tomorrow would be **October 26**. (Note: the previous response included an erroneous date reference to 2026).
+                * **In the real world:** As an AI without access to your local system clock or location, I don't know the exact current date or day of the week for you right now.
+
+                If you tell me today's date or day of the week, I can easily tell you what tomorrow is!
+              thoughtSignature: >-
+                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
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 538
+          candidatesTokenCount: 132
+          totalTokenCount: 1430
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 538
+          thoughtsTokenCount: 760
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: VJreaoWvJp7ExdIP5KLo4Q4
+  recorded_at: 2026-10-26T00:10:04.713364+00:00

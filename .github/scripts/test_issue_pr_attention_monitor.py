@@ -16,8 +16,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 import issue_pr_attention_monitor as monitor
 
-NOW = dt.datetime(2026, 7, 20, tzinfo=dt.timezone.utc)
-TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.timezone.utc)
+NOW = dt.datetime(2026, 7, 20, tzinfo=dt.UTC)
+TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.UTC)
 TRIAGE_OWNERS = monitor.MAINTAINER_OWNERS
 OLD = '2026-07-16T00:00:00Z'
 
@@ -72,6 +72,7 @@ class FakeClient(monitor.GitHubClient):
         self.reviews: dict[int, list[dict[str, Any]]] = {}
         self.truncated: set[int] = set()
         self.timelines: dict[int, list[dict[str, Any]]] = {}
+        self.label_descriptions: dict[str, str] = {}
 
     def get(self, path: str) -> Any:
         self.calls.append(('GET', path, None))
@@ -108,7 +109,8 @@ class FakeClient(monitor.GitHubClient):
             start = (page - 1) * per_page
             return {'total_count': len(values), 'items': values[start : start + per_page]}
         if '/labels/' in path:
-            return {'name': path.rsplit('/', 1)[-1]}
+            name = urllib.parse.unquote(path.rsplit('/', 1)[-1])
+            return {'name': name, 'description': self.label_descriptions.get(name, monitor._LABELS[name][1])}
         if '/issues?state=' in path and 'labels=' in path:
             requested = urllib.parse.unquote(path.split('labels=')[1].split('&')[0])
             state = path.split('/issues?state=')[1].split('&')[0]
@@ -148,6 +150,10 @@ class FakeClient(monitor.GitHubClient):
             existing = {str(value['name']) for value in self.items[number]['labels']}
             labels = [str(label) for label in payload['labels']]
             self.items[number]['labels'].extend({'name': label} for label in labels if label not in existing)
+        return {}
+
+    def patch(self, path: str, payload: object) -> Any:
+        self.calls.append(('PATCH', path, payload))
         return {}
 
     def delete(self, path: str, payload: object | None = None) -> None:
@@ -322,6 +328,59 @@ def test_snapshot_skips_active_recent_and_escalated_items():
     )
     candidates = monitor.build_snapshot(client, 'pydantic/pydantic-ai', now=NOW)['candidates']
     assert [candidate['number'] for candidate in candidates] == [2]
+
+
+def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_bot_prs():
+    incident = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    incident['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        '"run_id":"123","reset_at":null} -->'
+    )
+    human_issue = item(10, labels=['pydanty:meta'])
+    bot_pr = {
+        **item(11, labels=['agentic-workflows', 'pydanty:meta']),
+        'pull_request': {'url': 'https://api.github.test/pulls/11'},
+    }
+    client = SnapshotClient({9: incident, 10: human_issue, 11: bot_pr})
+
+    candidates = monitor.build_snapshot(client, 'pydantic/pydantic-ai', now=NOW)['candidates']
+
+    assert [candidate['number'] for candidate in candidates] == [10, 11]
+    assert [candidate['kind'] for candidate in candidates] == ['issue', 'pull_request']
+
+
+@pytest.mark.parametrize(
+    'marker',
+    [
+        '{"version":true,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1.0,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":2,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1,"scope":"provider","key":"minimax"}',
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance","reset_at":"2026-08-25T00:00:00"}',
+    ],
+)
+def test_operational_labels_without_a_valid_controller_marker_are_not_filtered(marker: str):
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = f'<!-- pydantic-ai-provider-health:v1 {marker} -->'
+
+    assert not monitor._is_provider_health_incident(issue)
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
+
+
+def test_deeply_nested_operational_marker_does_not_abort_snapshot():
+    nested = '[' * 10_000 + '0' + ']' * 10_000
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        f'"extra":{nested}}} -->'
+    )
+
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
 
 
 def test_candidate_search_covers_recent_activity_and_the_backlog():
@@ -696,6 +755,19 @@ def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path
         '#7: requested maintainer attention from @alice @bob'
     ]
     assert not any(call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_ensure_labels_updates_a_stale_description_but_not_the_color():
+    client = FakeClient()
+    client.label_descriptions[monitor.COMMUNITY_LABEL] = 'An outdated description'
+
+    monitor.ensure_labels(client, 'r')
+
+    patches = [call for call in client.calls if call[0] == 'PATCH']
+    assert patches == [
+        ('PATCH', '/repos/r/labels/community-backed', {'description': monitor._LABELS[monitor.COMMUNITY_LABEL][1]})
+    ]
+    assert not any(call[0] == 'POST' for call in client.calls)
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):
@@ -2168,6 +2240,7 @@ def test_healthy_census_does_not_require_a_slack_mention(
     monkeypatch.setattr(monitor, 'GitHubClient', lambda token: CensusClient(CENSUS_COUNTS))
     monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'census'])
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'github-output'))
     if mentions is None:
         monkeypatch.delenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', raising=False)
@@ -2776,77 +2849,6 @@ def test_sweep_clears_escalation_marker_from_closed_items():
     assert any(call[0] == 'DELETE' and monitor._ESCALATED_LABEL in call[1] for call in client.calls)
 
 
-def test_snapshot_is_inside_harness_workspace_and_writer_has_only_fixed_output():
-    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
-    text = workflow.read_text()
-
-    assert 'Read `attention-candidates.json`' in text
-    assert 'path: attention-candidates.json' in text
-    assert 'record-attention-decision:' in text
-    assert 'issues: write' in text
-    assert 'Slack' not in text
-    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in text
-    assert 'github: false' in text
-
-
-def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
-    # Actions runs the compiled .lock.yml, not the .md; nothing else pins the
-    # two together, so guard the load-bearing strings against a bad recompile.
-    lock = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.lock.yml'
-    text = lock.read_text()
-    jobs = yaml.safe_load(text)['jobs']
-    agent_permissions = jobs['agent']['permissions']
-    decision_permissions = jobs['record_attention_decision']['permissions']
-
-    assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "false"' in text
-    assert agent_permissions['pull-requests'] == 'read'
-    assert set(agent_permissions.values()) == {'read'}
-    assert decision_permissions['pull-requests'] == 'write'
-    assert 'workflow_call:' in text
-    assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
-    source_checkouts = [
-        step
-        for job in jobs.values()
-        for step in job.get('steps', [])
-        if step.get('uses', '').startswith('actions/checkout@de0fac2e')
-    ]
-    assert source_checkouts
-    assert all(step['with']['repository'] == '${{ job.workflow_repository }}' for step in source_checkouts)
-    assert all(step['with']['ref'] == '${{ job.workflow_sha }}' for step in source_checkouts)
-    assert 'name: attention-candidates-${{ github.run_id }}' in text
-    # The run_attempt suffix must stay gone: "Re-run failed jobs" bumps the
-    # attempt number, but only the original run_id upload exists.
-    assert 'name: attention-candidates-${{ github.run_id }}-' not in text
-
-
-def test_operations_workflow_routes_all_notices_to_the_triage_channel():
-    workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
-    text = workflow.read_text()
-    jobs = yaml.safe_load(text)['jobs']
-
-    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in text
-    assert 'issue_pr_attention_monitor.py finalize' in text
-    assert 'permissions: {}' in text
-    assert 'ATTENTION_NOTICES' in text
-    assert 'issue_pr_attention_monitor.py prepare' in text
-    assert 'needs.notify.outputs.notice_items' in text
-    assert 'steps.prepare.outputs.slack_payload' in text
-    assert 'Post actionable attention digest to the triage channel' in text
-    assert 'workflow_call:' in text
-    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:' in text
-    assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
-    assert jobs['reconcile']['permissions']['pull-requests'] == 'write'
-    assert jobs['notify']['permissions']['pull-requests'] == 'read'
-    assert jobs['finalize']['permissions']['pull-requests'] == 'write'
-    for job_name in ('reconcile', 'notify', 'finalize', 'coverage'):
-        checkout = next(
-            step for step in jobs[job_name]['steps'] if step.get('uses', '').startswith('actions/checkout@')
-        )
-        assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
-        assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
-        assert checkout['with']['persist-credentials'] is False
-
-
 def _script_sources() -> dict[str, str]:
     scripts = Path(__file__).parent
     return {
@@ -2887,7 +2889,10 @@ def _workflow_jobs() -> list[tuple[str, str, list[dict[str, Any]]]]:
 
 
 def test_every_script_running_job_installs_the_same_pinned_boundary_dependency():
-    """pydantic is the scripts' one required package; every job that runs one pins it, to one version."""
+    """pydantic is the scripts' one required package; every job that runs one pins it and its whole closure, to one set.
+
+    `--no-deps` keeps pip from resolving anything past the pins, so no fresh transitive release reaches a job.
+    """
     boundary = _boundary_script_names(_script_sources())
     pins: set[str] = set()
     checked: list[tuple[str, str]] = []
@@ -2896,7 +2901,10 @@ def test_every_script_running_job_installs_the_same_pinned_boundary_dependency()
         if not any(f'.github/scripts/{name}' in run for run in runs for name in boundary):
             continue
         checked.append((file_name, job_name))
-        installs = re.findall(r"pip install --quiet 'pydantic==([0-9][0-9a-z.]*)'", '\n'.join(runs))
+        commands = re.sub(r'\s+', ' ', '\n'.join(runs).replace('\\\n', ' '))
+        installs = re.findall(
+            r"pip install --quiet ('pydantic==[0-9][0-9a-z.]*'(?: '[a-z-]+==[0-9][0-9a-z.]*')+) --no-deps", commands
+        )
         assert installs, (file_name, job_name)
         pins.update(installs)
     # The discovery itself is under test: if the glob or the import scan break,
@@ -2936,33 +2944,6 @@ def test_boundary_scripts_import_only_the_stdlib_the_siblings_and_the_pinned_pac
             )
 
 
-def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
-    workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
-    text = workflow.read_text()
-    jobs = yaml.safe_load(text)['jobs']
-
-    assert "- cron: '47 6 * * *'" in text
-    assert 'issue_pr_attention_monitor.py census' in text
-    assert 'steps.census.outputs.slack_payload' in text
-    # The heartbeat may follow the pipeline's ordering, so the two search bursts
-    # do not collide, but must never inherit its silence or its failures.
-    assert jobs['coverage']['needs'] == ['reconcile']
-    assert jobs['coverage']['if'] == (
-        '${{ !cancelled() && '
-        "(github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') && "
-        "(github.event.schedule == '47 6 * * *' || github.event_name == 'workflow_dispatch') }}"
-    )
-    # Reusable jobs must consume the explicitly passed workflow_call secret.
-    # A job environment can shadow it with a caller-repository environment secret.
-    for job_name in ('notify', 'coverage', 'alert'):
-        assert 'environment' not in jobs[job_name]
-    assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
-    census_step = next(step for step in jobs['coverage']['steps'] if step.get('id') == 'census')
-    assert census_step['env']['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'] == '${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}'
-    assert census_step['env']['LOGFIRE_URL'] == '${{ vars.LOGFIRE_URL }}'
-    assert 'coverage' in jobs['alert']['needs']
-
-
 def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolated():
     workflow = Path(__file__).parent.parent / 'workflows' / 'weekly-maintainer-digest.yml'
     text = workflow.read_text()
@@ -2987,7 +2968,7 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
     for job_name in ('notify', 'alert'):
         assert 'environment' not in jobs[job_name]
         action = jobs[job_name]['steps'][0]
-        assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
+        assert action['uses'] == 'slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d'
         assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
 
 

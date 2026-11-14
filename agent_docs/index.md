@@ -5,11 +5,11 @@
 ## Code Style
 
 <!-- rule:409 -->
-- Keep PRs focused on their stated purpose — exclude unrelated changes even if conceptually related — Simplifies review, prevents unintended side effects, and makes rollbacks cleaner when each PR has a single clear objective
+- Keep implementation changes focused on the PR's stated purpose. Allow small, accurate documentation and comment improvements that clarify behavior or rationale, including unchanged behavior in another module. Judge these additions by reader value, correctness, and review burden. Request a separate PR when an addition introduces an independent behavior change, design decision, or substantial review work. A package boundary or label alone does not justify splitting a documentation clarification.
 <!-- rule:910 -->
 - Wrap code identifiers in backticks in user-facing messages (errors, warnings, logs) — Improves readability and clearly distinguishes code elements from prose, making error messages easier to parse and debug
 <!-- rule:193 -->
-- Centralize validation at one layer — removes redundancy and establishes single source of truth — Prevents validation drift when requirements change and reduces maintenance burden by avoiding duplicate validation logic across the call chain
+- Centralize validation at one layer to prevent validation drift when requirements change.
 <!-- rule:2 -->
 - Extract duplicated logic into shared helpers after 2+ occurrences — refactor existing code rather than creating parallel implementations — Prevents bugs from inconsistent implementations, reduces maintenance burden, and creates single sources of truth for validation, transformation, and schema handling
 <!-- rule:341 -->
@@ -17,13 +17,13 @@
 <!-- rule:559 -->
 - Consolidate duplicate logic across conditional branches using combined conditions, extracted variables, or hoisted shared code — Reduces duplication, makes changes easier to maintain in one place, and clarifies that behavior is intentionally shared across branches
 <!-- rule:14 -->
-- Inline single-use helpers that only wrap property access or delegation — reduces nesting and cognitive load without sacrificing clarity — Eliminates unnecessary indirection that forces readers to jump between methods to understand simple operations, making code more direct and maintainable
+- Don't create single-use helpers: inline the code at its only call site. Three kinds of helper may have a single call site: an arm of a dispatch over part, event or message types, a pass of a multi-pass pipeline, and a helper you extract to bring a function under the cognitive complexity limit. Give each arm of more than one statement, and each pass, its own method or module function, like the `_map_thinking_part` and `_map_compaction_part` arms of `AnthropicModel._map_model_response` in `models/anthropic/__init__.py`. Place a complexity helper as [Extract a method](complexity.md#extract-a-method) says. Never write any of the three as a nested `def` — A single-use helper makes readers jump between definitions without buying reuse — A flat arm per type means a new type adds one arm rather than a nested branch, and complexipy counts a nested `def` toward the enclosing function, so it removes no complexity
 <!-- rule:21 -->
 - Extract model profile logic into dedicated `{provider}_model_profile()` functions in `profiles/{provider}.py` rather than inline in provider classes — Separates profile definitions from provider implementation, making profiles testable in isolation and easier to maintain across providers
 <!-- rule:263 -->
 - Extract repeated logic into helper methods or top-level functions when patterns recur (e.g., streaming vs non-streaming handlers, serialization, part types, message mappings, model adapters) — Prevents duplication bugs and makes changes easier to apply consistently across all code paths (like both streaming and non-streaming handlers)
 <!-- rule:176 -->
-- Scope helpers and constants to their single usage site — define inline or within the class/function that uses them, not at module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use
+- Scope constants, and helpers called more than once from one class or function, to that class or function rather than module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use. Exception: place a dispatch arm, a pipeline pass or a complexity helper as the single-use helper rule above says
 <!-- rule:345 -->
 - Extract duplicated logic (validation, types, activity definitions, transformations) to parent classes or shared utilities — prevents drift and reduces maintenance burden across implementations — Keeping shared code in one place (like `_call_tool_in_activity` in `TemporalWrapperToolset`) prevents inconsistencies when logic evolves across multiple implementations (`TemporalFunctionToolset`, `TemporalMCPServer`, etc.)
 <!-- rule:284 -->
@@ -54,6 +54,7 @@
 - Don't add `| None` to `TypedDict` fields marked `total=False` or `NotRequired` — optionality is already expressed — Prevents redundant type declarations and makes it clear that omission (not None) is the intended optional behavior
 <!-- rule:196 -->
 - Remove `| None` from type annotations when values are guaranteed to be initialized or always provided — Prevents false optionality in types, making the API clearer and avoiding unnecessary None-checks that can never trigger
+- When a merge, dedup, or conflict check misses a difference because a type's `__eq__` ignores part of its state, fix that `__eq__`, not the checking code — Generic comparison code stays a plain `==`, and every other caller comparing the type gets the corrected answer
 
 ## Error Handling
 
@@ -66,7 +67,7 @@
 <!-- rule:353 -->
 - Fail fast on explicit user config conflicts without API-defined precedence — Clear errors prevent arbitrary overrides
 - Fall back gracefully on internal or automatic setting conflicts — Internal fallbacks enable cross-provider compatibility when constraints are inferred or propagated
-- Warn when API-defined precedence overrides an explicit user value — Documentation does not replace runtime feedback; warnings identify affected call sites, persist in logs and test suites, and make suppression explicit in source
+- Warn when API-defined precedence overrides an explicit user value. This excludes one capability's value overriding another's: the user chose the order (see [capabilities/AGENTS.md](../pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)) — Documentation does not replace runtime feedback; warnings identify affected call sites, persist in logs and test suites, and make suppression explicit in source
 - Make override warnings actionable by naming the overridden value and what took precedence — Users must be able to change the input that triggered the warning
 - Emit an override warning only when code proves the user supplied the overridden value — False positives make warnings untrustworthy and train users to suppress real problems
 <!-- rule:337 -->
@@ -132,5 +133,8 @@ Check these when working in specific areas:
 - **[Documentation](documentation.md)**: When writing or reviewing documentation, comments, docstrings, examples, or other user-facing text
 - **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
 - **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
+- **[Message History & Prompt Caching](message-history-and-caching.md)**: When enqueuing, editing, or rendering messages, contributing instructions or tools, wrapping content in tags, or converting history to or from a UI protocol
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Provider Adapters](provider-adapters.md)**: When mapping messages to or from a provider's wire format in a model adapter, adding a capability check, or adding a profile flag an adapter reads
+- **[Cognitive Complexity](complexity.md)**: When pre-commit or CI reports a function's cognitive complexity, or before you add a branch to a function that is already over the limit
 <!-- /braindump -->

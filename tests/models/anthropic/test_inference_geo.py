@@ -1,0 +1,283 @@
+"""Tests for Anthropic data residency (`anthropic_inference_geo`).
+
+The Claude API cases are recorded. The Bedrock, Vertex AI and Foundry clients can't be recorded here, so their tests,
+and the profile tests that reuse them, are mocked at the HTTP transport: each pins the request body as the SDK sent it
+and feeds back the `usage` shape the Claude API answers with, `inference_geo` on a non-streamed message and on
+`message_start` only for a stream. A mocked response is what lets those tests echo a geo the request didn't ask for.
+"""
+
+from __future__ import annotations as _annotations
+
+import json
+from collections.abc import Callable
+from typing import Any
+
+import httpx2
+import pytest
+
+from pydantic_ai import Agent, ModelHTTPError, ModelMessage, ModelResponse
+from pydantic_ai.profiles import ModelProfile
+
+from ...conftest import RequestCapture, try_import
+from ..conftest import AnthropicModelFactory
+
+with try_import() as imports_successful:
+    from anthropic import (
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
+]
+
+# An explicit `max_tokens` keeps non-streaming requests from being streamed behind the scenes.
+_MAX_TOKENS = 64
+
+_USAGE = {'input_tokens': 5, 'output_tokens': 1, 'inference_geo': 'us'}
+
+_MESSAGE_JSON = {
+    'id': 'msg_0123',
+    'type': 'message',
+    'role': 'assistant',
+    'model': 'claude-sonnet-5-5',
+    'content': [{'type': 'text', 'text': 'OK'}],
+    'stop_reason': 'end_turn',
+    'usage': _USAGE,
+}
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f'event: {event}\ndata: {json.dumps(data)}\n\n'
+
+
+_STREAM = ''.join(
+    [
+        _sse(
+            'message_start',
+            {'type': 'message_start', 'message': {**_MESSAGE_JSON, 'content': [], 'stop_reason': None}},
+        ),
+        _sse(
+            'content_block_start',
+            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        ),
+        _sse(
+            'content_block_delta',
+            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'OK'}},
+        ),
+        _sse('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
+        _sse(
+            'message_delta',
+            {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
+        ),
+        _sse('message_stop', {'type': 'message_stop'}),
+    ]
+).encode()
+
+
+def _handler(bodies: list[dict[str, Any]]):
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body.get('stream'):
+            return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=_STREAM)
+        return httpx2.Response(200, json=_MESSAGE_JSON)
+
+    return handle
+
+
+_CLIENTS: dict[str, Callable[[httpx2.AsyncClient], AsyncAnthropicClient]] = {
+    'api': lambda http_client: AsyncAnthropic(api_key='x', http_client=http_client),
+    'bedrock': lambda http_client: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
+    'mantle': lambda http_client: AsyncAnthropicBedrockMantle(
+        api_key='x', aws_region='us-east-1', http_client=http_client
+    ),
+    'vertex': lambda http_client: AsyncAnthropicVertex(
+        project_id='p', region='us-east5', access_token='x', http_client=http_client
+    ),
+    'foundry': lambda http_client: AsyncAnthropicFoundry(
+        api_key='x', base_url='https://example.com/anthropic', http_client=http_client
+    ),
+}
+"""The SDK client for each client name the tests parametrize over, sending through the given HTTP client."""
+
+
+def _ignored_warning(client: AsyncAnthropicClient) -> str:
+    """The warning raised when `client` ignores the setting, which names its class."""
+    return f'`anthropic_inference_geo` is not supported on `{type(client).__name__}`, where the endpoint decides'
+
+
+def _last_response(messages: list[ModelMessage]) -> ModelResponse:
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    return response
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.parametrize(
+    ('geo', 'provider_details'),
+    [
+        pytest.param('us', {'finish_reason': 'end_turn', 'inference_geo': 'us'}, id='set'),
+        pytest.param(None, {'finish_reason': 'end_turn'}, id='unset'),
+    ],
+)
+async def test_inference_geo_sent_and_reported(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    stream: bool,
+    geo: str | None,
+    provider_details: dict[str, Any],
+):
+    """The setting is sent as `inference_geo`, and where the request ran is reported only when the request set it.
+
+    Every response from the Claude API reports a geo, so reporting it unasked would change `provider_details` for
+    requests that don't use data residency.
+    """
+    settings = AnthropicModelSettings(max_tokens=_MAX_TOKENS)
+    if geo is not None:
+        settings['anthropic_inference_geo'] = geo
+    agent = Agent(anthropic_model('claude-sonnet-5-5', capture=True), model_settings=settings)
+    if stream:
+        async with agent.run_stream('Reply with exactly: OK') as streamed:
+            await streamed.get_output()
+        messages = streamed.all_messages()
+    else:
+        messages = (await agent.run('Reply with exactly: OK')).all_messages()
+
+    body = request_capture.body('/v1/messages')
+    assert body.get('stream', False) is stream
+    assert body.get('inference_geo') == geo
+    assert _last_response(messages).provider_details == provider_details
+
+
+@pytest.mark.vcr
+async def test_inference_geo_sent_to_models_without_data_residency(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """The setting isn't gated by model: a model without data residency still gets it, and the API's 400 is raised.
+
+    Dropping the field instead would quietly run a request the user asked to keep in one geography anywhere.
+    """
+    agent = Agent(
+        anthropic_model('claude-haiku-4-5', capture=True),
+        model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us'),
+    )
+    with pytest.raises(ModelHTTPError, match="'claude-haiku-4-5-20251001' does not support inference_geo") as exc_info:
+        await agent.run('Reply with exactly: OK')
+
+    assert exc_info.value.status_code == 400
+    assert request_capture.body('/v1/messages')['inference_geo'] == 'us'
+
+
+@pytest.mark.parametrize(
+    ('client_name', 'expected'),
+    [
+        pytest.param('api', 'us', id='api'),
+        pytest.param('bedrock', None, id='bedrock'),
+        pytest.param('mantle', None, id='mantle'),
+        pytest.param('vertex', None, id='vertex'),
+        pytest.param('foundry', None, id='foundry'),
+    ],
+)
+async def test_inference_geo_request_field_by_client(
+    allow_model_requests: None, client_name: str, expected: str | None
+):
+    """Bedrock, Vertex AI and Foundry decide the region by endpoint, so the setting is ignored there with a warning."""
+    bodies: list[dict[str, Any]] = []
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
+        client = _CLIENTS[client_name](http_client)
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
+        )
+        if expected is None:
+            with pytest.warns(UserWarning, match=_ignored_warning(client)):
+                messages = (await agent.run('Reply with exactly: OK')).all_messages()
+        else:
+            messages = (await agent.run('Reply with exactly: OK')).all_messages()
+
+    [body] = bodies
+    assert body.get('inference_geo') == expected
+    # The mocked response always reports a geo; it's only surfaced when the request carried one.
+    assert ('inference_geo' in (_last_response(messages).provider_details or {})) is (expected is not None)
+
+
+@pytest.mark.parametrize('client_name', ['mantle', 'vertex', 'foundry'])
+async def test_inference_geo_not_reported_when_ignored_streamed(allow_model_requests: None, client_name: str):
+    """A streamed response on a client that ignored the setting doesn't report the geo its `message_start` echoes.
+
+    The legacy Bedrock client streams AWS event-stream frames rather than SSE, so the mocked stream skips it; its
+    non-streamed case is in `test_inference_geo_request_field_by_client`.
+    """
+    bodies: list[dict[str, Any]] = []
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
+        client = _CLIENTS[client_name](http_client)
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
+        )
+        with pytest.warns(UserWarning, match=_ignored_warning(client)):
+            async with agent.run_stream('Reply with exactly: OK') as streamed:
+                await streamed.get_output()
+
+    [body] = bodies
+    assert body['stream'] is True
+    assert 'inference_geo' not in body
+    assert _last_response(streamed.all_messages()).provider_details == {'finish_reason': 'end_turn'}
+
+
+@pytest.mark.parametrize(
+    ('client_name', 'supports_inference_geo'),
+    [pytest.param('api', False, id='api-off'), pytest.param('foundry', True, id='foundry-on')],
+)
+async def test_inference_geo_provider_profile_wins(
+    allow_model_requests: None, client_name: str, supports_inference_geo: bool
+):
+    """A provider whose profile sets the flag wins over the client-class default."""
+
+    class InferenceGeoProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return AnthropicModelProfile(anthropic_supports_inference_geo=supports_inference_geo)
+
+    bodies: list[dict[str, Any]] = []
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
+        client = _CLIENTS[client_name](http_client)
+        model = AnthropicModel('claude-sonnet-5-5', provider=InferenceGeoProvider(anthropic_client=client))
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
+        )
+        if supports_inference_geo:
+            await agent.run('Reply with exactly: OK')
+        else:
+            with pytest.warns(UserWarning, match=_ignored_warning(client)):
+                await agent.run('Reply with exactly: OK')
+
+    [body] = bodies
+    assert body.get('inference_geo') == ('us' if supports_inference_geo else None)
+
+
+async def test_inference_geo_profile_override(allow_model_requests: None):
+    """A user's `profile=` wins over the client-class default."""
+    bodies: list[dict[str, Any]] = []
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_handler(bodies))) as http_client:
+        model = AnthropicModel(
+            'claude-sonnet-5-5',
+            provider=AnthropicProvider(anthropic_client=_CLIENTS['foundry'](http_client)),
+            profile=AnthropicModelProfile(anthropic_supports_inference_geo=True),
+        )
+        await Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_inference_geo='us')
+        ).run('Reply with exactly: OK')
+
+    [body] = bodies
+    assert body['inference_geo'] == 'us'

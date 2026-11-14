@@ -12,5 +12,7 @@
             - StructuredDict
             - Choice
             - Choices
+            - BoolCriteria
             - DeferredToolRequests
+            - PendingModelResponse
             - OutputObjectDefinition
