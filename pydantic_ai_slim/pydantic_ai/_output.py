@@ -1583,14 +1583,22 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ):
         self._function_schema = _function_schema.function_schema(output_function, GenerateToolJsonSchema)
 
+        # A model-like arg takes the model's own JSON schema, so a model with one `str` field would pass the
+        # property check below, but the function would be handed the raw text instead of the model.
         if (
-            not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
+            self._function_schema.single_arg_name is not None
+            or not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
             or len(arguments_schema) != 1
             or not (argument_name := next(iter(arguments_schema.keys()), None))
             or arguments_schema.get(argument_name, {}).get('type') != 'string'
         ):
             raise UserError('TextOutput must take a function taking a single `str` argument')
 
+        # The property is named after the parameter's alias, if it has one, but the function takes its Python name.
+        # When `single_arg_name` is set, the property names a field of the model instead, so keep it.
+        function_schema = self._function_schema
+        if function_schema.single_arg_name is None and function_schema.single_field_name is not None:
+            argument_name = function_schema.single_field_name
         self._str_argument_name = argument_name
 
     async def call(

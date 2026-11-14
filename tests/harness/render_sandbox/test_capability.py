@@ -22,7 +22,7 @@ with try_import() as imports_successful:
     from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
     from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
-    from pydantic_ai_harness.filesystem import FileSystem
+    from pydantic_ai_harness.file_system import FileSystem
     from pydantic_ai_harness.render_sandbox import RenderSandbox, RenderSandboxBackend
 
     from .._tool_calls import call_tools

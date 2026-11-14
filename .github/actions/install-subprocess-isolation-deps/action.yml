@@ -1,0 +1,35 @@
+name: Install subprocess isolation dependencies
+description: Install the pinned Ubuntu 24.04 bubblewrap and socat packages committed beside this file.
+runs:
+  using: composite
+  steps:
+    # claude-code-action isolates subprocesses with bwrap when `allowed_non_write_users` is set, and
+    # its own best-effort step runs `apt-get install bubblewrap socat`, retrying 3 times on failure.
+    # Installing both here keeps an Ubuntu mirror outage from leaving bwrap missing or spending the
+    # job's timeout on those retries.
+    #
+    # These are noble builds: run every job that uses this action on `ubuntu-24.04`.
+    # Source packages:
+    #   bubblewrap: http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3.dsc
+    #   socat: http://archive.ubuntu.com/ubuntu/pool/main/s/socat/socat_1.8.0.0-4ubuntu0.1.dsc
+    #
+    # The pins do not receive Ubuntu security updates. To refresh them, run in an empty directory:
+    #   base=http://archive.ubuntu.com/ubuntu/dists/noble-updates
+    #   curl -fsSLO $base/InRelease
+    #   gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg InRelease
+    #   curl -fsSLO $base/main/binary-amd64/Packages.gz
+    #   grep "$(sha256sum Packages.gz | cut -d' ' -f1)" InRelease
+    #   zcat Packages.gz | awk -v RS= '/^Package: (bubblewrap|socat)\n/' | grep -E '^(Filename|SHA256):'
+    # Download each Filename from http://archive.ubuntu.com/ubuntu/, then replace the files, the
+    # hashes and the source URLs here.
+    - name: Install bubblewrap and socat
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        sha256sum --check --strict <<'EOF'
+        2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094  bubblewrap_0.9.0-1ubuntu0.3_amd64.deb
+        46e854289b6b1c97e28be5d9293bea61e8633d00d6a65d9513f019c7232696fe  socat_1.8.0.0-4ubuntu0.1_amd64.deb
+        EOF
+        # Keep a newer version that the runner image already ships.
+        sudo dpkg -i --refuse-downgrade bubblewrap_0.9.0-1ubuntu0.3_amd64.deb socat_1.8.0.0-4ubuntu0.1_amd64.deb

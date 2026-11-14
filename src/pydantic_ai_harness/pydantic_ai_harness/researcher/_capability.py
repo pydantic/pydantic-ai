@@ -1,13 +1,14 @@
 """Complete research-agent harness assembled from regular capabilities."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, WebFetch, WebSearch
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
-from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, WorkspaceStore
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, WorkspaceOverflowStore
 from pydantic_ai_harness.tool_output_limits._store import OverflowStore
 
 DEFAULT_RESEARCHER_INSTRUCTIONS = """\
@@ -20,7 +21,7 @@ Distinguish sourced facts from your own inference.
 """Default instructions for `Researcher`."""
 
 
-def _researcher(store: OverflowStore | WorkspaceStore | None = None) -> SubAgent[AgentDepsT]:
+def _researcher(store: OverflowStore | WorkspaceOverflowStore | None = None) -> SubAgent[AgentDepsT]:
     agent = Agent[AgentDepsT](  # pyright: ignore[reportCallIssue, reportArgumentType]
         name='researcher',
         description='Research a focused sub-question on the web and report back with findings and source links',
@@ -33,13 +34,14 @@ def _researcher(store: OverflowStore | WorkspaceStore | None = None) -> SubAgent
     return SubAgent(agent)
 
 
+@dataclass(init=False)
 class Researcher(CombinedCapability[AgentDepsT]):
     """Web research with search, page fetching, a research delegate, and tool-output limits.
 
     Oversized tool results are spilled to files in the run's workspace, so a
     run needs one: attach `LocalWorkspace('.')` or a sandbox capability. A run
     without a workspace fails at its start unless `store=` provides a non-workspace
-    overflow store such as `LocalFileStore()`.
+    overflow store such as `LocalFileOverflowStore()`.
 
     Args:
         instructions: Replaces `DEFAULT_RESEARCHER_INSTRUCTIONS`; `None` adds no instructions.
@@ -54,15 +56,15 @@ class Researcher(CombinedCapability[AgentDepsT]):
         *,
         instructions: str | None = DEFAULT_RESEARCHER_INSTRUCTIONS,
         subagents: Sequence[SubAgent[AgentDepsT]] | None = None,
-        store: OverflowStore | WorkspaceStore | None = None,
+        store: OverflowStore | WorkspaceOverflowStore | None = None,
     ) -> None:
         delegates = [_researcher(store)] if subagents is None else subagents
         capabilities: list[AbstractCapability[AgentDepsT]] = []
-        if store is None or isinstance(store, WorkspaceStore):
+        if store is None or isinstance(store, WorkspaceOverflowStore):
             capabilities.append(RequireWorkspace[AgentDepsT]('Researcher'))
         if instructions is not None:
             # The id also names the capability's (empty) function toolset, which durable
-            # execution requires; mirrors `coder_instructions` (coder/_capability.py).
+            # execution requires.
             capabilities.append(Capability[AgentDepsT](id='researcher_instructions', instructions=instructions))
         capabilities.extend(
             [

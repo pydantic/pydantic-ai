@@ -14,7 +14,7 @@ from ..exceptions import PydanticAIDeprecationWarning
 from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
-from ..settings import CacheRetention
+from ..settings import CacheRetention, FramingAnnouncement
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -156,9 +156,10 @@ class ModelProfile(TypedDict, total=False):
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter, and when there are any, or instructions, they're followed
-    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
-    so that text can't open or close the tag.
+    provider's top-level system parameter, and the system prompt says what the tag means, from the request the
+    [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says. User prompts and
+    tool returns go out as written; text in them
+    that resembles a `<system>` tag gets a note instead.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -176,6 +177,44 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    needs_sealed_system_blocks: bool
+    """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
+
+    Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
+    each mid-conversation `SystemPromptPart` as `<system verified>...</system>` after the user's words in
+    its request, and the announcement at the start of the system prompt says the application's blocks carry that
+    attribute and that a block after the user's words already applies to the reply to them. A user lookalike's note
+    in a request with such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note
+    when it copies the attribute.
+
+    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, and Grok 4.3 through 4.7 (not Grok 4.20, which
+    measured worse sealed). Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation instruction
+    changes, and followed both with a marker and the sentence together (not with either alone). With the blocks
+    after the user's words it also followed steering after a tool result and a change next to a user lookalike,
+    where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but did as well or
+    better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its Anthropic
+    profile doesn't use the native role. Sonnet 5.5 credited the native role's messages to the user when asked who
+    said what, and with this rendering it attributed them correctly and followed steering after a tool result more
+    reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
+    a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
+    """
+
+    default_framing_announcement: FramingAnnouncement
+    """The model's default for the `framing_announcement` setting. Default: `'when_needed'`.
+
+    The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting wins when
+    it's set. Only meaningful where `supports_inline_system_prompts` is `False`.
+
+    `'when_needed'` sends the same request as `'always'` once a conversation has something to explain, and the same
+    request as `'never'` before that. Set to `'always'` for Claude Sonnet 4.6 and gpt-oss, which measured worse
+    without the announcement even on requests with nothing for it to explain: Sonnet 4.6 kept to the system prompt's
+    task against a conflicting user request in 30 of 48 runs with it and 22 of 96 without, and followed an
+    application's own reminder tags in a user turn in 24 of 24 with it and 0 of 48 without; gpt-oss kept to the
+    system prompt's task in 44 of 48 with it and 69 of 96 without. Other models measured did as well or better
+    without it on those requests. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
+    """
+
     supports_request_scoped_system_prompts: bool
     """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
 
@@ -186,9 +225,10 @@ class ModelProfile(TypedDict, total=False):
     `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
     renders like any other mid-conversation `SystemPromptPart` while it's current.
 
-    Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
-    renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
-    request-scoped part render as a lasting system prompt on every later request.
+    Independent of `supports_inline_system_prompts`: where that's `False`, the entry holds a `<system>` block like the
+    model's other mid-conversation messages. Only set it on a model whose adapter renders a self-clearing entry,
+    currently `AnthropicModel`. On any other adapter, `True` makes every request-scoped part render as a lasting
+    system prompt on every later request.
     """
 
     supports_mid_conversation_effort: bool
@@ -296,10 +336,10 @@ class ModelProfile(TypedDict, total=False):
     supports_forced_tool_choice: bool
     """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
 
-    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and Claude Mythos 5.1,
-    as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
-    resolved itself (such as an output tool's) falls back to `'auto'`, with the tools filtered to the requested
-    ones where the API can't restrict the choice. An explicit forcing
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude
+    Mythos 5.1 and 5.2, as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool
+    choice that Pydantic AI resolved itself (such as an output tool's) falls back to `'auto'`, with the tools
+    filtered to the requested ones where the API can't restrict the choice. An explicit forcing
     [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
     """
 
@@ -323,6 +363,20 @@ class ModelProfile(TypedDict, total=False):
 
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
+
+    may_tokenize_special_tokens_in_content: bool
+    """Whether this route may encode chat-template special tokens found in message content as real control tokens. Default: `False`.
+
+    Many hosts of open-weight models do, so a literal `<|im_start|>` in a tool result opens a real turn in the role it
+    names. When `True`, `Model.prepare_messages` puts a zero-width joiner inside each such token in user prompts, tool
+    results, inlined text files and replayed model output, on the outgoing copy only, and the joiner is removed again
+    from the tokens in each response's text and tool call arguments. Text without one is unchanged.
+
+    The host decides this, not the model family, so a provider sets it from `model_profile`, through the one table in
+    `profiles/_special_tokens.py`. An application that has pinned a route known to treat these tokens as text, or that
+    needs them sent as written, can turn it off with `profile=`.
+    See [Special tokens in content](../message-history.md#special-tokens-in-content).
+    """
 
     mimics_assistant_message_formatting: bool
     """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
@@ -375,9 +429,30 @@ class ModelProfile(TypedDict, total=False):
     a history whose IDs came from another provider (OpenAI's `call_...`, Anthropic's `toolu_...`) or were
     generated by Pydantic AI (`pyd_ai_...`). When set, `Model.prepare_messages` replaces every function tool
     call ID that doesn't fit with a hash of it that does, and leaves IDs that already fit unchanged. The
-    calls, their results and the `<tool_result>` tags that reference them keep pairing up, and since the
+    calls, their results and the `<pyai:tool_result>` tags that reference them keep pairing up, and since the
     replacement depends only on the history, the same history is sent as the same bytes on every request.
     Only the outgoing copy changes: stored message history keeps the original IDs.
+    """
+
+    tool_call_ids_are_response_scoped: bool
+    """Whether the model's tool call IDs are only unique within one response. Default: `False`.
+
+    Pydantic AI pairs each tool call with its result by `tool_call_id` across the whole message history, so an API
+    that numbers the calls in every response from scratch (`call_0`, then `call_0` again in the next response) makes
+    two different calls look like one. When set, each tool call ID the provider sends is stored with a suffix derived
+    from its response's [`provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], or from its
+    [`timestamp`][pydantic_ai.messages.ModelResponse.timestamp] when it has none, such as `call_0_k3ZcR9aQ`. The suffix
+    is the same every time the response is replayed, and keeps the ID within the `[a-zA-Z0-9_-]` characters that
+    Anthropic and Bedrock require. IDs Pydantic AI generates itself are already unique and are left alone, and so
+    is a call an `OpenAIResponsesModel` stream receives before the response's ID, which a request continuing that
+    response with `previous_response_id` couldn't restore from the timestamp.
+
+    When the history is sent back to the same provider and endpoint, the suffix is removed again, so the provider gets
+    the IDs it sent. Other providers and endpoints get the stored IDs.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and set by the
+    [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
     """
 
     tool_deferral_mode: ToolDeferralMode | None
@@ -422,6 +497,7 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
     'openai_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openrouter_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openai_reasoning_enabled_by_default': 'thinking_enabled_by_default',
+    'openai_responses_tool_call_ids_are_response_scoped': 'tool_call_ids_are_response_scoped',
 }
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
 
@@ -503,11 +579,13 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_forced_tool_choice_with_thinking': True,
     'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'may_tokenize_special_tokens_in_content': False,
     'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
     'tool_call_id_length': None,
+    'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

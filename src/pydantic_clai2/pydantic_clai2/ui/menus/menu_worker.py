@@ -6,7 +6,7 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import Event
-from typing import Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 import anyio
 from termflow.tui.keys import read_key
@@ -14,6 +14,9 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2.ui import telemetry
+
+if TYPE_CHECKING:
+    from pydantic_clai2.plugins.menus import Dialogs
 
 ResultT = TypeVar('ResultT')
 
@@ -32,6 +35,7 @@ def _no_hold(*, leave_screen: bool) -> AbstractContextManager[None]:
 class _NoTerminal:
     command: str
     instead: str | None
+    dialogs: 'Dialogs | None'
 
 
 _STOP: ContextVar[Event | None] = ContextVar('menu_stop', default=None)
@@ -40,13 +44,14 @@ _NO_TERMINAL: ContextVar[_NoTerminal | None] = ContextVar('menu_no_terminal', de
 
 
 @contextmanager
-def without_terminal(command: str, *, instead: str | None = None) -> Generator[None]:
+def without_terminal(command: str, *, instead: str | None = None, dialogs: 'Dialogs | None' = None) -> Generator[None]:
     """Refuse every terminal menu and prompt `command` opens in this context: there is no terminal to show them.
 
     A menu would read EOF from stdin and close as if cancelled; the command fails with `require_terminal`'s
-    error instead. `instead` names a command that does the same in the web UI.
+    error instead. `instead` names a command that does the same in the web UI. `dialogs` are a remote
+    UI's, where a Codex sign-in and `line_input.read_line` ask instead of failing; see `remote_dialogs`.
     """
-    token = _NO_TERMINAL.set(_NoTerminal(command=command, instead=instead))
+    token = _NO_TERMINAL.set(_NoTerminal(command=command, instead=instead, dialogs=dialogs))
     try:
         yield
     finally:
@@ -66,6 +71,12 @@ def require_terminal(*, instead: str | None = None) -> None:
         f'{refused.command} opens a terminal menu or prompt, and this CLAI has no terminal: '
         f'enter it in CLAI in a terminal{f", or use {instead} in this page" if instead else ""}.'
     )
+
+
+def remote_dialogs() -> 'Dialogs | None':
+    """The remote UI's dialogs to ask through under `without_terminal`; `None` with a terminal or no such UI."""
+    refused = _NO_TERMINAL.get()
+    return None if refused is None else refused.dialogs
 
 
 @contextmanager

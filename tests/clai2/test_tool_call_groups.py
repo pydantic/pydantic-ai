@@ -22,7 +22,7 @@ from pydantic_ai import (
     ThinkingPart,
 )
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
-from pydantic_ai_harness.filesystem import FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import set_completions
@@ -209,7 +209,7 @@ async def test_shell_and_arguments_are_ignored_but_edits_and_writes_print_as_in_
             pid=1,
             output_path='/o',
             status_path='/s',
-            total_lines=1,
+            line_count=1,
             truncated=False,
         ),
     ):

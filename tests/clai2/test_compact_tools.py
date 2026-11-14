@@ -9,7 +9,7 @@ from rich.text import Text
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings, resolve_settings
@@ -31,7 +31,7 @@ async def test_shell_only_prints_invocation(exit_code: int | None) -> None:
             output_path='/tmp/out',
             status_path='/tmp/status',
             exit_code=exit_code,
-            total_lines=100,
+            line_count=100,
             truncated=True,
             tool_call_id='shell',
         )
@@ -51,7 +51,7 @@ async def test_file_changes_show_diffs(operation: str) -> None:
     )
     if operation == 'write':
         await renderer.on_stream_event(
-            FileChangeRequestEvent(
+            FileChangeRequestedEvent(
                 path='file.py',
                 root_dir='/tmp',
                 operation='write',

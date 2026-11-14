@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness.media import (
-    DiskMediaStore,
+    FileMediaStore,
     MediaStore,
     SqliteMediaStore,
     externalize_media,
@@ -604,7 +604,7 @@ class FileStepStore:
         self._root = Path(directory)
         resolved: MediaStore | None
         if media_store == 'auto':
-            resolved = DiskMediaStore(self._root / 'media')
+            resolved = FileMediaStore(self._root / 'media')
         else:
             resolved = media_store
         self._media_store: MediaStore | None = resolved
@@ -671,8 +671,8 @@ class FileStepStore:
                 if prior.idempotency_key == event.idempotency_key:
                     return
         line = json.dumps(_event_to_dict(event))
-        with (run_dir / 'events.jsonl').open('a', encoding='utf-8') as fp:
-            fp.write(line + '\n')
+        with (run_dir / 'events.jsonl').open('a', encoding='utf-8') as file:
+            file.write(line + '\n')
 
     async def list_events(self, *, run_id: str) -> list[StepEvent]:
         return await anyio.to_thread.run_sync(self._sync_list_events, run_id)
@@ -720,8 +720,8 @@ class FileStepStore:
         seq = self._next_snapshot_seq(snap_dir)
         _atomic_write_text(snap_dir / f'{seq}.json', json.dumps(payload))
         if snapshot.idempotency_key is not None:
-            with key_path.open('a', encoding='utf-8') as fp:
-                fp.write(json.dumps(snapshot.idempotency_key) + '\n')
+            with key_path.open('a', encoding='utf-8') as file:
+                file.write(json.dumps(snapshot.idempotency_key) + '\n')
         self._sync_prune_snapshots(snap_dir)
 
     @staticmethod
@@ -938,8 +938,8 @@ class FileStepStore:
         run_dir = self._run_dir(record.run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(_tool_effect_to_dict(record))
-        with (run_dir / 'tool_effects.jsonl').open('a', encoding='utf-8') as fp:
-            fp.write(line + '\n')
+        with (run_dir / 'tool_effects.jsonl').open('a', encoding='utf-8') as file:
+            file.write(line + '\n')
 
     async def get_tool_effect(self, *, run_id: str, tool_call_id: str) -> ToolEffectRecord | None:
         return await anyio.to_thread.run_sync(self._sync_get_tool_effect, run_id, tool_call_id)
