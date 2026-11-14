@@ -268,10 +268,11 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     BedrockConverseModel('global.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
 
 
-async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
-    allow_model_requests: None, mocker: MockerFixture
+@pytest.mark.parametrize('model_name', ['us.openai.gpt-6.1-sol', 'us.openai.gpt-6.1-terra'])
+async def test_bedrock_converse_gpt_6_1_drops_sampling_settings(
+    allow_model_requests: None, mocker: MockerFixture, model_name: str
 ) -> None:
-    model = BedrockConverseModel('us.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+    model = BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))
     agent = Agent(model=model, model_settings=ModelSettings(temperature=1.0, top_p=0.9))
 
     mock_converse = mocker.patch.object(model.client, 'converse')
@@ -280,27 +281,6 @@ async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
         'stopReason': 'end_turn',
         'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
         'ResponseMetadata': {'HTTPStatusCode': 200},
-    }
-
-    with pytest.warns(UserWarning, match='Sampling parameters'):
-        await agent.run('What is the capital of France?')
-
-    inference_config = mock_converse.call_args.kwargs.get('inferenceConfig', {})
-    assert 'temperature' not in inference_config
-    assert 'topP' not in inference_config
-
-
-async def test_bedrock_converse_gpt_6_1_terra_drops_sampling_settings(
-    allow_model_requests: None, mocker: MockerFixture
-) -> None:
-    model = BedrockConverseModel('us.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
-    agent = Agent(model=model, model_settings=ModelSettings(temperature=1.0, top_p=0.9))
-
-    mock_converse = mocker.patch.object(model.client, 'converse')
-    mock_converse.return_value = {
-        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
-        'stopReason': 'end_turn',
-        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
     }
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
