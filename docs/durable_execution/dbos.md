@@ -225,6 +225,15 @@ An event emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] inside a
 
     Reserving handler positions changes the recorded step sequence of tools that emit events and make durable calls. Before upgrading, let in-flight workflows finish or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without a durability handler and legacy-wrapper workflows retain their existing step sequence.
 
+!!! warning "Compatibility impact: upgrading across v2.60.0 or v2.62.0 with an event stream handler"
+
+    Two releases added events that a durability `event_stream_handler=` receives, each in an event-handler step of its own, so they change the recorded step sequence of the workflows that emit them:
+
+    - v2.60.0 ([#9405](https://github.com/pydantic/pydantic-ai/pull/9405)) emits a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] when a tool joins the agent's tools mid-run, such as one a [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] callback or a dynamic toolset starts offering after the first model request. Its step starts before the next model request.
+    - v2.62.0 ([#11111](https://github.com/pydantic/pydantic-ai/pull/11111)) emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] when a model request's `thinking` effort level differs from the one in effect: on the first model request that names a level, as `thinking='low'` in model settings or [`Thinking(effort='high')`][pydantic_ai.capabilities.Thinking] do, and again whenever it changes after that. Its step starts before that model request. A run whose `thinking` never names a level, such as one that only uses `thinking=True`, emits none.
+
+    A workflow that got past one of those points on an earlier release has a model-request step recorded where the upgraded code now starts an event-handler step, so recovering it can raise `DBOSUnexpectedStepError`. This affects workflows with a durability `event_stream_handler=` that are in flight across the upgrade. Workflows without one, and workflows started after the upgrade, are unaffected. Before upgrading past either release, let those workflows finish or deploy the upgrade as a new DBOS application version.
+
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable step, while `ProcessEventStream` sees the buffered replay in workflow code.

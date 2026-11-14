@@ -23,11 +23,16 @@ Functionality deprecated in a V2 release keeps working until V3, and using it ra
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.62.0 (2026-10-26)
+
+- See [#11111](https://github.com/pydantic/pydantic-ai/pull/11111) - A model request whose `thinking` effort level differs from the one in effect, like a run's first request with `thinking='low'`, emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent], which a durability `event_stream_handler=` receives in an event-handler activity or step of its own. This can break replay of durable workflows paused across the upgrade: see [Temporal](durable_execution/temporal.md#streaming) and [DBOS](durable_execution/dbos.md#streaming) for who is affected and how to upgrade.
+
 ### v2.60.0 (2026-10-22)
 
-Nothing was removed, but code that reads message history behaves differently:
+Nothing was removed, but code that reads message history behaves differently, and some durable workflows record a different sequence of activities or steps:
 
 - See [#8094](https://github.com/pydantic/pydantic-ai/pull/8094) - Pydantic AI no longer records a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]. A tool retry is that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`, and a retry that answers no tool call is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. A stored `'retry-prompt'` part loads as one of those too, so `isinstance(part, RetryPromptPart)` matches nothing, and code that counts tool errors that way reports none without an error or warning. Replace that check with [`is_retry(part)`][pydantic_ai.messages.is_retry], which matches both new parts, or on a release that predates it, with `isinstance(part, RetryFeedbackPart) or (isinstance(part, ToolReturnPart) and part.outcome == 'retried')`; [Finding tool errors in history](retries.md#finding-tool-errors-in-history) shows it in use, and how to also find tool calls that failed. The [deprecation entry](#deprecated-in-v2-to-be-removed-in-v3) lists the other changes.
+- See [#9405](https://github.com/pydantic/pydantic-ai/pull/9405) - A tool that joins the agent's tools mid-run emits a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent], which a durability `event_stream_handler=` receives in an event-handler activity or step of its own. This can break replay of durable workflows paused across the upgrade: see [Temporal](durable_execution/temporal.md#streaming) and [DBOS](durable_execution/dbos.md#streaming) for who is affected and how to upgrade.
 
 ### v2.0.0 (2026-06-23)
 

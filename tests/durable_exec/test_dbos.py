@@ -66,6 +66,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     ModelFallback,
+    PrepareTools,
     SetToolMetadata,
     WrapperCapability,
 )
@@ -96,7 +97,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -4835,6 +4836,139 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert 'durability_handler__event_stream_handler' in step_names
+
+
+# `ToolAvailabilityDeltaEvent` for a mid-run tool population change (2.60, #9405) and `ModelSettingsDeltaEvent` for a
+# named `thinking` level (2.62, #11111) are dispatched to the durability's `event_stream_handler` like any other
+# workflow-side event, so each takes a step that workflows recorded before those releases don't have.
+
+_delta_handler_events: list[str] = []
+
+
+async def _delta_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _delta_handler_events.append(type(event).__name__)
+
+
+async def _done_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'done'
+
+
+async def _population_change_stream_fn(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """Call `unlock`, then `later` once it is advertised, then finish."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        yield {0: DeltaToolCall(name='unlock', json_args='{}', tool_call_id='c1')}
+    elif 'later' not in returned and any(tool.name == 'later' for tool in info.function_tools):
+        yield {0: DeltaToolCall(name='later', json_args='{}', tool_call_id='c2')}
+    else:
+        yield 'done'
+
+
+async def _admit_later_from_step_two(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Workflow-side and derived from the run step, so recovery resolves the same population.
+    return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
+
+
+def _unlock() -> str:
+    return 'unlocked'
+
+
+def _later() -> str:
+    return 'later ran'
+
+
+thinking_level_handler_agent = Agent(
+    FunctionModel(stream_function=_done_stream_fn),
+    name='durability_thinking_level_handler',
+    model_settings={'thinking': 'low'},
+    capabilities=[DBOSDurability(event_stream_handler=_delta_event_handler)],
+)
+
+population_change_handler_agent = Agent(
+    FunctionModel(stream_function=_population_change_stream_fn),
+    name='durability_population_change_handler',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        DBOSDurability(event_stream_handler=_delta_event_handler),
+    ],
+)
+
+
+@pytest.mark.parametrize(
+    ('agent', 'steps', 'handled_events'),
+    [
+        pytest.param(
+            thinking_level_handler_agent,
+            snapshot(
+                [
+                    'durability_thinking_level_handler__event_stream_handler',
+                    'durability_thinking_level_handler__model.request_stream',
+                ]
+            ),
+            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            id='thinking-level',
+        ),
+        pytest.param(
+            population_change_handler_agent,
+            snapshot(
+                [
+                    'durability_population_change_handler__model.request_stream',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__model.request_stream',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__model.request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'ToolAvailabilityDeltaEvent',
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                ]
+            ),
+            id='tool-population-change',
+        ),
+    ],
+)
+async def test_dbos_delta_events_take_an_event_stream_handler_step(
+    dbos: DBOS, agent: Agent[None, str], steps: list[str], handled_events: list[str]
+) -> None:
+    """A delta event takes an `__event_stream_handler` step of its own, ahead of the model request that follows it.
+
+    Pins the step sequence these events produce today. DBOS recovery matches recorded steps by position and name, so
+    a workflow recorded before the event existed has a model-request step where recovery now starts a handler step,
+    and changing this sequence again breaks recovery the same way; `docs/durable_execution/dbos.md` documents it for
+    the upgrades that introduced them.
+    """
+    _delta_handler_events.clear()
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go')).output
+
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == 'done'
+    assert [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)] == steps
+    assert _delta_handler_events == handled_events
 
 
 async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) -> None:

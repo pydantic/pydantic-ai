@@ -386,6 +386,17 @@ As a last resort, if the bytes genuinely need to sit in the workflow history, ra
 
 For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity, while each tool event is delivered in its own event-handler activity. As with any Temporal activity, a handler may run more than once if an activity retries, so keep its side effects idempotent.
 
+!!! warning "Compatibility impact: upgrading across v2.60.0 or v2.62.0 with an event stream handler"
+
+    Two releases added events that a durability `event_stream_handler=` receives, each in an event-handler activity of its own, so they change the activity sequence of the workflows that emit them:
+
+    - v2.60.0 ([#9405](https://github.com/pydantic/pydantic-ai/pull/9405)) emits a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] when a tool joins the agent's tools mid-run, such as one a [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] callback or a dynamic toolset starts offering after the first model request. Its activity is scheduled before the next model request.
+    - v2.62.0 ([#11111](https://github.com/pydantic/pydantic-ai/pull/11111)) emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] when a model request's `thinking` effort level differs from the one in effect: on the first model request that names a level, as `thinking='low'` in model settings or [`Thinking(effort='high')`][pydantic_ai.capabilities.Thinking] do, and again whenever it changes after that. Its activity is scheduled before that model request. A run whose `thinking` never names a level, such as one that only uses `thinking=True`, emits none.
+
+    A workflow that got past one of those points on an earlier release has a model-request activity in its history where the upgraded worker now schedules an event-handler activity. Replaying it fails with `[TMPRL1100] Nondeterminism error: Activity type of scheduled event '..._model_request...' does not match activity type of activity command '...__event_stream_handler'`, whether a worker picks the workflow up again or a [`Replayer`](https://python.temporal.io/temporalio.worker.Replayer.html) checks its history. This affects workflows with a durability `event_stream_handler=` that are in flight across the upgrade, including ones paused waiting for a signal. Workflows without one, and workflows started after the upgrade, are unaffected.
+
+    Before upgrading past either release, let those workflows finish, or keep workers on the earlier version deployed to serve them while new workflows start on the upgraded one, for example with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning).
+
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable activity, while `ProcessEventStream` sees the buffered replay in workflow code.

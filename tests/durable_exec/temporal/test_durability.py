@@ -45,6 +45,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestTimeout,
     ModelResponse,
+    ModelSettingsDeltaEvent,
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
@@ -60,6 +61,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
@@ -173,9 +175,10 @@ try:
         WorkflowInterceptorClassInput,
         WorkflowOutboundInterceptor,
     )
-    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig
+    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig, NondeterminismError
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
+    from pydantic_ai.durable_exec._base import MODEL_RESPONSE_STREAM_EVENT_TYPES
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -8307,6 +8310,202 @@ async def test_population_change_delta_is_recorded_once_and_replays(client: Clie
     assert deltas == [['later']]
     replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+# --- Delta events take an `event_stream_handler` activity of their own ---
+#
+# `ToolAvailabilityDeltaEvent` for a mid-run tool population change (2.60, #9405) and `ModelSettingsDeltaEvent` for a
+# named `thinking` level (2.62, #11111) are dispatched to the durability's `event_stream_handler` like any other
+# workflow-side event, so each adds an activity that histories recorded before those releases don't have.
+
+_delta_handler_events: list[str] = []
+
+
+async def _delta_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _delta_handler_events.append(type(event).__name__)
+
+
+async def _done_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'done'
+
+
+async def _population_change_stream_fn(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """Stream what `_population_change_model_fn` returns: a handler makes every model request a streamed one."""
+    part = _population_change_model_fn(messages, info).parts[0]
+    if isinstance(part, ToolCallPart):
+        yield {0: DeltaToolCall(name=part.tool_name, json_args='{}', tool_call_id=part.tool_call_id)}
+    else:
+        yield 'done'
+
+
+thinking_level_handler_agent = Agent(
+    FunctionModel(stream_function=_done_stream_fn),
+    name='durability_thinking_level_handler',
+    model_settings={'thinking': 'low'},
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_delta_event_handler)],
+)
+
+population_change_handler_agent = Agent(
+    FunctionModel(stream_function=_population_change_stream_fn),
+    name='durability_population_change_handler',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_delta_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class ThinkingLevelHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await thinking_level_handler_agent.run('go')).output
+
+
+@workflow.defn
+class PopulationChangeHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await population_change_handler_agent.run('go')).output
+
+
+async def _record_delta_event_history(
+    client: Client, workflow_type: type[Any], agent: Agent[None, str]
+) -> WorkflowHistory:
+    task_queue = f'{workflow_type.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[workflow_type],
+        plugins=[AgentPlugin(agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            workflow_type.__name__, id=task_queue, task_queue=task_queue, result_type=str
+        )
+        assert await handle.result() == 'done'
+        return await handle.fetch_history()
+
+
+def _scheduled_activity_kinds(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name.rsplit('__', 1)[-1]
+        for event in history.events
+        if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    ]
+
+
+@pytest.mark.parametrize(
+    ('workflow_type', 'agent', 'delta_event_type', 'activities', 'earlier_activities', 'handled_events'),
+    [
+        pytest.param(
+            ThinkingLevelHandlerWorkflow,
+            thinking_level_handler_agent,
+            ModelSettingsDeltaEvent,
+            snapshot(['event_stream_handler', 'model_request_stream']),
+            snapshot(['model_request_stream']),
+            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            id='thinking-level',
+        ),
+        pytest.param(
+            PopulationChangeHandlerWorkflow,
+            population_change_handler_agent,
+            ToolAvailabilityDeltaEvent,
+            snapshot(
+                [
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'event_stream_handler',
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'ToolAvailabilityDeltaEvent',
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                ]
+            ),
+            id='tool-population-change',
+        ),
+    ],
+)
+async def test_delta_event_handler_activity_breaks_replay_of_earlier_histories(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_type: type[Any],
+    agent: Agent[None, str],
+    delta_event_type: type[AgentStreamEvent],
+    activities: list[str],
+    earlier_activities: list[str],
+    handled_events: list[str],
+):
+    """A delta event takes a handler activity of its own, so a history recorded without it fails replay with `TMPRL1100`.
+
+    Pins the activity sequence these events produce today: changing it breaks replay of in-flight workflows the
+    same way again, which `docs/durable_execution/temporal.md` documents for the upgrades that introduced them.
+
+    The earlier history is recorded with the event left out of handler dispatch, which is the activity sequence
+    the releases before it recorded, since they didn't emit it. Unsandboxed, so the patched dispatch is the one the
+    workflow runs.
+    """
+    _delta_handler_events.clear()
+    history = await _record_delta_event_history(client, workflow_type, agent)
+    assert _scheduled_activity_kinds(history) == activities
+    assert _delta_handler_events == handled_events
+
+    with monkeypatch.context() as patch_dispatch:
+        patch_dispatch.setattr(
+            'pydantic_ai.durable_exec._base.MODEL_RESPONSE_STREAM_EVENT_TYPES',
+            (*MODEL_RESPONSE_STREAM_EVENT_TYPES, delta_event_type),
+        )
+        earlier_history = await _record_delta_event_history(client, workflow_type, agent)
+    assert _scheduled_activity_kinds(earlier_history) == earlier_activities
+
+    replayer = Replayer(
+        workflows=[workflow_type], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    assert (await replayer.replay_workflow(history)).replay_failure is None
+    replay = await replayer.replay_workflow(earlier_history, raise_on_replay_failure=False)
+    assert isinstance(replay.replay_failure, NondeterminismError)
+    assert (
+        f"[TMPRL1100] Nondeterminism error: Activity type of scheduled event 'agent__{agent.name}__model_request_stream'"
+        f" does not match activity type of activity command 'agent__{agent.name}__event_stream_handler'"
+    ) in str(replay.replay_failure)
 
 
 class _RealtimeConnection(InferredConnection):
