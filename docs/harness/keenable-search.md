@@ -31,7 +31,7 @@ key nor an install to run.
 ## Usage
 
 Nothing to install and nothing to configure: Keenable's endpoints are keyless
-by default, and this capability talks to them over `httpx`, which
+by default, and this capability talks to them over `httpx2`, which
 `pydantic-ai-harness` already depends on. The examples use an Anthropic model,
 so set `ANTHROPIC_API_KEY` for them.
 
@@ -116,7 +116,7 @@ Any object satisfying the [`KeenableClient`][pydantic_ai_harness.keenable.Keenab
 tests substitute a fake.
 
 To reuse connections, or to send requests through a proxy, custom TLS, or a
-retrying transport, pass your own `httpx.AsyncClient` as
+retrying transport, pass your own `httpx2.AsyncClient` as
 `HttpKeenableClient(http_client=...)`. Its timeouts apply alongside the
 30-second request deadline, and it stays open for you to close. Without one,
 each request opens and closes its own client. Requests never follow redirects,
@@ -144,7 +144,7 @@ or try another URL rather than abort the run. A
 `get_page` call that comes back with no readable content is a `ModelRetry` too. `get_page` reads Keenable's indexed copy
 of a page, and Keenable documents that fetching a URL it has not indexed fails;
 the model sees that failure as a `ModelRetry` as well. A `401`, `402`, or
-`403` propagates as `httpx.HTTPStatusError`: a rejected key or an exhausted
+`403` propagates as `httpx2.HTTPStatusError`: a rejected key or an exhausted
 account is configuration the model cannot fix.
 
 ## Multiple instances

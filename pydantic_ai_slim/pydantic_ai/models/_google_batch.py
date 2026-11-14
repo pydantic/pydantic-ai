@@ -199,7 +199,7 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
         # Google refused to create the job, so nothing reads the file, which would otherwise count against the
         # project's file storage until it expires. After a server error or no response, the job may have been created,
         # so the file is left for it.
-        with suppress(errors.APIError, httpx2.TransportError):
+        with suppress(errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError):
             await client.aio.files.delete(name=file.name)
         raise
     assert job.name is not None
@@ -227,7 +227,7 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     ):
         # The job has ended, so its input file isn't needed again; it would otherwise count against the project's
         # file storage until it expires. The handle's `input_file` isn't trusted: see `_UPLOADED_INPUT_FILES`.
-        with suppress(errors.APIError, httpx2.TransportError):
+        with suppress(errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError):
             await client.aio.files.delete(name=input_file)
     if job.dest is None or job.dest.file_name is None:
         # A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't

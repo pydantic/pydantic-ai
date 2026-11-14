@@ -21,13 +21,8 @@ try:
     from openai.types import chat
     from openai.types.chat import chat_completion
 
-    from .openai import (
-        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import CHAT_FINISH_REASON_MAP, LenientChatCompletion
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
@@ -53,7 +48,7 @@ See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for Z.A
 """
 
 _ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
-    **_CHAT_FINISH_REASON_MAP,
+    **CHAT_FINISH_REASON_MAP,
     # Blocked by Z.AI's content moderation.
     'sensitive': 'content_filter',
     'model_context_window_exceeded': 'length',
@@ -68,7 +63,7 @@ class _ZaiChoice(chat_completion.Choice):
     finish_reason: _ZaiFinishReason  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-class _ZaiChatCompletion(_ChatCompletion):
+class _ZaiChatCompletion(LenientChatCompletion):
     """Wraps the OpenAI chat completion with Z.AI's choice type."""
 
     choices: list[_ZaiChoice]  # pyright: ignore[reportIncompatibleVariableOverride]

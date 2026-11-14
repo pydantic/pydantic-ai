@@ -67,6 +67,7 @@ from ._response import (
     last_pass_input_tokens,
     map_usage,
     refusal_details,
+    report_inference_geo,
     report_input_transformations,
 )
 
@@ -91,6 +92,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
+    _report_inference_geo: bool = False
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_server_tool_use_indices: set[int] = field(default_factory=set[int], init=False)
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
@@ -149,6 +151,14 @@ class AnthropicStreamedResponse(StreamedResponse):
         if event.message.diagnostics is not None:
             self.provider_details = self.provider_details or {}
             self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
+        # See `response_provider_details`. Only the opening message's usage reports the speed.
+        if event.message.usage.speed == 'fast':
+            self.provider_details = self.provider_details or {}
+            self.provider_details['speed'] = 'fast'
+        # Where the request ran is only reported on the opening message's usage.
+        self.provider_details = report_inference_geo(
+            self.provider_details, event.message.usage.inference_geo, report=self._report_inference_geo
+        )
 
     def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._current_block = current_block = event.content_block

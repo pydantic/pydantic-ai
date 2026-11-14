@@ -142,6 +142,7 @@ engine:
       import sys
       from datetime import datetime, timezone
       from fnmatch import fnmatchcase
+      from importlib.util import find_spec
       from pathlib import Path
 
       import pydantic_core
@@ -379,7 +380,6 @@ engine:
       elif _configured_agent.lower().endswith(('.json', '.yaml', '.yml')):
           agent = Agent.from_file(_configured_agent)
       else:
-          sys.path.insert(0, os.getcwd())
           _module_name, _separator, _attribute = _configured_agent.rpartition(':')
           if not _separator:
               _module_name, _separator, _attribute = _configured_agent.rpartition('.')
@@ -387,6 +387,13 @@ engine:
               raise ValueError(
                   f'PAI_AGENT expects MODULE:ATTRIBUTE, MODULE.ATTRIBUTE, or a JSON/YAML file; got {_configured_agent!r}'
               )
+          # The checkout joins sys.path, after installed packages, only when nothing installed has the target's
+          # top-level name, because the agent imports some dependencies after this point. Then an installed module
+          # or regular package wins, but a namespace package nothing has imported yet can lose to a checkout
+          # package. A checkout target whose top-level name is also installed is not found.
+          _top_level = _module_name.partition('.')[0]
+          if _top_level not in sys.modules and find_spec(_top_level) is None:
+              sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
@@ -407,9 +414,10 @@ engine:
       `;
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
-      // Preload the installed runner before an opt-in PAI_AGENT import adds the
-      // checkout to sys.path. The wrapper is cached before CLAI 2 resolves -a,
-      // so agent code imports once and import failures retain their traceback.
+      // Preload the installed runner before the wrapper resolves PAI_AGENT, which
+      // can append the checkout to sys.path. The wrapper is cached before CLAI 2
+      // resolves -a, so agent code imports once and import failures retain their
+      // traceback.
       const LAUNCHER = `import importlib
       import json
       import os
@@ -640,8 +648,9 @@ engine:
         // path is trusted in-process configuration: Python can import from it at
         // startup, before the recorder protects its signing key.
         //
-        // The wrapper adds the checkout only when resolving an imported PAI_AGENT,
-        // after trusted framework packages have loaded.
+        // The wrapper appends the checkout to sys.path, after installed packages,
+        // only when nothing installed has an imported PAI_AGENT's top-level name.
+        // A checkout target whose top-level name is also installed is not found.
         env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
         if (hasNoop) {
           env.GH_AW_PREWRITTEN_NOOP = "1";

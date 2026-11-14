@@ -91,6 +91,9 @@ pytestmark = []
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
+with try_import() as jsonschema_imports_successful:
+    from jsonschema.validators import validator_for
+
 
 def test_capability_top_level_export() -> None:
     assert TopLevelCapability is Capability
@@ -739,15 +742,28 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'anthropic': {'$ref': '#/$defs/AnthropicAdvisorToolSettings'},
+                        'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'},
+                    },
+                    'title': 'AdvisorProviderSettings',
+                    'type': 'object',
+                },
                 'AdvisorTool': {
                     'properties': {
                         'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/AdvisorProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'model': {
                             'anyOf': [
                                 {
                                     'enum': [
-                                        'claude-fable-5-1',
+                                        'claude-fable-5-2',
                                         'claude-opus-5-5',
                                         'claude-sonnet-5-5',
                                         'claude-haiku-5-5',
@@ -771,6 +787,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Max Tokens',
                         },
                         'caching': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Caching',
@@ -787,6 +804,41 @@ def test_model_json_schema_with_capabilities():
                         'output': {'title': 'Output', 'type': 'integer'},
                     },
                     'title': 'AgentRetries',
+                    'type': 'object',
+                },
+                'AnthropicAdvisorToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'caching': {'enum': ['5m', '1h'], 'title': 'Caching', 'type': 'string'},
+                    },
+                    'title': 'AnthropicAdvisorToolSettings',
+                    'type': 'object',
+                },
+                'AnthropicWebFetchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'enable_citations': {'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {'title': 'Max Content Tokens', 'type': 'integer'},
+                        'use_cache': {'title': 'Use Cache', 'type': 'boolean'},
+                        'response_inclusion': {
+                            'enum': ['full', 'excluded'],
+                            'title': 'Response Inclusion',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'AnthropicWebFetchToolSettings',
+                    'type': 'object',
+                },
+                'AnthropicWebSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'response_inclusion': {
+                            'enum': ['full', 'excluded'],
+                            'title': 'Response Inclusion',
+                            'type': 'string',
+                        }
+                    },
+                    'title': 'AnthropicWebSearchToolSettings',
                     'type': 'object',
                 },
                 'CacheConfig': {
@@ -811,10 +863,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'FileSearchProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
+                    'title': 'FileSearchProviderSettings',
+                    'type': 'object',
+                },
                 'FileSearchTool': {
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/FileSearchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
                         'max_num_results': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -822,11 +884,13 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Max Num Results',
                         },
                         'instructions': {
+                            'deprecated': True,
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Instructions',
                         },
                         'retrieval_mode': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['hybrid', 'semantic', 'keyword'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Retrieval Mode',
@@ -836,37 +900,58 @@ def test_model_json_schema_with_capabilities():
                     'title': 'FileSearchTool',
                     'type': 'object',
                 },
+                'ImageGenerationProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'openai': {'$ref': '#/$defs/OpenAIImageGenerationToolSettings'}},
+                    'title': 'ImageGenerationProviderSettings',
+                    'type': 'object',
+                },
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/ImageGenerationProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'action': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['generate', 'edit', 'auto'],
                             'title': 'Action',
                             'type': 'string',
                         },
                         'background': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
                             'title': 'Background',
                             'type': 'string',
                         },
                         'input_fidelity': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Input Fidelity',
                         },
                         'moderation': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
                         },
                         'model': {
+                            'deprecated': True,
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2.6-flare',
+                                        'gpt-image-2.6-sunburst',
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -885,10 +970,16 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Output Format',
                         },
-                        'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
+                        'partial_images': {
+                            'deprecated': True,
+                            'default': 0,
+                            'title': 'Partial Images',
+                            'type': 'integer',
+                        },
                         'quality': {
+                            'deprecated': True,
                             'default': 'auto',
-                            'enum': ['low', 'medium', 'high', 'auto'],
+                            'enum': ['low', 'medium', 'high', 'xhigh', 'max', 'auto'],
                             'title': 'Quality',
                             'type': 'string',
                         },
@@ -920,7 +1011,7 @@ def test_model_json_schema_with_capabilities():
                 },
                 'KnownModelName': {
                     'enum': [
-                        'anthropic:claude-fable-5-1',
+                        'anthropic:claude-fable-5-2',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-haiku-5-5',
                         'anthropic:claude-opus-4-8',
@@ -938,7 +1029,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock-mantle:openai.gpt-oss-20b',
                         'bedrock:deepseek.v3.2',
                         'bedrock:global.amazon.nova-2-lite-v1:0',
-                        'bedrock:global.anthropic.claude-fable-5-1',
+                        'bedrock:global.anthropic.claude-fable-5-2',
                         'bedrock:global.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'bedrock:global.anthropic.claude-haiku-5-5',
                         'bedrock:global.anthropic.claude-opus-4-8',
@@ -953,6 +1044,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.openai.gpt-6-astra',
                         'bedrock:global.openai.gpt-6-luna',
                         'bedrock:global.openai.gpt-6.1-sol',
+                        'bedrock:global.openai.gpt-6.1-terra',
                         'bedrock:global.xai.grok-4.7',
                         'bedrock:global.zai.glm-5.3',
                         'bedrock:google.gemma-3-27b-it',
@@ -1000,7 +1092,7 @@ def test_model_json_schema_with_capabilities():
                         'crusoe:zai-org/GLM-5.3-Flash',
                         'deepseek:deepseek-flash',
                         'deepseek:deepseek-v4-pro',
-                        'gateway/anthropic:claude-fable-5-1',
+                        'gateway/anthropic:claude-fable-5-2',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-haiku-5-5',
                         'gateway/anthropic:claude-opus-4-8',
@@ -1009,7 +1101,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-5-5',
                         'gateway/bedrock:deepseek.v3.2',
                         'gateway/bedrock:global.amazon.nova-2-lite-v1:0',
-                        'gateway/bedrock:global.anthropic.claude-fable-5-1',
+                        'gateway/bedrock:global.anthropic.claude-fable-5-2',
                         'gateway/bedrock:global.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'gateway/bedrock:global.anthropic.claude-haiku-5-5',
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
@@ -1024,6 +1116,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.openai.gpt-6-astra',
                         'gateway/bedrock:global.openai.gpt-6-luna',
                         'gateway/bedrock:global.openai.gpt-6.1-sol',
+                        'gateway/bedrock:global.openai.gpt-6.1-terra',
                         'gateway/bedrock:global.xai.grok-4.7',
                         'gateway/bedrock:google.gemma-3-27b-it',
                         'gateway/bedrock:minimax.minimax-m2.5',
@@ -1053,6 +1146,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.5-flash-lite',
                         'gateway/google-cloud:gemini-3.8-flash',
                         'gateway/google-cloud:gemini-4-argon',
+                        'gateway/google-cloud:gemini-4-carbon',
+                        'gateway/google-cloud:gemini-4-hydrogen',
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
@@ -1061,6 +1156,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3.5-flash-lite',
                         'gateway/google:gemini-3.8-flash',
                         'gateway/google:gemini-4-argon',
+                        'gateway/google:gemini-4-carbon',
+                        'gateway/google:gemini-4-hydrogen',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:qwen/qwen3.8-27b',
@@ -1079,6 +1176,9 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.5-flash-lite',
                         'google-cloud:gemini-3.8-flash',
                         'google-cloud:gemini-4-argon',
+                        'google-cloud:gemini-4-carbon',
+                        'google-cloud:gemini-4-hydrogen',
+                        'google-decisions:gemini-decision-1',
                         'google:gemini-3-pro-image',
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-lite',
@@ -1087,6 +1187,8 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.5-flash-lite',
                         'google:gemini-3.8-flash',
                         'google:gemini-4-argon',
+                        'google:gemini-4-carbon',
+                        'google:gemini-4-hydrogen',
                         'groq:openai/gpt-oss-120b',
                         'groq:openai/gpt-oss-20b',
                         'groq:qwen/qwen3.8-27b',
@@ -1229,6 +1331,11 @@ def test_model_json_schema_with_capabilities():
                         'timeout': {'anyOf': [{'type': 'integer'}, {'type': 'number'}], 'title': 'Timeout'},
                         'request_timeout': {'title': 'Request Timeout', 'type': 'number'},
                         'first_event_timeout': {'title': 'First Event Timeout', 'type': 'number'},
+                        'framing_announcement': {
+                            'enum': ['always', 'when_needed', 'never'],
+                            'title': 'Framing Announcement',
+                            'type': 'string',
+                        },
                         'max_retries': {'title': 'Max Retries', 'type': 'integer'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
@@ -1278,6 +1385,89 @@ def test_model_json_schema_with_capabilities():
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'OpenAIImageGenerationToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'action': {'enum': ['generate', 'edit', 'auto'], 'title': 'Action', 'type': 'string'},
+                        'background': {
+                            'enum': ['transparent', 'opaque', 'auto'],
+                            'title': 'Background',
+                            'type': 'string',
+                        },
+                        'input_fidelity': {'enum': ['high', 'low'], 'title': 'Input Fidelity', 'type': 'string'},
+                        'moderation': {'enum': ['auto', 'low'], 'title': 'Moderation', 'type': 'string'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'gpt-image-2.6-flare',
+                                        'gpt-image-2.6-sunburst',
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1-mini',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Model',
+                        },
+                        'partial_images': {'title': 'Partial Images', 'type': 'integer'},
+                        'quality': {
+                            'enum': ['low', 'medium', 'high', 'xhigh', 'max', 'auto'],
+                            'title': 'Quality',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'OpenAIImageGenerationToolSettings',
+                    'type': 'object',
+                },
+                'OpenRouterAdvisorToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {'forward_transcript': {'title': 'Forward Transcript', 'type': 'boolean'}},
+                    'title': 'OpenRouterAdvisorToolSettings',
+                    'type': 'object',
+                },
+                'OpenRouterWebSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'engine': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Engine',
+                        },
+                        'mode': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'instant',
+                                        'fast',
+                                        'auto',
+                                        'deep-lite',
+                                        'deep',
+                                        'deep-reasoning',
+                                        'turbo',
+                                        'basic',
+                                        'advanced',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Mode',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'max_total_results': {'title': 'Max Total Results', 'type': 'integer'},
+                        'max_characters': {'title': 'Max Characters', 'type': 'integer'},
+                    },
+                    'title': 'OpenRouterWebSearchToolSettings',
                     'type': 'object',
                 },
                 'ToolOrOutput': {
@@ -1344,10 +1534,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'UploadedFile',
                     'type': 'object',
                 },
+                'WebFetchProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'anthropic': {'$ref': '#/$defs/AnthropicWebFetchToolSettings'}},
+                    'title': 'WebFetchProviderSettings',
+                    'type': 'object',
+                },
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebFetchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1363,20 +1563,39 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Blocked Domains',
                         },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'enable_citations': {
+                            'default': False,
+                            'deprecated': True,
+                            'title': 'Enable Citations',
+                            'type': 'boolean',
+                        },
                         'max_content_tokens': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
+                            'deprecated': True,
                             'title': 'Max Content Tokens',
                         },
                     },
                     'title': 'WebFetchTool',
                     'type': 'object',
                 },
+                'WebSearchProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'anthropic': {'$ref': '#/$defs/AnthropicWebSearchToolSettings'},
+                        'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'},
+                    },
+                    'title': 'WebSearchProviderSettings',
+                    'type': 'object',
+                },
                 'WebSearchTool': {
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],
@@ -1465,6 +1684,19 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'XaiFileSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'instructions': {'title': 'Instructions', 'type': 'string'},
+                        'retrieval_mode': {
+                            'enum': ['hybrid', 'semantic', 'keyword'],
+                            'title': 'Retrieval Mode',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'XaiFileSearchToolSettings',
+                    'type': 'object',
+                },
                 'short_spec_FileUnderstanding': {
                     'additionalProperties': False,
                     'properties': {
@@ -1496,16 +1728,78 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {
                                     'oneOf': [
-                                        {'$ref': '#/$defs/WebSearchTool'},
-                                        {'$ref': '#/$defs/XSearchTool'},
-                                        {'$ref': '#/$defs/CodeExecutionTool'},
-                                        {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/ImageGenerationTool'},
-                                        {'$ref': '#/$defs/MemoryTool'},
-                                        {'$ref': '#/$defs/MCPServerTool'},
-                                        {'$ref': '#/$defs/FileSearchTool'},
-                                        {'$ref': '#/$defs/AdvisorTool'},
-                                        {'$ref': '#/$defs/ToolSearchTool'},
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/WebSearchTool'},
+                                                {'properties': {'kind': {'const': 'web_search'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/XSearchTool'},
+                                                {'properties': {'kind': {'const': 'x_search'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/CodeExecutionTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'code_execution'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/WebFetchTool'},
+                                                {'properties': {'kind': {'const': 'web_fetch'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ImageGenerationTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'image_generation'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/MemoryTool'},
+                                                {'properties': {'kind': {'const': 'memory'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/MCPServerTool'},
+                                                {'properties': {'kind': {'const': 'mcp_server'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/FileSearchTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'file_search'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/AdvisorTool'},
+                                                {'properties': {'kind': {'const': 'advisor'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ToolSearchTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'tool_search'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
                                     ]
                                 },
                                 {'type': 'null'},
@@ -1875,6 +2169,7 @@ def test_model_json_schema_with_capabilities():
                                         'ModelNotFoundError',
                                         'ModelRequestTimeout',
                                         'ContentFilterError',
+                                        'OutputTokenLimitExceeded',
                                     ],
                                     'type': 'string',
                                 },
@@ -1896,6 +2191,7 @@ def test_model_json_schema_with_capabilities():
                                             'ModelNotFoundError',
                                             'ModelRequestTimeout',
                                             'ContentFilterError',
+                                            'OutputTokenLimitExceeded',
                                         ],
                                         'type': 'string',
                                     },
@@ -1952,7 +2248,13 @@ def test_model_json_schema_with_capabilities():
                         'image_model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2.6-flare',
+                                        'gpt-image-2.6-sunburst',
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -1969,7 +2271,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Output Format',
                         },
                         'quality': {
-                            'anyOf': [{'enum': ['low', 'medium', 'high', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'enum': ['low', 'medium', 'high', 'xhigh', 'max', 'auto'], 'type': 'string'},
+                                {'type': 'null'},
+                            ],
                             'title': 'Quality',
                         },
                         'size': {
@@ -2452,40 +2757,6 @@ def test_native_tools_param_wrapped_as_capabilities():
     assert len(cap_tools) == 2
 
 
-def test_agent_from_spec_builtin_tool():
-    """NativeTool capability can be constructed from spec."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'NativeTool': {'kind': 'web_search'}},
-            ],
-        }
-    )
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
-    assert len(builtin_caps) == 1
-    assert isinstance(builtin_caps[0].tool, WebSearchTool)
-
-
-def test_agent_from_spec_builtin_tool_with_options():
-    """NativeTool spec supports builtin tool configuration options."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'NativeTool': {'kind': 'web_search', 'search_context_size': 'high'}},
-            ],
-        }
-    )
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
-    assert len(builtin_caps) == 1
-    tool = builtin_caps[0].tool
-    assert isinstance(tool, WebSearchTool)
-    assert tool.search_context_size == 'high'
-
-
 def test_agent_from_spec_builtin_tool_explicit_form():
     """NativeTool spec supports the explicit {tool: ...} form."""
     agent = Agent.from_spec(
@@ -2500,6 +2771,38 @@ def test_agent_from_spec_builtin_tool_explicit_form():
     builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.parametrize(
+    ('arguments', 'tool'),
+    [
+        pytest.param({'kind': 'code_execution'}, CodeExecutionTool(), id='code-execution'),
+        pytest.param({'kind': 'web_search'}, WebSearchTool(), id='web-search'),
+        pytest.param(
+            {'kind': 'web_search', 'search_context_size': 'high'},
+            WebSearchTool(search_context_size='high'),
+            id='web-search-with-options',
+        ),
+    ],
+)
+def test_native_tool_flat_form_schema(arguments: dict[str, str], tool: AbstractNativeTool):
+    """The schema accepts each `NativeTool` flat form, which loads as the tool its `kind` names."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': arguments}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [tool]
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+def test_native_tool_flat_form_schema_requires_kind():
+    """The schema rejects a `NativeTool` flat form without `kind`, which loads as no native tool."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'search_context_size': 'high'}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec))
+    with pytest.raises(ValueError, match="Failed to instantiate capability 'NativeTool'"):
+        Agent.from_spec(spec)
 
 
 def test_save_schema(tmp_path: str):

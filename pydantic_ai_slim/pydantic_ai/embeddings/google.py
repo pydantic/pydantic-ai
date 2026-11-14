@@ -36,21 +36,25 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
             status = e.status if isinstance(e.status, str) else None
-            raise ModelHTTPError.for_category(
-                _model_errors.google_status_category(
-                    status,
-                    e.message,
-                    cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                )
+            body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
+            error = ModelHTTPError.for_category(
+                _model_errors.google_status_category(status, e.message, body)
                 or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,
                 model_name=model_name,
-                body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                body=body,
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 provider_error_code=status,
-            ) from e
+            )
+            error.retry_after = _model_errors.google_retry_after(error)
+            raise error from e
 
         raise
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+        error = _model_errors.transport_status_error(model_name, e.response)
+        error.retry_after = _model_errors.google_retry_after(error)
+        raise error from e
     except httpx2.TransportError as e:
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)

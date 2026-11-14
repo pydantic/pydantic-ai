@@ -490,9 +490,9 @@ jobs:
 
           # --- Deduplicate reruns ----------------------------------------------
           # A rerun of the same CI run, a second approval or a repeated label
-          # re-fires this workflow. Match our own marker, not the bot account: every
-          # gh-aw reviewer here posts as `github-actions[bot]`, so an actor match
-          # would let a UI Security Review on this head suppress this review entirely.
+          # re-fires this workflow. Match our own marker, not the bot account: douwebot
+          # and PR Review Checks also post as `github-actions[bot]`, so an actor match
+          # would let their review on this head suppress this review entirely.
           # Accept both footer encodings to deduplicate across compiler versions.
           ALREADY=$(printf '%s' "$REVIEWS" | jq --arg sha "$HEAD_SHA" --arg caller "$REVIEW_CALL_ID" '
             [.[] | select(.commit_id == $sha) | select((.body // "") |
