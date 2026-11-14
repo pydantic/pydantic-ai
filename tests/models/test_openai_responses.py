@@ -5266,7 +5266,7 @@ async def test_response_scoped_tool_call_id_from_other_endpoint(allow_model_requ
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+        profile=OpenAIModelProfile(tool_call_ids_are_response_scoped=True),
     )
 
     await model.request(history, None, ModelRequestParameters())
@@ -5353,7 +5353,7 @@ async def test_response_scoped_tool_call_id_with_previous_response(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+        profile=OpenAIModelProfile(tool_call_ids_are_response_scoped=True),
     )
 
     await model.request(

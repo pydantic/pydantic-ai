@@ -44,14 +44,14 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
-    unavailable. A 400 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category in
-    the provider's own error code or message first.
+    unavailable. A 400, 413 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category
+    in the provider's own error code or message first.
     """
     if status_code in (401, 403):
         return ModelAuthenticationError
     if status_code == 404:
         return ModelNotFoundError
-    if status_code in (400, 422):
+    if status_code in (400, 413, 422):
         return ModelRequestRejectedError
     if status_code == 402:
         return ModelQuotaExceededError

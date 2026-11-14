@@ -22,6 +22,7 @@ from pydantic_clai2.config.credential_store import (
     profile_accounts,
     save_codex_credentials,
 )
+from pydantic_clai2.models.profiles import KEY_NAME
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, require_terminal, run_worker
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -32,7 +33,7 @@ class KeyReference(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    # The pattern `normalize_name` gives every `/keys` label; it also rejects most pasted tokens, such as `ghp_...`.
+    # `KEY_NAME`, spelled out: the API compatibility check compares this text, and a test pins the two together.
     name: str = Field(pattern=r'^[A-Z_][A-Z0-9_]*$')
 
 
@@ -99,7 +100,7 @@ class SecretPrompt(Protocol):
 def normalize_name(*, name: str) -> str:
     """Use uppercase environment-style labels, without exporting environment variables."""
     name = name.strip().upper()
-    if re.fullmatch(r'[A-Z_][A-Z0-9_]*', name) is None:
+    if re.match(KEY_NAME, name) is None:
         raise ValueError('Use letters, numbers, and underscores; start with a letter or underscore.')
     return name
 

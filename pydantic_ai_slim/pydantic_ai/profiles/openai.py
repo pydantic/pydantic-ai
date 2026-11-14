@@ -465,12 +465,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`NativeOutput`][pydantic_ai.output.NativeOutput] becomes available on the Responses API alone."""
 
     openai_responses_tool_call_ids_are_response_scoped: bool
-    """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
+    """Deprecated: use [`tool_call_ids_are_response_scoped`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] instead.
 
-    When enabled, response IDs are incorporated into tool call IDs as responses are ingested so
-    normalized message history keeps the history-wide uniqueness required by Pydantic AI. The qualified
-    `response_id:tool_call_id` form is restored to the original provider tool call ID when history is
-    replayed.
+    Translated (with a deprecation warning) whenever profiles are merged; an explicit
+    `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
     openai_responses_supports_interleaved_function_calls: bool

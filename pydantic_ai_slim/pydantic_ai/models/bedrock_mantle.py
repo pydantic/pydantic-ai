@@ -88,10 +88,9 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
 class BedrockMantleChatModel(OpenAIChatModel):
     """An OpenAI Chat Completions model served by Amazon Bedrock Mantle (GPT-OSS Safeguard).
 
-    The response-scoped tool-call-ID normalization added for #6536 is Responses-only: Mantle's Chat
-    Completions API returns globally-unique `chatcmpl-tool-*` IDs across separate responses (verified
-    live), unlike the `/openai/v1/responses` endpoint's per-response `call_0` counter, so the Chat path
-    needs no normalization.
+    Its profile doesn't set `tool_call_ids_are_response_scoped`: Mantle's Chat Completions API returns
+    globally-unique `chatcmpl-tool-*` IDs across separate responses (verified live), unlike the
+    `/openai/v1/responses` endpoint's per-response `call_0` counter.
     """
 
     _mantle_client: AsyncOpenAI = field(repr=False)
