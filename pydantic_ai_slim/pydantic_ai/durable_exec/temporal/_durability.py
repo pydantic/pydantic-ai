@@ -258,8 +258,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 own class. Defaults to the errors another attempt can't fix:
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (which covers
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
-                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
-                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]),
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
+                [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]),
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
                 [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. A list you pass replaces
                 the default, and `()` lets the retry policy retry every model error.

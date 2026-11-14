@@ -14,7 +14,7 @@ from pydantic import BaseModel, create_model
 
 from pydantic_ai import Tool
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, ModelSchemaTooComplexError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, OutputObjectDefinition
@@ -24,6 +24,8 @@ from ...cassette_utils import request_json
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from botocore.exceptions import ClientError
+
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -129,10 +131,94 @@ async def test_bedrock_schema_too_complex_error_has_hint(allow_model_requests: N
         await agent.run('Fill in the form.')
 
     error = exc_info.value
-    assert isinstance(error, ModelRequestRejectedError)
+    assert isinstance(error, ModelSchemaTooComplexError)
     assert error.status_code == 400
     assert error.hint is not None
     assert error.hint.endswith('See https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits')
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_bedrock_too_complex_inferred_native_output_is_attempted_in_tool_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Converse reports the too-complex 400 in its own error shape, which the run attempts again in Tool Output too."""
+    form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
+    agent = Agent(BedrockConverseModel(_MODEL_NAME, provider=bedrock_provider), output_type=form)
+
+    result = await agent.run(
+        'Fill in the form with `field_0` set to "a" and every other field left empty.',
+        model_settings={'thinking': True},
+    )
+
+    assert result.output.model_dump(exclude_defaults=True) == {'field_0': 'a'}
+    assert [
+        {
+            'outputConfig': 'outputConfig' in body,
+            'tools': [
+                (tool['toolSpec']['name'], tool['toolSpec'].get('strict')) for tool in body['toolConfig']['tools']
+            ]
+            if 'toolConfig' in body
+            else [],
+        }
+        for body in map(request_json, vcr.requests)
+    ] == snapshot([{'outputConfig': True, 'tools': []}, {'outputConfig': False, 'tools': [('final_result', None)]}])
+    assert result.usage.requests == 1
+    [failed] = result.response.failed_attempts or []
+    assert failed.error is not None and failed.error.startswith('ModelSchemaTooComplexError: ')
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'classifies'),
+    [pytest.param(_MODEL_NAME, True, id='claude'), pytest.param('qwen.qwen3-32b-v1:0', False, id='qwen')],
+)
+async def test_bedrock_only_claude_streams_inferred_native_output_again_in_tool_output(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    model_name: str,
+    classifies: bool,
+):
+    """Only Claude's too-complex 400 is classified, so only for Claude does a streamed run attempt it again in Tool Output.
+
+    Both models infer Native Output when thinking. Offline, since what's under test is how the run handles the 400,
+    whose real shape `test_bedrock_too_complex_inferred_native_output_is_attempted_in_tool_output` records.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    sent: list[dict[str, Any]] = []
+
+    def converse_stream(**params: Any) -> None:
+        sent.append(params)
+        raise ClientError(
+            {
+                'Error': {
+                    'Code': 'ValidationException',
+                    'Message': 'The schema is too complex for grammar compilation.',
+                },
+                'ResponseMetadata': {
+                    'RequestId': '',
+                    'HostId': '',
+                    'HTTPStatusCode': 400,
+                    'HTTPHeaders': {},
+                    'RetryAttempts': 0,
+                },
+            },
+            'ConverseStream',
+        )
+
+    monkeypatch.setattr(model.client, 'converse_stream', converse_stream)
+    form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with Agent(model, output_type=form).run_stream('Fill in the form.', model_settings={'thinking': True}):
+            pass  # pragma: no cover
+
+    assert model._classifies_schema_too_complex() is classifies  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(exc_info.value, ModelSchemaTooComplexError) is classifies
+    assert [('outputConfig' in params, 'toolConfig' in params) for params in sent] == (
+        [(True, False), (False, True)] if classifies else [(True, False)]
+    )
 
 
 def test_bedrock_strict_tools_under_tool_choice_none_arent_counted(bedrock_provider: BedrockProvider):

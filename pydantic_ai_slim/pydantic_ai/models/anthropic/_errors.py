@@ -16,6 +16,7 @@ from ...exceptions import (
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelSchemaTooComplexError,
 )
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
@@ -138,7 +139,9 @@ def api_error(
         # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
         provider_error_code = amzn_error_type.split(':', 1)[0]
         category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
-    hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
+    hint = None
+    if status_code == 400 and is_schema_too_complex_error(reported_message):
+        category, hint = ModelSchemaTooComplexError, SCHEMA_TOO_COMPLEX_HINT
     return ModelHTTPError.for_category(
         category or _model_errors.http_status_category(status_code, reported_message),
         status_code=status_code,

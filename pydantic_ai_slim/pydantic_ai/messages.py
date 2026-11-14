@@ -4905,7 +4905,9 @@ class ModelRequestAttempt:
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records one for each model it moved on
     from, on the response of the model that answered
     ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
-    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed. So does a
+    run that attempts a request again in Tool Output after a
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
     """
 
     model_name: str
