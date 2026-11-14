@@ -2550,21 +2550,24 @@ async def test_bedrock_media_kind_delivered_in_tool_result(
 
 
 @pytest.mark.parametrize('via_gateway', [False, True], ids=['bedrock', 'gateway'])
-async def test_bedrock_openai_converse_file_inputs(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, via_gateway: bool
-):
+async def test_bedrock_openai_converse_file_inputs(allow_model_requests: None, via_gateway: bool):
     """GPT-5.6, GPT-6 and GPT-6.1 on Converse get a tool's image after the `toolResult`, and a tool's document as a note.
 
     Their AWS model cards say Converse rejects `document` blocks and an `image` inside a `toolResult` for these models
     (https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html). A document in the user
     prompt is still sent, as for any model that can't read a file the user chose.
 
-    Not a VCR test: the request is captured from a mocked client until a live recording is made.
+    Not a VCR test until a live recording is made: the serialized request is captured at `before-send`, which answers
+    it instead of sending it.
     """
     provider = (
         gateway_provider('bedrock', api_key='test-api-key', base_url='https://gateway.pydantic.info/proxy')
         if via_gateway
-        else bedrock_provider
+        else BedrockProvider(
+            region_name='us-east-1',
+            aws_access_key_id='AKIA6666666666666666',
+            aws_secret_access_key='6666666666666666666666666666666666666666',
+        )
     )
     model = BedrockConverseModel('us.openai.gpt-6.1-terra', provider=provider)
     agent = Agent(model)
@@ -2575,35 +2578,43 @@ async def test_bedrock_openai_converse_file_inputs(
     def get_files() -> list[BinaryContent]:
         return [image, document]
 
-    mock_converse = mocker.patch.object(model.client, 'converse')
-    usage = {'inputTokens': 1, 'outputTokens': 1}
-    mock_converse.side_effect = [
-        {
-            'output': {
-                'message': {
-                    'role': 'assistant',
-                    'content': [{'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}],
-                }
+    usage = {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2}
+    tool_use: dict[str, Any] = {'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}
+    responses: Iterator[dict[str, Any]] = iter(
+        [
+            {
+                'output': {'message': {'role': 'assistant', 'content': [tool_use]}},
+                'stopReason': 'tool_use',
+                'usage': usage,
             },
-            'stopReason': 'tool_use',
-            'usage': usage,
-        },
-        {
-            'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
-            'stopReason': 'end_turn',
-            'usage': usage,
-        },
-    ]
+            {
+                'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+                'stopReason': 'end_turn',
+                'usage': usage,
+            },
+        ]
+    )
+    sent: list[dict[str, Any]] = []
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        assert isinstance(request.body, bytes)
+        sent.append(json.loads(request.body))
+        body = io.BytesIO(json.dumps(next(responses)).encode())
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=body, preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime.Converse', respond)  # pyright: ignore[reportArgumentType]
 
     await agent.run(['Summarize this report, then the files.', document])
 
-    assert mock_converse.call_args.kwargs['messages'] == snapshot(
+    assert sent[-1]['messages'] == snapshot(
         [
             {
                 'role': 'user',
                 'content': [
                     {'text': 'Summarize this report, then the files.'},
-                    {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}},
+                    {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': 'JVBERi0xLjQ='}}},
                 ],
             },
             {
@@ -2626,7 +2637,7 @@ async def test_bedrock_openai_converse_file_inputs(
                         }
                     },
                     {'text': '<pyai:tool_result tool_name="get_files" tool_call_id="tooluse_1" file_id="chart">'},
-                    {'image': {'format': 'png', 'source': {'bytes': b'\x89PNG\r\n\x1a\n'}}},
+                    {'image': {'format': 'png', 'source': {'bytes': 'iVBORw0KGgo='}}},
                     {'text': '</pyai:tool_result>'},
                 ],
             },
