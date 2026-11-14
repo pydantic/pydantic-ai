@@ -778,9 +778,9 @@ class BedrockProvider(Provider[BaseClient]):
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             'openai': lambda model_name: merge_profile(
                 bedrock_openai_model_profile(model_name),
-                # Bedrock's prompt-caching table documents a 30-minute minimum TTL for these. GPT-6.1 Terra isn't in
-                # the table, but the page defers to model cards for TTL and its card states 30-minute retention.
-                # Other OpenAI models get automatic caching with no documented retention.
+                # Bedrock documents a 30-minute minimum TTL for these: GPT-6.1 Terra's is stated on its model card,
+                # which the prompt-caching page defers to for TTL, and the others' in the page's table. Other OpenAI
+                # models get automatic caching with no documented retention.
                 # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
                 # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
                 ModelProfile(default_cache_retention=timedelta(minutes=30))
