@@ -558,7 +558,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
             name='computer',
-            capabilities=[WorkspaceCapability(), ComputerUse(native=native), RecordingDurability(wraps_errors=True)],
+            capabilities=[WorkspaceCapability(), ComputerUse(native=native), RecordingDurability()],
         )
         with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
             await agent.run('Go.')
@@ -807,7 +807,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         durability = RecordingDurability(
             fail_operations=frozenset({'computer__capability__computer.call'} if where == 'the-engine' else ()),
             failure=UserError,
-            wraps_errors=True,
         )
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
