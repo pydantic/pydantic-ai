@@ -50,6 +50,7 @@ from .wrapper import WrapperCapability
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
@@ -269,6 +270,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             capability._has_on_model_request_error
             and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None
             and capability._handles_model_request_error(cap_ctx, request_context)
+            for capability in self._dispatch
+        )
+
+    @property
+    def _has_compact_history(self) -> bool:
+        return any(c._has_compact_history for c in self._dispatch)
+
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        return any(
+            capability._has_compact_history
+            and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None
+            and capability._handles_compact_history(cap_ctx)
             for capability in self._dispatch
         )
 
@@ -825,6 +838,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         finally:
             # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
             del error
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        # In dispatch order: the first capability that compacts wins, and the ones after it are its fallbacks.
+        for capability in self._dispatch:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None and (
+                result := await capability.compact_history(cap_ctx, request)
+            ) is not None:
+                return result
+        return None
 
     # --- Tool validate lifecycle hooks ---
 

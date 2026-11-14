@@ -74,6 +74,9 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
     CapabilityEvent,
+    CompactionEndEvent,
+    CompactionPart,
+    CompactionRecord,
     CustomEvent,
     InstructionId,
     InstructionPart,
@@ -1132,6 +1135,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
         'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context
         'pending_messages',  # live run queue, meaningless outside the running agent; replaced by an EnqueueGuard
+        '_compaction_requests',  # live run state; `request_compaction` raises inside an activity
         'messages',  # full history would be duplicated into every activity payload, against Temporal's 2MB limit
         'prompt',  # multi-modal BinaryContent would ride in every payload, against Temporal's 2MB limit; text-only subclasses can opt in
         'validation_context',  # arbitrary user object with no serialization contract
@@ -4083,3 +4087,38 @@ def test_payload_converter_decodes_journal_entries_written_before_records():
 
     converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
     assert converter.from_payload(payload, cast(type, CallToolResult)) == result
+
+
+def test_payload_converter_leaves_out_what_a_compaction_replaced():
+    """A `CompactionRecord`'s `replaced` history isn't written to an activity payload, alone or in its end event.
+
+    The converter serializes a value by inference, which would otherwise ignore the field's exclusion.
+    """
+    record = CompactionRecord(
+        part=CompactionPart(content='summary'),
+        handler='summarize',
+        reason='manual',
+        model_name='m',
+        provider_name='p',
+        messages_before=1,
+        messages_after=1,
+        kept_from=1,
+        part_message_index=0,
+        part_index=0,
+        replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
+    )
+    converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
+
+    record_payload = converter.to_payload(record)
+    event_payload = converter.to_payload(CompactionEndEvent(record=record))
+    for payload in (record_payload, event_payload):
+        assert payload is not None
+        assert b'the replaced history' not in payload.data
+        assert b'"replaced"' not in payload.data
+    assert record_payload is not None and event_payload is not None
+
+    loaded_record = converter.from_payload(record_payload, CompactionRecord)
+    loaded_event = converter.from_payload(event_payload, CompactionEndEvent)
+    for loaded in (loaded_record, loaded_event.record):
+        assert loaded == record
+        assert loaded.replaced is None

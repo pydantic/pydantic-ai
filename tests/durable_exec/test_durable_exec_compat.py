@@ -75,7 +75,10 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     CapabilityLoadDeltaEvent,
     CapabilityLoadDeltaPart,
+    CompactionEndEvent,
     CompactionPart,
+    CompactionRecord,
+    CompactionStartEvent,
     CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -138,7 +141,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ..workspace_fakes import FakeWorkspace
@@ -1081,6 +1084,24 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
         CapabilityLoadDeltaEvent(part=CapabilityLoadDeltaPart(loaded=['refunds'])),
         ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
+        CompactionStartEvent(
+            reason='manual', focus='decisions', model_name='m', provider_name='p', messages_before=4, cancelled=True
+        ),
+        CompactionEndEvent(
+            record=CompactionRecord(
+                part=CompactionPart(content='summary'),
+                handler='summarize',
+                reason='threshold',
+                model_name='m',
+                provider_name='p',
+                messages_before=4,
+                messages_after=2,
+                kept_from=1,
+                part_message_index=0,
+                part_index=0,
+            ),
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        ),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),
         DeferredToolRequestsEvent(requests=DeferredToolRequests(calls=[ToolCallPart('tool', tool_call_id='call')])),
@@ -1223,3 +1244,30 @@ async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[Ru
     with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
         unwrap_recorded_tool_call_result(payload)
     assert type(exc_info.value) is exc_type
+
+
+def test_the_json_codec_leaves_out_what_a_compaction_replaced() -> None:
+    """A JSON-mode durable operation crosses its boundary through `JSON_CODEC`, which leaves out `replaced`.
+
+    DBOS and Prefect durability pass objects (`IDENTITY_CODEC`); DBOS's pickling of a run result is covered by
+    `test_a_pickled_result_leaves_out_what_a_compaction_replaced`.
+    """
+    record = CompactionRecord(
+        part=CompactionPart(content='summary'),
+        handler='summarize',
+        reason='manual',
+        model_name='m',
+        provider_name='p',
+        messages_before=1,
+        messages_after=1,
+        kept_from=1,
+        part_message_index=0,
+        part_index=0,
+        replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
+    )
+    event = CompactionEndEvent(record=record)
+    assert 'replaced' not in JSON_CODEC.dump(CompactionRecord, record)
+    assert 'replaced' not in JSON_CODEC.dump(AgentStreamEvent, event)['record']
+    loaded = JSON_CODEC.load(AgentStreamEvent, JSON_CODEC.dump(AgentStreamEvent, event))
+    assert isinstance(loaded, CompactionEndEvent)
+    assert loaded.record == record and loaded.record.replaced is None
