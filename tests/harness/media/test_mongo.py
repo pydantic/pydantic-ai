@@ -9,11 +9,18 @@ store only uses the async collection surface both share.
 
 from __future__ import annotations
 
+import asyncio
+import struct
+from importlib.metadata import version
+from typing import cast
+
 import anyio.to_thread
 import pytest
+from bson import BSON, encode
 from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
+from typing_extensions import TypeIs
 
 import pydantic_ai_harness.media as media
 from pydantic_ai_harness.media import (
@@ -24,6 +31,24 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
+
+_HARNESS_VERSION = version('pydantic-ai-harness')
+
+
+def _is_string_keyed_dict(value: object) -> TypeIs[dict[str, object]]:
+    if not isinstance(value, dict):
+        return False
+    entries = cast(dict[object, object], value)
+    return all(isinstance(key, str) for key in entries)
+
+
+def test_is_string_keyed_dict_rejects_non_dict() -> None:
+    assert not _is_string_keyed_dict(None)
+
+
+def _fake_container_env_info() -> dict[str, object]:
+    return {}
+
 
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
@@ -100,6 +125,74 @@ class TestMongoMediaStoreConstruction:
 
         monkeypatch.undo()
         await client.close()
+
+    async def test_db_url_handshake_includes_harness_driver_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pymongo.pool_options.get_container_env_info', _fake_container_env_info, raising=False)
+        handshake_metadata: list[dict[str, object]] = []
+
+        async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                while True:
+                    header = await reader.readexactly(16)
+                    length, request_id, _, opcode = struct.unpack('<iiii', header)
+                    payload = await reader.readexactly(length - 16)
+                    raw_command = (
+                        BSON(payload[5:]).decode()
+                        if opcode == 2013
+                        else BSON(payload[payload.index(b'\0', 4) + 9 :]).decode()
+                    )
+                    assert _is_string_keyed_dict(raw_command)
+                    command = raw_command
+                    if 'client' in command:
+                        client = command['client']
+                        assert _is_string_keyed_dict(client)
+                        handshake_metadata.append(client)
+                        reply: dict[str, object] = {
+                            'ok': 1,
+                            'isWritablePrimary': True,
+                            'minWireVersion': 0,
+                            'maxWireVersion': 17,
+                            'logicalSessionTimeoutMinutes': 30,
+                        }
+                    elif 'find' in command:
+                        db = command.get('$db', 't')
+                        reply = {'ok': 1, 'cursor': {'id': 0, 'ns': f'{db}.{command["find"]}', 'firstBatch': []}}
+                    else:
+                        reply = {'ok': 1}
+                    if opcode == 2013:
+                        response = struct.pack('<iB', 0, 0) + encode(reply)
+                        response_opcode = 2013
+                    else:  # pragma: no cover -- supported PyMongo versions use OP_MSG only
+                        response = struct.pack('<iqii', 0, 0, 0, 1) + encode(reply)
+                        response_opcode = 1
+                    writer.write(struct.pack('<iiii', 16 + len(response), 1, request_id, response_opcode) + response)
+                    await writer.drain()
+            except asyncio.IncompleteReadError:
+                pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(handle, '127.0.0.1', 0)
+        port = server.sockets[0].getsockname()[1]
+        url = f'mongodb://127.0.0.1:{port}/?directConnection=true&serverSelectionTimeoutMS=1000'
+        store = await anyio.to_thread.run_sync(lambda: MongoMediaStore(db_url=url, database='t'))
+        try:
+            assert not await store.exists(f'media+sha256://{"0" * 64}')
+        finally:
+            await store.aclose()
+            server.close()
+            await server.wait_closed()
+
+        assert handshake_metadata
+        driver = handshake_metadata[0]['driver']
+        assert _is_string_keyed_dict(driver)
+        driver_name = driver.get('name')
+        assert isinstance(driver_name, str)
+        assert driver_name.split('|')[-1] == 'pydantic-ai-harness'
+        driver_version = driver.get('version')
+        assert isinstance(driver_version, str)
+        assert driver_version.endswith(f'|{_HARNESS_VERSION}')
 
 
 class TestMongoMediaStoreRoundTrip:

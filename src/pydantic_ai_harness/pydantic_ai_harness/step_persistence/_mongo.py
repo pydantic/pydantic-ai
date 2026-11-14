@@ -34,9 +34,11 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from importlib.metadata import version
 
 from pymongo import AsyncMongoClient, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.driver_info import DriverInfo
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
@@ -71,6 +73,8 @@ from pydantic_ai_harness.step_persistence._types import (
     StepEvent,
     ToolEffectRecord,
 )
+
+_HARNESS_VERSION = version('pydantic-ai-harness')
 
 _MongoDocument = dict[str, object]
 
@@ -122,7 +126,10 @@ class MongoStepStore:
             self._own_client = False
         else:
             assert db_url is not None
-            self._client = AsyncMongoClient[_MongoDocument](db_url)
+            self._client = AsyncMongoClient[_MongoDocument](
+                db_url,
+                driver=DriverInfo(name='pydantic-ai-harness', version=_HARNESS_VERSION),
+            )
             self._own_client = True
 
         self._db: AsyncDatabase[_MongoDocument] = self._client[database]
