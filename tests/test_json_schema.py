@@ -12,12 +12,7 @@ from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
-from pydantic_ai._json_schema import (
-    InlineDefsJsonSchemaTransformer,
-    JsonSchema,
-    JsonSchemaTransformer,
-    resolve_json_pointer,
-)
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
@@ -298,34 +293,6 @@ def test_schema_shape_ignores_keywords_the_transformers_do_not_read():
     }
 
     assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
-
-
-def test_resolve_json_pointer_percent_decodes_tokens_once():
-    schema = {
-        '$defs': {
-            'Address Book': {'type': 'object'},
-            'Percent%Name': {'type': 'string'},
-        },
-        'a/b%20c': {'type': 'integer'},
-        'a/b c': {'type': 'string'},
-    }
-
-    assert resolve_json_pointer(schema, '#/$defs/Address%20Book') == schema['$defs']['Address Book']
-    assert resolve_json_pointer(schema, '#/$defs/Percent%25Name') == schema['$defs']['Percent%Name']
-    assert resolve_json_pointer(schema, '#/a~1b%2520c') is schema['a/b%20c']
-    assert resolve_json_pointer(schema, '#/a~1b%2520c') is not schema['a/b c']
-
-
-def test_inline_defs_resolves_percent_encoded_name():
-    schema = {
-        'type': 'object',
-        'properties': {'address': {'$ref': '#/$defs/Address%20Book'}},
-        '$defs': {'Address Book': {'type': 'object', 'properties': {'street': {'type': 'string'}}}},
-    }
-
-    result = InlineDefsJsonSchemaTransformer(schema).walk()
-
-    assert result['properties']['address'] == {'type': 'object', 'properties': {'street': {'type': 'string'}}}
 
 
 @pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
@@ -1011,6 +978,15 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
             'definitions.A.properties.x',
             id='through-ref',
         ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'a': {'$ref': '#/definitions/A%20B~1C'}},
+                'definitions': {'A B/C': {'type': 'object', 'properties': {'x': 'string'}}},
+            },
+            'definitions.A B/C.properties.x',
+            id='through-escaped-ref',
+        ),
     ],
 )
 def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema(json_schema: dict[str, Any], location: str):
@@ -1120,6 +1096,65 @@ MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
                 },
             },
             id='escaped-tokens-and-list-index',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'from address': ADDRESS_SCHEMA,
+                    'from%20address': {'type': 'integer'},
+                    'to': {'$ref': '#/properties/from%20address'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'from address': ADDRESS_SCHEMA,
+                    'from%20address': {'type': 'integer'},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='percent-encoded-token',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    '%20/': ADDRESS_SCHEMA,
+                    ' /': {'type': 'integer'},
+                    '%20~1': {'type': 'boolean'},
+                    'to': {'$ref': '#/properties/%2520%7E1'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    '%20/': ADDRESS_SCHEMA,
+                    ' /': {'type': 'integer'},
+                    '%20~1': {'type': 'boolean'},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='percent-decoded-once-before-tilde',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b': ADDRESS_SCHEMA,
+                    'a': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+                    'to': {'$ref': '#/properties/a%2Fb'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b': ADDRESS_SCHEMA,
+                    'a': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='percent-encoded-slash-in-token',
         ),
     ],
 )

@@ -688,7 +688,14 @@ def test_falsy_const_tool_args() -> None:
     assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
 
 
-def test_json_pointer_ref_tool_args() -> None:
+@pytest.mark.parametrize(
+    'name,ref',
+    [
+        pytest.param('from', '#/properties/from', id='plain'),
+        pytest.param('from address', '#/properties/from%20address', id='percent-encoded'),
+    ],
+)
+def test_json_pointer_ref_tool_args(name: str, ref: str) -> None:
     """A local JSON-pointer `$ref` is followed like a `$defs` one when generating tool arguments.
 
     The MCP TypeScript SDK sends this shape for a zod v3 tool `{ from: Address, to: Address }`: the reused
@@ -712,42 +719,14 @@ def test_json_pointer_ref_tool_args() -> None:
         description=None,
         json_schema={
             'type': 'object',
-            'properties': {'from': address, 'to': {'$ref': '#/properties/from'}},
-            'required': ['from', 'to'],
+            'properties': {name: address, 'to': {'$ref': ref}},
+            'required': [name, 'to'],
             'additionalProperties': False,
         },
     )
 
     Agent(TestModel(), tools=[tool]).run_sync('hello')
-    assert calls == snapshot([{'from': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
-
-
-def test_percent_encoded_json_pointer_ref_tool_args() -> None:
-    address = {
-        'type': 'object',
-        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
-        'required': ['street', 'city'],
-        'additionalProperties': False,
-    }
-    calls: list[dict[str, Any]] = []
-
-    def ship_order(**kwargs: Any) -> str:
-        calls.append(kwargs)
-        return 'ok'
-
-    tool = Tool.from_schema(
-        ship_order,
-        name='ship_order',
-        description='Ships an order.',
-        json_schema={
-            'type': 'object',
-            'properties': {'from address': address, 'to': {'$ref': '#/properties/from%20address'}},
-            'required': ['from address', 'to'],
-            'additionalProperties': False,
-        },
-    )
-    Agent(TestModel(), tools=[tool]).run_sync('hello')
-    assert calls == snapshot([{'from address': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
+    assert calls == [{name: {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}]
 
 
 def test_list_form_items_tool_args() -> None:

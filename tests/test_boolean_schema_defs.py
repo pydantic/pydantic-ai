@@ -54,6 +54,9 @@ def test_inline_boolean_defs(
         ('X/Y', '#/$defs/X~1Y', 'X~1Y'),
         ('X~Y', '#/$defs/X~0Y', 'X~0Y'),
         ('X~1Y', '#/$defs/X~01Y', 'X~01Y'),
+        ('X Y', '#/$defs/X%20Y', 'X%20Y'),
+        ('X/Y', '#/$defs/X%7E1Y', 'X~1Y'),
+        ('X%20Y', '#/$defs/X%2520Y', 'X Y'),
     ],
 )
 def test_inline_boolean_defs_escaped_names(
@@ -101,6 +104,9 @@ def test_inline_boolean_defs_single_member_union(union_kind: str, definition: bo
         ('X/Y', '#/$defs/X~1Y', 'X~1Y'),
         ('X~Y', '#/$defs/X~0Y', 'X~0Y'),
         ('X~1Y', '#/$defs/X~01Y', 'X~01Y'),
+        ('X Y', '#/$defs/X%20Y', 'X%20Y'),
+        ('X/Y', '#/$defs/X%7E1Y', 'X~1Y'),
+        ('X%20Y', '#/$defs/X%2520Y', 'X Y'),
     ],
 )
 def test_inline_dictionary_defs_escaped_names(name: str, reference: str, encoded_name: str, recursive: bool):
@@ -141,7 +147,14 @@ def test_openai_boolean_root_defs(definition: bool, strict: bool | None, sibling
 @pytest.mark.parametrize('definition', [True, False])
 @pytest.mark.parametrize(
     'name,reference',
-    [('X/Y', '#/$defs/X~1Y'), ('X~Y', '#/$defs/X~0Y'), ('X~1Y', '#/$defs/X~01Y')],
+    [
+        ('X/Y', '#/$defs/X~1Y'),
+        ('X~Y', '#/$defs/X~0Y'),
+        ('X~1Y', '#/$defs/X~01Y'),
+        ('X Y', '#/$defs/X%20Y'),
+        ('X/Y', '#/$defs/X%7E1Y'),
+        ('X%20Y', '#/$defs/X%2520Y'),
+    ],
 )
 def test_openai_boolean_root_defs_escaped_names(name: str, reference: str, definition: bool):
     schema: JsonSchema = {'$ref': reference, '$defs': {name: definition}, 'not': {'type': 'string'}}
@@ -163,6 +176,9 @@ def test_openai_boolean_root_defs_escaped_names(name: str, reference: str, defin
         ('X/Y', '#/$defs/X~1Y', 'X~1Y'),
         ('X~Y', '#/$defs/X~0Y', 'X~0Y'),
         ('X~1Y', '#/$defs/X~01Y', 'X~01Y'),
+        ('X Y', '#/$defs/X%20Y', 'X%20Y'),
+        ('X/Y', '#/$defs/X%7E1Y', 'X~1Y'),
+        ('X%20Y', '#/$defs/X%2520Y', 'X Y'),
     ],
 )
 def test_openai_dictionary_root_defs_escaped_names(

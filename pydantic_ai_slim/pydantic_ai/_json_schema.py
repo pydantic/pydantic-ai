@@ -169,23 +169,31 @@ def _check_schema_container(key: str, container: type[dict[str, Any]] | type[lis
         _check_schema_shape(member, f'{path}.{name}')
 
 
+def decode_json_pointer_token(token: str) -> str:
+    """A reference token of a local JSON-pointer `$ref` (RFC 6901), with its escapes decoded.
+
+    A `$ref` is a URI, so the token is percent-decoded once (section 6), and only then are `~1` and `~0` unescaped
+    (section 4), in that order: `%7E1` decodes to `/`. Split the pointer on `/` before decoding its tokens, so that
+    `%2F` stays part of a member name (RFC 3986 section 2.4).
+    """
+    return unquote(token).replace('~1', '/').replace('~0', '~')
+
+
 def _json_pointer_path(ref: str) -> str:
-    """The dotted path an error names for a local JSON pointer, with its `~1` and `~0` escapes decoded."""
-    return '.'.join(token.replace('~1', '/').replace('~0', '~') for token in ref.split('/')[1:])
+    """The dotted path an error names for a local JSON pointer, with its escapes decoded."""
+    return '.'.join(decode_json_pointer_token(token) for token in ref.split('/')[1:])
 
 
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
 
-    RFC 6901 URI fragments are percent-decoded once before token splitting. Not every producer collects shared
-    subschemas into `$defs`: `zod-to-json-schema`, which the MCP TypeScript SDK uses, points a reused subschema at
-    its first occurrence instead.
+    Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the MCP
+    TypeScript SDK uses, points a reused subschema at its first occurrence instead.
     """
     if ref != '#' and not ref.startswith('#/'):
         return None
     node: JsonValue = schema
-    for token in unquote(ref).split('/')[1:]:
-        token = token.replace('~1', '/').replace('~0', '~')
+    for token in map(decode_json_pointer_token, ref.split('/')[1:]):
         if isinstance(node, dict):
             node = node.get(token)
         elif isinstance(node, list) and token in map(str, range(len(node))):
@@ -282,9 +290,7 @@ class JsonSchemaTransformer(ABC):
             # we modify it to avoid collisions.
             defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
-            root_key = (
-                None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
-            )
+            root_key = None if root_ref is None else decode_json_pointer_token(root_ref.removeprefix('#/$defs/'))
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
@@ -338,11 +344,7 @@ class JsonSchemaTransformer(ABC):
         `None` when the `$ref` stays, as a recursive one does.
         """
         # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
-        key = (
-            unquote(ref.removeprefix('#/$defs/')).replace('~1', '/').replace('~0', '~')
-            if ref.startswith('#/$defs/')
-            else ref
-        )
+        key = decode_json_pointer_token(ref.removeprefix('#/$defs/')) if ref.startswith('#/$defs/') else ref
         if key in self.refs_stack:
             if key not in self.defs:
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
