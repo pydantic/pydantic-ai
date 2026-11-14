@@ -122,3 +122,12 @@ settings = CohereModelSettings(
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Native output
+
+`command-a-plus*`, `command-a-03*`, `command-a-reasoning*`, and `command-r7b-12*` models support [`NativeOutput`](../output.md) and prompted JSON output, sent to Cohere as a `response_format` request parameter. Other Cohere model IDs keep tool-based output as the default and raise a `UserError` if you explicitly request native output.
+
+Schemas using keywords Cohere's `response_format` does not support (numeric/length/count constraints, `oneOf`) are rewritten: constraints are moved into descriptions and `oneOf` is rewritten as `anyOf`. Schemas without a faithful representation may be rejected by the API with a 400.
+
+> [!NOTE]
+> Model-family support and combining `response_format` with tools were confirmed by probing the Cohere API and conflict with parts of Cohere's published Chat API documentation (which says `response_format` is unsupported with tools or documents and uses a different schema field name). Treat these details as unverified against current provider docs.

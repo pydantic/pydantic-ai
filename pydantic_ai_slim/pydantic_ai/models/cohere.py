@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import EllipsisType
-from typing import Literal, assert_never, overload
+from typing import Any, Literal, assert_never, cast, overload
 
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import (
 )
 
 from .. import _model_errors, usage
+from .._json_schema import JsonSchema, JsonSchemaTransformer
 from .._run_context import RunContext
 from .._utils import (
     PeekableAsyncStream as _PeekableAsyncStream,
@@ -94,6 +95,7 @@ try:
     )
     from cohere.core.api_error import ApiError
     from cohere.core.request_options import RequestOptions
+    from cohere.types.response_format_v2 import ResponseFormatV2
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
@@ -183,6 +185,68 @@ class CohereModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
+class _CohereJsonSchemaTransformer(JsonSchemaTransformer):
+    """Adapt an output JSON schema to the subset Cohere's `response_format` accepts.
+
+    Unsupported validation keywords are moved into descriptions so the model still sees
+    the intent. Schemas with no faithful representation are left unchanged, in which
+    case Cohere may return a 400.
+    """
+
+    _UNSUPPORTED_KEYWORDS = (
+        'multipleOf',
+        'maximum',
+        'exclusiveMaximum',
+        'minimum',
+        'exclusiveMinimum',
+        'maxLength',
+        'minLength',
+        'pattern',
+        'maxItems',
+        'minItems',
+        'uniqueItems',
+        'maxProperties',
+        'minProperties',
+    )
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = dict(schema)
+        if 'oneOf' in schema:
+            schema['anyOf'] = schema.pop('oneOf')
+        all_of: list[Any] | None = schema.get('allOf')
+        if isinstance(all_of, list) and len(all_of) == 1:
+            inlined: JsonSchema = schema.pop('allOf')[0]
+            if isinstance(inlined, dict):
+                desc = inlined.pop('description', None)
+                schema.update(inlined)
+                if desc:
+                    existing = schema.get('description')
+                    schema['description'] = f'{existing} {desc}'.strip() if existing else desc
+        constraints = [(k, schema.pop(k)) for k in self._UNSUPPORTED_KEYWORDS if k in schema]
+        if constraints:
+            note = ', '.join(f'`{k}`: {v!r}' for k, v in constraints)
+            existing = schema.get('description')
+            schema['description'] = (
+                f'{existing} (enforced client-side, not by the API: {note})'.strip()
+                if existing
+                else f'Enforced client-side, not by the API: {note}'
+            )
+        return schema
+
+
+def _cohere_response_format(model_request_parameters: ModelRequestParameters) -> dict[str, Any] | None:
+    """Map the requested output mode to Cohere's `response_format`, or None for tool output."""
+    if model_request_parameters.output_mode == 'native':
+        output_object = model_request_parameters.output_object
+        assert output_object is not None
+        schema = _CohereJsonSchemaTransformer(output_object.json_schema, prefer_inlined_defs=True).walk()
+        return {'type': 'json_object', 'json_schema': schema}
+    elif model_request_parameters.output_mode == 'prompted':
+        return {'type': 'json_object'}
+    else:
+        return None
+
+
 class CohereModel(Model[AsyncClientV2]):
     """A model that uses the Cohere API.
 
@@ -330,26 +394,50 @@ class CohereModel(Model[AsyncClientV2]):
         cohere_messages = self._map_messages(messages, model_request_parameters)
         with _map_api_errors(self.model_name):
             chat = self.client.chat_stream if stream else self.client.chat
-            response = chat(
-                model=self._model_name,
-                messages=cohere_messages,
-                tools=tools or OMIT,
-                tool_choice=tool_choice,
-                thinking=self._translate_thinking(model_request_parameters) or OMIT,
-                max_tokens=model_settings.get('max_tokens', OMIT),
-                stop_sequences=model_settings.get('stop_sequences', OMIT),
-                temperature=model_settings.get('temperature', OMIT),
-                p=model_settings.get('top_p', OMIT),
-                k=model_settings.get('top_k', OMIT),
-                seed=model_settings.get('seed', OMIT),
-                presence_penalty=model_settings.get('presence_penalty', OMIT),
-                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
-                request_options=(
-                    None
-                    if (max_retries := model_settings.get('max_retries')) is None
-                    else RequestOptions(max_retries=max_retries)
-                ),
-            )
+            response_format = _cohere_response_format(model_request_parameters)
+            if response_format is not None:
+                response = chat(
+                    model=self._model_name,
+                    messages=cohere_messages,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice,
+                    thinking=self._translate_thinking(model_request_parameters) or OMIT,
+                    max_tokens=model_settings.get('max_tokens', OMIT),
+                    stop_sequences=model_settings.get('stop_sequences', OMIT),
+                    temperature=model_settings.get('temperature', OMIT),
+                    p=model_settings.get('top_p', OMIT),
+                    k=model_settings.get('top_k', OMIT),
+                    seed=model_settings.get('seed', OMIT),
+                    presence_penalty=model_settings.get('presence_penalty', OMIT),
+                    frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                    request_options=(
+                        None
+                        if (max_retries := model_settings.get('max_retries')) is None
+                        else RequestOptions(max_retries=max_retries)
+                    ),
+                    response_format=cast('ResponseFormatV2', response_format),
+                )
+            else:
+                response = chat(
+                    model=self._model_name,
+                    messages=cohere_messages,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice,
+                    thinking=self._translate_thinking(model_request_parameters) or OMIT,
+                    max_tokens=model_settings.get('max_tokens', OMIT),
+                    stop_sequences=model_settings.get('stop_sequences', OMIT),
+                    temperature=model_settings.get('temperature', OMIT),
+                    p=model_settings.get('top_p', OMIT),
+                    k=model_settings.get('top_k', OMIT),
+                    seed=model_settings.get('seed', OMIT),
+                    presence_penalty=model_settings.get('presence_penalty', OMIT),
+                    frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                    request_options=(
+                        None
+                        if (max_retries := model_settings.get('max_retries')) is None
+                        else RequestOptions(max_retries=max_retries)
+                    ),
+                )
             if isinstance(response, AsyncIterator):
                 return response
             return await response
