@@ -1113,14 +1113,30 @@ def get_function_type_hints(func: Any) -> dict[str, Any]:
     return _typing_extra.get_function_type_hints(func)
 
 
+def _renamed_def_ref(ref: str, name_mapping: dict[str, str]) -> str:
+    """Point a `#/$defs/` ref at the new name of its def from name_mapping."""
+    if ref.startswith('#/$defs/'):  # pragma: no branch
+        original_name = ref[8:]  # Remove '#/$defs/'
+        new_name = name_mapping.get(original_name, original_name)
+        ref = f'#/$defs/{new_name}'
+    return ref
+
+
+def _update_own_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
+    """Update the refs a schema node holds itself, rather than in a subschema, using name_mapping."""
+    if '$ref' in s:
+        s['$ref'] = _renamed_def_ref(s['$ref'], name_mapping)
+
+    # Pydantic also points a discriminated union's OpenAPI `discriminator.mapping` at its members' `$defs`.
+    discriminator = s.get('discriminator')
+    if is_str_dict(discriminator) and 'mapping' in discriminator:
+        mapping: dict[str, str] = discriminator['mapping']
+        discriminator['mapping'] = {tag: _renamed_def_ref(ref, name_mapping) for tag, ref in mapping.items()}
+
+
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
-    if '$ref' in s:
-        ref = s['$ref']
-        if ref.startswith('#/$defs/'):  # pragma: no branch
-            original_name = ref[8:]  # Remove '#/$defs/'
-            new_name = name_mapping.get(original_name, original_name)
-            s['$ref'] = f'#/$defs/{new_name}'
+    _update_own_json_schema_refs(s, name_mapping)
 
     for subschema in _mapped_json_subschemas(s):
         _update_mapped_json_schema_refs(subschema, name_mapping)
