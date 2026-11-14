@@ -210,16 +210,16 @@ effort values.
 
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
-    'anthropic': ('claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
+    'anthropic': ('claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
     'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'),
 }
 """Model-name prefixes, per upstream provider, of the OpenRouter routes that accept a mid-conversation effort change.
 
 OpenRouter routes a request carrying a `configuration_update` only to endpoints that accept it, and rejects it with a
 400 ("Mid-conversation reasoning effort (configuration_update) is not supported") on every other model, so this lists
-the models a live probe found accepting it (2026-10-26): Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5,
-and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5, GPT-6.1 Terra and GPT-5.6 are rejected,
-as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
+the models live probes found accepting it (2026-10-26, and 2026-11-10 for Claude Fable 5.2): Claude Fable 5.1 and 5.2,
+Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5, and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5,
+GPT-6.1 Terra and GPT-5.6 are rejected, as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
 https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation
 """
 
@@ -262,7 +262,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://openrouter.ai/api/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -396,6 +396,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
@@ -406,6 +407,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
@@ -416,6 +418,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         Args:
             api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
                 when omitted and required unless `openai_client` is provided.
+            base_url: The base URL to use for requests, if not provided, `https://openrouter.ai/api/v1` will be used.
             app_url: Optional url for app attribution. Falls back to
                 `OPENROUTER_APP_URL` when omitted.
             app_title: Optional title for app attribution. Falls back to
@@ -442,6 +445,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
         if x_title := app_title or os.getenv('OPENROUTER_APP_TITLE'):
             attribution_headers['X-Title'] = x_title
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://openrouter.ai/api/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

@@ -526,10 +526,12 @@ class Workspace(WorkspaceBackend):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
-        """Run a command in the working directory and wait for it.
+        """Run a command and wait for it.
 
-        To start elsewhere, prefix a shell command with `cd <shlex-quoted dir> && `.
+        It starts in `cwd`, resolved like file paths, or the working directory by default. A missing `cwd`
+        raises `FileNotFoundError`, and a file `NotADirectoryError`.
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
         validate_timeout(timeout)
@@ -539,7 +541,26 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
-        return await backend.run(command, shell=shell, env=env, timeout=timeout)
+        if cwd is None:
+            return await backend.run(command, shell=shell, env=env, timeout=timeout)
+        if isinstance(backend, Workspace):
+            # Passed on, so wrappers (durable execution, sandboxes) see it.
+            return await backend.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
+        return await backend.run(
+            await self._command_in(cwd, command, shell=shell), shell=shell, env=env, timeout=timeout
+        )
+
+    async def _command_in(self, cwd: str, command: WorkspaceCommand, *, shell: bool) -> WorkspaceCommand:
+        """`command` changed to start in `cwd`, through the shell, so it works on any backend."""
+        if isinstance(command, str) != shell:
+            # Checked before the directory, so a mismatch is a `TypeError`, as without `cwd`.
+            raise TypeError('a string command requires `shell=True`, and an argv sequence `shell=False`')
+        cwd = await self.resolve(cwd)
+        if not (await self.stat(cwd)).is_dir:
+            raise NotADirectoryError(cwd)
+        if isinstance(command, str):
+            return f'cd -- {shlex.quote(cwd)} || exit\n{command}'
+        return ['/bin/sh', '-c', 'cd -- "$1" || exit; shift; exec "$@"', 'sh', cwd, *command]
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""

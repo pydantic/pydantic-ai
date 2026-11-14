@@ -2240,6 +2240,7 @@ def test_healthy_census_does_not_require_a_slack_mention(
     monkeypatch.setattr(monitor, 'GitHubClient', lambda token: CensusClient(CENSUS_COUNTS))
     monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'census'])
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'github-output'))
     if mentions is None:
         monkeypatch.delenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', raising=False)

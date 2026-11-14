@@ -15,7 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, run_agent_in_task
 
@@ -179,6 +179,27 @@ async def test_explicit_subagent_uses_shared_app_for_direct_child_task_runs() ->
     assert ('nested-child__model.request', 1) in context.calls
     assert ('nested-child__function_toolset__<agent>.call_tool', 1) in context.calls
     assert not [name for name, _depth in context.calls if '__function_toolset__sub_agents' in name]
+
+
+async def test_delegate_task_in_a_render_task_keeps_max_calls() -> None:
+    """A `delegate_task` Render task is not a child workflow, so `max_calls` still applies there."""
+    app = RecordingWorkflows()
+    runtime = RenderWorkflows[None](app, deps_type=type(None))
+    worker = Agent[None, str](FunctionModel(tool_then_finish), name='render-budget-worker', deps_type=type(None))
+
+    @worker.tool_plain
+    async def child_tool() -> str:
+        return 'tool done'
+
+    parent = Agent[None, str](
+        delegate_once('render-budget-worker'),
+        name='render-budget-parent',
+        deps_type=type(None),
+        capabilities=[SubAgents(agents=[SubAgent(worker, max_calls=1)], agent_folders=None), runtime],
+    )
+    context = NestedTaskContext()
+    assert await run_agent_in_task(parent, runtime, context) == 'parent done'
+    assert any('__function_toolset__sub_agents' in name for name, _depth in context.calls)
 
 
 def returned_tool_names(messages: list[ModelMessage]) -> set[str]:

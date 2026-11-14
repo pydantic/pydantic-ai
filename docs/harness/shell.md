@@ -14,7 +14,23 @@ processes that keep running across the runs of a conversation.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](../img/harness/shell.svg)
+```mermaid
+flowchart TB
+    accTitle: Shell: run commands in the workspace, with guardrails
+    accDescr: The model calls Shell tools, such as run_command and start_command, and gets results. Before a command runs, the capability checks the executable, shell operators and interactive commands. A passing command runs as a process in the workspace, with its working directory and environment, and one in denied_commands, such as rm by default, is rejected and the model gets a retry.
+    model(["model"])
+    shell["Shell()<br/>run_command,<br/>start_command"]:::capability
+    checks["checks the executable,<br/>shell operators and<br/>interactive commands"]:::capability
+    process["workspace process<br/>its working directory<br/>and environment"]:::external
+    rejected["denied_commands,<br/>such as rm by default:<br/>the model gets a retry"]:::blocked
+    model <-->|"tool call, result"| shell
+    shell -->|"before it runs"| checks
+    checks -->|"runs"| process
+    checks -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -310,20 +326,20 @@ show output as it arrives without parsing the tool result:
 |---|---|---|
 | `CommandStartedEvent` | stream | `command`, `pid` |
 | `CommandOutputEvent` | stream | `text`: a chunk of the combined log, decoded incrementally |
-| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `total_lines` |
+| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `line_count` |
 
 Output events are emitted while a foreground call waits: at most the first
 16,000 bytes of the log per call, in chunks of up to 4,096 bytes, polled every
 50 ms to 1 s. A background call emits only the started and finished events. `finished`
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
-more than the events showed. `total_lines` counts logical lines in logs up to
+more than the events showed. `line_count` counts logical lines in logs up to
 1 MiB and is `None` for larger logs, which are not scanned. If `max_log_bytes`
 empties the log during the call, output events start again from its notice,
-`truncated` is true and `total_lines` is `None`. A cancelled call may emit no
+`truncated` is true and `line_count` is `None`. A cancelled call may emit no
 finished event. Events carry command text and command output, so treat them as
 untrusted when rendering. They add no telemetry spans; core already traces the
-tool call.
+tool call. `total_lines` is the deprecated name of `line_count`. It still reads, with a warning, and a payload saved under it still loads.
 
 ## Working directory
 

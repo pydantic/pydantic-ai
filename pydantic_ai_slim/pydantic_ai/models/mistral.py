@@ -138,7 +138,15 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
-        raise _model_errors.transport_status_error(model_name, e.response) from e
+        body, _, text = _model_errors.transport_error_body(e.response)
+        raise _status_error(
+            model_name,
+            status_code=e.response.status_code,
+            body=body,
+            parsed=body,
+            headers=dict(e.response.headers),
+            text=text,
+        ) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -150,22 +158,48 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
         error = pydantic_core.from_json(e.body)
     except ValueError:
         error = None
-    code = error.get('code') if _utils.is_str_dict(error) else None
-    error_type = error.get('type') if _utils.is_str_dict(error) else None
-    # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+    return _status_error(
+        model_name,
+        status_code=e.status_code,
+        body=e.body,
+        parsed=error,
+        headers=dict(e.headers),
+    )
+
+
+def _status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    parsed: object,
+    headers: dict[str, str],
+    text: str | None = None,
+) -> ModelHTTPError:
+    """The error for a Mistral API error status, classified by `parsed`, the error object its `body` holds.
+
+    Without a message in `parsed`, the status is classified with `text`, the body's text if no SDK read it.
+    """
+    code = parsed.get('code') if _utils.is_str_dict(parsed) else None
+    error_type = parsed.get('type') if _utils.is_str_dict(parsed) else None
+    error_message = parsed.get('message') if _utils.is_str_dict(parsed) else None
+    message = error_message if isinstance(error_message, str) else text
+    # Mistral sends its numeric error codes as strings.
     code = str(code) if isinstance(code, str | int) else None
-    message = error.get('message') if _utils.is_str_dict(error) else None
+    # Mistral sends a context window overflow with the type `invalid_request_prompt_too_long` (code `'3059'`).
+    # `'3051'` is its generic invalid arguments code, so it only means an overflow when the message says so.
     category = (
         ModelContextWindowExceededError
-        if code == '3051'
-        else _model_errors.http_status_category(e.status_code, message)
+        if error_type == 'invalid_request_prompt_too_long'
+        or (code == '3051' and isinstance(error_message, str) and 'maximum context length' in error_message.lower())
+        else _model_errors.http_status_category(status_code, message)
     )
     return ModelHTTPError.for_category(
         category,
-        status_code=e.status_code,
+        status_code=status_code,
         model_name=model_name,
-        body=e.body,
-        headers=dict(e.headers),
+        body=body,
+        headers=headers,
         provider_error_code=code,
         provider_error_type=error_type if isinstance(error_type, str) else None,
     )
@@ -246,6 +280,8 @@ class MistralModel(Model[Mistral]):
 
     # Mistral's chat API reads PDFs and takes text files inlined into the prompt, and has no audio or video part.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
     _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
 
     _model_name: MistralModelName = field(repr=False)
