@@ -18,6 +18,7 @@ from unittest import mock
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import from_json
 
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelRequest
@@ -101,40 +102,6 @@ def describe(error: ModelHTTPError) -> dict[str, object]:
         'body': error.body,
         'headers': error.headers,
     }
-
-
-class Rejector:
-    """A local WebSocket server that rejects every upgrade with the current `rejection`."""
-
-    def __init__(self) -> None:
-        self.rejection = Rejection(500)
-
-    def process_request(self, connection: ServerConnection, request: Request) -> Response:
-        body = self.rejection.body
-        headers = Headers([*self.rejection.headers, ('Content-Length', str(len(body)))])
-        return Response(self.rejection.status, 'Rejected', headers, body)
-
-
-async def _never_accepted(connection: ServerConnection) -> None:
-    raise AssertionError('every upgrade is rejected')  # pragma: no cover
-
-
-@pytest.fixture
-async def rejector() -> AsyncIterator[Rejector]:
-    """A rejecting server that every realtime model's WebSocket dial reaches, whatever URL it builds."""
-    rejector = Rejector()
-    async with serve(
-        _never_accepted, '127.0.0.1', 0, process_request=rejector.process_request, server_header=None
-    ) as server:
-        host, port = next(iter(server.sockets)).getsockname()[:2]
-
-        def dial(uri: str, **kwargs: Any) -> websocket_connect:
-            # `google-genai` passes a TLS context for its `wss://` URL; the local server is plain text.
-            kwargs.pop('ssl', None)
-            return websocket_connect(f'ws://{host}:{port}', **kwargs)
-
-        with mock.patch.object(websockets, 'connect', dial), mock.patch.object(genai_live, 'ws_connect', dial):
-            yield rejector
 
 
 def _azure_provider(http_client: httpx2.AsyncClient | None = None) -> AzureProvider:
@@ -484,6 +451,40 @@ UPGRADE_CASES = [
 ]
 
 
+class Rejector:
+    """A local WebSocket server that rejects every upgrade with the current `rejection`."""
+
+    def __init__(self) -> None:
+        self.rejection = Rejection(500)
+
+    def process_request(self, connection: ServerConnection, request: Request) -> Response:
+        body = self.rejection.body
+        headers = Headers([*self.rejection.headers, ('Content-Length', str(len(body)))])
+        return Response(self.rejection.status, 'Rejected', headers, body)
+
+
+async def _never_accepted(connection: ServerConnection) -> None:
+    raise AssertionError('every upgrade is rejected')  # pragma: no cover
+
+
+@pytest.fixture
+async def rejector() -> AsyncIterator[Rejector]:
+    """A rejecting server that every realtime model's WebSocket dial reaches, whatever URL it builds."""
+    rejector = Rejector()
+    async with serve(
+        _never_accepted, '127.0.0.1', 0, process_request=rejector.process_request, server_header=None
+    ) as server:
+        host, port = next(iter(server.sockets)).getsockname()[:2]
+
+        def dial(uri: str, **kwargs: Any) -> websocket_connect:
+            # `google-genai` passes a TLS context for its `wss://` URL; the local server is plain text.
+            kwargs.pop('ssl', None)
+            return websocket_connect(f'ws://{host}:{port}', **kwargs)
+
+        with mock.patch.object(websockets, 'connect', dial), mock.patch.object(genai_live, 'ws_connect', dial):
+            yield rejector
+
+
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in UPGRADE_CASES])
 async def test_rejected_upgrade(case: UpgradeCase, rejector: Rejector) -> None:
     rejector.rejection = case.rejection
@@ -604,26 +605,6 @@ def platform_cached() -> None:
     platform.platform()
 
 
-async def _signal(call: SignalingCall, http_client: httpx2.AsyncClient) -> None:
-    match call:
-        case 'openai_client_secret':
-            provider = OpenAIProvider(api_key='sk-test', http_client=http_client)
-            await OpenAIRealtimeModel('gpt-realtime', provider=provider).create_client_secret()
-        case 'openai_webrtc_offer':
-            provider = OpenAIProvider(api_key='sk-test', http_client=http_client)
-            await OpenAIRealtimeModel('gpt-realtime', provider=provider).answer_webrtc_offer(SDP_OFFER)
-        case 'azure_hang_up':
-            model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider(http_client))
-            await model.hang_up(WebRTCSession(provider_name='azure', session_id='rtc_x'))
-        case 'elevenlabs_agents_preflight':
-            async with _elevenlabs_agents_model(http_client).connect(
-                messages=MESSAGES, model_settings=None, model_request_parameters=ModelRequestParameters()
-            ):
-                pass  # pragma: no cover
-        case _:
-            assert_never(call)
-
-
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in SIGNALING_CASES])
 async def test_rejected_signaling_request(case: SignalingCase, platform_cached: None) -> None:
     rejection = case.rejection
@@ -632,5 +613,58 @@ async def test_rejected_signaling_request(case: SignalingCase, platform_cached: 
     )
     async with httpx2.AsyncClient(transport=transport) as http_client:
         with pytest.raises(ModelHTTPError) as exc_info:
-            await _signal(case.call, http_client)
+            match case.call:
+                case 'openai_client_secret':
+                    provider = OpenAIProvider(api_key='sk-test', http_client=http_client)
+                    await OpenAIRealtimeModel('gpt-realtime', provider=provider).create_client_secret()
+                case 'openai_webrtc_offer':
+                    provider = OpenAIProvider(api_key='sk-test', http_client=http_client)
+                    await OpenAIRealtimeModel('gpt-realtime', provider=provider).answer_webrtc_offer(SDP_OFFER)
+                case 'azure_hang_up':
+                    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider(http_client))
+                    await model.hang_up(WebRTCSession(provider_name='azure', session_id='rtc_x'))
+                case 'elevenlabs_agents_preflight':
+                    async with _elevenlabs_agents_model(http_client).connect(
+                        messages=MESSAGES, model_settings=None, model_request_parameters=ModelRequestParameters()
+                    ):
+                        pass  # pragma: no cover
+                case _:
+                    assert_never(case.call)
     assert describe(exc_info.value) == case.expected
+
+
+@pytest.mark.vcr
+async def test_recorded_client_secret_rejection(platform_cached: None) -> None:
+    """A real rejection, recorded from OpenAI with a bogus key, reads like the SDK's error for it.
+
+    Neither OpenAI Realtime nor Gemini Live rejects the WebSocket upgrade for a bogus key: both accept it and report
+    the error over the socket, so no rejected upgrade can be recorded on demand. The client-secret endpoint rejects the
+    key over HTTP, and its response goes through the same parser as a rejected OpenAI-protocol upgrade.
+    """
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='sk-bogus'))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.create_client_secret()
+    error = exc_info.value
+    assert {key: value for key, value in describe(error).items() if key not in ('body', 'headers')} == snapshot(
+        {
+            'class': 'ModelAuthenticationError',
+            'status_code': 401,
+            'provider_error_code': 'invalid_api_key',
+            'provider_error_type': 'invalid_request_error',
+            'retry_after': None,
+        }
+    )
+    assert error.headers is not None
+    # The body stays the response text. OpenAI sends it pretty-printed and the cassette stores it re-serialized, so
+    # it's compared parsed.
+    assert isinstance(error.body, str)
+    assert from_json(error.body) == snapshot(
+        {
+            'error': {
+                'message': 'Incorrect API key provided: sk-bogus. You can find your API key at https://platform.openai.com/account/api-keys.',
+                'type': 'invalid_request_error',
+                'param': None,
+                'code': 'invalid_api_key',
+            }
+        }
+    )
