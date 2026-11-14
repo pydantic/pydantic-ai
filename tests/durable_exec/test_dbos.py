@@ -96,7 +96,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -4328,6 +4328,36 @@ async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> No
         'stream-exit',
         'model-exit:none',
     ]
+
+
+async def _structured_output_preamble_text_stream(
+    _messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'Preamble text.'
+    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"structured output"}', tool_call_id='call_1')}
+
+
+@dataclass
+class StructuredOutput:
+    response: str
+
+
+async def test_durability_run_stream_structured_output_preamble_text_in_workflow(dbos: DBOS) -> None:
+    agent = Agent(
+        FunctionModel(stream_function=_structured_output_preamble_text_stream),
+        name='durability_structured_output_preamble_text',
+        output_type=StructuredOutput,
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def structured_output_preamble_text_workflow() -> str:
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+            return output.response
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await structured_output_preamble_text_workflow() == 'structured output'
 
 
 async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:

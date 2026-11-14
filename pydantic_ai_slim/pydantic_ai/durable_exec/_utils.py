@@ -248,6 +248,7 @@ class DurableModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        _, prepared_request_parameters = self.wrapped.prepare_request(model_settings, model_request_parameters)
         try:
             result = await self._request_stream_segment(segment_context)
         except Exception as error:
@@ -256,10 +257,10 @@ class DurableModel(WrapperModel):
             # The stream failed after it produced output, so it's handed over as a stream that fails partway
             # through rather than one that failed to open.
             stream: CompletedStreamedResponse = _StreamedThenFailed(
-                partial, model_request_parameters=model_request_parameters, error=error
+                partial, model_request_parameters=prepared_request_parameters, error=error
             )
         else:
-            stream = _completed_stream(result, model_request_parameters)
+            stream = _completed_stream(result, prepared_request_parameters)
         yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
