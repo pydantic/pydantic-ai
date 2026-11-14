@@ -133,7 +133,7 @@ Rules of thumb:
 
 ## Manage Context Size
 
-Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
+Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`. A realtime session never calls `before_model_request`: it calls `before_realtime_connect` once before connecting instead, with a `RealtimeConnectContext` whose `messages` (the seeded history) it can change. `ProcessHistory` implements both, so its processor also runs once over the `message_history` a session is seeded with; register `Hooks(before_realtime_connect=fn)` for a change only a session needs.
 
 In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
 

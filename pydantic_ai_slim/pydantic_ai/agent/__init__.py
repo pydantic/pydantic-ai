@@ -183,6 +183,7 @@ if TYPE_CHECKING:
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
+        RealtimeConnectContext,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeProviderSession,
@@ -4088,7 +4089,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         asks for that: signaling only reads back the instructions and tools a session would advertise,
         and is not itself a run.
         """
-        from ..realtime import RealtimeModel, infer_realtime_model
+        from ..realtime import RealtimeConnectContext, RealtimeModel, infer_realtime_model
         from ..realtime._utils import session_instructions
 
         if not isinstance(model, RealtimeModel):
@@ -4251,6 +4252,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
         lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
+        # Taken from `run_context.messages` once the run hooks have run, then replaced by the history the
+        # `before_realtime_connect` hooks leave, below.
+        seeded_history = list(message_history or ())
 
         def _build_session_result() -> AgentRunResult[Any]:
             assert lifecycle_state is not None and lifecycle_state.session is not None
@@ -4275,7 +4279,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return exceptions.RunCancelled(
                     message,
                     messages=session.all_messages() if session is not None else message_history or (),
-                    new_message_index=len(message_history or ()),
+                    new_message_index=len(seeded_history if session is not None else message_history or ()),
                     usage=run_context.usage,
                     metadata=run_context.metadata,
                     run_id=run_id,
@@ -4356,16 +4360,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sourced_instructions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
+            # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
+            # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
+            # The model sends this standing prompt as instructions, and the session records it.
+            # Seeded from the run's own history, as `iter` is, so what `for_run` and `before_run` hooks change in
+            # `ctx.messages` is what the session is seeded with.
+            seeded_history = list(run_context.messages)
+            system_prompt_parts: list[_messages.SystemPromptPart] = []
+            if seeded_history:
+                await _system_prompt.reevaluate_dynamic_system_prompts(
+                    seeded_history, self._system_prompt_dynamic_functions, run_context, append=False
+                )
+            else:
+                system_prompt_parts = await _system_prompt.resolve_system_prompts(
+                    self._system_prompts, self._system_prompt_functions, run_context
+                )
+
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
             # which seeding skips: a session has no channel for them. They join the session's own instructions
             # instead, after the rest, resolved as the graph resolves them before each request.
             # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
-            loaded_capability_ids = [
-                capability_id
-                for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history
-                if (capability := run_context.capabilities.get(capability_id)) is not None
-                and capability.defer_loading is True
-            ]
+            def loaded_capability_ids_of(messages: Sequence[_messages.ModelMessage]) -> list[str]:
+                return [
+                    capability_id
+                    for capability_id in _instructions.LoadedInstructionValues.of(messages).stated_in_history
+                    if (capability := run_context.capabilities.get(capability_id)) is not None
+                    and capability.defer_loading is True
+                ]
+
+            loaded_capability_ids = loaded_capability_ids_of(seeded_history)
 
             async def resolve_instruction_parts(
                 ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]
@@ -4385,24 +4408,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return _instructions.session_instruction_parts(parts, loaded_parts)
 
             instruction_parts = await resolve_instruction_parts(run_context, tool_manager.toolset)
-            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
-            # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
-            # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
-            # The model sends this standing prompt as instructions, and the session records it.
-            seeded_history = list(message_history or ())
-            system_prompt_parts: list[_messages.SystemPromptPart] = []
-            if seeded_history:
-                await _system_prompt.reevaluate_dynamic_system_prompts(
-                    seeded_history, self._system_prompt_dynamic_functions, run_context, append=False
-                )
-            else:
-                system_prompt_parts = await _system_prompt.resolve_system_prompts(
-                    self._system_prompts, self._system_prompt_functions, run_context
-                )
-            request_messages: list[_messages.ModelMessage] = [
-                *seeded_history,
-                _messages.ModelRequest(parts=[*system_prompt_parts], instructions=resolved_instructions or None),
-            ]
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
@@ -4454,6 +4459,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_request_parameters,
                 function_tools=model_request_parameters.declared_function_tools,
             )
+
+            # As `before_model_request` does before a standard run's request, the `before_realtime_connect` hooks
+            # see what the session is about to connect with and can change the history it's seeded with. They
+            # run once, after `before_run` and the re-evaluated system prompts, and before the history is folded
+            # into the session's instructions and replayed to the provider.
+            # What the hooks leave is the session's seed: what the provider is seeded with, what the session records
+            # as its history's start, and what a reconnect replays.
+            seeded_history = await _apply_before_realtime_connect(
+                run_capability,
+                run_context,
+                RealtimeConnectContext(
+                    model=model,
+                    messages=seeded_history,
+                    model_settings=effective_model_settings,
+                    model_request_parameters=model_request_parameters,
+                ),
+            )
+            # The instructions of the capabilities the seed loaded follow what it now loads: a hook that drops the
+            # turn which loaded one drops its instructions too, as the model in a standard run wouldn't see them.
+            instruction_parts = await _refold_loaded_instructions(
+                instruction_parts,
+                loaded_capability_ids,
+                loaded_capability_ids_of(seeded_history),
+                lambda: resolve_instruction_parts(run_context, tool_manager.toolset),
+            )
+            model_request_parameters = dataclasses.replace(
+                model_request_parameters, instruction_parts=instruction_parts
+            )
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
+            request_messages: list[_messages.ModelMessage] = [
+                *seeded_history,
+                _messages.ModelRequest(parts=[*system_prompt_parts], instructions=resolved_instructions or None),
+            ]
 
             wrap_event_stream: (
                 Callable[
@@ -4632,7 +4670,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     yielded = True
                 return
 
-            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
+            if resolved.message_history and not resolved.model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
                     f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
@@ -5229,6 +5267,47 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     PendingMessageDrainCapability,
 )
 """Infrastructure capabilities auto-injected when not already present."""
+
+
+async def _apply_before_realtime_connect(
+    run_capability: AbstractCapability[Any], run_context: RunContext[Any], connect_context: RealtimeConnectContext
+) -> list[_messages.ModelMessage]:
+    """Run the `before_realtime_connect` hooks and return the history they leave, the session's seed."""
+    # Captured first: a hook can assign to the context it was given as well as return a copy.
+    model, model_settings, params = (
+        connect_context.model,
+        connect_context.model_settings,
+        connect_context.model_request_parameters,
+    )
+    processed = await run_capability.before_realtime_connect(run_context, connect_context)
+    if (
+        processed.model is not model
+        or processed.model_settings is not model_settings
+        or processed.model_request_parameters is not params
+    ):
+        raise exceptions.UserError(
+            '`before_realtime_connect` can only change `messages`: the `model`, `model_settings` and '
+            '`model_request_parameters` a session connects with are read-only.'
+        )
+    return list(processed.messages)
+
+
+async def _refold_loaded_instructions(
+    instruction_parts: list[_messages.InstructionPart],
+    loaded_capability_ids: list[str],
+    processed_ids: list[str],
+    resolve_instruction_parts: Callable[[], Awaitable[list[_messages.InstructionPart]]],
+) -> list[_messages.InstructionPart]:
+    """Re-resolve a session's instructions if the `before_realtime_connect` hooks changed what its seed loads.
+
+    `loaded_capability_ids` are the on-demand capabilities the seed loaded before the hooks, and `processed_ids` those
+    it loads after them. The list is updated in place, since the session resolves its instructions from it again
+    before each model turn.
+    """
+    if processed_ids == loaded_capability_ids:
+        return instruction_parts
+    loaded_capability_ids[:] = processed_ids
+    return await resolve_instruction_parts()
 
 
 def _warn_realtime_uncalled_hooks(run_capability: AbstractCapability[Any]) -> None:

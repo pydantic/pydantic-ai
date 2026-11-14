@@ -2410,7 +2410,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             # Current while the offer is answered, as while a session connects: a model can consult the
             # agent it belongs to (GPT-Live delegates to the agent's own model by default).
             with set_current_run_context(resolved.run_context):
-                if self._message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
+                if resolved.message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
                     return await resolved.model.answer_webrtc_offer(
                         sdp_offer,
                         instructions=resolved.session_instructions,
