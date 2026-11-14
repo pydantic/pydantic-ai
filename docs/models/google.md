@@ -580,7 +580,7 @@ decode is one model request:
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
 - In a streamed run, a later request that fails before it streams any output, with an error the HTTP client raises,
   is sent 3 more times from the same continuation token, with no wait, before the model request fails as above. That
-  includes a failed or dropped connection, a timeout and the `HTTPStatusError` of a
+  includes a connection that can't be opened or that drops, a timeout and the `HTTPStatusError` of a
   [retrying transport](../retries.md#transport-retries) that gave up, but not an error status the SDK reads itself.
   `retry_options` and [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off. They
   also retry a connection that can't be opened, and a timeout before the response arrives, on each of those 4
