@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass
-from pathlib import Path  # noqa: F401 -- resolves the inherited fields' annotations for the agent spec schema
+
+# `Path` and `Authority` resolve the inherited fields' annotations here, for the agent spec schema.
+from pathlib import Path  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 from pydantic_ai._run_context import AgentDepsT
-from pydantic_ai.messages import Authority  # noqa: F401 -- as above
+from pydantic_ai.messages import Authority  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from pydantic_ai.workspaces import WindowsWorkspaceBackend
 from pydantic_ai.workspaces.local import _HostWorkspaceBackend  # pyright: ignore[reportPrivateUsage]
 
