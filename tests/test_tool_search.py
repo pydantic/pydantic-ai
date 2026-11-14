@@ -163,7 +163,9 @@ with try_import() as openai_available:
         ResponseToolSearchCall,
         ResponseToolSearchOutputItem,
     )
+    from openai.types.responses.custom_tool import CustomTool
     from openai.types.responses.file_search_tool import FileSearchTool
+    from openai.types.responses.namespace_tool import NamespaceTool, ToolFunction
 
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
@@ -3833,7 +3835,10 @@ def test_openai_map_tool_search_call_unit():
     populated metadata for various output shapes — useful as a fast deterministic
     gate without burning a live API call. The end-to-end live cassette in
     `test_openai_native_tool_search_round_trip` exercises the same functions with
-    real provider responses."""
+    real provider responses.
+
+    The namespace-wrapped and mixed shapes are synthetic: the SDK types allow them,
+    but no model returned them in live probes, so there is no recording to replay."""
 
     call = ResponseToolSearchCall(
         id='ts_1',
@@ -3885,6 +3890,31 @@ def test_openai_map_tool_search_call_unit():
     )
     mixed = build_tool_search_return_part('call_mix', mixed_output, 'openai')
     assert mixed.content == {'discovered_tools': [{'name': 'real'}]}
+
+    # A deferred match can arrive as a namespace wrapping its function; the inner
+    # function names are the discovered tools.
+    namespaced_output = ResponseToolSearchOutputItem(
+        id='tso_ns',
+        call_id='call_ns',
+        execution='server',
+        status='completed',
+        tools=[
+            NamespaceTool(
+                type='namespace',
+                name='get_exchange_rate',
+                description='',
+                tools=[
+                    ToolFunction(type='function', name='get_exchange_rate', parameters={}, defer_loading=True),
+                    # Pydantic AI never sends custom tools, so a custom tool can't be a match.
+                    CustomTool(type='custom', name='freeform'),
+                ],
+            ),
+            FunctionTool(name='note', description='', parameters={}, strict=False, type='function'),
+        ],
+        type='tool_search_output',
+    )
+    namespaced = build_tool_search_return_part('call_ns', namespaced_output, 'openai')
+    assert namespaced.content == {'discovered_tools': [{'name': 'get_exchange_rate'}, {'name': 'note'}]}
 
 
 @pytest.mark.parametrize('call_id', [None, 'call_1'], ids=['null-id', 'explicit-id'])
