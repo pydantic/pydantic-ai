@@ -164,7 +164,10 @@ def _split_merged_tail(
     if tail is None or not appended:
         return messages, new_message_index
     start = new_message_index - (len(unsaved) - len(appended) + 1)
-    merged = messages[start]
+    merged = messages[start] if 0 <= start < len(messages) else None
+    if not isinstance(merged, _messages.ModelRequest):
+        # A history shorter than its index says, as a payload dumped without some of its messages has.
+        return messages, new_message_index
     added: list[Any] = list(merged.parts)
     for part in [part for request in (tail, *appended) for part in request.parts]:
         if part not in added:
@@ -1284,9 +1287,11 @@ class AgentRunResult(Generic[OutputDataT]):
             data['output'] = serialized['output']
         filtered = _filter_serialized(data, info)
         if filtered.get('messages') is not self._state.message_history:
-            # The caller left out messages, which the full history would hold again and its indices point into.
+            # The caller left out messages, which the full history would hold again and its indices point into,
+            # and the merged tail would hold again.
             filtered.pop('conversation_messages', None)
             filtered.pop('conversation_run_start', None)
+            filtered.pop('conversation_merged_tail', None)
         return cast('_AgentRunResultData[Any]', filtered)
 
     @overload

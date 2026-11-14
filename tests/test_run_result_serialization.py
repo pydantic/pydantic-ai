@@ -29,8 +29,9 @@ from pydantic_ai import (
     UserError,
 )
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import InMemoryConversationStore
-from pydantic_ai.messages import TextPart
+from pydantic_ai.messages import ModelRequest, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import StreamedRunResult
@@ -679,6 +680,47 @@ async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_w
         assert 'conversation_messages' not in dumped
         assert 'conversation_run_start' not in dumped
         TYPE_ADAPTER.validate_json(TYPE_ADAPTER.dump_json(result, exclude=exclude))
+
+
+class _Answer(BaseModel):
+    text: str
+
+
+async def test_a_run_result_whose_prompt_merged_into_a_stored_request_dumped_without_its_messages_leaves_that_out_too() -> (
+    None
+):
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('one', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('two')]))
+    result = await agent.run(conversation=loaded)
+    adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
+    assert 'conversation_merged_tail' in adapter.dump_python(result)
+
+    for exclude in ({'messages'}, {'messages': {0}}):
+        assert 'conversation_merged_tail' not in adapter.dump_python(result, exclude=exclude)
+        revived = adapter.validate_json(adapter.dump_json(result, exclude=exclude))
+        assert revived.conversation.new_message_index is None
+
+
+def test_a_run_result_whose_merged_tail_is_past_its_messages_leaves_its_conversation_unsplit() -> None:
+    tail = ModelRequest(parts=[UserPromptPart('stored')])
+    revived = TYPE_ADAPTER.validate_python(
+        {
+            'output': 'done',
+            'messages': [],
+            'new_message_index': 2,
+            'conversation_unsaved': [ModelRequest(parts=[UserPromptPart('appended')])],
+            'conversation_merged_tail': tail,
+        }
+    )
+
+    conversation = revived.conversation
+
+    assert conversation.messages == []
+    assert conversation.new_message_index is None
 
 
 def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_validation() -> None:
