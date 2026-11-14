@@ -1,0 +1,65 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "130"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: "Reply with just: ok"
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=254
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: ok
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 6
+          candidatesTokenCount: 1
+          totalTokenCount: 7
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 6
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash-lite
+        responseId: Cn7qau71KfiiqtsP78XkkAE
+  recorded_at: 2026-11-04T00:36:26.866321+00:00

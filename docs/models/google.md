@@ -348,6 +348,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+`presence_penalty` and `frequency_penalty` aren't sent through the Gemini API, which rejects them for every model, or on Google Cloud for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models, which reject them too.
+
 ### Configure thinking
 
 Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:

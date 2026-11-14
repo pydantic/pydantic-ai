@@ -120,6 +120,10 @@ Such a request is streamed behind the scenes, since a response that long can tak
 
 Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request starts, so an account with a small Claude quota can see more `ThrottlingException`s. Set `max_tokens` close to the output you expect to reserve less and send a non-streaming `Converse` request.
 
+### Sampling settings on Claude
+
+As on [Anthropic](anthropic.md), a Claude request that thinks drops `temperature` other than `1`, `top_p` below `0.95` and `top_k`, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`, silently, since Bedrock rejects them.
+
 ### Thinking and structured output
 
 Claude answers a forced tool choice without thinking, and manual extended thinking

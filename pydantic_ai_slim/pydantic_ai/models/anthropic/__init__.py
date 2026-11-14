@@ -110,6 +110,7 @@ from .. import (
     download_item,
 )
 from .._anthropic_max_tokens import cap_max_tokens
+from .._anthropic_sampling import drop_conflicting_sampling_settings
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
@@ -1584,16 +1585,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             raise limit_exceeded_error(exceeded, self.model_name)
         if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
             prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
-        if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        if prepared_settings:
+            prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
         # Explicit `anthropic_cache*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not any(
             key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
         ):
             prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _drop_rejected_sampling_settings(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects alone or with the rest of the request."""
+        profile = self.profile
+        if profile.get('anthropic_disallows_sampling_settings', False):
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        thinking = _request_thinking_type(profile, model_settings, model_request_parameters) is not None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
