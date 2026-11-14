@@ -516,7 +516,10 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         await process.aclose()
 
     async def _terminate(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
-        """Kill the process group, or else the direct child, and reap it; return the group and child kill denials."""
+        """Kill the process group, or else the direct child, and reap it; return the group and child kill denials.
+
+        When both kills are denied, return without reaping.
+        """
         denial = None
         try:
             os.killpg(process.pid, signal.SIGKILL)
