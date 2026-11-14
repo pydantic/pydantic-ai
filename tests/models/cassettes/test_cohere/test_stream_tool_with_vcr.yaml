@@ -30,6 +30,7 @@ interactions:
             function:
               name: get_temperature
               arguments: "{\"city\":\"Paris\"}"
+          tool_plan: I will use the get_temperature tool to find the temperature in Paris.
         - role: tool
           tool_call_id: get_temperature_2faxbq9b1fnm
           content: 24 degrees Celsius

@@ -85,6 +85,7 @@ try:
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
+        ToolPlanDeltaV2ChatStreamResponse,
         ToolV2,
         ToolV2Function,
         Usage as CohereUsage,
@@ -410,6 +411,11 @@ class CohereModel(Model[AsyncClientV2]):
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
+        if response.message.tool_plan:
+            # Cohere expects its `tool_plan` echoed back on subsequent turns; preserve it as a
+            # thinking part so it doesn't count as response text, and let `_map_model_response`
+            # replay it as `tool_plan`.
+            parts.append(ThinkingPart(content=response.message.tool_plan))
         if response.message.content is not None:
             for content in response.message.content:
                 if content.type == 'text':
@@ -489,6 +495,10 @@ class CohereModel(Model[AsyncClientV2]):
             # the OpenAI and Anthropic adapters.
             return None
         message_param = AssistantChatMessageV2(role='assistant')
+        if tool_calls and thinking:
+            # The leading thinking part carries the plan captured by `_process_response`/`_map_event`;
+            # echo it back as Cohere's `tool_plan`, which tool-call turns expect replayed.
+            message_param.tool_plan = thinking.pop(0)
         if texts or thinking:
             contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
             if thinking:
@@ -638,6 +648,14 @@ class CohereStreamedResponse(StreamedResponse):
                     self.provider_response_id = event.id
             case ContentDeltaV2ChatStreamResponse():
                 yield from self._handle_content_delta(event)
+            case ToolPlanDeltaV2ChatStreamResponse():
+                if event.delta and event.delta.message and event.delta.message.tool_plan:
+                    # Cohere streams its reasoning-about-tool-use separately from content text;
+                    # keep it as a thinking part so it doesn't feed text outputs, and let
+                    # `_map_model_response` replay it as `tool_plan` on the follow-up request.
+                    yield from self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='tool_plan', content=event.delta.message.tool_plan
+                    )
             case ToolCallStartV2ChatStreamResponse() | ToolCallDeltaV2ChatStreamResponse():
                 yield from self._handle_tool_call(event)
             case MessageEndV2ChatStreamResponse():
