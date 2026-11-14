@@ -26,6 +26,7 @@ from ...messages import (
     EnqueuedMessagesEvent,
     FilePart,
     FunctionToolResultEvent,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -46,6 +47,7 @@ from .._adapter import (
     capability_load_delta_payload,
     compaction_payload,
     enqueued_messages_for_client,
+    model_response_rejected_payload,
     model_settings_delta_payload,
     tool_availability_delta_payload,
 )
@@ -71,6 +73,7 @@ from ._utils import (
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     LIFECYCLE_1_0_VERSION,
+    MODEL_RESPONSE_REJECTED_EVENT_NAME,
     MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -485,6 +488,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[BaseEvent]:
+        value = model_response_rejected_payload(event)
+        # Names the assistant message that streamed the rejected response, when it streamed one: a response with no
+        # text or tool calls announced none, and `message_id` may still name an earlier response's message. Every ID
+        # the stream references has to have been announced, so it's left out rather than pointing at a message the
+        # rejected response doesn't own. The next response gets a message of its own either way.
+        if self._turn == 'response' and self._started_message_id == self.message_id:
+            value = {'message_id': self.message_id, **value}
+        yield AGUICustomEvent(name=MODEL_RESPONSE_REJECTED_EVENT_NAME, value=value)
 
     async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
