@@ -543,8 +543,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         else:
             self._check_construction_workspace(ctx, workspace)
         durable = DurableWorkspace(workspace, durability=self, ctx=ctx)
-        # Calls made before the run's steps begin fall back to `ctx`, so it must hold this workspace,
-        # or `_unit_workspace` builds a new backend for each of them.
+        # Calls made before the run's steps begin use `ctx`: without this, each one gets a new backend.
         ctx.workspace = durable
         return durable
 

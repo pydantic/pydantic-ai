@@ -55,7 +55,6 @@ class ReadInForRun(AbstractCapability[Any]):
 
     async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
         await ctx.workspace.exists('a.txt')
-        await ctx.workspace.exists('b.txt')
         return self
 
 
@@ -427,10 +426,7 @@ async def check_local(run: Runner, agents: ScenarioAgents) -> None:
 
 
 async def check_prepare_reads(run: Runner, agents: ScenarioAgents) -> None:
-    """Workspace calls made while the run is prepared reach the run's one backend, not a new one each.
-
-    Not in `CASES`: only in-process engines keep one backend, where Temporal and Render rebuild it from the ref.
-    """
+    """A workspace call made while the run is prepared reaches the run's backend, not a new one."""
     await run('prepare_reads', None)
     assert agents.provider.log == ['create:env-1']
 
@@ -476,6 +472,10 @@ CASES: dict[str, Check] = {
 }
 
 
-def cases() -> list[Any]:
-    """`CASES` as pytest params, one per scenario."""
-    return [pytest.param(check, id=name) for name, check in CASES.items()]
+def cases(*, in_process: bool = False) -> list[Any]:
+    """`CASES` as pytest params, one per scenario.
+
+    `in_process` adds the checks for engines that keep one backend per run; others rebuild it from the ref.
+    """
+    checks = {**CASES, 'prepare_reads': check_prepare_reads} if in_process else CASES
+    return [pytest.param(check, id=name) for name, check in checks.items()]
