@@ -1,11 +1,15 @@
 from __future__ import annotations as _annotations
 
+import json
 import re
+from typing import Any
 
 import httpx
 import pytest
+from pydantic import BaseModel
 from pytest_mock import MockerFixture
 
+from pydantic_ai import Agent, NativeOutput, PromptedOutput
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -22,6 +26,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from groq import AsyncGroq
 
+    from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
 
 
@@ -84,7 +89,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
     assert meta_profile is not None
-    assert meta_profile.get('supports_json_object_output', False) is False
+    assert meta_profile.get('supports_json_object_output', False) is True
     assert meta_profile.get('supports_json_schema_output', False) is False
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
@@ -188,3 +193,143 @@ def test_groq_provider_model_profile_reasoning_flags():
     assert plain_profile is not None
     assert plain_profile.get('supports_thinking', False) is False
     assert plain_profile.get('thinking_always_enabled', False) is False
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+def test_groq_model_profile_json_flags_and_reasoning_list():
+    """`supports_json_object_output` resolves provider-wide; JSON schema and thinking resolve per model."""
+    provider = GroqProvider(api_key='api-key')
+
+    # JSON mode is provider-wide.
+    for model_name in ('llama-3.1-8b-instant', 'meta-llama/Llama-Guard-4-12B', 'minimaxai/minimax-m2.7'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None, model_name
+        assert profile.get('supports_json_object_output', False) is True, model_name
+
+    # JSON-schema structured output only on the models that accept it.
+    for model_name in ('meta-llama/Llama-Guard-4-12B', 'minimaxai/minimax-m2.7'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None, model_name
+        assert profile.get('supports_json_schema_output', False) is False, model_name
+
+    for model_name in ('qwen/qwen3.8-32b', 'qwen/qwen3.6-32b', 'meta-models/muse-spark-open'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None, model_name
+        assert profile.get('supports_json_schema_output', False) is True, model_name
+
+    # Muse, MiniMax M2.7 and the qwen3.8 line all reason on Groq.
+    for model_name in ('meta-models/muse-spark-open', 'minimaxai/minimax-m2.7', 'qwen/qwen3.8-32b'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None, model_name
+        assert profile.get('supports_thinking', False) is True, model_name
+
+
+def test_groq_native_output_with_function_tools_raises_user_error(allow_model_requests: None):
+    """`NativeOutput` with function tools raises before any request is sent, with the `ToolOutput` remedy."""
+    provider = GroqProvider(api_key='api-key')
+    model = GroqModel('meta-models/muse-spark-open', provider=provider)
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Mexico City'
+
+    # The tool itself is fine; only native output combined with function tools is rejected.
+    assert get_city() == 'Mexico City'
+
+    with pytest.raises(UserError, match=re.escape('does not support `NativeOutput` and function tools')):
+        agent.run_sync('What is the city?')
+
+
+async def test_groq_structured_output_streaming_and_prompted_request_bodies(allow_model_requests: None):
+    """Streaming native output sends a `json_schema` response format; prompted output sends `json_object`."""
+    captured: list[dict[str, Any]] = []
+
+    def stream_handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        chunk = {
+            'id': '0',
+            'object': 'chat.completion.chunk',
+            'created': 0,
+            'model': 'meta-models/muse-spark-open',
+            'choices': [
+                {
+                    'index': 0,
+                    'delta': {
+                        'role': 'assistant',
+                        'content': '{"city": "Mexico City", "country": "Mexico"}',
+                    },
+                    'finish_reason': None,
+                }
+            ],
+        }
+        stop_chunk: dict[str, Any] = {
+            'id': '0',
+            'object': 'chat.completion.chunk',
+            'created': 0,
+            'model': 'meta-models/muse-spark-open',
+            'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}],
+        }
+        body = ''.join(f'data: {json.dumps(c)}\n\n' for c in (chunk, stop_chunk)) + 'data: [DONE]\n\n'
+        return httpx.Response(200, content=body, headers={'content-type': 'text/event-stream'})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(stream_handler)) as http_client:
+        provider = GroqProvider(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(
+            GroqModel('meta-models/muse-spark-open', provider=provider), output_type=NativeOutput(CityLocation)
+        )
+        async with agent.run_stream('What is the city?') as result:
+            assert await result.get_output() == CityLocation(city='Mexico City', country='Mexico')
+
+    assert len(captured) == 1
+    response_format = captured[0]['response_format']
+    assert response_format['type'] == 'json_schema'
+    assert set(response_format['json_schema']['schema']['properties']) == {'city', 'country'}
+
+    captured.clear()
+
+    def completion_handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                'id': '0',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'meta-models/muse-spark-open',
+                'choices': [
+                    {
+                        'index': 0,
+                        'message': {
+                            'role': 'assistant',
+                            'content': '{"city": "Mexico City", "country": "Mexico"}',
+                            'tool_calls': None,
+                        },
+                        'finish_reason': 'stop',
+                    }
+                ],
+                'usage': {
+                    'prompt_tokens': 1,
+                    'completion_tokens': 1,
+                    'total_tokens': 2,
+                    'prompt_time': 0.001,
+                    'completion_time': 0.001,
+                    'queue_time': None,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(completion_handler)) as http_client:
+        provider = GroqProvider(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(
+            GroqModel('meta-models/muse-spark-open', provider=provider), output_type=PromptedOutput(CityLocation)
+        )
+        result = await agent.run('What is the city?')
+        assert result.output == CityLocation(city='Mexico City', country='Mexico')
+
+    assert len(captured) == 1
+    assert captured[0]['response_format'] == {'type': 'json_object'}
