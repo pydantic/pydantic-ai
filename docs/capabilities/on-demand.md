@@ -36,11 +36,11 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
-<context id="capability:deferred_capabilities">
+<pyai:context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
 
 The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
@@ -178,6 +178,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 - **Anthropic `tool_addition_mode='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
 - **OpenAI Responses `tool_addition_mode='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
 - **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. A remote MCP server chooses its own tool names, so a tool whose name contains a framing tag such as `</system>` is still sent but not named in the announcement. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
+- **[Decision models](../models/decision.md#on-demand-capabilities)** cannot fill a free-form `id`, so they offer each capability as a route of their own, described by its `description`, and leave the catalog out of the framing every question carries. The ids travel on [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities], the step's catalog with each capability's description and whether it's active, not on the `load_capability` schema, so what a language model is sent stays the same whichever capabilities a run has.
 
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
 

@@ -8,8 +8,10 @@ from pathlib import Path
 from uuid import UUID
 
 import keyring
+import keyring.backend
+import keyring.core
 import pytest
-from keyring.errors import InitError, KeyringLocked, NoKeyringError
+from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordSetError
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
@@ -28,6 +30,10 @@ from tests.clai2.conftest import stored_accounts
 Vault = dict[tuple[str, str], str]
 KEY = ('pydantic-clai2', 'encryption-key')
 LEGACY = ('pydantic-clai2', 'openai-codex')
+PLAINTEXT_WARNING = (
+    'OS keyring is unavailable or has no saved entry; using 0600 plaintext credential files. '
+    'Configure an OS keyring backend to encrypt credentials at rest.'
+)
 
 
 def fake_browser(url: str) -> bool:
@@ -35,8 +41,9 @@ def fake_browser(url: str) -> bool:
 
 
 def new_session() -> None:
-    """Forget the key a previous process read, as a restart would."""
+    """Forget the key and fallback warning a previous process cached, as a restart would."""
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._warn_plaintext_fallback.cache_clear()  # pyright: ignore[reportPrivateUsage]
 
 
 def legacy_chunks(vault: Vault, value: str, *, count: int = 3) -> None:
@@ -229,16 +236,121 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
     monkeypatch.setattr(keyring, 'delete_password', raise_error)
 
 
-@pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError], indirect=True)
-def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None) -> None:
-    assert load_codex_credentials(fallback=fallback) is None
-    save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
-    assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
-    save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
-    assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
+def assert_plaintext_fallback_round_trip(fallback: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level('WARNING', logger=credential_store.__name__):
+        assert load_codex_credentials(fallback=fallback) is None
+        assert caplog.records == []
+        save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
+        new_session()
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING, PLAINTEXT_WARNING]
+        save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
+    assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING, PLAINTEXT_WARNING]
     assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError, RuntimeError], indirect=True)
+def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
+    assert_plaintext_fallback_round_trip(fallback, caplog)
+
+
+@pytest.mark.parametrize('error', [NoKeyringError, RuntimeError, PasswordSetError, None])
+def test_file_fallback_when_set_password_has_no_keyring(
+    vault: Vault,
+    fallback: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: type[Exception] | None,
+) -> None:
+    def fail_set(service: str, account: str, value: str) -> None:
+        if error is not None:
+            raise error('No recommended backend was available')
+
+    monkeypatch.setattr(keyring, 'set_password', fail_set)
+    assert_plaintext_fallback_round_trip(fallback, caplog)
+    fallback.unlink()
+    new_session()
+    vault[LEGACY] = '{"access_token":"migrated"}'
+    with caplog.at_level('WARNING', logger=credential_store.__name__):
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"migrated"}'
+    assert LEGACY not in vault
+    assert list(fallback.parent.glob('credentials.*')) == [fallback]
+
+
+def test_file_fallback_with_kwallet_like_backend(
+    fallback: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """KWallet backends fall back to the 0600 file whether writes are discarded or the wallet fails to open."""
+
+    class DBusKeyring(keyring.backend.KeyringBackend):
+        def connected(self, service: str) -> bool:
+            return True
+
+        def get_password(self, service: str, username: str) -> str | None:
+            if not self.connected(service):
+                raise KeyringLocked('Failed to unlock the keyring!')
+            return None
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            pass
+
+        def delete_password(self, service: str, username: str) -> None:
+            pass  # pragma: no cover
+
+    monkeypatch.setattr(keyring, 'get_password', keyring.core.get_password)
+    monkeypatch.setattr(keyring, 'set_password', keyring.core.set_password)
+    monkeypatch.setattr(keyring, 'delete_password', keyring.core.delete_password)
+    monkeypatch.setattr(keyring.core, '_keyring_backend', DBusKeyring())
+    assert_plaintext_fallback_round_trip(fallback, caplog)
+
+    fallback.unlink()
+    caplog.clear()
+    new_session()
+
+    class UnopenableKWalletBackend(DBusKeyring):
+        def connected(self, service: str) -> bool:
+            return False
+
+    monkeypatch.setattr(keyring.core, '_keyring_backend', UnopenableKWalletBackend())
+    assert_plaintext_fallback_round_trip(fallback, caplog)
+
+    class LockedSecretServiceBackend(keyring.backend.KeyringBackend):
+        def get_password(self, service: str, username: str) -> str | None:
+            raise KeyringLocked('Failed to unlock the collection!')
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            pass  # pragma: no cover
+
+        def delete_password(self, service: str, username: str) -> None:
+            pass  # pragma: no cover
+
+    class ChainedBackend(keyring.backend.KeyringBackend):
+        def __init__(self, backends: list[keyring.backend.KeyringBackend]) -> None:
+            self.backends = backends
+
+        def get_password(self, service: str, username: str) -> str | None:
+            for child in self.backends:  # pragma: no branch
+                return child.get_password(service, username)
+            return None  # pragma: no cover
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            pass  # pragma: no cover
+
+        def delete_password(self, service: str, username: str) -> None:
+            pass  # pragma: no cover
+
+    new_session()
+    monkeypatch.setattr(
+        keyring.core, '_keyring_backend', ChainedBackend([LockedSecretServiceBackend(), UnopenableKWalletBackend()])
+    )
+    with pytest.raises(KeyringLocked):
+        save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
 
 
 def test_planted_staging_symlink_is_not_followed(
@@ -250,7 +362,7 @@ def test_planted_staging_symlink_is_not_followed(
     target.write_text('untouched')
     staging = fallback.with_name(f'credentials.json.{"0" * 32}.tmp')
     staging.symlink_to(target)
-    monkeypatch.setattr('pydantic_clai2.config.credential_store.uuid4', lambda: UUID(int=0))
+    monkeypatch.setattr('pydantic_clai2.config.private_files.uuid4', lambda: UUID(int=0))
     save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert target.read_text() == 'untouched'
     assert not staging.is_symlink()

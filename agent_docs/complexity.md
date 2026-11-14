@@ -138,7 +138,7 @@ C001, C002. Return early for the cases you can rule out, and skip unwanted items
 
 C003, C005.
 
-- Make the block a private method on the class, or a private function next to its only caller in the same module.
+- Make the block a private method on the class, or a private function next to its only caller in the same module. In a package whose `AGENTS.md` assigns module-level helpers to submodules by concern, follow that file.
 - Never extract it as a nested `def`. complexipy counts a nested `def` toward the enclosing function, one level deeper.
 - A local variable does not simplify a compound condition: `ok = a and b` costs what `if a and b:` costs. Name the condition as a predicate method instead.
 

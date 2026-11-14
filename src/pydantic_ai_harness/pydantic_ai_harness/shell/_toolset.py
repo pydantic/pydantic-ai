@@ -303,8 +303,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             # \udc80-\udcff range as the raw bytes it round-trips from. Encoding
             # as plain UTF-8 here would reject commands the OS runs happily.
             os.fsencode(command)
-        except UnicodeEncodeError as e:
-            raise ModelRetry('The command contains characters that cannot be encoded for the operating system.') from e
+        except UnicodeEncodeError as exc:
+            raise ModelRetry(
+                'The command contains characters that cannot be encoded for the operating system.'
+            ) from exc
 
         if not self._allow_interactive and is_interactive_command(command):
             raise PermissionError(f'Interactive commands are not allowed. Command: {command!r}')
@@ -406,8 +408,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                     env=self._resolve_env(),
                     timeout=timeout,
                 )
-            except WorkspaceTimeoutError as e:
-                return _labelled(e.stdout, e.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
+            except WorkspaceTimeoutError as exc:
+                return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
 
             output = _labelled(result.stdout, result.stderr, empty='(no output)')
             exit_code = result.exit_code

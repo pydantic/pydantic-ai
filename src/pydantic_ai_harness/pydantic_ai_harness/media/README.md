@@ -5,7 +5,7 @@
 >
 > ```python
 > from pydantic_ai_harness.media import (
->     DiskMediaStore,
+>     FileMediaStore,
 >     S3MediaStore,
 >     SqliteMediaStore,
 >     externalize_media,
@@ -31,7 +31,7 @@ Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `publi
 
 | Store | Backed by | Use when |
 |---|---|---|
-| `DiskMediaStore(directory=...)` | A directory on disk | Local runs and tests |
+| `FileMediaStore(directory=...)` | A directory on disk | Local runs and tests |
 | `SqliteMediaStore(...)` | A SQLite database | A single-file store that travels with the data |
 | `S3MediaStore(...)` | S3 or an S3-compatible bucket | Shared or production storage |
 | `MongoMediaStore(...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document, split so no chunk hits the 16 MiB cap |
@@ -84,9 +84,9 @@ async def build_media_store() -> tuple[PostgresMediaStore, asyncpg.Pool]:
 
 Close the returned pool during application shutdown. The store does not manage it.
 
-A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaStore` (`SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP. `DiskMediaStore` rejects a URI that is not `media+sha256://<hex>` before calling the strategy.
+A `KeyStrategy` controls the on-store layout for `FileMediaStore` and `S3MediaStore` (`SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP. `FileMediaStore` rejects a URI that is not `media+sha256://<hex>` before calling the strategy.
 
-`get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
+`get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `FileMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
 
 ## Walker helpers
 
@@ -95,9 +95,9 @@ A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaSt
 ```python
 from pydantic_ai import ModelMessagesTypeAdapter
 
-from pydantic_ai_harness.media import DiskMediaStore, externalize_media, restore_media
+from pydantic_ai_harness.media import FileMediaStore, externalize_media, restore_media
 
-store = DiskMediaStore(directory='./media')
+store = FileMediaStore(directory='./media')
 
 # Replace binary and text payloads at or above the threshold with media+sha256:// URIs.
 tree = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
@@ -120,7 +120,7 @@ A dict the walker leaves inline but which carries `__harness_external_media__` o
 | Symbol | Purpose |
 |---|---|
 | `MediaStore` | Async content-addressed store protocol (`put` / `get` / `exists` / `public_url` / `get_metadata`) |
-| `DiskMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore`, `PostgresMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
+| `FileMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore`, `PostgresMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
 | `PostgresPool`, `PostgresConnection` | The asyncpg-compatible pool and connection protocols `PostgresMediaStore` accepts |
 | `MediaContext` | Per-call context (e.g. tenant) threaded through store operations |
 | `KeyStrategy`, `default_key_strategy` | On-store key layout |

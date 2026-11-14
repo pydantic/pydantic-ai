@@ -35,6 +35,7 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    OutputTokenLimitExceeded,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -81,6 +82,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
         lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
+        lambda: OutputTokenLimitExceeded('test'),
         lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
     ids=[
@@ -98,6 +100,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'ModelHTTPError-ModelRateLimitError',
         'ModelRequestTimeout',
         'IncompleteToolCall',
+        'OutputTokenLimitExceeded',
         'ToolRetryError',
     ],
 )
@@ -121,8 +124,9 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     [
         (lambda: ModelRetry('retry msg'), {'message': 'retry msg'}),
         (lambda: ToolFailed('failed msg'), {'message': 'failed msg'}),
-        (lambda: CallDeferred(), {'metadata': None}),
-        (lambda: CallDeferred({'key': 'value'}), {'metadata': {'key': 'value'}}),
+        (lambda: CallDeferred(), {'metadata': None, 'kind': 'external'}),
+        (lambda: CallDeferred({'key': 'value'}), {'metadata': {'key': 'value'}, 'kind': 'external'}),
+        (lambda: CallDeferred({'key': 'value'}, kind='question'), {'metadata': {'key': 'value'}, 'kind': 'question'}),
         (lambda: ApprovalRequired(), {'metadata': None}),
         (lambda: ApprovalRequired({'key': 'value'}), {'metadata': {'key': 'value'}}),
         (lambda: UserError('user error'), {'message': 'user error'}),
@@ -249,6 +253,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             },
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (lambda: OutputTokenLimitExceeded('cut off'), {'message': 'cut off', 'body': None}),
         (
             lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
             {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
@@ -259,6 +264,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ToolFailed',
         'CallDeferred-no-metadata',
         'CallDeferred-with-metadata',
+        'CallDeferred-question',
         'ApprovalRequired-no-metadata',
         'ApprovalRequired-with-metadata',
         'UserError',
@@ -281,6 +287,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-model-suggestion-and-hint',
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
+        'OutputTokenLimitExceeded',
         'InlinedSchemaTooLargeError',
     ],
 )

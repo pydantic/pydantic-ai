@@ -163,6 +163,8 @@ agent = Agent(model, model_settings={'max_retries': 0})
 
 The transport you pass replaces the one the client would build, so it owns the connection pool. Without `wrapped`, a retrying transport sends its attempts through an `httpx2.AsyncHTTPTransport` it creates with the same pool limits as Pydantic AI's own clients (1000 connections, up to 100 kept alive). HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so give the retrying transport your own `wrapped` transport with a `proxy` if you need one. A `wrapped` transport you build has HTTPX's default pool of 100 connections, 20 kept alive, unless you set its `limits` too: `wrapped=httpx2.AsyncHTTPTransport(proxy=..., limits=httpx2.Limits(max_connections=1000, max_keepalive_connections=100))`.
 
+If the client also submits [batches](batch.md), have `validate_response` [skip batch creates](batch.md#retrying-transports): the transport otherwise sends a create that failed with an error response again, which can create a second batch.
+
 ### Wait strategies
 
 #### wait_retry_after
@@ -461,6 +463,8 @@ model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http
 agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
+Before retrying or re-raising an error status, the transport reads the response body, so the error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body] and what Pydantic AI parses from it: the error category, like an overloaded provider's [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], and, for Google, the wait in [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. Each rejected attempt therefore downloads its error body, and once the download completes, its connection goes back to the pool. A success status your `validate_response` rejects is closed without reading its body. If reading an error body fails, the transport closes the response and still raises the exception from your `validate_response`, and the error's `body` is `None`.
+
 ### Performance considerations
 
 - Retries add latency to requests, especially with exponential backoff
@@ -681,6 +685,49 @@ _(This example is complete, it can be run "as is")_
 
 When a tool's retry budget runs out, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] instead of recording another retried result, so that last rejection is only visible as the exception.
 
+### Finding tool errors in history
+
+To find the retries in a run's messages or a stored history, use [`is_retry`][pydantic_ai.messages.is_retry]. It matches a retried tool call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (`outcome='retried'`), and a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] for a retry that answers no tool call, such as output that failed validation (see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call)). Those two are what the deprecated `RetryPromptPart` used to record, and stored histories load in this shape too, so `is_retry(part)` replaces an `isinstance(part, RetryPromptPart)` check:
+
+```python {title="find_retries.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    ModelRetry,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.messages import is_retry
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def lookup_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('lookup', {'invoice_id': 'INV-1'})])
+    return ModelResponse(parts=[TextPart('There is no such invoice.')])
+
+
+agent = Agent(FunctionModel(lookup_then_answer))
+
+
+@agent.tool_plain
+def lookup(invoice_id: str) -> str:
+    raise ModelRetry('no such invoice')
+
+
+result = agent.run_sync('Find invoice INV-1')
+retries = [part for message in result.all_messages() for part in message.parts if is_retry(part)]
+print([(type(part).__name__, part.content) for part in retries])
+#> [('ToolReturnPart', 'no such invoice')]
+```
+
+_(This example is complete, it can be run "as is")_
+
+A tool call that failed (`outcome='failed'`, see [above](#what-a-retry-looks-like-in-message-history)) isn't a retry, so `is_retry` leaves it out. To find every tool call that reached the model as an error, check the [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] of any [`BaseToolReturnPart`][pydantic_ai.messages.BaseToolReturnPart] against [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES], which holds `'retried'` and `'failed'`: `isinstance(part, BaseToolReturnPart) and part.outcome in ERROR_OUTCOMES`. That also covers a [native tool](native-tools.md)'s return.
+
+Don't rely on `retry` being set: a retried return loaded from a deprecated `RetryPromptPart`, or one your own code builds, can have `retry=None`, so the outcome is the check that always holds.
+
 
 ## Output retries
 
@@ -757,17 +804,17 @@ The stored part carries no wording at all; each model turns it into a sendable p
 
 | `cause` | What the model is sent | Why |
 |---|---|---|
-| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
-| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<retry_feedback>…</retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
-| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. A `'no_output'` part with any other content, such as one your own code builds, goes out fenced in `<retry_feedback>` like a `'model_retry'`. |
+| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<pyai:validation_errors>…</pyai:validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
+| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<pyai:retry_feedback>…</pyai:retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
+| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. A `'no_output'` part with any other content, such as one your own code builds, goes out fenced in `<pyai:retry_feedback>` like a `'model_retry'`. |
 
-A closing tag inside any of these wrappers is escaped, so text the model had a hand in cannot end the statement that carries it, and inside the two user-voice fences so is a `<system>` tag, opening or closing, so the model's own words cannot pass themselves off as the framework speaking.
+The text inside these wrappers goes in as written ([details](message-history.md#framework-frames-and-content-fidelity)).
 
 !!! note "Feedback never joins the standing prompt"
     Feedback never joins the run's standing prompt, even when it opens the history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), [`ProcessHistory`](capabilities/process-history.md) filtering, or a model-request hook retrying the first request of a run with no user prompt. Only the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s the history was written with go to the provider's own system field; `'no_output'` feedback in that position goes out as `<system>`-tagged user text, whatever the provider.
 
 !!! note "`RetryPromptPart` is deprecated"
-    Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which is deprecated and will be removed in v3. A stored history loads as the two parts above, so to read a retry from history, match [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` or `RetryFeedbackPart` instead. See the [upgrade guide](changelog.md#deprecated-in-v2-to-be-removed-in-v3) for the details.
+    Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which is deprecated and will be removed in v3. A stored history loads as the two parts above, so to read a retry from history, check it with [`is_retry`][pydantic_ai.messages.is_retry], which matches both, as in [Finding tool errors in history](#finding-tool-errors-in-history). See the [upgrade guide](changelog.md#deprecated-in-v2-to-be-removed-in-v3) for the details.
 
 ## What is never retried
 

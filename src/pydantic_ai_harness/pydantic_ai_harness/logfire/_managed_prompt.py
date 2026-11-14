@@ -300,7 +300,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         """
         try:
             return resolved, TemplateStr[object](resolved.value)
-        except HandlebarsError as e:
+        except HandlebarsError as exc:
             # Resolve the code default through Logfire, so a callable default sees the same merged
             # targeting context (resource attributes, baggage, targeting key fallback) it would in `get()`.
             with self._variable.override(self._variable.default):
@@ -310,7 +310,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             template = TemplateStr[object](fallback.value)  # an invalid code default raises here
             message = (
                 f'Managed prompt {self._variable.name!r} (label {resolved.label!r}, version {resolved.version!r}) '
-                f'is not a valid template, so the code default is used: {e}'
+                f'is not a valid template, so the code default is used: {exc}'
             )
             warnings.warn(message, RuntimeWarning)
             # Also log it where whoever edited the prompt in Logfire will see it.
@@ -320,7 +320,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
                 variable=self._variable.name,
                 label=resolved.label,
                 version=resolved.version,
-                _exc_info=e,
+                _exc_info=exc,
             )
-            fallback.exception = e
+            fallback.exception = exc
             return fallback, template

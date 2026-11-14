@@ -184,30 +184,31 @@ def check_azure_content_filter(
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
     body_any: Any = e.body
 
-    if is_azure(client, system) and e.status_code == 400 and _is_str_dict(body_any):
-        try:
-            error_data = _AzureError.model_validate(body_any.get('error', body_any))
+    if not (is_azure(client, system) and e.status_code == 400 and _is_str_dict(body_any)):
+        return None
+    try:
+        error_data = _AzureError.model_validate(body_any.get('error', body_any))
 
-            if error_data.code == 'content_filter':
-                provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
+        if error_data.code != 'content_filter':
+            return None
+        provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
 
-                if error_data.innererror and error_data.innererror.content_filter_result:
-                    provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
-                        exclude_none=True
-                    )
-                if error_data.content_filters:
-                    provider_details['content_filters'] = [
-                        content_filter.model_dump(exclude_none=True) for content_filter in error_data.content_filters
-                    ]
+        if error_data.innererror and error_data.innererror.content_filter_result:
+            provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
+                exclude_none=True
+            )
+        if error_data.content_filters:
+            provider_details['content_filters'] = [
+                content_filter.model_dump(exclude_none=True) for content_filter in error_data.content_filters
+            ]
 
-                return ModelResponse(
-                    parts=[],  # Empty parts to trigger content filter error in agent graph
-                    model_name=model_name,
-                    timestamp=_utils.now_utc(),
-                    provider_name=system,
-                    finish_reason='content_filter',
-                    provider_details=provider_details,
-                )
-        except ValidationError:
-            pass
-    return None
+        return ModelResponse(
+            parts=[],  # Empty parts to trigger content filter error in agent graph
+            model_name=model_name,
+            timestamp=_utils.now_utc(),
+            provider_name=system,
+            finish_reason='content_filter',
+            provider_details=provider_details,
+        )
+    except ValidationError:
+        return None

@@ -168,8 +168,8 @@ def thinking_with_stale_block_history(
 
 def warn_stale_thinking_block_recovery(model_name: str) -> None:
     warnings.warn(
-        f'{model_name!r} rejected a replayed thinking block: the conversation prefix changed '
-        'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+        f'{model_name!r} rejected a replayed thinking block: Anthropic binds each thinking block '
+        'to the conversation prefix that produced it, and that prefix changed between requests. '
         "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
         "without that turn's reasoning. The cause is something earlier in the request that is not "
         'byte-stable between turns — commonly instructions carrying a per-request value such as a '

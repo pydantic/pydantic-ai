@@ -4,9 +4,7 @@
 reads the same folders, so a workspace made in one session is listed and destroyed from another.
 """
 
-import os
 import re
-import secrets
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +14,7 @@ from typing import Literal
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_clai2.builtin_plugins.workspaces.kinds import Teardown
+from pydantic_clai2.config.private_files import write_private
 from pydantic_clai2.config.settings_store import state_dir
 
 _ID = re.compile(r'[a-z0-9][a-z0-9-]{0,47}')
@@ -100,16 +99,3 @@ class Registry:
     def forget(self, workspace_id: str) -> None:
         """Delete a workspace's folder, and what an older CLAI kept there."""
         shutil.rmtree(self.folder(workspace_id), ignore_errors=True)
-
-
-def write_private(path: Path, text: str) -> None:
-    """Replace `path` with `text` in a file only you can read, through a fresh temporary file renamed over it."""
-    temporary = path.with_name(f'.{path.name}.{secrets.token_hex(8)}.tmp')
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
-            file.write(text)
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise

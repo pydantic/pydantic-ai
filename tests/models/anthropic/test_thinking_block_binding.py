@@ -1301,7 +1301,14 @@ async def test_anthropic_fable_5_2_retries_a_stale_thinking_block_on_a_legacy_ac
     history = await stale_thinking_block_history(m)
 
     second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')
-    with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
+    # The rejection came from a legacy account, so the warning must not tie enforcement to account age.
+    with pytest.warns(
+        AnthropicStaleThinkingBlockWarning,
+        match=(
+            r"^'claude-fable-5-2' rejected a replayed thinking block: Anthropic binds each thinking block to the "
+            r'conversation prefix that produced it, and that prefix changed between requests\. Pydantic AI retried'
+        ),
+    ):
         replayed = await second.run('And times two?', message_history=history)
 
     response = message(replayed.all_messages(), ModelResponse, index=-1)
