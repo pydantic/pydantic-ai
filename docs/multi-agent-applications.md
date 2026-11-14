@@ -14,6 +14,8 @@ There are roughly five levels of complexity when building applications with Pyda
 
 Of course, you can combine multiple strategies in a single application.
 
+Whichever you choose, two patterns help once a workflow has side effects or several steps: [extract, decide, write](#extract-decide-write) keeps writes to your data out of agent runs, and [shared typed state](#shared-typed-state) passes delegates' results between steps as typed data rather than text.
+
 ## Agent delegation
 
 "Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
@@ -365,6 +367,242 @@ graph TB
 
   seat_preference_agent --> END
 ```
+
+## Extract, decide, write {#extract-decide-write}
+
+When a workflow changes business data, such as issuing a refund or updating a record, let agents propose the change and let your code commit it:
+
+1. **Extract**: agents with read-only tools turn unstructured input into typed findings. They never write.
+2. **Decide**: one step turns the findings into a typed plan. This is usually plain code; when the decision needs judgment, it can be a single agent whose output is the plan.
+3. **Write**: application code applies the plan inside a lock, checks that the data the plan was based on hasn't changed since it was read, and records an idempotency key so that a retry, or a crash after the write, doesn't apply the plan twice.
+
+As long as no agent is given a tool that writes, no model call can change data, so a misread input produces a wrong plan that your code can reject, log, or show to a person, rather than a half-finished set of writes made from inside an agent loop. It also replaces chains of narrow agents that each write part of the result with one typed plan that is applied in a single place.
+
+```python {title="extract_decide_write.py" test="skip"}
+from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Literal
+
+import anyio
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+@dataclass
+class Order:
+    order_id: str
+    total: Decimal
+    refunded: Decimal = Decimal(0)
+    version: int = 1
+
+
+@dataclass
+class Store:  # (1)!
+    orders: dict[str, Order]
+    applied_keys: set[str] = field(default_factory=set[str])
+    lock: anyio.Lock = field(default_factory=anyio.Lock)
+
+
+class Findings(BaseModel):
+    order_id: str
+    problem: Literal['damaged', 'late', 'other']
+
+
+extract_agent = Agent(
+    '{{ openai:medium }}',
+    name='extract_agent',
+    deps_type=Store,
+    output_type=Findings,
+    instructions='Find the order the customer email is about and classify the problem.',
+)
+
+
+@extract_agent.tool
+async def get_order(ctx: RunContext[Store], order_id: str) -> Order | None:  # (2)!
+    return ctx.deps.orders.get(order_id)
+
+
+@extract_agent.output_validator
+async def check_order_exists(ctx: RunContext[Store], findings: Findings) -> Findings:
+    if findings.order_id not in ctx.deps.orders:  # (3)!
+        raise ModelRetry(f'There is no order {findings.order_id!r}.')
+    return findings
+
+
+class RefundPlan(BaseModel):
+    order_id: str
+    amount: Decimal
+    order_version: int
+
+
+def decide(findings: Findings, order: Order) -> RefundPlan | None:  # (4)!
+    remaining = order.total - order.refunded
+    if findings.problem == 'damaged':
+        amount = remaining
+    elif findings.problem == 'late':
+        amount = min(remaining, order.total * Decimal('0.1'))
+    else:
+        return None
+    return RefundPlan(
+        order_id=order.order_id, amount=amount, order_version=order.version
+    )
+
+
+class StalePlanError(Exception):
+    pass
+
+
+async def apply(store: Store, plan: RefundPlan, idempotency_key: str) -> None:
+    async with store.lock:  # (5)!
+        if idempotency_key in store.applied_keys:
+            return
+        order = store.orders[plan.order_id]
+        if order.version != plan.order_version:
+            raise StalePlanError(f'Order {order.order_id!r} changed since it was read.')
+        order.refunded += plan.amount
+        order.version += 1
+        store.applied_keys.add(idempotency_key)
+
+
+async def handle_email(store: Store, message_id: str, email: str) -> RefundPlan | None:
+    result = await extract_agent.run(email, deps=store)
+    order = store.orders[result.output.order_id]
+    plan = decide(result.output, order)
+    if plan is not None:
+        await apply(store, plan, idempotency_key=f'refund:{message_id}')  # (6)!
+    return plan
+```
+
+1. Stands in for your database: the orders, the idempotency keys of the plans already applied, and a lock that serializes writes.
+2. The extraction agent only gets read-only tools.
+3. An [output validator](output.md#output-validator-functions) checks every id the model returns against the data, so a made-up order id is sent back to the model as a retry instead of reaching your code.
+4. The decision is plain code: the refund policy is a business rule, not something the model should make up. The plan records the order version it was based on.
+5. The write happens in one place, under a lock, and only if the order still has the version the plan was based on. If a person reviews the plan before it is applied, this is what stops an approved plan from overwriting a change made while it was waiting. On `StalePlanError`, decide again from the current order rather than retrying the old plan.
+6. The idempotency key comes from the input (here, the email's message id), not from the model, so handling the same email twice applies its refund once. In a real database, write the refund and the key in one transaction, with a unique constraint on the key, so a crash can't record one without the other.
+
+When a person has to approve the change, show them the typed plan between the decide and write steps. [Deferred tools](deferred-tools.md) are the right fit when they need to approve an individual tool call that the agent makes during its run, rather than a business change.
+
+## Shared typed state across delegated agents {#shared-typed-state}
+
+When a parent agent delegates several steps of one task and the results of earlier steps feed later ones, keep those results as typed data in the parent's [dependencies](dependencies.md), not only as text in the conversation:
+
+- A "case file" object in deps holds the typed state of the task.
+- Each delegate agent has a typed `output_type`, and the tool that calls it stores the output on the case file.
+- The tool returns a short summary to the parent model: enough to decide the next step, while the full typed result stays available to later tools and to your code after the run.
+
+```python {title="shared_typed_state.py" test="skip"}
+from dataclasses import dataclass
+from decimal import Decimal
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+class Charge(BaseModel):
+    charge_id: str
+    amount: Decimal
+    merchant: str
+
+
+class DisputedCharges(BaseModel):
+    charge_ids: list[str]
+
+
+class Eligibility(BaseModel):
+    eligible: bool
+    reason: str
+
+
+@dataclass
+class CaseFile:  # (1)!
+    complaint: str
+    charges: list[Charge]
+    disputed: DisputedCharges | None = None
+    eligibility: Eligibility | None = None
+
+
+dispute_agent = Agent(
+    '{{ openai:small }}',
+    name='dispute_agent',
+    deps_type=CaseFile,
+    output_type=DisputedCharges,
+    instructions='List the ids of the charges the customer is disputing.',
+)
+
+
+@dispute_agent.output_validator
+async def check_charge_ids(
+    ctx: RunContext[CaseFile], disputed: DisputedCharges
+) -> DisputedCharges:
+    known = {c.charge_id for c in ctx.deps.charges}
+    if unknown := set(disputed.charge_ids) - known:  # (2)!
+        raise ModelRetry(f'These charges are not on the case: {sorted(unknown)}')
+    return disputed
+
+
+eligibility_agent = Agent(
+    '{{ openai:medium }}',
+    name='eligibility_agent',
+    output_type=Eligibility,
+    instructions='Decide whether the disputed charges are eligible for a chargeback.',
+)
+case_agent = Agent(
+    '{{ openai:medium }}',
+    name='case_agent',
+    deps_type=CaseFile,
+    instructions=(
+        'Handle the customer dispute: find the disputed charges, check eligibility, '
+        'then write a short reply to the customer.'
+    ),
+)
+
+
+@case_agent.tool
+async def find_disputed_charges(ctx: RunContext[CaseFile]) -> str:
+    case = ctx.deps
+    charges = '\n'.join(c.model_dump_json() for c in case.charges)
+    result = await dispute_agent.run(
+        f'Complaint: {case.complaint}\n\nCharges:\n{charges}',
+        deps=case,
+        usage=ctx.usage,
+    )
+    case.disputed = result.output  # (3)!
+    case.eligibility = None  # (4)!
+    return f'{len(result.output.charge_ids)} charge(s) disputed.'  # (5)!
+
+
+@case_agent.tool(sequential=True)
+async def check_eligibility(ctx: RunContext[CaseFile]) -> str:
+    case = ctx.deps
+    if case.disputed is None:
+        raise ModelRetry('Find the disputed charges first.')
+    disputed = [c for c in case.charges if c.charge_id in case.disputed.charge_ids]
+    result = await eligibility_agent.run(  # (6)!
+        '\n'.join(c.model_dump_json() for c in disputed),
+        usage=ctx.usage,
+    )
+    case.eligibility = result.output
+    return f'Eligible: {result.output.eligible}. {result.output.reason}'
+
+
+async def handle_dispute(case: CaseFile) -> str:
+    result = await case_agent.run(case.complaint, deps=case)
+    if case.disputed and case.eligibility and case.eligibility.eligible:  # (7)!
+        ...  # open the chargeback for case.disputed.charge_ids
+    return result.output
+```
+
+1. The case file is the run's shared state. Your code creates it, the parent's tools fill it in, and your code reads it after the run.
+2. A typed `list[str]` doesn't make the ids belong to this case. The output validator sends any id that isn't one of the case's charges back to the delegate as a retry, so the eligibility check and your code later act on the same validated set.
+3. The delegate's validated output is stored as-is, so nothing downstream has to parse it back out of text.
+4. A later result invalidates what was derived from the earlier one: if the model finds the disputed charges again, the eligibility check has to run again on the new set.
+5. The parent model sees the state through tool results like this summary, which is enough to decide what to do next. Rendering the case file into [instructions](agent.md#instructions) instead would change them on every step and invalidate the [prompt cache](capabilities/caching.md#what-invalidates-a-cache).
+6. The second delegate gets its input from the typed state the first one produced, not from the parent model restating it. The tool is [`sequential`](tools-advanced.md#parallel-tool-calls-concurrency), so if the model calls both tools in one response, a `find_disputed_charges` call can't replace the disputed charges while their eligibility is being checked.
+7. Your code acts on the typed state, not on the reply the parent model wrote to the customer. This combines with [extract, decide, write](#extract-decide-write): the delegates extract, and your code decides and writes.
+
+The delegation tools are written by hand here because Pydantic AI Harness's [`SubAgents`](harness/subagents.md) capability returns a delegate's output to the parent as text.
 
 ## Pydantic Graphs
 
