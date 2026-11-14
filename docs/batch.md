@@ -329,7 +329,7 @@ model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider
 
 1. OpenAI creates a batch with `POST /v1/batches`, Anthropic with `POST /v1/messages/batches`, and Google with `POST /v1beta/models/<model>:batchGenerateContent`.
 
-The transport still retries a create that failed to connect, as it never reached the provider, and every other request, such as a check on a batch. The create's error then fails the batch's requests, as when the provider refuses to create a batch, so check the provider's batches before submitting the requests again. Uploading the input file of an OpenAI batch is still retried too, which at worst leaves an unused file for OpenAI to delete after 30 days.
+The transport still retries a create that failed to connect, as it never reached the provider, and every other request, such as a check on a batch. The create's error then fails the batch's requests, as when the provider refuses to create a batch, so check the provider's batches before submitting the requests again. Uploading the input file of an OpenAI or Google batch is still retried too, which at worst leaves an unused file in place until the provider expires it.
 
 ## Direct batch requests
 
