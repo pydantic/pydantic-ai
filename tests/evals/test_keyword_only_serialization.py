@@ -123,22 +123,27 @@ with try_import() as imports_successful:
         ),
     }
 
-    # Each entry with the evaluator it loads as, or `None` when the built-in schema rejects it.
-    BUILTIN_SCHEMA_CASES: dict[str, tuple[dict[str, JsonValue], Evaluator[str, str, str] | None]] = {
-        'scalar-short-form': ({'Equals': 5}, Equals(value=5)),
-        'object-keyword-form': ({'Equals': {'value': {'a': 1}}}, Equals(value={'a': 1})),
-        'query-keyword-form': (
-            {'HasMatchingSpan': {'query': {'name_equals': 'x'}}},
-            HasMatchingSpan(query={'name_equals': 'x'}),
+    @dataclass(frozen=True)
+    class SchemaCase:
+        """An evaluator entry and the evaluator it loads as, or `None` when the built-in schema rejects it."""
+
+        entry: dict[str, JsonValue]
+        loaded: Evaluator[str, str, str] | None = None
+
+    BUILTIN_SCHEMA_CASES: dict[str, SchemaCase] = {
+        'scalar-short-form': SchemaCase({'Equals': 5}, Equals(value=5)),
+        'object-keyword-form': SchemaCase({'Equals': {'value': {'a': 1}}}, Equals(value={'a': 1})),
+        'query-keyword-form': SchemaCase(
+            {'HasMatchingSpan': {'query': {'name_equals': 'x'}}}, HasMatchingSpan(query={'name_equals': 'x'})
         ),
-        'defaulted-short-form': ({'EqualsExpected': 'check'}, EqualsExpected(evaluation_name='check')),
-        'unknown-keyword': ({'Equals': {'a': 1}}, None),
-        'missing-value': ({'Equals': {}}, None),
-        'contains-unknown-keyword': ({'Contains': {'a': 1}}, None),
-        'query-fields-as-keywords': ({'HasMatchingSpan': {'name_equals': 'x'}}, None),
-        'mistyped-keyword': ({'Equals': {'value': 5, 'evaluation_name': 3}}, None),
-        'mistyped-flag': ({'Contains': {'value': 'x', 'case_sensitive': 'no'}}, None),
-        'empty-entry': ({}, None),
+        'defaulted-short-form': SchemaCase({'EqualsExpected': 'check'}, EqualsExpected(evaluation_name='check')),
+        'unknown-keyword': SchemaCase({'Equals': {'a': 1}}),
+        'missing-value': SchemaCase({'Equals': {}}),
+        'contains-unknown-keyword': SchemaCase({'Contains': {'a': 1}}),
+        'query-fields-as-keywords': SchemaCase({'HasMatchingSpan': {'name_equals': 'x'}}),
+        'mistyped-keyword': SchemaCase({'Equals': {'value': 5, 'evaluation_name': 3}}),
+        'mistyped-flag': SchemaCase({'Contains': {'value': 'x', 'case_sensitive': 'no'}}),
+        'empty-entry': SchemaCase({}),
     }
 
 
@@ -216,13 +221,16 @@ def test_non_string_keyed_short_form():
     ],
 )
 def test_builtin_evaluator_schema(case_id: str):
-    """The built-in schema rejects short forms the loader reads as keyword arguments, and empty entries."""
-    evaluator, loaded = BUILTIN_SCHEMA_CASES[case_id]
-    raw: dict[str, JsonValue] = {'name': 'built-in', 'cases': [{'inputs': 'hello'}], 'evaluators': [evaluator]}
+    """The built-in schema rejects short forms the loader reads as keyword arguments, and empty entries.
+
+    Schema generation and loading make no model request, so there is nothing to record.
+    """
+    case = BUILTIN_SCHEMA_CASES[case_id]
+    raw: dict[str, JsonValue] = {'name': 'built-in', 'cases': [{'inputs': 'hello'}], 'evaluators': [case.entry]}
     schema = Dataset[str, str, str].model_json_schema_with_evaluators()
-    assert (list(validator_for(schema)(schema).iter_errors(raw)) == []) is (loaded is not None)
-    if loaded is not None:
-        assert Dataset[str, str, str].from_dict(raw).evaluators == [loaded]
+    assert (list(validator_for(schema)(schema).iter_errors(raw)) == []) is (case.loaded is not None)
+    if case.loaded is not None:
+        assert Dataset[str, str, str].from_dict(raw).evaluators == [case.loaded]
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])

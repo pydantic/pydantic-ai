@@ -294,6 +294,8 @@ class RefCycleParam(AbstractCapability[None]):
 
 
 class TestBuildSchemaTypes:
+    """Schema generation and spec loading make no model request, so these tests record no cassette."""
+
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
         ('arguments', 'tools', 'metadata'),
