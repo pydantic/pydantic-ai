@@ -502,3 +502,44 @@ def test_harness_docs_reference_no_removed_mcp_server_classes() -> None:
         'Removed MCP classes reappeared in harness docs; reference `pydantic_ai.mcp.MCPToolset` instead '
         '(docs/migration.md keeps the old names as the historical mapping):\n' + '\n'.join(offenders)
     )
+
+
+_PROBLEM_TO_CAPABILITY_HEADING = '## From problem to capability'
+# (a phrase identifying one curated `## From problem to capability` row,
+# the phrase in the packaged skill's Task Routing Table that routes the same need)
+_PROBLEM_TO_SKILL_ROUTE = (
+    ('retried or blocked', 'Add guardrails'),
+    ('flooding the context window', 'limit large tool outputs'),
+    ('specific directory', 'work in a specific directory'),
+    ('fixed amount', 'spend limits'),
+    ('without making progress', 'loop detection'),
+    ('malformed JSON', 'repair malformed tool arguments'),
+)
+
+
+def _problem_to_capability_rows() -> list[str]:
+    """The data rows of the curated problem-first table in `docs/harness/index.md`."""
+    index = (_DOCS_DIR / 'index.md').read_text(encoding='utf-8')
+    section = index.split(_PROBLEM_TO_CAPABILITY_HEADING, 1)[1].split('\n## ', 1)[0]
+    lines = [line for line in section.splitlines() if line.startswith('| ')]
+    return [line for line in lines if not line.startswith('| If your problem')]
+
+
+def test_problem_to_capability_index_rows_resolve() -> None:
+    """The curated problem-first table stays at six problems and every link resolves to a docs page."""
+    rows = _problem_to_capability_rows()
+    assert len(rows) == 6, f'expected exactly 6 curated problems, got {len(rows)}'
+    targets = _markdown_link_targets('\n'.join(rows))
+    assert targets, 'problem-to-capability table has no links'
+    unresolvable = [target for target in targets if not (_DOCS_DIR / target).resolve().is_file()]
+    assert not unresolvable, f'problem-to-capability table links to missing docs pages: {unresolvable}'
+
+
+def test_packaged_skill_routes_problem_index_needs() -> None:
+    """Each curated problem in the docs index is routed by the packaged skill's Task Routing Table."""
+    skill = (_PACKAGE / '.agents' / 'skills' / 'pydantic-ai-harness' / 'SKILL.md').read_text(encoding='utf-8')
+    routing = skill.split('## Task Routing Table', 1)[1].split('\n## ', 1)[0]
+    rows = '\n'.join(_problem_to_capability_rows())
+    for index_phrase, route_phrase in _PROBLEM_TO_SKILL_ROUTE:
+        assert index_phrase in rows, f'problem-to-capability table lost the row matching "{index_phrase}"'
+        assert route_phrase in routing, f'packaged skill no longer routes "{route_phrase}"'
