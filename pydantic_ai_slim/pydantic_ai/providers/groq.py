@@ -189,8 +189,8 @@ class _GroqBestEffortJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
 
     def walk(self) -> JsonSchema:
         schema = super().walk()
-        # The caller coalesces an unset `strict` to this value, so the schema goes out best-effort unless the caller
-        # passed `strict=True`.
+        # `_customize_output_object()` coalesces an unset `strict` to this value, so the output object goes out
+        # best-effort unless `NativeOutput(..., strict=True)` is passed.
         self.is_strict_compatible = self.strict is True
         return schema
 
