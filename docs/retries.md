@@ -163,6 +163,8 @@ agent = Agent(model, model_settings={'max_retries': 0})
 
 The transport you pass replaces the one the client would build, so it owns the connection pool. Without `wrapped`, a retrying transport sends its attempts through an `httpx2.AsyncHTTPTransport` it creates with the same pool limits as Pydantic AI's own clients (1000 connections, up to 100 kept alive). HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so give the retrying transport your own `wrapped` transport with a `proxy` if you need one. A `wrapped` transport you build has HTTPX's default pool of 100 connections, 20 kept alive, unless you set its `limits` too: `wrapped=httpx2.AsyncHTTPTransport(proxy=..., limits=httpx2.Limits(max_connections=1000, max_keepalive_connections=100))`.
 
+If the client also submits [batches](batch.md), have `validate_response` [skip batch creates](batch.md#retrying-transports): the transport otherwise sends a create that failed with an error response again, which can create a second batch.
+
 ### Wait strategies
 
 #### wait_retry_after
@@ -460,6 +462,8 @@ client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
 agent = Agent(model, model_settings={'max_retries': 0})
 ```
+
+Before retrying or re-raising an error status, `AsyncHTTPX2TenacityTransport` and `HTTPX2TenacityTransport` read the response body, so the error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body] and gets what Pydantic AI parses from it: the error category, like an exhausted quota's [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or an overloaded provider's [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], the provider's [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code] and [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and, for Google, the wait in [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. An OpenAI image generation request blocked for content moderation raises a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Each rejected attempt therefore downloads its error body, and once the download completes, its connection goes back to the pool. A success status your `validate_response` rejects is closed without reading its body. If reading an error body fails, the transport closes the response and still raises the exception from your `validate_response`, and the error's `body` is `None`. The deprecated [`TenacityTransport`][pydantic_ai.retries.TenacityTransport] and [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport] close a rejected response without reading it, so its error's `body` is `None` and only its status sets its category.
 
 ### Performance considerations
 
