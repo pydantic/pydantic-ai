@@ -64,6 +64,22 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
             return len(ctx.output) >= self.minimum
 
+    @dataclass
+    class ObjectPositional(Evaluator[str, str, str]):
+        """A string-keyed dict value saves in the keyword form, since the loader reads one as keyword arguments."""
+
+        minimum: dict[str, int]
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum['length']
+
+    @dataclass
+    class IntKeyed(Evaluator[str, str, str]):
+        minimum: dict[int, int]
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum[1]
+
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
         value: float
@@ -91,6 +107,11 @@ with try_import() as imports_successful:
         'PositionalWithKeywordOnlyDefault': RoundTripCase(
             PositionalWithKeywordOnlyDefault(minimum=4), 4, frozenset({'short_spec'}) | KEYWORD_FORMS
         ),
+        'ObjectPositional': RoundTripCase(
+            ObjectPositional(minimum={'length': 4}),
+            {'minimum': {'length': 4}},
+            frozenset({'short_spec'}) | KEYWORD_FORMS,
+        ),
     }
 
 
@@ -107,6 +128,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'KeywordOnlyFirstWithDefault',
         'Positional',
         'PositionalWithKeywordOnlyDefault',
+        'ObjectPositional',
     ],
 )
 def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'], evaluator_name: str):
@@ -135,6 +157,17 @@ def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'],
     assert list(validator.iter_errors(raw)) == []
     forms = {key.removesuffix(f'_{name}') for key in schema['$defs'] if key.endswith(f'_{name}')}
     assert forms == case.schema_forms
+    report = loaded.evaluate_sync(lambda value: value)
+    assert all(result.value is True for result in report.cases[0].assertions.values())
+
+
+def test_non_string_keyed_short_form():
+    """A YAML mapping with a non-string key is a positional short-form value, in the schema as in the loader."""
+    raw = yaml.safe_load('name: int-keyed\ncases: [{inputs: hello}]\nevaluators:\n- IntKeyed: {1: 4}\n')
+    schema = Dataset[str, str, str].model_json_schema_with_evaluators([IntKeyed])
+    assert list(validator_for(schema)(schema).iter_errors(raw)) == []
+    loaded = Dataset[str, str, str].from_dict(raw, custom_evaluator_types=[IntKeyed])
+    assert loaded.evaluators == [IntKeyed(minimum={1: 4})]
     report = loaded.evaluate_sync(lambda value: value)
     assert all(result.value is True for result in report.cases[0].assertions.values())
 

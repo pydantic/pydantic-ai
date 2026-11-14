@@ -249,6 +249,8 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+The text is passed as a `str`. A function whose argument is a Pydantic model, dataclass or `TypedDict` instead, even one with a single `str` field, raises a [`UserError`][pydantic_ai.exceptions.UserError] when the agent is created. To turn the text into a model, take a `str` and build the model inside the function.
+
 Some models cannot write text at all, and say so through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on their profile — [decision models](models/decision.md) such as [TypeSafe's Jev](models/typesafe.md) are. On those, any `output_type` that leaves text output available is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent: the default `str`, a `str` among several output types, a `TextOutput` function, and [`PromptedOutput`](#prompted-output), which asks for its structured data as text. Give such a model a structured `output_type`, such as a `BaseModel` or a union of them, instead.
 
 !!! note

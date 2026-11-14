@@ -72,8 +72,8 @@ custom = Researcher(instructions=DEFAULT_RESEARCHER_INSTRUCTIONS + 'Answer in Fr
 Gotchas:
 
 - A run without a workspace fails at start with `UserError`. Attach `LocalWorkspace('.')` or a sandbox
-  capability, or pass `store=LocalFileStore()` (`from pydantic_ai_harness.tool_output_limits import
-  LocalFileStore`) to spill on the agent's host. Custom delegates need their own store.
+  capability, or pass `store=LocalFileOverflowStore()` (`from pydantic_ai_harness.tool_output_limits import
+  LocalFileOverflowStore`) to spill on the agent's host. Custom delegates need their own store.
 - `Researcher` has no search-backend parameter. For Exa or You.com, compose the parts yourself:
   `Capability(instructions=...)`, the search capability, `SubAgents(agents=[...], agent_folders=None)`,
   `ToolOutputLimits()`. The search capability goes on the delegate that searches (see the Exa
@@ -148,7 +148,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 from pydantic_ai_harness import ExaSearch, SubAgents, ToolOutputLimits
-from pydantic_ai_harness.subagents import SubAgent
+from pydantic_ai_harness.sub_agents import SubAgent
 
 researcher = Agent(
     name='researcher',
