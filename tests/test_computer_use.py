@@ -472,10 +472,7 @@ async def test_a_computer_call_a_stream_ended_on_records_its_grid_for_the_run_th
         yield {0: DeltaToolCall(name='computer', json_args='{"actions": [{"type": "click", "x": 500, "y": 500}]}')}
         raise RuntimeError('Connection dropped.')
 
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('ok')])
-
-    agent = _grid_agent(FunctionModel(respond, stream_function=stream, profile=GRID_PROFILE))
+    agent = _grid_agent(FunctionModel(stream_function=stream, profile=GRID_PROFILE))
     with capture_run_messages() as messages:
         with pytest.raises(RuntimeError, match='Connection dropped'):
             async with agent.run_stream('Click.'):
