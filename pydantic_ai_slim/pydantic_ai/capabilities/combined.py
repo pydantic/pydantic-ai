@@ -43,6 +43,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     _combination_roots,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 from .wrapper import WrapperCapability
 
@@ -563,6 +564,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         for capability in reversed(self._dispatch):
             if (run_id := capability.get_default_run_id()) is not None:
+                return run_id
+        return None
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        if type(self).get_default_run_id is not CombinedCapability.get_default_run_id:
+            return self.get_default_run_id()
+        for capability in reversed(self._dispatch):
+            if (run_id := await capability._get_default_run_id_for_inputs(get_inputs)) is not None:
                 return run_id
         return None
 

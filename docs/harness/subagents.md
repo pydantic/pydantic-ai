@@ -7,7 +7,7 @@ description: "Let a Pydantic AI agent delegate tasks to named subagents through 
 
 `SubAgents` lets an agent delegate self-contained tasks to named child agents. It takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/subagents/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -139,7 +139,7 @@ The orchestrator knows how hard a task is at the moment it writes the brief, so 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import SubAgent, SubAgents
-from pydantic_ai_harness.subagents import ModelOption
+from pydantic_ai_harness.sub_agents import ModelOption
 
 reviewer = Agent('{{ anthropic:large }}', name='reviewer', description='Reviews a diff')
 linter = Agent('{{ anthropic:large }}', name='linter', description='Runs the linter and reports failures')
@@ -182,8 +182,8 @@ the tool omits `working_directory` and children inherit the parent's workspace.
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
+from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.sub_agents import DelegationWorkspaceRequest, SubAgent, SubAgents
 
 workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
 
@@ -245,7 +245,7 @@ Their `task` and `output` are cut at `MAX_EVENT_TEXT_CHARS` (4096) with a `trunc
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.subagents import DelegationFinishedEvent, SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import DelegationFinishedEvent, SubAgent, SubAgents
 
 
 class ReportDelegations(AbstractCapability):
@@ -287,7 +287,7 @@ By default a delegation finishes inside the `delegate_task` call that started it
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent, SubAgents
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 
 researcher = Agent('{{ anthropic:large }}', name='researcher', description='Researches a topic and reports findings')
 
@@ -339,11 +339,11 @@ Unlike `DelegationStartedEvent` and `DelegationFinishedEvent`, these events are 
 
 Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartedEvent` and `DelegationFinishedEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
-Earlier releases named some of these differently. The old class names still import, with a `HarnessDeprecationWarning`: `SubAgentMessage`, `ParentMessage` and `ChildMessage` (each now ends in `Event`), `TaskFollowUpEvent` (`TaskResumedEvent`), `TaskMessageEvent` (`TaskSteeredEvent`), `TaskAnswerEvent` (`TaskAnsweredEvent`), `TaskCancelRequestEvent` (`TaskCancelRequestedEvent`), `TaskForceCancelEvent` (`TaskForceCancelRequestedEvent`), `TaskQuestionEvent` (`TaskQuestionAskedEvent`) and `TaskRetryEvent` (`TaskRetriedEvent`). Each event's `kind` is unchanged. `AgentCreatedEvent.name` is now `agent_name`, and `parent_id` on `DelegationStartedEvent` and `DelegationFinishedEvent` is now `parent_task_id`: the old attributes still read, with the same warning, and an event serialized under an old key still loads. Constructing one of these events takes the new keyword only. They serialize under the new keys: update code that reads a serialized event by key, and upgrade any process that loads events this release writes.
+Earlier releases named some of these differently. The old class names still import from the deprecated `pydantic_ai_harness.subagents` path, with a `HarnessDeprecationWarning`: `SubAgentMessage`, `ParentMessage` and `ChildMessage` (each now ends in `Event`), `TaskFollowUpEvent` (`TaskResumedEvent`), `TaskMessageEvent` (`TaskSteeredEvent`), `TaskAnswerEvent` (`TaskAnsweredEvent`), `TaskCancelRequestEvent` (`TaskCancelRequestedEvent`), `TaskForceCancelEvent` (`TaskForceCancelRequestedEvent`), `TaskQuestionEvent` (`TaskQuestionAskedEvent`) and `TaskRetryEvent` (`TaskRetriedEvent`). Each event's `kind` is unchanged. `AgentCreatedEvent.name` is now `agent_name`, and `parent_id` on `DelegationStartedEvent` and `DelegationFinishedEvent` is now `parent_task_id`: the old attributes still read, with the same warning, and an event serialized under an old key still loads. Constructing one of these events takes the new keyword only. They serialize under the new keys: update code that reads a serialized event by key, and upgrade any process that loads events this release writes.
 
 ```python
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.subagents import TaskAssignedEvent, TaskQuestionAskedEvent
+from pydantic_ai_harness.sub_agents import TaskAssignedEvent, TaskQuestionAskedEvent
 
 
 class DelegationPolicy(AbstractCapability):
@@ -364,7 +364,7 @@ A `SubAgentWorker` serves agents to delegating agents in other processes. The de
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import RemoteSubAgent, SubAgents, SubAgentWorker, TaskControl
+from pydantic_ai_harness.sub_agents import RemoteSubAgent, SubAgents, SubAgentWorker, TaskControl
 
 transport = ...  # a SubAgentTransport both processes reach
 
@@ -402,7 +402,7 @@ orchestrator = Agent(
 With `dynamic_agents`, the model gets a `create_agent(name, description, instructions, model=None)` tool and can delegate to the agents it creates until the run ends. This works with or without task control.
 
 ```python
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
+from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgents
 
 SubAgents(models={'fast': '{{ anthropic:small }}'}, dynamic_agents=DynamicAgents(models=['fast'], max_agents=3))
 ```
@@ -446,7 +446,7 @@ on message content, or pass it through `sanitize_messages`, which resets `TextCo
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks, SubAgents
 
 agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
 tasks = DelegationTasks(directory=Path('.task-history'))
@@ -535,7 +535,7 @@ owns it may still be running it.
 ```python
 from pathlib import Path
 
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 
 
 async def show_saved_tasks():
@@ -586,7 +586,7 @@ By default, on Temporal a delegation to an agent other than `self` runs in an ac
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.durable_exec.temporal import TemporalDurability
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 worker = Agent('{{ anthropic:large }}', name='worker', capabilities=[TemporalDurability()])
 
@@ -681,7 +681,7 @@ Disk agents inherit the parent run's model by default. Per agent, the caller can
 
 ```python
 from pydantic_ai_harness import SubAgents
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
@@ -691,7 +691,7 @@ SubAgents(
 
 When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
 
-`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable from the deprecated `pydantic_ai_harness.subagents` path, with a `HarnessDeprecationWarning`. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 
@@ -765,7 +765,7 @@ SubAgent(
 ```
 
 ```python {names="defined"}
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 
 TaskControl(
     remote_agents=(),      # Sequence[RemoteSubAgent] -- agents a SubAgentWorker serves
@@ -791,100 +791,100 @@ TaskControl(
 
 ## API reference
 
-::: pydantic_ai_harness.subagents.SubAgents
+::: pydantic_ai_harness.sub_agents.SubAgents
 
-::: pydantic_ai_harness.subagents.SubAgent
+::: pydantic_ai_harness.sub_agents.SubAgent
 
-::: pydantic_ai_harness.subagents.ModelOption
+::: pydantic_ai_harness.sub_agents.ModelOption
 
-::: pydantic_ai_harness.subagents.AgentOverride
+::: pydantic_ai_harness.sub_agents.AgentOverride
 
-::: pydantic_ai_harness.subagents.DelegationStartedEvent
+::: pydantic_ai_harness.sub_agents.DelegationStartedEvent
 
-::: pydantic_ai_harness.subagents.DelegationFinishedEvent
+::: pydantic_ai_harness.sub_agents.DelegationFinishedEvent
 
-::: pydantic_ai_harness.subagents.TaskControl
+::: pydantic_ai_harness.sub_agents.TaskControl
 
-::: pydantic_ai_harness.subagents.RemoteSubAgent
+::: pydantic_ai_harness.sub_agents.RemoteSubAgent
 
-::: pydantic_ai_harness.subagents.SubAgentWorker
+::: pydantic_ai_harness.sub_agents.SubAgentWorker
 
-::: pydantic_ai_harness.subagents.SubAgentTransport
+::: pydantic_ai_harness.sub_agents.SubAgentTransport
 
-::: pydantic_ai_harness.subagents.InMemoryTransport
+::: pydantic_ai_harness.sub_agents.InMemoryTransport
 
-::: pydantic_ai_harness.subagents.serialize_message
+::: pydantic_ai_harness.sub_agents.serialize_message
 
-::: pydantic_ai_harness.subagents.deserialize_message
+::: pydantic_ai_harness.sub_agents.deserialize_message
 
-::: pydantic_ai_harness.subagents.DynamicAgents
+::: pydantic_ai_harness.sub_agents.DynamicAgents
 
-::: pydantic_ai_harness.subagents.DynamicAgentSpec
+::: pydantic_ai_harness.sub_agents.DynamicAgentSpec
 
-::: pydantic_ai_harness.subagents.DynamicAgentFactory
+::: pydantic_ai_harness.sub_agents.DynamicAgentFactory
 
-::: pydantic_ai_harness.subagents.SubAgentMessageEvent
+::: pydantic_ai_harness.sub_agents.SubAgentMessageEvent
 
-::: pydantic_ai_harness.subagents.ParentMessageEvent
+::: pydantic_ai_harness.sub_agents.ParentMessageEvent
 
-::: pydantic_ai_harness.subagents.ChildMessageEvent
+::: pydantic_ai_harness.sub_agents.ChildMessageEvent
 
-::: pydantic_ai_harness.subagents.Recipient
+::: pydantic_ai_harness.sub_agents.Recipient
 
-::: pydantic_ai_harness.subagents.TaskSettledEvent
+::: pydantic_ai_harness.sub_agents.TaskSettledEvent
 
-::: pydantic_ai_harness.subagents.BackgroundReason
+::: pydantic_ai_harness.sub_agents.BackgroundReason
 
-::: pydantic_ai_harness.subagents.TaskRequestEvent
+::: pydantic_ai_harness.sub_agents.TaskRequestEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskAssignedEvent
+::: pydantic_ai_harness.sub_agents.TaskAssignedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskResumedEvent
+::: pydantic_ai_harness.sub_agents.TaskResumedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskStartedEvent
+::: pydantic_ai_harness.sub_agents.TaskStartedEvent
 
-::: pydantic_ai_harness.subagents.TaskBackgroundedEvent
+::: pydantic_ai_harness.sub_agents.TaskBackgroundedEvent
 
-::: pydantic_ai_harness.subagents.TaskProgressEvent
+::: pydantic_ai_harness.sub_agents.TaskProgressEvent
 
-::: pydantic_ai_harness.subagents.TaskQuestionAskedEvent
+::: pydantic_ai_harness.sub_agents.TaskQuestionAskedEvent
 
-::: pydantic_ai_harness.subagents.TaskAnsweredEvent
+::: pydantic_ai_harness.sub_agents.TaskAnsweredEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskSteeredEvent
+::: pydantic_ai_harness.sub_agents.TaskSteeredEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskCancelRequestedEvent
+::: pydantic_ai_harness.sub_agents.TaskCancelRequestedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskForceCancelRequestedEvent
+::: pydantic_ai_harness.sub_agents.TaskForceCancelRequestedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskRetriedEvent
+::: pydantic_ai_harness.sub_agents.TaskRetriedEvent
 
-::: pydantic_ai_harness.subagents.TaskCompletedEvent
+::: pydantic_ai_harness.sub_agents.TaskCompletedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskFailedEvent
+::: pydantic_ai_harness.sub_agents.TaskFailedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskCancelledEvent
+::: pydantic_ai_harness.sub_agents.TaskCancelledEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.AgentCreatedEvent
+::: pydantic_ai_harness.sub_agents.AgentCreatedEvent
     options:
         inherited_members: true

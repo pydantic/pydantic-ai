@@ -2854,7 +2854,7 @@ from collections.abc import Sequence
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AgentCapability, Hooks
-from pydantic_ai_harness.filesystem import FileWrittenEvent
+from pydantic_ai_harness.file_system import FileWrittenEvent
 
 from pydantic_clai2.plugins import Plugin
 
@@ -3135,7 +3135,7 @@ use the default".
 
 ```python
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai_harness.filesystem import FileWrittenEvent
+from pydantic_ai_harness.file_system import FileWrittenEvent
 from rich.console import RenderableType
 
 from pydantic_clai2.plugins import Plugin
