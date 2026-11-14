@@ -59,6 +59,11 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
     conversation_unchecked: NotRequired[bool]
     conversation_saved: NotRequired[bool]
+    conversation_merged_tail: NotRequired[_messages.ModelRequest]
+    # Only when a capability dropped or rewrote messages the run was given or added: the conversation's full
+    # history, where an int stands for the message at that index of `messages`, and where the run's own start.
+    conversation_messages: NotRequired[list[_messages.ModelMessage | int]]
+    conversation_run_start: NotRequired[int]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -82,6 +87,9 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_unsaved: list[_messages.ModelMessage]
     conversation_unchecked: bool
     conversation_saved: bool
+    conversation_merged_tail: _messages.ModelRequest
+    conversation_messages: list[_messages.ModelMessage | int]
+    conversation_run_start: int
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -143,6 +151,175 @@ def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
     return all(part in remaining for part in kept)
 
 
+def _split_merged_tail(
+    state: _agent_graph.GraphAgentState, messages: list[_messages.ModelMessage], new_message_index: int
+) -> tuple[list[_messages.ModelMessage], int]:
+    """Put the stored request the run merged the unsaved ones after it into, and those, back in place of the merged request.
+
+    The unsaved requests get the fields the run filled in on the merged request it sent, and the last one any part
+    it added. See `GraphAgentState.conversation_merged_tail`.
+    """
+    tail, unsaved = state.conversation_merged_tail, state.conversation_unsaved or []
+    appended = _agent_graph.leading_requests(unsaved)
+    if tail is None or not appended:
+        return messages, new_message_index
+    start = new_message_index - (len(unsaved) - len(appended) + 1)
+    merged = messages[start] if 0 <= start < len(messages) else None
+    if not isinstance(merged, _messages.ModelRequest):
+        # A history shorter than its index says, as a payload dumped without some of its messages has.
+        return messages, new_message_index
+    added: list[Any] = list(merged.parts)
+    for part in [part for request in (tail, *appended) for part in request.parts]:
+        if part not in added:
+            # Something edited the merged request in place, so which of its parts are stored isn't known.
+            return messages, new_message_index
+        added.remove(part)
+    # The merged request has the latest timestamp of the ones it merged, unless the run stamped its own.
+    given_timestamps = [request.timestamp for request in (tail, *appended)]
+    split = [
+        dataclasses.replace(
+            request,
+            parts=[*request.parts, *(added if request is appended[-1] else ())],
+            **{
+                name: value
+                for name in _STAMPED_FIELDS
+                if getattr(request, name) is None
+                and (value := getattr(merged, name)) is not None
+                and (name != 'timestamp' or value not in given_timestamps)
+            },
+        )
+        for request in appended
+    ]
+    return [*messages[:start], tail, *split, *messages[start + 1 :]], new_message_index + len(appended)
+
+
+def _full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
+    """The full history `_keep_full_history` kept when the run ended, and where the messages the run added start in it."""
+    appended = state.appended_messages
+    if not appended.full or appended.messages is None:
+        return None
+    return appended.messages, appended.new_message_index
+
+
+def _keep_full_history(state: _agent_graph.GraphAgentState) -> None:
+    """Keep the full history of a run that just ended, if its history lost any of it, and nothing otherwise.
+
+    Called once the run's last node and its hooks ran, so the result's `conversation` neither looks at the history
+    again nor holds on to the record: an edit to the history after the run then reaches the conversation, as it
+    would without a capability, unless one dropped or rewrote messages during the run.
+    """
+    appended = state.appended_messages
+    full = _merged_history(state)
+    if full is None:
+        appended.messages = None
+    else:
+        appended.messages, appended.new_message_index = full
+        appended.full = True
+
+
+def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
+    """The history the run was given and every message it added, and where those start, if its history lost any of them.
+
+    A capability can drop messages from the history or replace them with rewritten copies, say to keep what the
+    model sees short. The full history then has the messages as the run was given or added them, and every other
+    message the history holds, like a summary a capability put in place of the ones it dropped, right before the
+    message it comes before in the history. A message a capability only adds, and filling in or adding to a message
+    as `_rewritten` allows, keeps the history whole, so this is `None`.
+    """
+    recorded = state.appended_messages.messages
+    if recorded is None:
+        return None
+    merge = _HistoryMerge(recorded, given=state.appended_messages.new_message_index, history=state.message_history)
+    for message in state.message_history:
+        merge.place(message)
+    merge.finish()
+    return (merge.merged, merge.given_end) if merge.changed else None
+
+
+@dataclasses.dataclass
+class _HistoryMerge:
+    """Merges a run's message history into the messages it was given and added, for `_merged_history`."""
+
+    recorded: list[_messages.ModelMessage]
+    given: int
+    """How many of `recorded` the run was given."""
+    history: dataclasses.InitVar[list[_messages.ModelMessage]]
+    merged: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    given_end: int = 0
+    """Where the messages the run was given end in `merged`."""
+    changed: bool = False
+    """Whether the history dropped or rewrote any of `recorded`."""
+    _added: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    """Messages of the history not in `recorded`, waiting for the recorded message they come before."""
+    _start: int = 0
+    _positions: dict[int, int] = dataclasses.field(default_factory=dict[int, int])
+    _held: set[int] = dataclasses.field(default_factory=set[int])
+
+    def __post_init__(self, history: list[_messages.ModelMessage]) -> None:
+        self._positions = {id(message): index for index, message in enumerate(self.recorded)}
+        self._held = {id(message) for message in history}
+
+    def place(self, message: _messages.ModelMessage) -> None:
+        """Merge in `message`, the next one of the history."""
+        index = self._positions.get(id(message))
+        if index is not None and index < self._start:
+            # Already merged: the history moved it.
+            self.changed = True
+            return
+        copied = False
+        if index is None:
+            index, copied = self._find_original(message)
+        if index is None:
+            self._added.append(message)
+            return
+        self.changed = self.changed or copied or index != self._start
+        self.take(index)
+        if id(message) not in self._positions and not copied:
+            # A copy that only fills in or adds to the message stands for it as the history holds it.
+            self.merged[-1] = message
+
+    def finish(self) -> None:
+        """Merge the recorded messages after the last one the history holds, then the added ones after it."""
+        self.changed = self.changed or self._start < len(self.recorded)
+        self.take(len(self.recorded))
+
+    def take(self, index: int) -> None:
+        """Merge the recorded messages the history dropped before `index`, the added ones waiting, then the one at `index`."""
+        self._merge_recorded(range(self._start, index))
+        self.merged += self._added
+        self._added = []
+        self._merge_recorded(range(index, min(index + 1, len(self.recorded))))
+        self._start = index + 1
+
+    def _merge_recorded(self, indices: range) -> None:
+        for index in indices:
+            self.merged.append(self.recorded[index])
+            if index < self.given:
+                self.given_end = len(self.merged)
+
+    def _find_original(self, message: _messages.ModelMessage) -> tuple[int | None, bool]:
+        """The recorded message `message` is a copy of, among the ones the history dropped, and whether it rewrote it.
+
+        A copy that only fills in or adds to a message, as `_rewritten` allows, stands for it. So does one that keeps
+        its timestamp and run, as `dataclasses.replace` does, as a rewrite of it, even with a `run_id` the run filled in.
+        """
+        for index in range(self._start, len(self.recorded)):
+            original = self.recorded[index]
+            if id(original) in self._held:
+                break
+            if type(original) is not type(message):
+                continue
+            if not _rewritten(message, original):
+                return index, False
+            if (
+                original.timestamp is not None
+                and message.timestamp == original.timestamp
+                and original.run_id in (None, message.run_id)
+            ):
+                return index, True
+        return None, False
+
+
 _STATE_KEYS = (
     'usage',
     'run_id',
@@ -151,6 +328,7 @@ _STATE_KEYS = (
     'conversation_unsaved',
     'conversation_unchecked',
     'conversation_saved',
+    'conversation_merged_tail',
     'metadata',
 )
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
@@ -585,6 +763,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._sync_graph_state(result)
 
         _utils.raise_if_cancelling()
+        if isinstance(result, End):
+            _keep_full_history(self.ctx.state)
         return result
 
     async def _run_node_with_hooks(
@@ -645,6 +825,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)
+            if isinstance(result, End):
+                _keep_full_history(self.ctx.state)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -938,6 +1120,32 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
+def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
+    """The `GraphAgentState.appended_messages` a serialized result's `conversation_messages` and `conversation_run_start` describe.
+
+    An int in `conversation_messages` stands for the message at that index of `messages`; one out of range fails
+    validation, as does a `conversation_run_start` outside the conversation.
+    """
+    messages = data.get('messages')
+    history = cast('list[Any]', messages) if isinstance(messages, list) else []
+    full = data['conversation_messages']
+    if not isinstance(full, list):
+        raise ValueError('`conversation_messages` must be a list.')
+    messages_data: list[Any] = []
+    for item in cast('list[Any]', full):
+        if type(item) is int and not 0 <= item < len(history):
+            raise ValueError(
+                f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
+            )
+        messages_data.append(history[item] if type(item) is int else item)
+    run_start = data.get('conversation_run_start', 0)
+    if type(run_start) is not int or not 0 <= run_start <= len(messages_data):
+        raise ValueError(
+            f'`conversation_run_start` is {run_start}, but `conversation_messages` holds {len(messages_data)} messages.'
+        )
+    return {'messages': messages_data, 'new_message_index': run_start, 'full': True}
+
+
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """The public shape of an `AgentRunResult` serialized with its private fields, `_state` among them.
 
@@ -1024,6 +1232,8 @@ class AgentRunResult(Generic[OutputDataT]):
         for key in _STATE_KEYS:
             if key in data:
                 state_data[key] = data[key]
+        if 'conversation_messages' in data:
+            state_data['appended_messages'] = _appended_messages_data(data)
 
         validated: dict[str, Any] = {
             '_output_tool_name': data.get('output_tool_name'),
@@ -1063,12 +1273,26 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_unchecked'] = True
         if self._state.conversation_saved:
             data['conversation_saved'] = True
+        if self._state.conversation_merged_tail is not None:
+            data['conversation_merged_tail'] = self._state.conversation_merged_tail
+        if (full := _full_history(self._state)) is not None:
+            # The messages the history still holds are referred to by their index in it rather than repeated.
+            positions = {id(message): index for index, message in enumerate(self._state.message_history)}
+            data['conversation_messages'] = [positions.get(id(message), message) for message in full[0]]
+            data['conversation_run_start'] = full[1]
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
             # stand-in, so honor them here instead of failing the dump that was asked for.
             data['output'] = serialized['output']
-        return cast('_AgentRunResultData[Any]', _filter_serialized(data, info))
+        filtered = _filter_serialized(data, info)
+        if filtered.get('messages') is not self._state.message_history:
+            # The caller left out messages, which the full history would hold again and its indices point into,
+            # and the merged tail would hold again.
+            filtered.pop('conversation_messages', None)
+            filtered.pop('conversation_run_start', None)
+            filtered.pop('conversation_merged_tail', None)
+        return cast('_AgentRunResultData[Any]', filtered)
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -1199,10 +1423,29 @@ class AgentRunResult(Generic[OutputDataT]):
         [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index] points at
         the messages the store doesn't have yet: the ones this run added, and any the conversation
         hadn't saved before the run.
+
+        A capability that trims or rewrites the history, like
+        [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], changes what the model is sent
+        and what [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] returns, not the
+        conversation: when it dropped or rewrote messages this run was given or added, the messages
+        are the history as the run was given it followed by every message the run added, with any
+        message the capability put in the history, like a summary, right after the ones it dropped.
+        Storing or carrying the conversation keeps them all, and the capability trims or compacts the
+        full history again on the next run. That full history is fixed when the run ends, so an edit
+        to `all_messages()` after the run doesn't reach it. Otherwise the messages are the same as
+        `all_messages()`, including any message a capability added, and edits to it after the run.
+
+        The run sends a stored request and the request you appended after it, like an output tool's
+        result and your next prompt, as one request. The conversation keeps them apart, as they
+        were stored and appended, so its store gets neither again.
         """
         output = self.output
+        full = _full_history(self._state)
+        messages, new_message_index = _split_merged_tail(
+            self._state, *(full or (self._state.message_history, self._new_message_index))
+        )
         conversation = Conversation(
-            messages=list(self.all_messages()),
+            messages=list(messages),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
             deferred_tool_requests=(
@@ -1217,7 +1460,7 @@ class AgentRunResult(Generic[OutputDataT]):
             ),
             revision=self._state.conversation_revision,
         )
-        index = self._conversation_new_message_index()
+        index = self._conversation_new_message_index(messages, new_message_index)
         if index is not None and self._state.conversation_unchecked:
             # Its store compares the messages before the index with the stored ones instead.
             conversation.new_message_index = index
@@ -1231,17 +1474,19 @@ class AgentRunResult(Generic[OutputDataT]):
         self._state.conversation_unchecked = False
         self._state.conversation_saved = True
 
-    def _conversation_new_message_index(self) -> int | None:
+    def _conversation_new_message_index(
+        self, messages: list[_messages.ModelMessage], new_message_index: int
+    ) -> int | None:
         if self._state.conversation_saved:
-            return len(self._state.message_history)
+            return len(messages)
         unsaved = self._state.conversation_unsaved
         if unsaved is None:
             return None
-        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
+        # The unsaved messages the run was given come just before the ones it added, unless the run changed
         # them, in which case the store compares the whole history instead. Filling in what a request it sends
-        # lacks doesn't count as a rewrite.
-        start = self._new_message_index - len(unsaved)
-        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
+        # lacks doesn't count as a change.
+        start = new_message_index - len(unsaved)
+        carried = messages[start:new_message_index] if start >= 0 else []
         if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
             return None
         return start

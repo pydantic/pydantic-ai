@@ -1174,12 +1174,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # this node finishes, so the stream still adds it on top of the refreshed snapshot.
                                 stream._refresh_initial_run_ctx_usage()  # pyright: ignore[reportPrivateUsage]
 
-                            yield StreamedRunResult(
+                            streamed_result = StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
                                 stream,
                                 on_complete,
                             )
+                            streamed_result._full_history_from = (  # pyright: ignore[reportPrivateUsage]
+                                graph_ctx.state.appended_messages,
+                                len(messages),
+                            )
+                            yield streamed_result
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle

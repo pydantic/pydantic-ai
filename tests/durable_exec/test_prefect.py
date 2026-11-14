@@ -2777,6 +2777,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'conversation_id',  # per-conversation id; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_appended_messages',  # live record of the history, which `messages` already projects
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         '_pending_immediate_dispatches',  # live stream-deduplication state, not a task input
         '_event_stream_replacements',  # live legacy-replacement state applied at stream position, not a task input
