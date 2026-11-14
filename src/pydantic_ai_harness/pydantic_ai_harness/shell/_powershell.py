@@ -22,16 +22,21 @@ def literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-_WRAPPER = """function Publish($code) {
+_PUBLISH = """function Publish($code, $owner = $PID) {
   $tmp = Join-Path $dir 'status.tmp'
-  [IO.File]::WriteAllText($tmp, ('{"pid": ' + $PID + ', "exit_code": ' + $code + '}'))
+  [IO.File]::WriteAllText($tmp, ('{"pid": ' + $owner + ', "exit_code": ' + $code + '}'))
   # A reader holding `status.json` open makes the replace fail for a moment, so it is retried.
   for ($try = 0; $try -lt 100; $try++) {
     try { Move-Item -LiteralPath $tmp -Destination (Join-Path $dir 'status.json') -Force -ErrorAction Stop; return }
     catch { Start-Sleep -Milliseconds 20 }
   }
 }
-Publish 'null'
+"""
+"""Publish `status.json` for the job in `$dir`: the exit code `$code` of process `$owner`, the wrapper by default."""
+
+_WRAPPER = (
+    _PUBLISH
+    + """Publish 'null'
 $ready = Join-Path $dir 'launch.ready'
 $launcher = [int][IO.File]::ReadAllText((Join-Path $dir 'launcher'))
 while (-not (Test-Path -LiteralPath $ready)) {
@@ -99,6 +104,7 @@ foreach ($stream in $logs.Values) { $stream.Dispose() }
 $process.WaitForExit()
 Publish $process.ExitCode
 """
+)
 """The job's supervisor, given `$dir`, `$cwd`, the logs `$out` and `$err`, the log limit `$limit` (`0` for none),
 and the seconds between log checks `$interval`.
 
@@ -193,7 +199,7 @@ def stop_script(directory: str) -> str:
     the job's status file never reads as running after a stop.
     """
     return f"""$dir = {literal(directory)}
-[IO.File]::WriteAllText((Join-Path $dir 'stop'), '')
+{_PUBLISH}[IO.File]::WriteAllText((Join-Path $dir 'stop'), '')
 $wrapper = [IO.File]::ReadAllText((Join-Path $dir 'handle')).Split(' ')[0]
 $started = [IO.File]::ReadAllText((Join-Path $dir 'wrapper.started'))
 try {{ $current = "$((Get-Process -Id $wrapper -ErrorAction Stop).StartTime.ToFileTimeUtc())" }} catch {{ $current = $null }}
@@ -201,9 +207,5 @@ if ($current -eq $started) {{
   taskkill /T /F /PID $wrapper | Out-Null
   if ($LASTEXITCODE -notin 0, {MISSING_PROCESS}) {{ exit $LASTEXITCODE }}
 }}
-$status = Join-Path $dir 'status.json'
-if ([IO.File]::ReadAllText($status) -match '"exit_code": null') {{
-  [IO.File]::WriteAllText("$status.tmp", ('{{"pid": ' + $wrapper + ', "exit_code": {KILLED}}}'))
-  Move-Item -LiteralPath "$status.tmp" -Destination $status -Force
-}}
+if ([IO.File]::ReadAllText((Join-Path $dir 'status.json')) -match '"exit_code": null') {{ Publish {KILLED} $wrapper }}
 exit 0"""

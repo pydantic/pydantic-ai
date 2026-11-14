@@ -57,7 +57,7 @@ _POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process wit
 
 _WINDOWS_JOB_HINT = (
     '(e.g.\n`Get-Content -Tail` in a later shell call) and stop the process tree with the\n'
-    '`taskkill` command the result names. Commands run in PowerShell, not `sh`.'
+    'stop command the result names. Commands run in PowerShell, not `sh`.'
 )
 """`_POSIX_JOB_HINT` for a `'windows'` workspace."""
 

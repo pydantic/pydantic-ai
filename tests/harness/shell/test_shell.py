@@ -2533,5 +2533,5 @@ output is truncated. Background mode returns the handles
 immediately; only for background jobs, a foreground command still running
 at its timeout, or truncated long output, read the log or status file (e.g.
 `Get-Content -Tail` in a later shell call) and stop the process tree with the
-`taskkill` command the result names. Commands run in PowerShell, not `sh`. No notification arrives when a background job finishes.\
+stop command the result names. Commands run in PowerShell, not `sh`. No notification arrives when a background job finishes.\
 """)
