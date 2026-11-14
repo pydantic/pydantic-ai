@@ -262,6 +262,21 @@ durability = AzureDurableTaskDurability(
 `@durable_operation` methods. [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] and deferred calls
 are agent control flow, not activity failures. `UserError` and serialization failures are not retried.
 
+A model activity that fails with a model error that has a `retry_after` (read from a provider's
+`Retry-After` header, for example) is attempted again after that long, on a durable timer, instead of
+the policy's backoff. A `RetryPolicy` can't set the delay of one retry, so the activity completes with
+the wait, and the orchestration waits it and calls the activity again with the attempts the policy has
+left: the history shows the completed activity, a timer, and the activity again. The wait is capped at
+`max_retry_interval`, or without one at the policy's own backoff for that attempt or a minute,
+whichever is longer. Once the policy allows no more attempts, the orchestration gets a
+`TaskFailedError` with the model error's type, message and cause, rebuilt from the activity's result:
+the last attempt shows as completed in the history rather than failed, its message names the activity
+rather than its task number, and properties from a worker's `exception_properties_provider` aren't
+included. Without `model_options`, or with `max_number_of_attempts=1`, no retry can happen, so a
+model activity fails with the model error like any other activity. Set
+`model_settings={'max_retries': 0}` on the agent so the provider SDK doesn't also retry inside the
+activity.
+
 `resolve_tool_options(operation_id, tool, tool_name)` sets a policy per tool: return a `RetryPolicy`,
 `None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
 tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic

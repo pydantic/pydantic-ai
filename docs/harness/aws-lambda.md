@@ -310,8 +310,16 @@ execution's traces show only the work that invocation did, and costs are counted
     ```
 
 - **Retries stack.** Pydantic AI and provider clients have their own retry logic. Leaving those
-  enabled alongside the step retry policy multiplies the attempts and mishandles `Retry-After`;
-  disable one side.
+  enabled alongside the step retry policy multiplies the attempts, and a retry inside the step
+  waits out the provider's `Retry-After` while the invocation runs. Disable one side, for example
+  with `model_settings={'max_retries': 0}` on the agent.
+- **A model step's retry waits the provider's `Retry-After`.** When a model request fails with a
+  model error that has a `retry_after` (read from a `Retry-After` or `retry-after-ms` header, for
+  example) and the step's retry strategy retries it, the execution suspends for that long, rounded
+  up to whole seconds, instead of the strategy's delay. No compute is billed while it waits. The
+  strategy still decides whether to retry, so its attempt limit and error filters apply. A strategy
+  is a function with no maximum to read, so the wait is capped at the strategy's own delay for that
+  attempt or a minute, whichever is longer.
 - **Tool calls run one at a time.** A step's identity comes from the order steps are reached, so
   concurrently scheduled tool calls could claim each other's checkpoints when the execution
   resumes. Inside a durable handler the run is switched to sequential tool execution. Outside one

@@ -7,7 +7,7 @@ import gc
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 from typing import Any, assert_type
 
@@ -16,9 +16,9 @@ from aws_durable_execution_sdk_python import (
     DurableContext,
     durable_execution,  # pyright: ignore[reportUnknownVariableType]
 )
-from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
+from aws_durable_execution_sdk_python.config import Duration, StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError
-from aws_durable_execution_sdk_python.retries import RetryPresets
+from aws_durable_execution_sdk_python.retries import RetryDecision, RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
@@ -27,7 +27,15 @@ from opentelemetry.sdk.metrics.export import ExponentialHistogramDataPoint, Hist
 from pydantic_ai import Agent, RunContext, RunUsage
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ModelFallback, durable_operation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, ModelRetry, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRateLimitError,
+    ModelRetry,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -562,6 +570,81 @@ class TestStepConfig:
             UserError, match="Tool 'act' has invalid 'aws_lambda' metadata: step config keys must be strings"
         ):
             run_durable(lambda: agent.run('go'), context=ctx)
+
+
+def _rate_limited(retry_after: float | None) -> ModelHTTPError:
+    return ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='test-model', retry_after=retry_after
+    )
+
+
+def _failed_model_step(
+    error: Exception, *, step_config: Mapping[str, object] | None = None
+) -> tuple[Callable[[Exception, int], RetryDecision], Exception]:
+    """The retry strategy the model step that failed with `error` was given, and the error the SDK hands it."""
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise error
+
+    agent = Agent(FunctionModel(fail), name='a', capabilities=[AWSLambdaDurability(step_config=step_config)])
+    ctx = FakeDurableContext()
+    with pytest.raises(ModelAPIError):
+        run_durable(lambda: agent.run('go'), context=ctx)
+    [operation] = ctx.failed
+    assert operation.name == 'a__model.request'
+    assert operation.config is not None and operation.config.retry_strategy is not None
+    assert isinstance(operation.error, Exception)
+    return operation.config.retry_strategy, operation.error
+
+
+class TestRetryAfter:
+    """A model step's retry waits the `retry_after` a model error asked for, as the SDK's timed suspension."""
+
+    @pytest.mark.parametrize(
+        ('retry_after', 'step_config', 'delay'),
+        [
+            pytest.param(30.0, None, 30, id='retry-after'),
+            pytest.param(0.5, None, 1, id='rounded-up-to-whole-seconds'),
+            # The SDK's default strategy waits at most a minute, so the wait is capped at a minute.
+            pytest.param(1000.0, None, 60, id='capped-at-a-minute'),
+            # A strategy that waits longer than a minute raises the cap to its own delay.
+            pytest.param(
+                1000.0,
+                {'retry_strategy': RetryPresets.fixed(Duration.from_minutes(2))},
+                120,
+                id='capped-at-the-strategys-delay',
+            ),
+        ],
+    )
+    def test_retry_waits_the_model_errors_retry_after(
+        self, retry_after: float, step_config: Mapping[str, object] | None, delay: int
+    ) -> None:
+        strategy, error = _failed_model_step(_rate_limited(retry_after), step_config=step_config)
+
+        assert strategy(error, 1) == RetryDecision.retry(Duration(seconds=delay))
+
+    def test_strategy_still_decides_whether_to_retry(self) -> None:
+        strategy, error = _failed_model_step(_rate_limited(30.0), step_config={'retry_strategy': RetryPresets.none()})
+
+        assert strategy(error, 1) == RetryDecision.no_retry()
+
+    def test_error_without_retry_after_keeps_the_strategys_delay(self) -> None:
+        strategy, error = _failed_model_step(
+            _rate_limited(None), step_config={'retry_strategy': RetryPresets.fixed(Duration(seconds=7))}
+        )
+
+        assert strategy(error, 1) == RetryDecision.retry(Duration(seconds=7))
+
+    def test_tool_steps_keep_their_config(self) -> None:
+        agent = build_agent(lambda: 'sunny')
+        ctx = FakeDurableContext()
+
+        run_durable(lambda: agent.run('go'), context=ctx)
+
+        configs = {operation.name: operation.config for operation in ctx.operations}
+        assert configs['a__function_toolset__<agent>.call_tool:act'] is None
+        model_config = configs['a__model.request']
+        assert model_config is not None and model_config.retry_strategy is not None
 
 
 class TestNesting:

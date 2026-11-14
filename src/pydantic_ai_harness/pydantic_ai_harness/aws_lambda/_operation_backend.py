@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import fields
+from dataclasses import fields, replace
 from typing import Any, Literal
 
 from aws_durable_execution_sdk_python.concurrency.models import BatchResult
-from aws_durable_execution_sdk_python.config import ParallelConfig, StepConfig, StepSemantics
-from aws_durable_execution_sdk_python.retries import RetryDecision
+from aws_durable_execution_sdk_python.config import Duration, ParallelConfig, StepConfig, StepSemantics
+from aws_durable_execution_sdk_python.retries import RetryDecision, RetryPresets
 from aws_durable_execution_sdk_python.serdes import SerDes, SerDesContext
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
@@ -14,10 +15,12 @@ from pydantic_ai.durable_exec import (
     DurableOperationId,
     JournalCallableOperationBackend,
     RoleBasedOperationConfig,
+    model_error_retry_after,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import ToolsetTool
 
+from .._retry_after import MODEL_OPERATION_IDS
 from ._bridge import ENGINE_NAME, current_bridge
 
 TOOL_CONFIG_KEY = 'aws_lambda'
@@ -32,6 +35,9 @@ _STEP_SEMANTICS_ADAPTER = TypeAdapter(StepSemantics)
 _SERDES_ADAPTER: TypeAdapter[SerDes[object] | None] = TypeAdapter(
     SerDes[object] | None, config=ConfigDict(arbitrary_types_allowed=True)
 )
+_MINIMUM_RETRY_AFTER_CAP = 60
+"""The shortest cap on a model error's `retry_after`, in seconds, when the retry strategy's own delay is shorter."""
+
 _STEP_CONFIG_VALUE_ADAPTERS = {
     'retry_strategy': (_RETRY_STRATEGY_ADAPTER, 'a callable or None'),
     'step_semantics': (_STEP_SEMANTICS_ADAPTER, 'StepSemantics'),
@@ -98,12 +104,37 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         cache_key: tuple[object, ...],
         config: StepConfig | None,
     ) -> object:
-        del operation_id, cache_key
+        del cache_key
 
         bridge = current_bridge()
         # Execution in a durable context guarantees a bridge.
         assert bridge is not None
+        if isinstance(operation_id, MODEL_OPERATION_IDS):
+            config = _waiting_retry_after(config)
         return await bridge.run_step(name, body, config)
+
+
+def _waiting_retry_after(config: StepConfig | None) -> StepConfig:
+    """A model step's config whose retry strategy waits the `retry_after` a model error asked for.
+
+    The step's retry strategy, the SDK's default when none is set, still decides whether to retry. When it does and
+    the model error has a `retry_after`, the SDK suspends the execution for that long instead of the strategy's delay,
+    rounded up to whole seconds. A strategy is a function with no maximum to read, so the wait is capped at the
+    strategy's own delay for the attempt or a minute, whichever is longer.
+    """
+    step_config = config or StepConfig()
+    strategy = step_config.retry_strategy or RetryPresets.default()
+
+    def retry_strategy(error: Exception, attempts_made: int) -> RetryDecision:
+        decision = strategy(error, attempts_made)
+        if not decision.should_retry:
+            return decision
+        delay = model_error_retry_after(error, maximum=max(decision.delay_seconds, _MINIMUM_RETRY_AFTER_CAP))
+        if delay is None:
+            return decision
+        return RetryDecision.retry(Duration(seconds=math.ceil(delay)))
+
+    return replace(step_config, retry_strategy=retry_strategy)
 
 
 def _serdes(config: StepConfig | None) -> SerDes[Any] | None:

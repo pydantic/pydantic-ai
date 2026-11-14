@@ -31,10 +31,19 @@ class TaskSteps:
     async def step(self, name: str, operation: Callable[[], Awaitable[StepT]]) -> StepT:
         # Step names are built from the agent, toolset, and tool names, which can hold characters
         # pgtask rejects (the agent's own toolset has the id `<agent>`).
+        name, occurrence = self._occurrence(name)
+        return await self.task.step(name, operation, occurrence=occurrence)
+
+    async def sleep_for(self, name: str, seconds: float) -> None:
+        """Sleep durably, suspending the task until the wait is over, numbered like a step."""
+        name, occurrence = self._occurrence(name)
+        await self.task.sleep_for(name, seconds, occurrence=occurrence)
+
+    def _occurrence(self, name: str) -> tuple[str, int]:
         name = _UNSUPPORTED_STEP_NAME_CHAR.sub('_', name)
         occurrence = self.occurrences[name]
         self.occurrences[name] += 1
-        return await self.task.step(name, operation, occurrence=occurrence)
+        return name, occurrence
 
 
 # The counters are shared by every step of an attempt, wherever it runs, so they are keyed by the task

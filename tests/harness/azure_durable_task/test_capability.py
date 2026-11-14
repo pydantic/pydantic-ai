@@ -7,9 +7,11 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
+from typing import NotRequired
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -26,7 +28,7 @@ from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, Ins
 from pydantic_ai.durable_exec import (
     conversation_id_from_run_id,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -64,6 +66,16 @@ with try_import() as imports_successful:
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
+
+
+class _RetryPolicyOptions(TypedDict):
+    """The `durabletask.task.RetryPolicy` arguments a test builds its policy from."""
+
+    first_retry_interval: timedelta
+    max_number_of_attempts: int
+    backoff_coefficient: NotRequired[float]
+    max_retry_interval: NotRequired[timedelta]
+    retry_timeout: NotRequired[timedelta]
 
 
 @dataclass
@@ -1024,6 +1036,151 @@ class TestAzureDurableTaskDurability:
             state = durable_worker.wait(instance_id)
         state.raise_if_failed()
         assert state.get_output() == [1, 10]
+
+    @pytest.mark.parametrize(
+        ('retry_after', 'policy', 'answer_on', 'waits', 'output'),
+        [
+            # The policy's own backoff would wait 30 seconds.
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 3},
+                2,
+                [5.0],
+                'recovered',
+                id='retry-after',
+            ),
+            pytest.param(
+                5,
+                {
+                    'first_retry_interval': timedelta(seconds=1),
+                    'max_number_of_attempts': 3,
+                    'max_retry_interval': timedelta(seconds=2),
+                },
+                2,
+                [2.0],
+                'recovered',
+                id='capped-at-max-retry-interval',
+            ),
+            # A backoff too long for a `timedelta` is capped at `max_retry_interval` before it's built.
+            pytest.param(
+                5,
+                {
+                    'first_retry_interval': timedelta(seconds=1),
+                    'max_number_of_attempts': 3,
+                    'backoff_coefficient': 1e14,
+                    'max_retry_interval': timedelta(seconds=2),
+                },
+                2,
+                [2.0],
+                'recovered',
+                id='long-backoff-capped-at-max-retry-interval',
+            ),
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 2},
+                None,
+                [5.0],
+                'failed',
+                id='attempts-exhausted',
+            ),
+            pytest.param(
+                5,
+                {
+                    'first_retry_interval': timedelta(seconds=30),
+                    'max_number_of_attempts': 3,
+                    'retry_timeout': timedelta(seconds=3),
+                },
+                None,
+                [5.0],
+                'failed',
+                id='retry-timeout-elapsed',
+            ),
+            # Without `max_retry_interval`, the policy's own backoff caps the wait once it's longer than a minute.
+            pytest.param(
+                300,
+                {'first_retry_interval': timedelta(seconds=90), 'max_number_of_attempts': 3},
+                2,
+                [90.0],
+                'recovered',
+                id='capped-at-the-policys-backoff',
+            ),
+            pytest.param(
+                300,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 3},
+                2,
+                [60.0],
+                'recovered',
+                id='capped-at-a-minute',
+            ),
+            # Without a retry policy that allows another attempt, the model activity fails natively.
+            pytest.param(5, None, None, [], 'failed', id='no-retry-policy'),
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 1},
+                None,
+                [],
+                'failed',
+                id='single-attempt',
+            ),
+        ],
+    )
+    def test_model_retry_after_waits_on_a_durable_timer(
+        self,
+        durable_worker: InMemoryWorker,
+        retry_after: int,
+        policy: _RetryPolicyOptions | None,
+        answer_on: int | None,
+        waits: list[float],
+        output: str,
+    ) -> None:
+        """A model error's `retry_after` is waited on a durable timer before the model activity's next attempt, within
+        its retry policy; once the policy allows no more attempts, the orchestration gets the activity's failure."""
+        calls: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('request')
+            if len(calls) == answer_on:
+                return ModelResponse(parts=[TextPart('recovered')])
+            raise ModelHTTPError(429, 'test-model', headers={'Retry-After': str(retry_after)})
+
+        agent = Agent(
+            FunctionModel(model),
+            name='retry-after',
+            capabilities=[
+                AzureDurableTaskDurability(model_options=task.RetryPolicy(**policy) if policy is not None else None)
+            ],
+        )
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, str]:
+            async def body() -> str:
+                try:
+                    return (await agent.run('Hi')).output
+                except task.TaskFailedError as error:
+                    assert error.details.is_caused_by(ModelHTTPError)
+                    return 'failed'
+
+            return (yield from run_durable(context, body))
+
+        observed: list[float] = []
+        with registered_agent(durable_worker, agent):
+            durable_worker.add_orchestrator(orchestrator)
+            instance_id = durable_worker.schedule(orchestrator)
+            durable_worker.run_until_idle()
+            while durable_worker.timers:
+                [(_, _, timer)] = durable_worker.timers
+                observed.append(round((timer.fireAt.ToDatetime() - durable_worker.now).total_seconds(), 3))
+                durable_worker.fire_timers()
+                durable_worker.run_until_idle()
+            state = durable_worker.wait(instance_id)
+        state.raise_if_failed()
+        assert state.get_output() == output
+        assert observed == waits
+        assert len(calls) == len(waits) + 1
+        # A model activity that waited a `retry_after` completes with it, so only one that couldn't fails natively.
+        history = durable_worker.instances[instance_id].history
+        assert any(event.HasField('taskFailed') for event in history) == (output == 'failed' and not waits)
 
     def test_user_error_is_terminal_under_native_retries(self, durable_worker: InMemoryWorker) -> None:
         effects: list[str] = []

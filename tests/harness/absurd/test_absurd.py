@@ -19,6 +19,7 @@ pytest.importorskip('fastmcp')
 from absurd_sdk import (
     AsyncAbsurd,
     JsonValue,
+    SuspendTask,
     TaskContext,
     _current_task_context,  # pyright: ignore[reportPrivateUsage]
 )
@@ -29,7 +30,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._toolset import CallToolResult
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRateLimitError, ModelRetry, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -51,6 +52,7 @@ from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
+from tests.harness._rate_limited_model import rate_limited_once
 
 from ._task import checkpoints, reenter_running_task, running_task_context
 
@@ -815,3 +817,106 @@ class TestCodeMode:
         # The `run_code` body re-runs on replay, but its `search` call is served from the checkpoint.
         assert first.output == second.output == 'done: results for x'
         assert calls['calls'] == 1
+
+
+class TestRetryAfter:
+    async def test_model_step_waits_retry_after_and_runs_again(self, absurd: AsyncAbsurd) -> None:
+        """The failed attempt is checkpointed, the task sleeps the wait, and the model step runs again; a replay
+        serves both from the checkpoints."""
+        counter = {'calls': 0}
+        # A wait that has already passed, so the sleep doesn't suspend the task.
+        agent = Agent(rate_limited_once(counter, 0.0), name='limited', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'limited') as ctx:
+            assert (await agent.run('hi')).output == 'ok'
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert list(stored) == [
+            'limited__model.request',
+            'limited__model.request.retry_after',
+            'limited__model.request#2',
+        ]
+        assert stored['limited__model.request'] == {'__pydantic_ai_harness_retry_after__': 0.0}
+
+        async with reenter_running_task(absurd, ctx.task_id):
+            assert (await agent.run('hi')).output == 'ok'
+        assert counter['calls'] == 2
+
+    @pytest.mark.parametrize(
+        ('retry_after', 'wait'),
+        [
+            pytest.param(30.0, 30.0, id='retry-after'),
+            # Without a `RetryStrategy` `max_seconds`, the wait is capped at a minute.
+            pytest.param(120.0, 60.0, id='capped-at-a-minute'),
+        ],
+    )
+    async def test_model_step_wait_suspends_the_task(
+        self, absurd: AsyncAbsurd, retry_after: float, wait: float
+    ) -> None:
+        counter = {'calls': 0}
+        agent = Agent(rate_limited_once(counter, retry_after), name='suspended', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'suspended') as ctx:
+            with pytest.raises(SuspendTask):
+                await agent.run('hi')
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert list(stored) == ['suspended__model.request', 'suspended__model.request.retry_after']
+        assert stored['suspended__model.request'] == {'__pydantic_ai_harness_retry_after__': wait}
+        assert counter['calls'] == 1
+
+    async def test_model_step_wait_is_capped_at_the_retry_strategy_maximum(self, absurd: AsyncAbsurd) -> None:
+        counter = {'calls': 0}
+        agent = Agent(rate_limited_once(counter, 30.0), name='capped', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(
+            absurd, 'capped', retry_strategy={'kind': 'fixed', 'base_seconds': 1, 'max_seconds': 2}
+        ) as ctx:
+            with pytest.raises(SuspendTask):
+                await agent.run('hi')
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert stored['capped__model.request'] == {'__pydantic_ai_harness_retry_after__': 2.0}
+
+    @pytest.mark.parametrize(
+        ('retry_after', 'max_attempts'),
+        [pytest.param(5.0, 1, id='no-attempts-left'), pytest.param(None, 2, id='no-retry-after')],
+    )
+    async def test_model_error_fails_the_run_without_a_wait(
+        self, absurd: AsyncAbsurd, retry_after: float | None, max_attempts: int
+    ) -> None:
+        """A model error that asks for no wait, or comes with no attempts left, fails the run for Absurd's task retry."""
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError.for_category(
+                ModelRateLimitError, status_code=429, model_name='fn', retry_after=retry_after
+            )
+
+        agent = Agent(FunctionModel(fn, model_name='fn'), name='failing', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'failing', max_attempts=max_attempts) as ctx:
+            with pytest.raises(ModelRateLimitError):
+                await agent.run('hi')
+        assert await checkpoints(absurd, ctx.task_id) == {}
+
+    async def test_task_without_an_attempt_limit_waits_as_often_as_asked(self, absurd: AsyncAbsurd) -> None:
+        calls: list[int] = []
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(len(calls))
+            if len(calls) <= 2:
+                raise ModelHTTPError.for_category(
+                    ModelRateLimitError, status_code=429, model_name='fn', retry_after=0.0
+                )
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        agent = Agent(FunctionModel(fn, model_name='fn'), name='unlimited', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'unlimited', max_attempts=None) as ctx:
+            assert (await agent.run('hi')).output == 'ok'
+        assert len(calls) == 3
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert list(stored) == [
+            'unlimited__model.request',
+            'unlimited__model.request.retry_after',
+            'unlimited__model.request#2',
+            'unlimited__model.request.retry_after#2',
+            'unlimited__model.request#3',
+        ]

@@ -20,6 +20,7 @@ from absurd_sdk import (
     AsyncTaskContext,
     ClaimedTask,
     JsonValue,
+    RetryStrategy,
     _create_async_task_context,  # pyright: ignore[reportPrivateUsage]
     _current_task_context,  # pyright: ignore[reportPrivateUsage]
 )
@@ -52,15 +53,24 @@ async def _entered(absurd: AsyncAbsurd, task: ClaimedTask) -> AsyncGenerator[Asy
 
 
 @asynccontextmanager
-async def running_task_context(absurd: AsyncAbsurd, task_name: str = 'noop') -> AsyncGenerator[AsyncTaskContext]:
+async def running_task_context(
+    absurd: AsyncAbsurd,
+    task_name: str = 'noop',
+    *,
+    max_attempts: int | None = 2,
+    retry_strategy: RetryStrategy | None = None,
+) -> AsyncGenerator[AsyncTaskContext]:
     """Spawn, claim and enter a task context for the duration of the block.
 
-    The task stays `running` when the block exits, so `reenter_running_task` can retry it.
+    The task stays `running` when the block exits, so `reenter_running_task` can retry it. A `max_attempts` of
+    `None` enters a task with no attempt limit, which Absurd's schema allows but the Python SDK never spawns.
     """
     absurd.register_task(name=task_name)(_noop)
-    spawned = await absurd.spawn(task_name, None, max_attempts=2)
+    spawned = await absurd.spawn(task_name, None, max_attempts=max_attempts or 1, retry_strategy=retry_strategy)
     [task] = await absurd.claim_tasks(batch_size=1)
     assert task['task_id'] == spawned['task_id']
+    if max_attempts is None:
+        task['max_attempts'] = None
     async with _entered(absurd, task) as ctx:
         yield ctx
 

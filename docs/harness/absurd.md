@@ -94,6 +94,7 @@ call. Step names are built from the agent's `name` and each toolset's `id`:
 |---|---|
 | `{name}__model.request` | one model request segment |
 | `{name}__model.request_stream` | one streamed model request segment |
+| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after`, `{name}__model.compact_messages.retry_after`, `{name}__model.cancel_suspended_response.retry_after` | the wait a model error's `retry_after` asked for, before that model operation runs again |
 | `{name}__model.compact_messages` | one model message-compaction operation |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
 | `{name}__capability__{capability_id}.{operation}` | an operation contributed by another capability |
@@ -130,6 +131,15 @@ These are not checkpointed and run again on replay:
   steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
   the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
   already did.
+- A model request that fails with a model error that has a `retry_after` (read from a provider's
+  `Retry-After` header, for example) is checkpointed as a failed attempt. The task then sleeps that
+  long with Absurd's durable `sleep_for` (the `{name}__model.request.retry_after` step), which
+  suspends it until then without using one of its attempts, and the request runs again as the next
+  occurrence of its step. The wait is capped at the task's `RetryStrategy` `max_seconds`, or at a
+  minute without one. Each model request waits at most as many times as the task has attempts left
+  after the current one; after that, the model error fails the run and Absurd's own retry applies.
+  The suspension leaves `agent.run` as Absurd's `SuspendTask`, so an `on_model_request_error` hook
+  that handles every exception has to re-raise it.
 
 ## Parallel execution
 
