@@ -220,8 +220,21 @@ class AbstractNativeTool(ABC):
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
+            # The discriminator is a function, so the union's JSON schema is a `oneOf` with no mapping, and each
+            # tool's `kind` is a plain string with a default. Pinning `kind` keeps `{'kind': 'code_execution'}` from
+            # matching several members; it's required because a document without one loads as no built-in tool.
+            # `kind=tool.kind` binds each member's own kind: a closure would see only the last one.
             tools_annotated = [
-                Annotated[tool, pydantic.Tag(tool.kind), _kind_const_json_schema(tool.kind)] for tool in tools
+                Annotated[
+                    tool,
+                    pydantic.Tag(tool.kind),
+                    pydantic.GetPydanticSchema(
+                        get_pydantic_json_schema=lambda schema, handler, kind=tool.kind: {
+                            'allOf': [handler(schema), {'properties': {'kind': {'const': kind}}, 'required': ['kind']}]
+                        }
+                    ),
+                ]
+                for tool in tools
             ]
             tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
 
@@ -1164,22 +1177,6 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractNativeTool) -> str:
         return tool_data.get('kind', AbstractNativeTool.kind)
     else:
         return tool_data.kind
-
-
-def _kind_const_json_schema(kind: str) -> pydantic.GetPydanticSchema:
-    """A JSON schema hook that makes a native tool union member match only documents whose `kind` is `kind`.
-
-    The union's discriminator is a function, so its JSON schema is a `oneOf` with no mapping, and each tool's own `kind`
-    is a plain string with a default. Without this, `{'kind': 'code_execution'}` matches several members and fails the
-    `oneOf`. `kind` is required because a document without one loads as no built-in tool.
-
-    This is a factory so each member binds its own `kind`: a lambda written in the loop would see only the last one.
-    """
-    return pydantic.GetPydanticSchema(
-        get_pydantic_json_schema=lambda schema, handler: {
-            'allOf': [handler(schema), {'properties': {'kind': {'const': kind}}, 'required': ['kind']}]
-        }
-    )
 
 
 SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
