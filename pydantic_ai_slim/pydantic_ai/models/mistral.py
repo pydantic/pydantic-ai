@@ -139,14 +139,13 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
         body, _, text = _model_errors.transport_error_body(e.response)
-        message = body.get('message') if _utils.is_str_dict(body) else None
         raise _status_error(
             model_name,
             status_code=e.response.status_code,
             body=body,
             parsed=body,
-            message=message if isinstance(message, str) else text,
             headers=dict(e.response.headers),
+            text=text,
         ) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
@@ -164,18 +163,27 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
         status_code=e.status_code,
         body=e.body,
         parsed=error,
-        message=error.get('message') if _utils.is_str_dict(error) else None,
         headers=dict(e.headers),
     )
 
 
 def _status_error(
-    model_name: str, *, status_code: int, body: object, parsed: object, message: object, headers: dict[str, str]
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    parsed: object,
+    headers: dict[str, str],
+    text: str | None = None,
 ) -> ModelHTTPError:
-    """The error for a Mistral API error status, classified by `parsed`, the error object its `body` holds."""
+    """The error for a Mistral API error status, classified by `parsed`, the error object its `body` holds.
+
+    Without a message in `parsed`, the status is classified with `text`, the body's text if no SDK read it.
+    """
     code = parsed.get('code') if _utils.is_str_dict(parsed) else None
     error_type = parsed.get('type') if _utils.is_str_dict(parsed) else None
     error_message = parsed.get('message') if _utils.is_str_dict(parsed) else None
+    message = error_message if isinstance(error_message, str) else text
     # Mistral sends its numeric error codes as strings.
     code = str(code) if isinstance(code, str | int) else None
     # Mistral sends a context window overflow with the type `invalid_request_prompt_too_long` (code `'3059'`).

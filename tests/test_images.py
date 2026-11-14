@@ -67,7 +67,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, google_user_agents, try_import
+from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, gave_up_on, google_user_agents, try_import
 
 pytestmark = [
     pytest.mark.usefixtures('allow_model_requests'),
@@ -2114,12 +2114,9 @@ async def test_google_image_generation_status_error(
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        response = httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
-        if gave_up:
-            raise httpx2.HTTPStatusError(f'Error status {status_code}', request=request, response=response)
-        return response
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
 
-    async with _mock_google_provider(handle_request) as provider:
+    async with _mock_google_provider(gave_up_on(handle_request) if gave_up else handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
         with pytest.raises(ModelHTTPError) as exc_info:
@@ -2132,36 +2129,7 @@ async def test_google_image_generation_status_error(
     assert exc_info.value.provider_error_code == error.get('status')
     assert exc_info.value.body == {'error': error}
     assert exc_info.value.retry_after == expected_retry_after
-
-
-@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_image_generation_gave_up_status_error():
-    """A status a retrying transport gave up on surfaces as a categorized `ModelHTTPError` with Gemini's wait.
-
-    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
-    """
-    error: dict[str, object] = {
-        'code': 429,
-        'message': 'Resource has been exhausted',
-        'status': 'RESOURCE_EXHAUSTED',
-        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
-    }
-
-    def handle_request(request: httpx2.Request) -> httpx2.Response:
-        response = httpx2.Response(429, json={'error': error}, request=request)
-        raise httpx2.HTTPStatusError('Client error 429', request=request, response=response)
-
-    async with _mock_google_provider(handle_request) as provider:
-        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
-
-        with pytest.raises(ModelHTTPError) as exc_info:
-            await model.generate('tiny robot')
-
-    assert isinstance(exc_info.value, ModelRateLimitError)
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.body == {'error': error}
-    assert exc_info.value.retry_after == 14.0
-    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError) is gave_up
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -4665,14 +4633,13 @@ async def test_openai_image_generation_gave_up_status_error(
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        response = httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
-        raise httpx2.HTTPStatusError(f'Error status {status_code}', request=request, response=response)
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
 
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
         max_retries=0,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(gave_up_on(handle_request))),
     )
     model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
     images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
@@ -4754,7 +4721,7 @@ async def test_openai_image_generation_moderation_blocked(gave_up: bool):
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        response = httpx2.Response(
+        return httpx2.Response(
             400,
             json={
                 'error': {
@@ -4766,11 +4733,10 @@ async def test_openai_image_generation_moderation_blocked(gave_up: bool):
             },
             request=request,
         )
-        if gave_up:
-            raise httpx2.HTTPStatusError('Error status 400', request=request, response=response)
-        return response
 
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(gave_up_on(handle_request) if gave_up else handle_request)
+    )
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
     model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
 

@@ -75,7 +75,7 @@ def status_error(
     error_type: str | None,
     message: str | None,
     headers: Mapping[str, str] | None = None,
-    error_object: object = None,
+    error_object: Mapping[str, object] | None = None,
 ) -> ModelHTTPError:
     """The error for an HTTP error status, which a batch also reports for each request that failed.
 
@@ -92,8 +92,8 @@ def status_error(
     elif model_id_namespace == 'moonshotai':
         # Moonshot sends an exhausted balance as a 429 too; only its error type tells it from a rate limit.
         category = _model_errors.moonshot_type_category(error_type) or category
-    error_object = body if error_object is None else error_object
-    if status_code == 403 and flags_input(error_object.get('metadata') if _utils.is_str_dict(error_object) else None):
+    reported = body if error_object is None else error_object
+    if status_code == 403 and flags_input(reported.get('metadata') if _utils.is_str_dict(reported) else None):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(

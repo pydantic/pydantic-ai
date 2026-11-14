@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
@@ -408,7 +408,7 @@ def _status_error(
     error_type: str | None,
     message: str,
     headers: dict[str, str],
-    error_object: object = None,
+    error_object: Mapping[str, object] | None = None,
 ) -> ContentFilterError | ModelHTTPError:
     """The error for an OpenAI image API error status.
 
@@ -416,10 +416,10 @@ def _status_error(
     of a status a retrying transport gave up on is the whole response body, which wraps it. A `moderation_blocked` one
     is a `ContentFilterError` holding the error object as JSON.
     """
-    error_object = body if error_object is None else error_object
     if code == 'moderation_blocked':
         return ContentFilterError(
-            'OpenAI image generation was blocked for content moderation', json.dumps(error_object)
+            'OpenAI image generation was blocked for content moderation',
+            json.dumps(body if error_object is None else error_object),
         )
     return _model_errors.openai_compatible_status_error(
         model_name,
