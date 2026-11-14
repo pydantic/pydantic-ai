@@ -30,10 +30,10 @@ a `for` loop or comprehension over an iterable whose annotation or return annota
 `isinstance` narrowing, and a module-level type alias stands for the type it names. A name bound any
 other way, such as a `with ... as` target, a tuple-unpacked loop variable or a module-level loop
 variable, has no class, so a member read through it records nothing. A `.get(key)` call on a mapping
-whose annotation or return annotation is known, an `_Index._MAPPINGS` type such as `dict[K, V]` or
-`Mapping[K, V]`, is a `V`; a subscript `mapping[key]` and the other mapping methods, such as
-`.values()`, `.pop()` and `.setdefault()`, have no class. An access on a typed name that
-the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
+whose annotation or return annotation is known, a mapping type named in `_Index._MAPPINGS` such as
+`dict[K, V]` or `Mapping[K, V]`, is a `V`; a subscript `mapping[key]` and the other mapping methods,
+such as `.values()`, `.pop()` and `.setdefault()`, have no class. An access on a typed name that the
+walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
 to the class, unless the class has a base outside the walked packages (`BaseModel`, `Exception`),
 which may define the member: those accesses record nothing. Reflection over a whole instance is read
 only through `fields()` and `__dataclass_fields__`; `vars(obj)` and iterating `obj.__dict__` record
