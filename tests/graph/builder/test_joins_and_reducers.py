@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from dataclasses import dataclass, field
 
 from pydantic_graph import GraphBuilder, StepContext
@@ -293,6 +294,70 @@ async def test_reducer_with_deps_access():
     result = await graph.run(state=state, deps=deps)
     # (0 + 1*10) + (2*10) + (3*10) = 60
     assert result == 60
+
+
+async def test_join_plain_reducer_with_keyword_only_parameter():
+    """A plain reducer with an optional keyword-only parameter is still called as (current, inputs).
+
+    https://github.com/pydantic/pydantic-ai/issues/13444
+    """
+
+    def sum_configured(current: int, value: int, *, weight: int = 1) -> int:
+        return current + weight * value
+
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def first(ctx: StepContext[None, None, None]) -> int:
+        return 1
+
+    @g.step
+    async def second(ctx: StepContext[None, None, None]) -> int:
+        return 2
+
+    join = g.join(sum_configured, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(first, second),
+        g.edge_from(first, second).to(join),
+        g.edge_from(join).to(g.end_node),
+    )
+
+    result = await g.build().run()
+    assert result == 3
+
+
+async def test_join_partial_plain_reducer_with_keyword_only_parameter():
+    """functools.partial of a keyword-only-configured plain reducer is still called as (current, inputs).
+
+    https://github.com/pydantic/pydantic-ai/issues/13444
+    """
+
+    def sum_configured(current: int, value: int, *, weight: int = 1) -> int:
+        return current + weight * value
+
+    sum_weighted = functools.partial(sum_configured, weight=10)
+
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def first(ctx: StepContext[None, None, None]) -> int:
+        return 1
+
+    @g.step
+    async def second(ctx: StepContext[None, None, None]) -> int:
+        return 2
+
+    join = g.join(sum_weighted, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(first, second),
+        g.edge_from(first, second).to(join),
+        g.edge_from(join).to(g.end_node),
+    )
+
+    result = await g.build().run()
+    assert result == 30
 
 
 async def test_reduce_list_extend():
