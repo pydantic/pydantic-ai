@@ -4483,6 +4483,18 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
             id='unavailable',
         ),
         pytest.param(
+            503,
+            {'retry-after': '2'},
+            {
+                'message': 'The server is overloaded, please try again later.',
+                'type': 'service_unavailable_error',
+                'code': 'server_is_overloaded',
+            },
+            ModelOverloadedError,
+            2.0,
+            id='overloaded',
+        ),
+        pytest.param(
             500,
             None,
             {'message': 'The server had an error', 'type': 'server_error', 'code': None},

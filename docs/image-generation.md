@@ -468,7 +468,9 @@ Image generation raises the same exceptions as the rest of Pydantic AI:
   are mapped onto these same two exceptions. From Google, OpenAI and xAI, the error is also an instance of an error
   category like [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
   [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, as
-  when a [model request fails](models/overview.md#handling-model-api-errors).
+  when a [model request fails](models/overview.md#handling-model-api-errors). From Google and OpenAI, a provider that
+  cannot be reached raises a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], or a
+  [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] when an attempt times out.
 
 Because a block is reported as an exception rather than an empty result, you can retry a rejected prompt explicitly:
 
