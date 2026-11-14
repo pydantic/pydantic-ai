@@ -92,15 +92,16 @@ class GroqProvider(Provider[AsyncGroq]):
         # (e.g. `qwen/qwen3-*` reasons, and Groq's `openai/gpt-oss-*` reasons, but the generic Qwen/OpenAI
         # profiles flag them differently or not at all). Groq is authoritative here, so the Groq profile's
         # reasoning flags override the family profile — it's layered *after* it. The Groq profile also turns
-        # JSON mode on for every model and JSON-schema output on for some, never off. The family profile still
-        # provides all its other (non-`groq_`, non-reasoning) traits, which the Groq profile doesn't touch.
+        # JSON-schema output on for some models, never off. The family profile still provides all its other
+        # (non-`groq_`, non-reasoning) traits, which the Groq profile doesn't touch.
         # Maintenance contract: because this makes `groq_model_profile`'s reasoning detection authoritative,
         # its `is_reasoning_model` list must stay complete for every Groq-served reasoning model — a model the
         # list misses would have any family-profile `supports_thinking=True` overridden to `False` here.
         return merge_profile(
             profile,
             groq_model_profile(model_name),
-            ModelProfile(supports_inline_system_prompts=True),
+            # Groq documents JSON mode for every model it serves.
+            ModelProfile(supports_inline_system_prompts=True, supports_json_object_output=True),
             special_token_route_profile('groq', model_name),
         )
 
