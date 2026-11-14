@@ -24,8 +24,9 @@ except ImportError as e:
 # `mistral-small-*` / `mistral-medium-*` snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`)
 # don't support reasoning and are deliberately excluded, as is `mistral-large-latest` until Mistral
 # repoints it; keep this set and `_LARGE_4_MODELS` together in sync with the supported model ids
-# reporting `capabilities.reasoning` on the Mistral `/v1/models` API. The alias ids (`-latest`, `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model
-# on the public API; on private deployments they may point to an older non-reasoning snapshot.
+# reporting `capabilities.reasoning` on the Mistral `/v1/models` API. The alias ids (`-latest`,
+# `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model on the public API; on private
+# deployments they may point to an older non-reasoning snapshot.
 # `magistral-medium-latest` and `magistral-small-latest` point at Medium 3.5 and Small 4 too: verified
 # live 2026-10-22, they reason only with `reasoning_effort='high'`, not at all without it or with
 # `'none'`, and reject `'low'`. The dated `magistral-*` ids they replaced are gone ("Invalid model"), so
