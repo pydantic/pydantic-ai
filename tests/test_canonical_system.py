@@ -15,7 +15,9 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 
+from pydantic_ai import Agent
 from pydantic_ai._canonical_system import accepts_stateless_artifact, stateless_artifact_system
 from pydantic_ai.messages import (
     Citation,
@@ -43,6 +45,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.settings import ModelSettings
 
 from .conftest import try_import
 
@@ -1057,6 +1060,132 @@ async def test_bedrock_replays_claude_signatures_by_canonical_system(case: Repla
         anthropic_history(case.history_provider, canonical_system=case.canonical_system), ModelRequestParameters(), {}
     )
     assert _json(messages) == case.expected
+
+
+def _converse_response(*content: dict[str, object]) -> dict[str, object]:
+    return {
+        'output': {'message': {'role': 'assistant', 'content': list(content)}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+
+async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content(
+    allow_model_requests: None, mocker: MockerFixture
+):
+    """GPT-5.6's encrypted reasoning on Bedrock is not replayed into Claude on Bedrock.
+
+    The client is mocked: the claim is about what the adapter renders from history, and the mocked responses only
+    supply that history. The GPT-5.6 turn has the reasoning shape recorded for
+    `test_bedrock_thinking_openai_responses_variant`.
+    """
+    gpt_model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider())
+    mocker.patch.object(gpt_model.client, 'converse').return_value = _converse_response(
+        {'reasoningContent': {'redactedContent': b'rsn_gpt-encrypted-reasoning'}}, {'text': 'Ok!'}
+    )
+    result = await Agent(gpt_model, model_settings=ModelSettings(max_tokens=32)).run('Hi')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.canonical_system == 'bedrock'
+
+    claude_model = bedrock_claude_model()
+    mock_claude_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_claude_converse.return_value = _converse_response({'text': 'Hello!'})
+    # Without `max_tokens`, a Claude request is streamed behind the scenes rather than sent to `converse`.
+    await Agent(claude_model, model_settings=ModelSettings(max_tokens=32)).run(
+        'Continue', message_history=result.all_messages()
+    )
+
+    _, kwargs = mock_claude_converse.call_args
+    assert kwargs['messages'][1] == snapshot({'role': 'assistant', 'content': [{'text': 'Ok!'}]})
+
+
+async def test_bedrock_same_family_history_replay_keeps_thinking(allow_model_requests: None, mocker: MockerFixture):
+    """Same-family history replay keeps thinking: Claude re-sends its signature; gpt-oss keeps the text.
+
+    The client is mocked: the claim is about what the adapter renders from history, and the mocked responses only
+    supply that history.
+    """
+    thinking: dict[str, object] = {
+        'reasoningContent': {
+            'reasoningText': {'signature': 'own-signature', 'text': 'Internal reasoning about the answer.'}
+        }
+    }
+
+    claude_model = bedrock_claude_model()
+    mock_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_converse.return_value = _converse_response(thinking, {'text': 'Ok!'})
+    claude_agent = Agent(claude_model, model_settings=ModelSettings(max_tokens=32))
+    result = await claude_agent.run('Hi')
+    await claude_agent.run('Continue', message_history=result.all_messages())
+    _, kwargs = mock_converse.call_args
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'reasoningContent': {
+                        'reasoningText': {'text': 'Internal reasoning about the answer.', 'signature': 'own-signature'}
+                    }
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
+
+    gpt_model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider())
+    mock_converse = mocker.patch.object(gpt_model.client, 'converse')
+    mock_converse.return_value = _converse_response(thinking, {'text': 'Ok!'})
+    gpt_agent = Agent(gpt_model, model_settings=ModelSettings(max_tokens=32))
+    result = await gpt_agent.run('Hi')
+    await gpt_agent.run('Continue', message_history=result.all_messages())
+    _, kwargs = mock_converse.call_args
+    # GPT-OSS has no native send-back channel (`bedrock_send_back_thinking_parts` is unset), so its thinking is
+    # replayed as text without the signature.
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'text': """\
+<think>
+Internal reasoning about the answer.
+</think>\
+"""
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
+
+    # A model the name doesn't identify, like an application inference profile, may be Claude, so its thinking still
+    # replays into a named Claude model with its signature.
+    arn_model = BedrockConverseModel(
+        'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123', provider=bedrock_provider()
+    )
+    mocker.patch.object(arn_model.client, 'converse').return_value = _converse_response(thinking, {'text': 'Ok!'})
+    result = await Agent(arn_model, model_settings=ModelSettings(max_tokens=32)).run('Hi')
+    claude_model = bedrock_claude_model()
+    mock_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_converse.return_value = _converse_response({'text': 'Hello!'})
+    await Agent(claude_model, model_settings=ModelSettings(max_tokens=32)).run(
+        'Continue', message_history=result.all_messages()
+    )
+    _, kwargs = mock_converse.call_args
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'reasoningContent': {
+                        'reasoningText': {'text': 'Internal reasoning about the answer.', 'signature': 'own-signature'}
+                    }
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
 
 
 async def test_anthropic_replays_web_search_citations_by_canonical_system():
