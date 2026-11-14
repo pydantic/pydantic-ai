@@ -2637,13 +2637,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             raise
                     except exceptions.ModelRetry as e:
                         await _settle_pending(_pending, None)
-                        self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
                         # `ModelRetry` — then there's no response to preserve in history.
                         if _handler_response is not None:  # pragma: no branch
                             self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+                        try:
+                            self._enforce_usage_limits(ctx, accounted_responses)
+                        except exceptions.UsageLimitExceeded:
+                            await self._append_retry_request_on_limit(ctx, e)
+                            raise
                         await self._build_retry_node(ctx, e)
                     except BaseException:
                         await _settle_pending(_pending, None)
@@ -2752,13 +2756,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
             await _settle_pending(state.pending, None)
-            self._enforce_usage_limits(ctx, state.accounted_responses)
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if state.response is not None:
                 self._append_response(
                     ctx, state.response, record_usage=not state.usage_recorded, described=state.described_attempts
                 )
+            try:
+                self._enforce_usage_limits(ctx, state.accounted_responses)
+            except exceptions.UsageLimitExceeded:
+                await self._append_retry_request_on_limit(ctx, e)
+                raise
             return await self._build_retry_node(ctx, e)
         except BaseException:
             await _settle_pending(state.pending, None)
@@ -3770,6 +3778,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # context size: then against that segment's.
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
+
+    async def _append_retry_request_on_limit(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        error: exceptions.ModelRetry,
+    ) -> None:
+        """Append a retry ModelRequest to history when usage limits are exceeded during a ModelRetry.
+
+        Preserves the retry feedback so resuming the run with the message history
+        will carry the retry reason rather than re-executing unhandled tool calls.
+        """
+        m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        try:
+            ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
+        except exceptions.UnexpectedModelBehavior:
+            # Retries already exhausted; still append the retry request to record the feedback
+            pass
+        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+        request = _messages.ModelRequest(parts=[m], timestamp=now_utc())
+        fill_run_metadata(request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        ctx.state.message_history.append(request)
 
     async def _build_retry_node(
         self,

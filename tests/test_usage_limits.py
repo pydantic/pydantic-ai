@@ -1323,6 +1323,66 @@ async def test_response_over_limit_is_kept_in_captured_messages(
         )
 
 
+@pytest.mark.parametrize('retries', [0, 1])
+async def test_response_over_limit_with_model_retry_is_kept_in_captured_messages(retries: int) -> None:
+    """A response that triggered ModelRetry from a hook but crosses a limit preserves both response and retry request."""
+    from pydantic_ai.capabilities import Hooks
+    from pydantic_ai.messages import RetryFeedbackPart
+
+    tool_called = False
+
+    def dangerous_tool() -> str:
+        nonlocal tool_called
+        tool_called = True
+        return 'executed'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='dangerous_tool', args={})],
+                usage=RunUsage(input_tokens=50),
+            )
+        return ModelResponse(parts=[TextPart('recovered safely')])
+
+    hooks = Hooks()
+
+    @hooks.on.after_model_request
+    async def reject(ctx: RunContext[object], *, request_context: object, response: ModelResponse) -> ModelResponse:
+        if response.parts and isinstance(response.parts[0], ToolCallPart):
+            raise ModelRetry('Dangerous tool rejected')
+        return response
+
+    agent = Agent(
+        FunctionModel(model_function, model_name='gpt-4o'),
+        capabilities=[hooks],
+        tools=[dangerous_tool],
+        retries=retries,
+    )
+
+    run_usage = RunUsage()
+    with capture_run_messages() as messages:
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run(
+                'Hello',
+                usage=run_usage,
+                usage_limits=UsageLimits(input_tokens_limit=40),
+            )
+
+    # 1. User prompt ModelRequest, 2. Rejected ModelResponse, 3. ModelRequest with RetryFeedbackPart
+    assert len(messages) == 3
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+    assert isinstance(messages[2], ModelRequest)
+    assert isinstance(messages[2].parts[0], RetryFeedbackPart)
+    assert messages[2].parts[0].content == 'Dangerous tool rejected'
+    assert run_usage.requests == 1
+
+    # Resuming without prompt sends the retry feedback, does NOT run the rejected tool
+    res = await agent.run(message_history=messages)
+    assert tool_called is False
+    assert res.output == 'recovered safely'
+
+
 # ── per_request_input_tokens_limit ──────────────────────────────────────
 
 
