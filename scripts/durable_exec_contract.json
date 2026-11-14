@@ -7785,6 +7785,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
       ]
     },
+    "Workspace.path": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "projected_field"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.path"
+      ]
+    },
     "Workspace.read_bytes": {
       "engines": [
         "durable_exec"

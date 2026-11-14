@@ -464,6 +464,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
     ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
+    # On Windows, `ntpath.relpath` makes each path absolute with `GetFullPathNameW`, which reads no disk for
+    # the absolute paths the file tools pass it.
+    ('os.path.abspath', 'pydantic_ai_harness/file_system/_toolset.py', '_relative'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),

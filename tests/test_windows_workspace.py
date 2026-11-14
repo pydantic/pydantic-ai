@@ -88,6 +88,7 @@ class FakeWindowsBackend:
 
 
 class TestWindowsPaths:
+    @pytest.mark.skipif(sys.platform == 'win32', reason='`LocalWorkspaceBackend` needs POSIX')
     async def test_a_backend_is_posix_unless_it_says_otherwise(self, tmp_path: Path) -> None:
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         assert (workspace.platform, workspace.path) == ('posix', posixpath)

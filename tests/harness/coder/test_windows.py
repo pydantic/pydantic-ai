@@ -36,6 +36,7 @@ from pydantic_ai_harness.shell import Shell
 from .._tool_calls import call_tool, call_tools
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='runs PowerShell')
+posix_only = pytest.mark.skipif(sys.platform == 'win32', reason='stands in with `LocalWorkspace`, which needs POSIX')
 
 
 class DriveBackend:
@@ -119,6 +120,7 @@ def file_system(**settings: object) -> FileSystem[None]:
     return FileSystem[None](tools=FILE_TOOL_NAMES, content_hashes=False, **settings)  # pyright: ignore[reportArgumentType]
 
 
+@posix_only
 class TestFileToolsOnWindows:
     async def test_paths_are_windows_paths(self, drive: Path) -> None:
         results = await call_tools(
@@ -192,6 +194,7 @@ class TestFileToolsOnWindows:
         assert '1\tsecret' in result
 
 
+@posix_only
 class TestWindowsFallback:
     @pytest.fixture
     def on_windows(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -260,6 +263,7 @@ class TestShellOnWindows:
             'start_command',
             {'command': "Write-Output started; [Console]::Error.WriteLine('err'); Start-Sleep 600"},
         )
+        assert 'ID: ' in started, started
         command_id = started.rsplit('ID: ', 1)[1].strip()
         results = await call_tools(
             [shell, workspace],

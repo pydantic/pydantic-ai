@@ -570,7 +570,8 @@ class WorkspaceBackendSuite:
             assert await workspace.realpath(join(a, 'rel', 'missing')) == join(a, 'b', 'missing')
             assert await workspace.realpath(join(a, 'up', 'missing')) == join(root, 'out', 'missing')
             assert await workspace.realpath(join(a, 'rel', '..')) == a
-            assert await workspace.realpath(join(a, 'up', '..')) == root
+            # Windows takes `..` off the path before following links; POSIX climbs from the link's target.
+            assert await workspace.realpath(join(a, 'up', '..')) == (a if _windows(backend) else root)
             with anyio.fail_after(30):
                 try:
                     loop_path = await workspace.realpath(join(a, 'loop1', 'q'))
