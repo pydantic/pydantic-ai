@@ -332,6 +332,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         if not response.choices:
+            # `huggingface_hub`'s inference types subclass `dict`, so the response serves as the body as is.
             raise ModelEmptyResponseError(
                 self.model_name, f'Empty response from {self.system}: no choices', body=response
             )
