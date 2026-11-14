@@ -9,9 +9,10 @@ from typing import Protocol
 import anyio
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
+from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset, ToolCallPart, ToolDefinition, ToolReturnPart
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
-from pydantic_ai.exceptions import CallDeferred, ContentFilterError, ModelRetry, UserError
+from pydantic_ai.exceptions import CallDeferred, ContentFilterError, ModelRetry, ToolFailed, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -23,7 +24,12 @@ try:
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
-    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, TerminatedError
+    from temporalio.exceptions import (
+        ApplicationError,
+        CancelledError as TemporalCancelledError,
+        ChildWorkflowError,
+        TerminatedError,
+    )
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import (
         ChildWorkflowCancellationType,
@@ -250,6 +256,66 @@ async def test_child_workflow_tool_exception_fails_the_child(client: Client) -> 
 
     cause = _workflow_failure_cause(exc_info.value)
     assert (cause.type, cause.message) == ('ValueError', 'Something broke in the child.')
+
+
+recovered_failure_toolset = FunctionToolset[None](id='recovered_failure_child_tools')
+
+
+@recovered_failure_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def recovered_failure_child_tool() -> str:
+    raise ValueError('Something broke in the child.')
+
+
+child_failure_hooks = Hooks[None]()
+
+
+@child_failure_hooks.on.tool_execute_error
+async def child_failure_as_tool_result(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception
+) -> str:
+    assert isinstance(error, ChildWorkflowError)
+    cause = error.cause
+    assert isinstance(cause, ApplicationError)
+    raise ToolFailed(f'{cause.type}: {cause.message}')
+
+
+recovered_failure_agent = Agent(
+    TestModel(call_tools='all'),
+    name='recovered_failure_child_workflow_agent',
+    deps_type=type(None),
+    toolsets=[recovered_failure_toolset],
+    capabilities=[child_failure_hooks, TemporalDurability()],
+)
+
+
+@workflow.defn
+class RecoveredChildFailureWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        result = await recovered_failure_agent.run('call the tool')
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+
+async def test_child_workflow_failure_reaches_parent_hook_as_child_workflow_error(client: Client) -> None:
+    """The parent's tool call raises `ChildWorkflowError`, which an `on_tool_execute_error` hook can turn into a result."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RecoveredChildFailureWorkflow],
+        plugins=[AgentPlugin(recovered_failure_agent)],
+    ):
+        tool_returns = await client.execute_workflow(
+            RecoveredChildFailureWorkflow.run,
+            id='test_child_workflow_failure_reaches_parent_hook_as_child_workflow_error',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert tool_returns == ['failed: ValueError: Something broke in the child.']
 
 
 user_error_toolset = FunctionToolset[None](id='user_error_child_tools')

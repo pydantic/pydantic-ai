@@ -741,6 +741,42 @@ The continuation passes `None` as the prompt: the carried-over history already e
 
 Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `message_history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself. The function and the `@workflow.run` signature that receives them are yours to shape.
 
+#### Workflows that run the agent many times
+
+`continue_as_new` is scoped to a single run: it's called from inside one run, with that run's `RunContext`, so it can carry that run's conversation forward but knows nothing about the rest of the workflow. That doesn't help a workflow whose history grows because it fans out many small runs, say one per document. Check `workflow.info().is_continue_as_new_suggested()` yourself between runs instead, and continue with the work that's left:
+
+```python {title="temporal_continue_as_new_fan_out.py" test="skip"}
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+
+summarizer = Agent(
+    '{{ openai:medium }}',
+    name='summarizer',
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class SummarizeWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [summarizer]
+
+    @workflow.run
+    async def run(
+        self, documents: list[str], summaries: list[str] | None = None
+    ) -> list[str]:
+        summaries = summaries or []
+        for i, document in enumerate(documents):
+            if workflow.info().is_continue_as_new_suggested():
+                workflow.continue_as_new(args=[documents[i:], summaries])
+            result = await summarizer.run(f'Summarize: {document}')
+            summaries.append(result.output)
+        return summaries
+```
+
+Alternatively, run each agent run in a [child workflow](https://docs.temporal.io/develop/python/child-workflows) of its own, started with `workflow.execute_child_workflow()`. Its model requests and tool calls are then recorded in the child's history, and the parent's history grows by only a few events per run.
+
 ### Responses WebSocket connections
 
 An OpenAI Responses model can reuse a [Responses WebSocket](../models/openai.md#responses-websockets) across model activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-realtime]`, set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport], and enter the model around the worker's lifetime:
@@ -1013,10 +1049,133 @@ deterministically by the workflow. The `id`, `task_queue`, `execution_timeout`, 
 runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
 agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
 
-An exception raised by the tool body fails the child workflow and reaches the parent's tool call the
-way a failed activity would. The child is retried according to its `retry_policy`, except on errors a
-retry can't fix, such as a [`UserError`][pydantic_ai.exceptions.UserError], which an activity doesn't
-retry either.
+The child gets copies of what crosses into it, just like an activity: the tool arguments, `deps`, and
+the [run context](#agent-run-context-and-dependencies), including its `usage`. Only the tool's result
+comes back, so changes the child makes to `deps` or `ctx.usage` are lost, and a nested run given
+`usage=ctx.usage` adds its usage to the child's copy, not to the parent run's. A tool that runs in the
+workflow itself, with [`'temporal': False`](#per-tool-activity-config), shares the parent run's live
+`deps` and `RunContext` instead. So a per-run budget the tool keeps in `deps`, like a cap on how often
+it runs, stops working when the tool moves from the workflow into a child workflow. Enforce it from the
+parent: in a tool hook like `before_tool_execute`, which runs in the parent's workflow code with its
+live `deps`, or with [usage limits](../agent.md#usage-limits) on the nested run, as in the example below.
+Carrying usage back across durable boundaries is discussed in
+[pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886), and what nested runs inherit
+from their parent in [pydantic-ai#13135](https://github.com/pydantic/pydantic-ai/issues/13135).
+
+Control-flow exceptions the tool body raises, like [`ModelRetry`][pydantic_ai.exceptions.ModelRetry],
+[`ToolFailed`][pydantic_ai.exceptions.ToolFailed] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
+cross back to the parent as the tool's result. Any other exception fails the child workflow. The child is retried according to its
+`retry_policy`, except on errors a retry can't fix, such as a
+[`UserError`][pydantic_ai.exceptions.UserError], which an activity doesn't retry either. The parent's
+tool call then raises Temporal's `ChildWorkflowError`, not the `ActivityError` a failed activity raises,
+with the original exception's class name in `cause.type`. A Temporal error the body doesn't catch, like
+the `ActivityError` of a failed activity the body started itself, fails the child as it is, so it
+arrives as the `ChildWorkflowError`'s `cause`.
+
+Like any exception a tool raises, a `ChildWorkflowError` the parent doesn't handle ends the run. To
+let the model see the failure and carry on instead, catch what you can in the tool body, which runs in
+the child, and turn the rest into a tool result in an `on_tool_execute_error` hook, which runs in the
+parent:
+
+```python {title="temporal_child_workflow_errors.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from temporalio import workflow
+from temporalio.exceptions import ApplicationError, ChildWorkflowError
+from temporalio.workflow import ChildWorkflowConfig
+
+from pydantic_ai import Agent, RunContext, ToolCallPart, ToolDefinition
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+from pydantic_ai.exceptions import ToolFailed, UsageLimitExceeded
+from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import UsageLimits
+
+
+@dataclass
+class Budget:
+    research_calls_left: int
+
+
+researcher = Agent(
+    '{{ openai:medium }}',
+    name='researcher',
+    capabilities=[TemporalDurability()],
+)
+
+delegation = FunctionToolset[Budget](id='delegation')
+
+
+@delegation.tool_plain(metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}})
+async def research(topic: str) -> str:
+    """Research a topic in depth."""
+    try:
+        result = await researcher.run(
+            f'Research: {topic}',
+            usage_limits=UsageLimits(request_limit=10),  # (1)!
+        )
+    except UsageLimitExceeded as e:
+        raise ToolFailed(f'Research ran out of budget: {e}') from e  # (2)!
+    return result.output
+
+
+hooks = Hooks[Budget]()
+
+
+@hooks.on.before_tool_execute(tools=['research'])
+async def spend_research_budget(
+    ctx: RunContext[Budget],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
+    if ctx.deps.research_calls_left == 0:
+        raise ToolFailed('No research budget left.')
+    ctx.deps.research_calls_left -= 1  # (3)!
+    return args
+
+
+@hooks.on.tool_execute_error(tools=['research'])
+async def report_child_failure(
+    ctx: RunContext[Budget],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+    error: Exception,
+) -> Any:
+    if isinstance(error, ChildWorkflowError):
+        cause = error.cause  # (4)!
+        reason = cause.type if isinstance(cause, ApplicationError) else cause
+        raise ToolFailed(f'Research failed: {reason}')
+    raise error
+
+
+lead = Agent(
+    '{{ openai:medium }}',
+    name='lead',
+    deps_type=Budget,
+    toolsets=[delegation],
+    capabilities=[hooks, TemporalDurability()],
+)
+
+
+@workflow.defn
+class LeadWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [lead, researcher]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await lead.run(prompt, deps=Budget(research_calls_left=3))
+        return result.output
+```
+
+1. The usage limit bounds the nested run inside the child, where its model requests happen.
+2. The tool body runs in the child, so a failure it catches never fails the child workflow. [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] crosses back to the parent as a failed tool result the model sees.
+3. This hook runs in the parent's workflow code, so the change to `deps` lasts for the whole run. The same change made in the tool body would be lost with the child's copy of `deps`.
+4. For an exception the tool body raised, `cause.type` is its class name. A Temporal error, like the `ActivityError` of one of the nested agent's tools, is the `cause` itself. Either way, the failure becomes a failed tool result the model sees, rather than ending the run.
 
 A worker registers a toolset's child workflow when the plugin configures it, if a tool in the
 toolset has `child_workflow` metadata by then (tools added with `@agent.tool` included) or a
@@ -1033,7 +1192,7 @@ When using Temporal, it's recommended to not use [transport retries](../retries.
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
 
-An exception a tool raises reaches workflow code as Temporal's `ActivityError`, with the original exception's class name in `cause.type`.
+An exception a tool raises, other than a control-flow exception like `ModelRetry` or `ToolFailed`, reaches workflow code as Temporal's `ActivityError`, or as a `ChildWorkflowError` for a tool that runs as a [child workflow](#child-workflows), with the original exception's class name in `cause.type`.
 
 A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
 
