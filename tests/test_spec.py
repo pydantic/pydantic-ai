@@ -1,5 +1,6 @@
 """Tests for the shared _spec.py module."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Self
 
@@ -11,6 +12,7 @@ from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
+from pydantic_ai.tools import AgentDepsT
 
 from .conftest import try_import
 
@@ -286,6 +288,18 @@ class RefCycleParam(AbstractCapability[None]):
         return cls()
 
 
+@dataclass
+class CallableParam(AbstractCapability[None]):
+    key: Callable[[str], str]
+    limit: int = 1
+
+
+@dataclass
+class TypeVarGenericParam(AbstractCapability[AgentDepsT]):
+    inner: AbstractCapability[AgentDepsT]
+    limit: int = 1
+
+
 class TestBuildSchemaTypes:
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
@@ -420,6 +434,48 @@ class TestBuildSchemaTypes:
         assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
         capabilities = Agent.from_spec(name_only, custom_capability_types=[ClientParam]).root_capability.capabilities
         assert [c for c in capabilities if isinstance(c, ClientParam)] == [ClientParam()]
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize('capability', [CallableParam, TypeVarGenericParam])
+    def test_required_unrepresentable_param_capability_schema(self, capability: type[AbstractCapability[None]]):
+        """A required parameter with no JSON form leaves the capability out of the schema, since no spec entry can load it."""
+        name = capability.__name__
+        schema = AgentSpec.model_json_schema_with_capabilities([capability])
+        assert [key for key in schema['$defs'] if key.endswith(f'_{name}')] == []
+        validator = validator_for(schema)(schema)
+        entries: list[JsonValue] = [name, {name: {'limit': 2}}]
+        for entry in entries:
+            spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [entry]}
+            assert list(validator.iter_errors(spec))
+            with pytest.raises(ValueError, match='missing 1 required positional argument'):
+                Agent.from_spec(spec, custom_capability_types=[capability])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_unannotated_required_param_capability_schema(self):
+        """An unannotated required parameter accepts any value, so the schema rejects the name alone."""
+
+        @dataclass
+        class UnannotatedParam(AbstractCapability[None]):
+            threshold: int
+
+            @classmethod
+            def from_spec(cls, threshold) -> Self:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+                return cls(threshold=threshold)  # pyright: ignore[reportUnknownArgumentType]
+
+        schema = AgentSpec.model_json_schema_with_capabilities([UnannotatedParam])
+        validator = validator_for(schema)(schema)
+        name_only = {'model': 'test', 'capabilities': ['UnannotatedParam']}
+        assert list(validator.iter_errors(name_only))
+        with pytest.raises(ValueError, match="missing 1 required positional argument: 'threshold'"):
+            Agent.from_spec(name_only, custom_capability_types=[UnannotatedParam])
+        entries: list[JsonValue] = [{'UnannotatedParam': 3}, {'UnannotatedParam': {'threshold': 3}}]
+        for entry in entries:
+            spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [entry]}
+            assert list(validator.iter_errors(spec)) == []
+            capabilities = Agent.from_spec(
+                spec, custom_capability_types=[UnannotatedParam]
+            ).root_capability.capabilities
+            assert [c.threshold for c in capabilities if isinstance(c, UnannotatedParam)] == [3]
 
     def test_no_params_class(self):
         class NoParams:

@@ -292,34 +292,48 @@ def build_schema_types(
     schema_types: list[Any] = []
     for name, cls in registry.items():
         target = get_schema_target(cls) if get_schema_target is not None else cls
-        type_hints, required_type_hints = _spec_param_type_hints(target)
-        keyword_only_params = _keyword_only_spec_params(target, type_hints)
-
-        # Shortest form: just the name
-        if len(type_hints) == 0 or not required_type_hints:
-            schema_types.append(Literal[name])
-
-        # Short form: the single argument must accept a positional value.
-        short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
-        object_rejecting_type = _object_rejecting_type(target, name, type_hints)
-        if len(short_type_hints) == 1 and short_type_hints.keys().isdisjoint(keyword_only_params):
-            [type_hint_type] = short_type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', name, {name: object_rejecting_type or type_hint_type}))
-
-        # Keyword form: required for keyword-only or multiple parameters, or a sole parameter accepting an object.
-        if len(type_hints) > 1 or keyword_only_params or object_rejecting_type:
-            params_td = _make_typed_dict('spec_params', name, type_hints)
-            schema_types.append(_make_typed_dict('spec', name, {name: params_td}))
+        schema_types.extend(_target_schema_types(name, target))
 
     return schema_types
 
 
-def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _target_schema_types(name: str, target: Callable[..., object]) -> list[Any]:
+    """The schema types of the spec forms that can load `target` under `name`."""
+    spec_type_hints = _spec_param_type_hints(target)
+    if spec_type_hints is None:
+        return []
+    type_hints, required_type_hints = spec_type_hints
+    keyword_only_params = _keyword_only_spec_params(target, type_hints)
+    schema_types: list[Any] = []
+
+    # Shortest form: just the name
+    if len(type_hints) == 0 or not required_type_hints:
+        schema_types.append(Literal[name])
+
+    # Short form: the single argument must accept a positional value.
+    short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
+    object_rejecting_type = _object_rejecting_type(target, name, type_hints)
+    if len(short_type_hints) == 1 and short_type_hints.keys().isdisjoint(keyword_only_params):
+        [type_hint_type] = short_type_hints.values()
+        schema_types.append(_make_typed_dict('short_spec', name, {name: object_rejecting_type or type_hint_type}))
+
+    # Keyword form: required for keyword-only or multiple parameters, or a sole parameter accepting an object.
+    if len(type_hints) > 1 or keyword_only_params or object_rejecting_type:
+        params_td = _make_typed_dict('spec_params', name, type_hints)
+        schema_types.append(_make_typed_dict('spec', name, {name: params_td}))
+
+    return schema_types
+
+
+def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`.
 
-    The second dict holds the type hints of its required parameters only.
+    The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
+    type has no JSON form, since no spec entry can then load `target`.
     """
-    type_hints = get_function_type_hints(target)
+    params = inspect.signature(target).parameters
+    # An unannotated param takes any value.
+    type_hints: dict[str, Any] = dict.fromkeys(params, Any) | get_function_type_hints(target)
     type_hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
@@ -327,7 +341,7 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
 
     required_type_hints: dict[str, Any] = {}
 
-    for p in inspect.signature(target).parameters.values():
+    for p in params.values():
         # Skip self/cls (unbound instance/class methods) and *args/**kwargs
         if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
             type_hints.pop(p.name, None)
@@ -335,14 +349,13 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
         if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
             type_hints.pop(p.name, None)
             continue
-        # Skip params whose type was entirely filtered out
-        if p.name not in type_hints:
-            continue
-        type_hints.setdefault(p.name, Any)
-        if p.default is not p.empty:
-            type_hints[p.name] = NotRequired[type_hints[p.name]]
-        else:
+        # A param missing from `type_hints` had its type entirely filtered out.
+        if p.default is p.empty:
+            if p.name not in type_hints:
+                return None
             required_type_hints[p.name] = type_hints[p.name]
+        elif p.name in type_hints:
+            type_hints[p.name] = NotRequired[type_hints[p.name]]
 
     return type_hints, required_type_hints
 
