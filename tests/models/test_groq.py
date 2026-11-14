@@ -6331,6 +6331,30 @@ GROQ_REQUEST_BODY_CASES = [
         ),
     ),
     GroqRequestBodyCase(
+        # Groq doesn't list qwen3.6 for strict mode; qwen's family transformer still reports the schema strict.
+        id='qwen3.6-native',
+        model_name='qwen/qwen3.6-27b',
+        output_type=NativeOutput(CityLocation),
+        expected=snapshot(
+            {
+                'stream': False,
+                'response_format': {
+                    'type': 'json_schema',
+                    'json_schema': {
+                        'name': CityLocation.__qualname__,
+                        'schema': {
+                            'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
+                            'required': ['city', 'country'],
+                            'title': CityLocation.__qualname__,
+                            'type': 'object',
+                        },
+                        'strict': True,
+                    },
+                },
+            }
+        ),
+    ),
+    GroqRequestBodyCase(
         id='muse-native',
         model_name='meta-models/muse-spark-open',
         output_type=NativeOutput(CityLocation),

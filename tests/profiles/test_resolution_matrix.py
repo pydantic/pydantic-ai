@@ -76,7 +76,10 @@ with try_import() as google_imports:
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports:
-    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.groq import (
+        GroqProvider,
+        _GroqQwenStrictOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
 
 with try_import() as huggingface_imports:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -2437,12 +2440,12 @@ def test_groq_gpt_oss():
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_qwen3_8():
-    """Groq serves strict JSON-schema output on qwen3.8, with gpt-oss's strict schema transformer, and its reasoning
-    can be turned off."""
+    """Groq serves strict JSON-schema output on qwen3.8, whose output object gets gpt-oss's strict schema
+    transformer, and its reasoning can be turned off."""
     profile = GroqProvider.model_profile('qwen/qwen3.8-27b')
     assert _normalize(profile) == snapshot(
         {
-            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'json_schema_transformer': _GroqQwenStrictOutputJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'supports_thinking': True,
             'groq_supports_reasoning_disable': True,

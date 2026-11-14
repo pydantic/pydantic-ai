@@ -5,9 +5,10 @@ from typing import overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient
+from pydantic_ai._json_schema import JsonSchemaTransformerWithOutputOverride
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -105,10 +106,7 @@ class GroqProvider(Provider[AsyncGroq]):
             groq_model_profile(model_name),
             # Groq documents JSON mode for every model it serves.
             ModelProfile(supports_inline_system_prompts=True, supports_json_object_output=True),
-            # Groq's strict mode requires every field to be required and every object to set
-            # `additionalProperties: false` (https://console.groq.com/docs/structured-outputs). Of the models it lists
-            # for strict mode, qwen3.8's family transformer doesn't produce that, so it gets the one gpt-oss gets.
-            ModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
+            ModelProfile(json_schema_transformer=_GroqQwenStrictOutputJsonSchemaTransformer)
             if model_name.startswith('qwen/qwen3.8-')
             else None,
             special_token_route_profile('groq', model_name),
@@ -167,3 +165,17 @@ class GroqProvider(Provider[AsyncGroq]):
     def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         assert isinstance(http_client, httpx.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+
+
+class _GroqQwenStrictOutputJsonSchemaTransformer(
+    InlineDefsJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride
+):
+    """Qwen's family transformer for tool schemas, and gpt-oss's strict one for the output object.
+
+    Groq lists qwen3.8 for `strict: true`, which requires every field to be required and every object to set
+    `additionalProperties: false` (https://console.groq.com/docs/structured-outputs); qwen's family transformer only
+    inlines `$defs`. `GroqModel` sends `strict` only on the output object's `json_schema` response format, never on a
+    tool, so tool schemas keep the family transformer.
+    """
+
+    output_object_transformer = _GptOssJsonSchemaTransformer

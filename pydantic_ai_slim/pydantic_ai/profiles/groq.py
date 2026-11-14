@@ -58,7 +58,7 @@ def groq_model_profile(model_name: str) -> ModelProfile:
             'deepseek-r1',  # legacy (deprecated)
             'llama-4-maverick',  # legacy (deprecated)
             'meta-models/muse-spark-open',  # current: always-on reasoning
-            # current: always-on reasoning, since Groq accepts `reasoning_effort='none'` only on Qwen 3.8
+            # current: always-on reasoning; Groq's reasoning docs don't list `reasoning_effort='none'` for it
             # (https://console.groq.com/docs/reasoning)
             'minimaxai/minimax-m2.7',
         )
