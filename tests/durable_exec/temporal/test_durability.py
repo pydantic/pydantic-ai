@@ -38,6 +38,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
+    FinalResultEvent,
     FunctionToolset,
     ImageGenerationTool,
     ImageGenerator,
@@ -46,6 +47,7 @@ from pydantic_ai import (
     ModelRequestTimeout,
     ModelResponse,
     MultiModalContent,
+    NativeOutput,
     PartDeltaEvent,
     PartStartEvent,
     PendingModelResponse,
@@ -3462,11 +3464,25 @@ class RunStreamEventsDurableAgentWorkflow:
             return [type(event).__name__ async for event in stream]
 
 
-async def _structured_output_preamble_text_stream(
+async def _preamble_text_before_function_tool(
+    messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        yield 'Let me look that up.'
+        yield {0: DeltaToolCall(name='look_up_city', json_args='{}', tool_call_id='call_1')}
+    else:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
+
+
+async def _preamble_text_before_output_tool(
     _messages: list[ModelMessage], _info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:
     yield 'Preamble text.'
-    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"structured output"}', tool_call_id='call_1')}
+    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
+
+
+def look_up_city() -> str:
+    return 'Paris'
 
 
 @dataclass
@@ -3474,37 +3490,102 @@ class StructuredOutput:
     response: str
 
 
-_structured_output_preamble_text_agent = Agent(
-    FunctionModel(stream_function=_structured_output_preamble_text_stream),
-    name='durability_structured_output_preamble_text',
-    output_type=StructuredOutput,
+_preamble_text_agents = [
+    Agent(
+        FunctionModel(stream_function=stream_function),
+        name=f'durability_{stream_function.__name__.lstrip("_")}',
+        output_type=StructuredOutput,
+        tools=[look_up_city],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    for stream_function in (_preamble_text_before_function_tool, _preamble_text_before_output_tool)
+]
+
+
+async def _run_and_stream(agent: Agent[None, StructuredOutput]) -> tuple[str, str, list[str | None]]:
+    """The `run()` and `run_stream()` outputs, and the tool name of each `FinalResultEvent` the `run()` handler gets."""
+    final_result_tool_names: list[str | None] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, FinalResultEvent):
+                final_result_tool_names.append(event.tool_name)
+
+    run_output = (await agent.run('hello', event_stream_handler=handler)).output
+    async with agent.run_stream('hello') as result:
+        stream_output = await result.get_output()
+    return run_output.response, stream_output.response, final_result_tool_names
+
+
+@workflow.defn
+class StructuredOutputAfterPreambleTextWorkflow:
+    @workflow.run
+    async def run(self) -> list[tuple[str, str, list[str | None]]]:
+        return [await _run_and_stream(agent) for agent in _preamble_text_agents]
+
+
+async def test_durability_structured_output_after_preamble_text_in_workflow(client: Client) -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The workflow replays the activity's stream against the parameters the activity's model prepared, in which `'auto'`
+    has resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the activity and would see the live stream.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StructuredOutputAfterPreambleTextWorkflow],
+        plugins=[AgentPlugin(agent) for agent in _preamble_text_agents],
+    ):
+        output = await client.execute_workflow(
+            StructuredOutputAfterPreambleTextWorkflow.run,
+            id=StructuredOutputAfterPreambleTextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot([('Paris', 'Paris', ['final_result']), ('Paris', 'Paris', ['final_result'])])
+
+
+_rejected_native_output_agent = Agent(
+    FunctionModel(
+        stream_function=_preamble_text_before_output_tool, profile=ModelProfile(supports_json_schema_output=False)
+    ),
+    name='durability_rejected_native_output',
+    output_type=NativeOutput(StructuredOutput),
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
 
 @workflow.defn
-class StructuredOutputPreambleTextWorkflow:
+class RejectedNativeOutputWorkflow:
     @workflow.run
     async def run(self) -> str:
-        async with _structured_output_preamble_text_agent.run_stream('hello') as result:
-            output = await result.get_output()
-            return output.response
+        async with _rejected_native_output_agent.run_stream('hello') as result:
+            return (await result.get_output()).response  # pragma: no cover
 
 
-async def test_durability_run_stream_structured_output_preamble_text_in_workflow(client: Client) -> None:
+async def test_durability_run_stream_request_the_model_rejects_fails_in_the_activity(client: Client) -> None:
+    """A streamed request the model rejects fails in the activity, as a request that isn't streamed does.
+
+    The workflow prepares the request again for the replay only once the activity has returned, so
+    `prepare_request` rejecting native output for this model reaches the workflow as an `ActivityError`.
+    """
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[StructuredOutputPreambleTextWorkflow],
-        plugins=[AgentPlugin(_structured_output_preamble_text_agent)],
+        workflows=[RejectedNativeOutputWorkflow],
+        plugins=[AgentPlugin(_rejected_native_output_agent)],
     ):
-        output = await client.execute_workflow(
-            StructuredOutputPreambleTextWorkflow.run,
-            id=str(uuid.uuid4()),
-            task_queue=TASK_QUEUE,
-        )
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RejectedNativeOutputWorkflow.run,
+                id=RejectedNativeOutputWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
-    assert output == 'structured output'
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert str(activity_error.cause) == snapshot('UserError: Native structured output is not supported by this model.')
 
 
 async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
