@@ -2364,7 +2364,9 @@ def test_groq_moonshotai_kimi():
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama4_maverick():
-    """Special-cased Llama 4 Maverick gets `supports_json_object_output=True` overlay."""
+    """Unprefixed Llama 4 Maverick resolves through the generic Meta profile, not the `meta-llama/` overlay.
+
+    JSON mode is provider-wide."""
     profile = GroqProvider.model_profile('llama-4-maverick-17b-128e-instruct')
     assert _normalize(profile) == snapshot(
         {
