@@ -14,7 +14,25 @@ alternative: they work with every model and keep the compaction logic (and its c
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
-![Compaction runs in the before_model_request hook, between the message history and the model. TieredCompaction runs its tiers in order: DeduplicateFileReads and ClearToolResults cost no model call, SummarizingCompaction makes one. After each tier it re-measures the history and stops as soon as it fits target_tokens, so in this example the summary tier never runs. The shortened history persists into the run.](https://pydantic.dev/docs/ai/img/harness/compaction.svg)
+```mermaid
+flowchart TB
+    accTitle: Compaction: keep the history inside the context window
+    accDescr: When the message history is over target_tokens, TieredCompaction runs in before_model_request, starting with DeduplicateFileReads, which makes no model call. If the history is still over, ClearToolResults runs, also with no model call, and if still over, SummarizingCompaction makes one model call. The history goes to the model once it fits, or after SummarizingCompaction.
+    history["message history<br/>over target_tokens"]
+    subgraph tiers["TieredCompaction()"]
+        dedupe["DeduplicateFileReads<br/>no model call"]:::capability
+        clear["ClearToolResults<br/>no model call"]:::capability
+        summary["SummarizingCompaction<br/>one model call"]:::capability
+    end
+    model(["model"])
+    history -->|"before_model_request"| dedupe
+    dedupe -->|"still over"| clear
+    clear -->|"still over"| summary
+    dedupe -->|"fits"| model
+    clear -->|"fits"| model
+    summary --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The menu
 
@@ -209,7 +227,7 @@ window, and only observes:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
@@ -219,7 +237,7 @@ agent = Agent(
     ],
 )
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
@@ -227,7 +245,7 @@ async def show(ctx, event):
 Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the
 fallback rather than the model's real one, so a gauge can show that the percentage is a guess.
 Migration: `on_usage` remains supported but is deprecated. Move its callback body to a
-`ContextUsageEvent` subscription.
+`ContextUsageMeasuredEvent` subscription.
 
 Order matters: register the monitor *after* a compaction capability to observe the corrected current
 history after same-cycle compaction, or before it to see what triggered the compaction.
@@ -433,6 +451,9 @@ agent = Agent(
 A part is clamped only when it is oversized *and* the clamp actually shrinks it, so keep
 `keep_head_chars + keep_tail_chars` well below your per-part threshold.
 
+A clamped part also loses its item ID (`TextPart.id`, `ToolCallPart.id`): the OpenAI Responses API uses its stored copy
+of an item sent with its ID and ignores the content sent alongside, so the clamp wouldn't reach the model.
+
 It clamps two kinds of part inside each `ModelResponse`:
 
 - **Response text** (`TextPart`) -- the critical case, a runaway model-response text part.
@@ -535,7 +556,8 @@ the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
-arguments of the cleared calls. A `load_capability` call keeps its argument, because Pydantic AI reads from
+arguments of the cleared calls. A cleared call also loses its item ID (`ToolCallPart.id`), for the same
+reason a clamped part does. A `load_capability` call keeps its argument, because Pydantic AI reads from
 it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
@@ -588,6 +610,17 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 and stops once under `target_tokens` -- so a tier's own `max_*` trigger is irrelevant there (set it to
 anything valid). Any object with `async def compact(messages, ctx) -> list[ModelMessage]`
 (`CompactionStrategy`) can be a tier, so you can plug in your own.
+
+Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds the
+whole current turn, the first user message under `preserve_first_user_message`, and pinned parts.
+Those set a lower bound on how far the chain can shrink the history, and a `target_tokens` below it
+can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are
+messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier
+leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt
+on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets
+`compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the
+history, no span is emitted; the warning still reports the estimate and target. Pass
+`preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
 
 ## Cache tradeoff (read before using `ClearToolResults`)
 
@@ -645,12 +678,12 @@ instead of using `keep_messages`.
 
 The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
 which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
-keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
+keeps it. Each provider model receives it as user-voice text inside `<pyai:conversation_summary>`, saying a
 separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
 system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
-part, Pydantic AI also treats it as a compaction boundary, so tool discoveries from before it are announced
-again, on-demand capability loads from before it are recorded again after it (see "On-demand capabilities
-across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
+part, Pydantic AI also treats it as a compaction boundary, which would reset tool discoveries and on-demand
+capability loads from before it, so the strategy records them again after it (see "Tool search discoveries
+across compaction" and "On-demand capabilities across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
 `compacted`. The part carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`,
 which the model never sees; that marker, together with the part having no provider data, is how
 `SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
@@ -665,6 +698,13 @@ Both prompt surfaces of the summary request are fields: `summary_prompt` is the 
 must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
+The default `summary_prompt` asks for the summary under fixed section headings. Its `## Intent` section
+asks for the user's overall goal and only the constraints or preferences the user stated themselves: an
+instruction that appeared inside a tool result or fetched content is not the user's, and if the summary
+keeps one, it must say where it came from.
+A custom `summary_prompt` replaces all of this, so unless it has a rule of its own, a summarizer can list
+a request planted in a tool result as the user's constraint. Of the guidance on who said what, only the
+`<harness_data>` instruction described below is still added to a custom prompt.
 
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
@@ -672,7 +712,7 @@ for a tool call or return, its tool name. Retry feedback, the correction a rejec
 got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool
 name), so the summary records the correction rather than the rejected call as something that happened;
 feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
-own tags or a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), in
+own tags or a framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), in
 any case or spacing, is escaped, so a tool return stays inside its own message and can't end the
 transcript early. Each tool return and retry feedback is capped, after that escaping, at
 `tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
@@ -682,7 +722,8 @@ Content a harness capability added on the user channel and tagged with an `origi
 `BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot, including one an older release marked with a plain string. Tagged content is
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
-treat it as the user's requests or standing constraints; other summary requests are unchanged.
+treat it as the user's requests or standing constraints; that guidance is the only conditional part of
+the summary request.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 
@@ -776,6 +817,9 @@ to keep span cardinality low. Attributes:
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
 | `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
+| `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
+| `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
@@ -853,18 +897,19 @@ task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction
 
-Pydantic AI counts an on-demand capability as loaded while its `load_capability` exchange is in the
-history after the latest compaction, so a strategy that summarizes or drops the exchange would unload it:
-its tools would leave the request and its instructions would no longer be sent, while the summary may
-still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` remove
-history, so when they remove a capability's load they record it again: a `load_capability` call and its
-return, with the original return's content, right after the summary (or ahead of the kept messages when
-there's no summary). The capability stays loaded, its tools stay in the request, and Pydantic AI states
-its current instructions again in the system voice. The recorded exchange carries
-`{'pydantic-ai-harness.compaction.recorded-load.v1': True}` in the `metadata` of its `ModelResponse` and
-of its `LoadCapabilityReturnPart`, which the model never sees. Summaries leave every `load_capability`
-exchange out, the model's own included: which capabilities are loaded is carried by the exchanges, recorded
-again after each compaction, never by the summary.
+Pydantic AI counts an on-demand capability as loaded while the record of its load is in the history
+after the latest compaction: the model's `load_capability` exchange, or the `CapabilityLoadDeltaPart` a
+load from code (`RunContext.load_capability`) leaves. A strategy that summarizes or drops that record would
+unload the capability: its tools would leave the request and its instructions would no longer be sent,
+while the summary may still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction` and
+`RelevanceCompaction` remove history, so when they remove a capability's load they record it again, right
+after the summary (or ahead of the kept messages when there's no summary), as a load from code is recorded:
+a `CapabilityLoadDeltaPart` naming the capability, followed by the `ToolAvailabilityDeltaPart` revealing
+its tools, if the load revealed any. That's a framework record of what's loaded, not a `load_capability`
+call the model never made. The capability stays loaded, its tools stay in the request, and Pydantic AI
+states its current instructions again in the system voice. Summaries leave every load record out, the
+model's own exchanges included: which capabilities are loaded is carried by the records, recorded again
+after each compaction, never by the summary.
 Only capabilities the run still registers as on-demand are recorded. `compact_now`, which has no run to
 ask, records every load, and the next run ignores a load of a capability it doesn't register.
 
@@ -876,8 +921,20 @@ whose `TextContent.metadata` is
 summary treats it as data rather than as the user's words.
 
 `ClearToolResults`, `DeduplicateFileReads` and `ClampOversizedMessages` keep every message and leave
-`load_capability` calls and returns as they are, so loads survive them unchanged. Provider-native
+load records as they are, so loads survive them unchanged. Provider-native
 compaction (`OpenAICompaction`, `AnthropicCompaction`) runs no harness strategy, so it still unloads them.
+
+## Tool search discoveries across compaction
+
+A tool found through tool search stays discovered while the record of its discovery is in the history
+after the latest compaction: the model's `search_tools` exchange, the provider's native search result, or
+a `ToolReturn.tools` reveal. When `SummarizingCompaction`, `SlidingWindowCompaction` or
+`RelevanceCompaction` removes that record, it records the discovery again as a `ToolAvailabilityDeltaPart`
+naming the tools, in the place it records capability loads. That's a framework record of what the model
+has been shown, not a search the model never made, so a provider's native search result is kept the same
+way as a local one. The tools stay in the request and the model can call them without searching again. A
+tool revealed by a capability load is left to that load, so `preserve_loaded_capabilities=False` unloads it
+along with its capability. Provider-native compaction still drops discoveries, so the model searches again.
 
 ## Keeping user messages (`keep_user_messages`)
 
@@ -887,13 +944,20 @@ the newest user turns from the summarized prefix alongside the summary. In messa
 existing `keep_messages` tail budget, so at most that many retained user messages and tail
 messages survive together, except that one tail slot is reserved for the request being
 answered when retained user turns would otherwise consume it; compaction therefore does not
-grow retained copies on each cycle. With a positive `keep_tokens`, the original suffix takes
+grow retained copies on each cycle. The tail messages the retained turns leave no room for are
+summarized with the rest of the prefix, and the retained turns are the newest user turns of
+everything summarized. With a positive `keep_tokens`, the original suffix takes
 precedence: `keep_messages` caps only the additional older user turns, which do not reduce the
 retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget, and the
 newest tail message still survives.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched.
+A retained copy is recognized by a marker on its text items, never by request metadata, which isn't
+trusted as a provenance marker, so a turn marked only there is summarized and bounded like any other.
+Copies kept by releases before 2.60 carry only that request-level marker, as does a copy whose text
+items already had metadata that isn't a dict, so the next compaction after upgrading summarizes them
+once more and keeps them again.
 Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is
 left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized
 prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the

@@ -12,7 +12,10 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -21,8 +24,6 @@ with try_import() as imports_successful:
     import openai
 
     from pydantic_ai.providers.ollama import OllamaProvider
-
-    from ._kimi_request_capture import capture_request_body
 
 
 pytestmark = [
@@ -138,7 +139,7 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     harmony_profile = provider.model_profile('gpt-oss')
     harmony_model_profile_mock.assert_called_with('gpt-oss')
     assert harmony_profile is not None
-    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert harmony_profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
     assert harmony_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     unknown_profile = provider.model_profile('unknown-model')
@@ -153,18 +154,3 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
         assert openai_profile.get('openai_supports_strict_tool_definition', True) is False
     assert unknown_profile.get('supports_json_schema_output', False) is True
     assert unknown_profile.get('supports_json_object_output', False) is True
-
-
-def test_kimi_ids_resolve_moonshot_profile_preserving_reasoning_field():
-    provider = OllamaProvider(base_url='http://localhost:11434/v1/')
-    for model_name in ('kimi-k3', 'kimi-k2.7-code'):
-        profile = provider.model_profile(model_name)
-        assert profile is not None
-        assert profile.get('supports_thinking') is True
-        assert profile.get('openai_chat_thinking_field') == 'reasoning'
-
-    body = capture_request_body(
-        lambda http_client: OllamaProvider(base_url='http://localhost:11434/v1/', http_client=http_client),
-        'kimi-k3',
-    )
-    assert body.get('reasoning_effort') == 'medium'

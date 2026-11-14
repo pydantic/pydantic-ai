@@ -120,7 +120,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
         timeout_ms = int(timeout_seconds * 1000)
         return HttpOptions(
             base_url=base_url,
-            headers={'User-Agent': get_user_agent()},
+            headers={'user-agent': get_user_agent()},
             httpx_async_client=http_client,
             timeout=timeout_ms,
             retry_options=retry_options,
@@ -206,7 +206,7 @@ class GoogleProvider(BaseGoogleProvider):
         assert self._api_key is not None
         # Its own `HttpOptions` and HTTP clients: nothing it holds is shared with the provider's client.
         http_options = HttpOptions(
-            base_url=self._base_url, api_version=api_version, headers={'User-Agent': get_user_agent()}
+            base_url=self._base_url, api_version=api_version, headers={'user-agent': get_user_agent()}
         )
         return Client(vertexai=False, api_key=self._api_key, http_options=http_options)
 

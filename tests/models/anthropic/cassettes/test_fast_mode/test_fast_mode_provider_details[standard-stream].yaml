@@ -1,0 +1,90 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "148"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-fable-5-2
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=94
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-68d7cf2ab8bc1134641bc60f44fc8e49-2c9f3f6a11bc69bf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011CguadUpiGSFJNfqTKjYm3","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":18,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS3gQKEAgTGAI4AUIIdGhpbmtpbmcSDG3eA+eZnt4JWq2YgxoMAF9BnRnTuO1LNatKIjD/bLpOicVw6CYoXpHjp3UsmQBRRN7QZ8YiA76Kg2EATO/en1LVZLjo+fFp7h4XGSIq+wP6UkHY4nKJrJb7LAB0P4f+9CPgH+Q8CE4w23ikiRe1MB/aso8txmP7xJeqh3EC7tg5EA/CpJ93xw3z02GCtscaNo5QS1T0bS8v0EXqzRpKqgjwPglbffyxpLvuWkNwLs1LA0JQdzq0jdj4m7NUUyGj+eO7O1n2uAFSPLITUTRkWnbTlDSzDXU/Io3PB9CAFlmgr82m1Lnu6dgjGugXxuKxwRRqz1a9kDFia98/vui7lLiG0lOAX/G6QcKop1slAa69XIzPzL8kIoYM0yUqfw/ABJIH2dHfJNsDR/z+jhvUFBhR8IdUOmh1Td3gYg94uay/AAJgQSbFTDHMPsyObazaSDlG2i7Yfg8Nm72j/xVycPIXmxcVNKtZD4l4y3BXM3rZTxpyBJlqMLXCvu52MOe7RA8pCQ8Og+xo0ZWGYgfaijEfuMldAkCMB1PeUJwYikUNNxNK8dJb05sNNVDA6cBSSOt9b0KzrfvhtkY7oHDRAFgtaIlABTnZiV3pXxh2K7hCVZyonwGm6NoGHSwJUkEfYNfrqHnG3q1Y71OTpMspVpEWZvbjdRyBm86zJTa+QteRaMMhCRp48WaXjB1pCCPLf6nw4d+xOppZJmrXCnrPJB+eoTW0Bagj+KtxBOqc7XTS46AWCgwj6LcpxqkwsirJcoX7xMLzi9c2Ly8YAQ=="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"O"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"K"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":18,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":17,"output_tokens_details":{"thinking_tokens":13}}              }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-11-10T16:41:48.487341+00:00

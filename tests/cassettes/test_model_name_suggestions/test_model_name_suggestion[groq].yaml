@@ -1,28 +1,32 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '113'
+      - "100"
       content-type:
       - application/json
       host:
       - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: hello
-        role: user
-      model: llama-3.3-70b-versatlie
-      n: 1
-      stream: false
-    uri: https://api.groq.com/openai/v1/chat/completions
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: hello
+        model: openai/gpt-oss-120bb
+        "n": 1
+        stream: false
   response:
+    status: 404
     headers:
       alt-svc:
       - h3=":443"; ma=86400
@@ -30,8 +34,6 @@ interactions:
       - private, max-age=0, no-store, no-cache, must-revalidate
       connection:
       - keep-alive
-      content-length:
-      - '169'
       content-type:
       - application/json
       strict-transport-security:
@@ -40,12 +42,11 @@ interactions:
       - chunked
       vary:
       - Origin
-    parsed_body:
-      error:
-        code: model_not_found
-        message: The model `llama-3.3-70b-versatlie` does not exist or you do not have access to it.
-        type: invalid_request_error
-    status:
-      code: 404
-      message: Not Found
-version: 1
+    body:
+      type: json
+      content:
+        error:
+          message: The model `openai/gpt-oss-120bb` does not exist or you do not have access to it.
+          type: invalid_request_error
+          code: model_not_found
+  recorded_at: 2026-11-07T19:13:56.749595+00:00

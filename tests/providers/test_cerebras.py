@@ -9,8 +9,12 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 from ..conftest import TestEnv, try_import
 
@@ -19,9 +23,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models import infer_model
     from pydantic_ai.models.cerebras import CerebrasModel
-    from pydantic_ai.providers.cerebras import CerebrasProvider, zai_model_profile
-
-    from ._kimi_request_capture import capture_request_body
+    from pydantic_ai.providers.cerebras import CerebrasProvider
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -61,7 +63,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     harmony_model_profile_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
-    zai_model_profile_mock = mocker.patch(f'{ns}.zai_model_profile', wraps=zai_model_profile)
+    glm_5_3_schema_profile_mock = mocker.patch(f'{ns}._glm_5_3_schema_profile', wraps=_glm_5_3_schema_profile)
 
     # Test llama model - uses meta profile which has InlineDefsJsonSchemaTransformer
     meta_profile = provider.model_profile('llama-3.3-70b')
@@ -82,13 +84,13 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     harmony_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert harmony_profile is not None
     assert isinstance(harmony_profile, dict)
-    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert harmony_profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
     # gpt-oss follows Harmony rules: prior reasoning is replayed in the `reasoning` field, not `<think>` tags.
     assert harmony_profile.get('openai_chat_send_back_thinking_parts', None) == 'auto'
 
-    # Test zai model - uses default OpenAI profile (zai_model_profile returns None)
+    # Test zai model - uses default OpenAI profile (only GLM-5.3 gets a schema profile)
     zai_profile = provider.model_profile('zai-glm-4.7')
-    zai_model_profile_mock.assert_called_with('zai-glm-4.7')
+    glm_5_3_schema_profile_mock.assert_called_with('glm-4.7')
     assert zai_profile is not None
     assert isinstance(zai_profile, dict)
     assert zai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
@@ -113,17 +115,3 @@ def test_infer_cerebras_model(env: TestEnv):
     model = infer_model('cerebras:llama-3.3-70b')
     assert isinstance(model, CerebrasModel)
     assert model.model_name == 'llama-3.3-70b'
-
-
-def test_kimi_k3_resolves_moonshot_profile_with_always_on_overlay():
-    provider = CerebrasProvider(api_key='api-key')
-    profile = provider.model_profile('kimi-k3')
-    assert profile.get('supports_thinking') is True
-    assert profile.get('thinking_always_enabled') is True
-    assert profile.get('ignore_streamed_leading_whitespace') is True
-
-    body = capture_request_body(
-        lambda http_client: CerebrasProvider(api_key='api-key', http_client=http_client),
-        'kimi-k3',
-    )
-    assert body.get('reasoning_effort') == 'medium'

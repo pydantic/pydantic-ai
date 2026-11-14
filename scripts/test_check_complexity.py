@@ -156,6 +156,28 @@ def test_a_move_keeps_its_predecessor_when_a_rename_could_take_it(repo: Path, ca
     assert 'pkg/alpha.py:1: unrelated 5: new function over the limit' in out
 
 
+def test_classes_that_move_with_the_same_method_each_keep_their_own_predecessor(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+):
+    _write(
+        repo,
+        'pkg/both.py',
+        'class A:\n' + _ifs('run', 4, indent='    ') + '\n\nclass B:\n' + _ifs('run', 5, indent='    '),
+    )
+    _commit(repo)
+    # `a.py` is checked first, and its method is the less complex one.
+    _write(repo, 'pkg/both.py', 'from pkg.a import A\nfrom pkg.b import B\n')
+    _write(repo, 'pkg/a.py', 'class A:\n' + _ifs('run', 4, indent='    '))
+    _write(repo, 'pkg/b.py', 'class B:\n' + _ifs('run', 5, indent='    '))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 0
+    assert 'note: pkg/a.py A::run replaces pkg/both.py A::run, so it is not counted' in out
+    assert 'note: pkg/b.py B::run replaces pkg/both.py B::run, so it is not counted' in out
+
+
 def test_a_moved_function_that_grows_is_judged_against_its_predecessor(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, 'pkg/debt.py', _ifs('small', 2))
     _write(repo, 'pkg/other.py', _ifs('debt', 6))

@@ -10,18 +10,32 @@ from pydantic_ai_harness.bubblewrap_sandbox._workspace import BubblewrapWorkspac
 
 
 @dataclass
-class BubblewrapSandbox(WrapperCapability[AgentDepsT]):
-    """Runs the commands of the wrapped capability's workspace in a bubblewrap sandbox, on that workspace's host.
+class BubblewrappedWorkspace(WrapperCapability[AgentDepsT]):
+    """Runs the commands of the wrapped capability's workspace in a bubblewrap wrapper, on that workspace's host.
 
-    See [`BubblewrapWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace] for what the sandbox allows.
+    !!! warning "Best effort, not a security boundary"
+        This wrapper is a best-effort convenience that keeps a trusted agent from accidentally changing files outside
+        its working directory. It is **not a security boundary** and **not a sandbox for untrusted code or untrusted
+        agents**: commands share the host kernel and run as the host user. For untrusted agents, use a VM or
+        microVM-backed sandbox such as [`E2BSandbox`][pydantic_ai_harness.e2b_sandbox.E2BSandbox],
+        [`ModalSandbox`][pydantic_ai_harness.modal_sandbox.ModalSandbox],
+        [`DaytonaSandbox`][pydantic_ai_harness.daytona_sandbox.DaytonaSandbox],
+        [`BoxLiteSandbox`][pydantic_ai_harness.boxlite_sandbox.BoxLiteSandbox], or
+        [`SmolSandbox`][pydantic_ai_harness.smol_sandbox.SmolSandbox].
+
+        Do **not** set the working directory to your home directory (or a directory containing it): files there such as
+        shell startup files, or configuration under a non-default `$XDG_CONFIG_HOME`, can be changed by the agent and
+        run later outside the wrapper (only the default startup locations are mounted read-only).
+
+    See [`BubblewrapWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace] for what the wrapper allows.
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai_harness import BubblewrapSandbox, SSHWorkspace
+    from pydantic_ai_harness import BubblewrappedWorkspace, SSHWorkspace
 
     agent = Agent(
         'anthropic:claude-opus-5-5',
-        capabilities=[BubblewrapSandbox(SSHWorkspace('dev@build-box', working_dir='/srv/app'))],
+        capabilities=[BubblewrappedWorkspace(SSHWorkspace('dev@build-box', working_dir='/srv/app'))],
     )
     ```
     """

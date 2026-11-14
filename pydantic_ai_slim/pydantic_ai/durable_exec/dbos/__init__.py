@@ -12,6 +12,14 @@ from ._agent import DBOSAgent, DBOSParallelExecutionMode  # pyright: ignore[repo
 from ._durability import DBOSDurability
 from ._model import DBOSModel
 from ._operation_names import DBOSOperationNamer
-from ._utils import StepConfig
+from ._utils import ChildWorkflowConfig, StepConfig
 
-__all__ = ['DBOSAgent', 'DBOSDurability', 'DBOSModel', 'DBOSOperationNamer', 'DBOSParallelExecutionMode', 'StepConfig']
+__all__ = [
+    'ChildWorkflowConfig',
+    'DBOSAgent',
+    'DBOSDurability',
+    'DBOSModel',
+    'DBOSOperationNamer',
+    'DBOSParallelExecutionMode',
+    'StepConfig',
+]

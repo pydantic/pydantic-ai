@@ -442,6 +442,66 @@ def _voice_live_times_speech(settings: AzureRealtimeModelSettings, *, cascade: b
     return cascade and not settings.get('openai_voice')
 
 
+def _voice_live_response_config(
+    tools: list[ToolDefinition] | None, settings: AzureRealtimeModelSettings
+) -> dict[str, Any]:
+    """The Voice Live session's tools, tool choice, parallel tool calls and output token limit, when set."""
+    config: dict[str, Any] = {}
+    advertised_tools, tool_choice = resolve_advertised_tools(list(tools or []), settings.get('tool_choice'))
+    if advertised_tools:
+        config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
+    if (max_tokens := settings.get('max_tokens')) is not None:
+        config['max_response_output_tokens'] = max_tokens
+    if settings.get('parallel_tool_calls') is False:
+        # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
+        # `True`, so only `False` is sent.
+        config['parallel_tool_calls'] = False
+    if tool_choice is not None:
+        config['tool_choice'] = tool_choice_config(tool_choice)
+    return config
+
+
+def _voice_live_voice(settings: AzureRealtimeModelSettings) -> AzureVoiceLiveVoice | dict[str, str] | None:
+    """The Voice Live session's `voice`, when set."""
+    if (azure_voice := settings.get('azure_voice_live_voice')) is not None:
+        return (
+            AzureVoiceLiveVoice(type='azure-standard', name=azure_voice)
+            if isinstance(azure_voice, str)
+            else azure_voice
+        )
+    if voice := settings.get('openai_voice'):
+        if isinstance(voice, VoiceID):
+            # Voice Live's session schema addresses a voice by provider + *name*, with no place for
+            # an OpenAI custom-voice id, so accepting one would silently drop it.
+            raise UserError(
+                'Azure AI Voice Live does not accept an OpenAI custom `VoiceID`; set `openai_voice` '
+                'to a voice name instead.'
+            )
+        return {'type': 'openai', 'name': voice}
+    return None
+
+
+def _voice_live_temperature(
+    settings: AzureRealtimeModelSettings, *, cascade: bool, model_name: str, thinking: ThinkingLevel | None
+) -> float | None:
+    """The Voice Live session's `temperature`, when set and the model takes one: warned about and left out otherwise."""
+    if (temperature := settings.get('azure_voice_live_temperature')) is None:
+        return None
+    if cascade and _cascade_model_is_reasoning(model_name, thinking):
+        remedy = (
+            'Set `thinking=False` to use it.'
+            if openai_model_profile(model_name).get('openai_supports_reasoning_effort_none', False)
+            else 'This model cannot turn reasoning off.'
+        )
+        warnings.warn(
+            f'`azure_voice_live_temperature` is not supported while {model_name!r} is reasoning, '
+            f'so it will be ignored. {remedy}',
+            UserWarning,
+        )
+        return None
+    return temperature
+
+
 def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
     """Whether a Voice Live cascade chat model will reason, which rules out a non-default temperature.
 
@@ -834,47 +894,14 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}
         config.update(_voice_live_audio_processing(settings, cascade=cascade))
-        if (azure_voice := settings.get('azure_voice_live_voice')) is not None:
-            config['voice'] = (
-                AzureVoiceLiveVoice(type='azure-standard', name=azure_voice)
-                if isinstance(azure_voice, str)
-                else azure_voice
-            )
-        elif voice := settings.get('openai_voice'):
-            if isinstance(voice, VoiceID):
-                # Voice Live's session schema addresses a voice by provider + *name*, with no place for
-                # an OpenAI custom-voice id, so accepting one would silently drop it.
-                raise UserError(
-                    'Azure AI Voice Live does not accept an OpenAI custom `VoiceID`; set `openai_voice` '
-                    'to a voice name instead.'
-                )
-            config['voice'] = {'type': 'openai', 'name': voice}
-        advertised_tools, tool_choice = resolve_advertised_tools(list(tools or []), settings.get('tool_choice'))
-        if advertised_tools:
-            config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
-        if (max_tokens := settings.get('max_tokens')) is not None:
-            config['max_response_output_tokens'] = max_tokens
-        if settings.get('parallel_tool_calls') is False:
-            # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
-            # `True`, so only `False` is sent.
-            config['parallel_tool_calls'] = False
-        if tool_choice is not None:
-            config['tool_choice'] = tool_choice_config(tool_choice)
+        if (voice := _voice_live_voice(settings)) is not None:
+            config['voice'] = voice
+        config.update(_voice_live_response_config(tools, settings))
         thinking = settings.get('thinking')
-        if (temperature := settings.get('azure_voice_live_temperature')) is not None:
-            if cascade and _cascade_model_is_reasoning(self.model, thinking):
-                remedy = (
-                    'Set `thinking=False` to use it.'
-                    if openai_model_profile(self.model).get('openai_supports_reasoning_effort_none', False)
-                    else 'This model cannot turn reasoning off.'
-                )
-                warnings.warn(
-                    f'`azure_voice_live_temperature` is not supported while {self.model!r} is reasoning, '
-                    f'so it will be ignored. {remedy}',
-                    UserWarning,
-                )
-            else:
-                config['temperature'] = temperature
+        if (
+            temperature := _voice_live_temperature(settings, cascade=cascade, model_name=self.model, thinking=thinking)
+        ) is not None:
+            config['temperature'] = temperature
         if settings.get('output_speech_timestamps') and self._output_speech_timestamp_granularity(settings):
             config['output_audio_timestamp_types'] = ['word']
         if thinking is not None and self.profile.get('supports_thinking', False):

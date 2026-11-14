@@ -24,7 +24,7 @@ from pydantic_clai2.ui.prompt.image_input import ATTACHED, ImageInput, clipboard
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
 from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
@@ -99,6 +99,8 @@ class LivePrompt:
         self.spinner = spinner
         self.panel = panel
         self.queue_changed = queue_changed
+        self.ctrl_enter_steers = ctrl_enter_steers()
+        """Whether Ctrl+Enter steers, as Alt+Enter does; otherwise it is Enter."""
         self.notice = ''
         self._chord_prefix = ''
         self._last_escape: float | None = None
@@ -215,10 +217,12 @@ class LivePrompt:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
                 self.images.notice = ATTACHED
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
-            self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
+            self.images.paste_failed(exc, clock=self.clock)
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
+        if key == 'ctrl-enter':
+            key = 'alt-enter' if self.ctrl_enter_steers else 'enter'
         if key in TRANSCRIPT_KEYS:
             # Leave the draft alone, and the notice unless a drag copied text.
             if self.output.transcript_key(key, data):
@@ -569,7 +573,8 @@ class LivePrompt:
         if self.interrupts.active:
             head, glyph = '─ Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
-            hints = '| Enter: queue | Alt+Enter: steer ' if self.queued_messages or self.buffer.text.strip() else ''
+            chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
+            hints = f'| Enter: queue | {chord}: steer ' if self.queued_messages or self.buffer.text.strip() else ''
             title = truncate(f'{head}{glyph} {hints}', width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
@@ -627,12 +632,16 @@ class LivePrompt:
         Every `ANIMATED_REPAINT` seconds while a turn runs, the panel shows forks or tasks, or for
         `IDLE_REPAINT` after either; `IDLE_REPAINT` seconds after the last frame otherwise. A spinner
         faster than that gets a repaint per frame, but only while it shows.
+        The paste-error deadline also caps the wait; expiry repaints an unsuspended editor through this
+        existing loop, without adding periodic polling.
         """
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
             self._animated_at = now
+        expired = self.images.expire_notice()
         if not self._suspended and (
-            now - self._animated_at < IDLE_REPAINT
+            expired
+            or now - self._animated_at < IDLE_REPAINT
             or now - self._painted_at >= IDLE_REPAINT
             # Hosts without SIGWINCH find a resize only here.
             or self.console.size != self._painted_size
@@ -642,13 +651,13 @@ class LivePrompt:
             # Output written too soon after the last frame waits for this, idle or not.
             self.output.refresh()
         if self.interrupts.active:
-            return min(ANIMATED_REPAINT, self.spinner().interval)
+            return min(ANIMATED_REPAINT, self.spinner().interval, self.images.notice_remaining())
         # The frame just painted may have found the panel's first fork or task.
         if self._panel_shown or now - self._animated_at < IDLE_REPAINT:
-            return ANIMATED_REPAINT
+            return min(ANIMATED_REPAINT, self.images.notice_remaining())
         due = self._painted_at + IDLE_REPAINT - now
         # A menu owning the screen leaves the last frame behind; nothing is due until it closes.
-        return due if due > 0 else IDLE_REPAINT
+        return min(due if due > 0 else IDLE_REPAINT, self.images.notice_remaining())
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:

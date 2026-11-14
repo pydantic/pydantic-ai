@@ -35,6 +35,8 @@ pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
 ```
 
 ```python {title="production_service.py" test="skip"}
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import logfire
@@ -47,8 +49,19 @@ from pydantic_ai.durable_exec.dbos import DBOSDurability
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-app = FastAPI()
-DBOS(fastapi=app, config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+DBOS(config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    DBOS.launch()  # after the module has registered every workflow
+    try:
+        yield
+    finally:
+        DBOS.destroy()
+
+
+app = FastAPI(lifespan=lifespan)
 
 agent = Agent(
     '{{ anthropic:medium }}',
@@ -273,7 +286,7 @@ def test_support_agent():
 
 - **Authorize tools and conversation access**: give the agent only the tools the current caller may use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering it](toolsets.md#filtering-tools) against the user in your [dependencies](dependencies.md); check that the caller may access the [conversation](#state) it continues; and treat a history sent by a client as [untrusted input](message-history.md#loading-untrusted-history).
 - **Require approval for sensitive actions**: [deferred tools](#approval) put a person, or a second model with [`ToolCallJudge`](harness/tool-call-judge.md), in front of the call.
-- **Isolate model-written code**: run shell commands and generated code in a [sandbox](harness/index.md#execution-environments), such as [bubblewrap](harness/bubblewrap-sandbox.md) locally or [E2B](harness/e2b-sandbox.md) or [Modal](harness/modal-sandbox.md) remotely. [`FileSystem`](harness/filesystem.md) path patterns guard what the model's file tools write, but they are checks, not isolation, and don't bound shell commands.
+- **Isolate model-written code**: run untrusted shell commands and generated code in a VM or microVM-backed [sandbox](harness/index.md#execution-environments), such as [BoxLite](harness/boxlite-sandbox.md) or [Smol](harness/smol-sandbox.md) locally or [E2B](harness/e2b-sandbox.md) or [Modal](harness/modal-sandbox.md) remotely. On Linux, [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) keeps a trusted agent from accidentally writing outside its working directory, though it is not a security boundary. [`FileSystem`](harness/filesystem.md) path patterns guard what the model's file tools write, but they are checks, not isolation, and don't bound shell commands.
 
 [Pydantic AI Harness](harness/index.md#capabilities) adds more, such as [guardrails](harness/guardrails.md) with secret and PII detectors and a [prompt injection defender](harness/prompt-injection-defender.md) for tool results.
 
