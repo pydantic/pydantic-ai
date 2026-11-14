@@ -1,7 +1,9 @@
 """The token count `UsageLimits(count_tokens_before_request=True)` asks for, under Temporal.
 
 The count is provider I/O, so it runs in an activity of its own ahead of the request, and the workflow sees what the
-activity returned: the usage, the framework metadata the count wrote on the request, or the error it raised.
+activity returned: the usage, the framework metadata the count wrote on the request, or the error it raised. Not VCR
+tests: the behavior under test is which activities a workflow schedules and what its history replays, which only a
+Temporal server shows.
 """
 
 from __future__ import annotations

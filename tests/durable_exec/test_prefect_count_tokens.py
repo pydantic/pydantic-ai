@@ -1,4 +1,8 @@
-"""The token count `UsageLimits(count_tokens_before_request=True)` asks for, under `PrefectDurability`."""
+"""The token count `UsageLimits(count_tokens_before_request=True)` asks for, under `PrefectDurability`.
+
+Not VCR tests: the behavior under test is which Prefect task each operation runs in, which only the task-run context
+shows.
+"""
 
 from __future__ import annotations
 

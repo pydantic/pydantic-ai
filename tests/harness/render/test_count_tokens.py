@@ -1,13 +1,13 @@
 """The token count `UsageLimits(count_tokens_before_request=True)` asks for, under Render Workflows.
 
 Render runs each durable unit as a child task in another process, so the count crosses the task boundary as JSON
-both ways, like a model request.
+both ways, like a model request. Not VCR tests: the behavior under test is which child task the count runs in and
+what crosses its boundary, which the recording task context shows without a provider.
 """
 
 from __future__ import annotations
 
 import inspect
-from typing import Any
 
 from render.workflows import TaskContext, Workflows
 
@@ -46,7 +46,7 @@ async def test_count_tokens_runs_in_its_own_child_task() -> None:
     context = RecordingTaskContext()
 
     @runtime.task
-    async def root(ctx: TaskContext) -> list[dict[str, Any] | None]:
+    async def root(ctx: TaskContext) -> list[dict[str, object] | None]:
         del ctx
         limits = UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
         result = await agent.run('hi', usage_limits=limits)
