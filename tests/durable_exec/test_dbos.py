@@ -4339,7 +4339,7 @@ async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> No
     ]
 
 
-async def test_durability_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
+async def test_dbos_durability_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
     """Text streamed before a tool call isn't the final result when the output type is structured.
 
     The workflow replays the step's stream against the parameters the step's model prepared, in which `'auto'` has
@@ -4356,7 +4356,7 @@ async def test_durability_structured_output_after_preamble_text_in_workflow(dbos
         assert await structured_output_after_preamble_text_workflow() == await plain_run_and_stream()
 
 
-async def test_durability_run_stream_warns_once_about_an_ignored_setting(dbos: DBOS) -> None:
+async def test_dbos_durability_run_stream_warns_once_about_an_ignored_setting(dbos: DBOS) -> None:
     """A setting the model ignores is warned about once per request, by the step's model that sends it."""
 
     class NoStopSequencesFunctionModel(FunctionModel):
