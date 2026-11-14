@@ -1,10 +1,11 @@
 """Tests for the shared _spec.py module."""
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Protocol, Self
 
 import pytest
-from pydantic import BaseModel, GetPydanticSchema, JsonValue
+from pydantic import BaseModel, GetPydanticSchema, JsonValue, ValidationError
+from pydantic_core import SchemaError
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent
@@ -252,6 +253,12 @@ class ModelParam(AbstractCapability[None]):
 
 
 @dataclass
+class WeightedParam(AbstractCapability[None]):
+    weights: dict[str, int]
+    label: str = 'w'
+
+
+@dataclass
 class AnyParam(AbstractCapability[None]):
     value: Any = None
 
@@ -287,6 +294,8 @@ class RefCycleParam(AbstractCapability[None]):
 
 
 class TestBuildSchemaTypes:
+    """Schema generation and spec loading make no model request, so these tests record no cassette."""
+
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
         ('arguments', 'tools', 'metadata'),
@@ -391,6 +400,50 @@ class TestBuildSchemaTypes:
         if valid:
             capabilities = Agent.from_spec(spec, custom_capability_types=[AnyParam]).root_capability.capabilities
             assert [c.value for c in capabilities if isinstance(c, AnyParam)] == [value]
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('arguments', 'valid'),
+        [
+            pytest.param({'weights': {'a': 1}}, True, id='keyword-form'),
+            pytest.param({'a': 1}, False, id='short-form-object'),
+            pytest.param({}, False, id='short-form-empty'),
+        ],
+    )
+    def test_multi_param_object_capability_schema(self, arguments: JsonValue, valid: bool):
+        """A sole required object-typed parameter among several takes a string-keyed object in the keyword form only."""
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{'WeightedParam': arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([WeightedParam])
+        assert (list(validator_for(schema)(schema).iter_errors(spec)) == []) is valid
+        if valid:
+            capabilities = Agent.from_spec(spec, custom_capability_types=[WeightedParam]).root_capability.capabilities
+            assert [c.weights for c in capabilities if isinstance(c, WeightedParam)] == [{'a': 1}]
+        else:
+            with pytest.raises(ValueError, match="Failed to instantiate capability 'WeightedParam'"):
+                Agent.from_spec(spec, custom_capability_types=[WeightedParam])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_empty_capability_entry_schema(self):
+        """The schema rejects an empty capability entry, which names no capability."""
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{}]}
+        schema = AgentSpec.model_json_schema_with_capabilities()
+        assert list(validator_for(schema)(schema).iter_errors(spec))
+        with pytest.raises(ValidationError, match='Field required'):
+            Agent.from_spec(spec)
+
+    def test_schema_error_param_capability_schema(self):
+        """A short-form parameter type with no core schema raises from the full schema, which names the field."""
+
+        class Session(Protocol):
+            id: str
+
+        @dataclass
+        class SessionParam(AbstractCapability[None]):
+            session: Session
+            label: str = 'x'
+
+        with pytest.raises(SchemaError, match='Field "capabilities"'):
+            AgentSpec.model_json_schema_with_capabilities([SessionParam])
 
     @pytest.mark.parametrize('capability', [ExternalRefParam, RefCycleParam])
     def test_unresolved_ref_param_capability_schema(self, capability: type[AbstractCapability[None]]):
