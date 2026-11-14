@@ -31,7 +31,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 from pydantic_ai_harness.step_persistence.conversations import ConversationConflict
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.sub_agents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Conversation, Transcript

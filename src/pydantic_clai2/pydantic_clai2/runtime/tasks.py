@@ -37,9 +37,9 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     DelegationStartedEvent,
     DelegationTask,
@@ -226,7 +226,11 @@ class TaskRouter:
                     self._users -= 1
                     last = not self._users
                     if last:
-                        await self._stack.aclose()
+                        try:
+                            await self._stack.aclose()
+                        except RuntimeError:
+                            # The owner's drain timeout: a task that ignores cancellation must not crash CLAI.
+                            logging.getLogger(__name__).exception('Delegated tasks did not close cleanly')
                 if not last:
                     for record in [record for record in self.owner.records.values() if view.runs(record)]:
                         await self.owner.cancel(record.id, user=False)

@@ -10,7 +10,7 @@ def image_media_type_from_bytes(data: bytes) -> str | None:
     report the media type the caller actually received instead of the provider's claim.
 
     Harness's `FileSystem` duplicates these signatures in `sniff_media_type`
-    (`pydantic_ai_harness/filesystem/_content.py`), extended with GIF and PDF. Change both together.
+    (`pydantic_ai_harness/file_system/_content.py`), extended with GIF and PDF. Change both together.
     """
     if data.startswith(b'\x89PNG'):
         return 'image/png'

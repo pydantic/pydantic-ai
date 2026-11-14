@@ -172,7 +172,7 @@ over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
-`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+`FileWrittenEvent` from `pydantic_ai_harness.file_system`; set `root_dir` to the
 directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
