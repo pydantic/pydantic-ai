@@ -39,6 +39,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -642,6 +643,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             if target is not None:
                 set_ui_message_id(target, msg.id)
 
+        for message in builder.messages:
+            if isinstance(message, ModelResponse):
+                message.parts = _native_returns_before_function_calls(message.parts)
+
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
         return narrow_message_parts(builder.messages)
@@ -1049,6 +1054,30 @@ def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> 
                 retry=retry,
             )
         )
+
+
+def _native_returns_before_function_calls(parts: Sequence[ModelResponsePart]) -> Sequence[ModelResponsePart]:
+    """`parts` with each `NativeToolReturnPart` moved ahead of the function `ToolCallPart`s directly before it.
+
+    An `AssistantMessage` lists all of a response's tool calls before the `ToolMessage`s that answer
+    them, so a native tool return otherwise loads after a function call that followed its native call.
+    A function call ends the model's turn, and Anthropic rejects a server tool result after a `tool_use`.
+    """
+    ordered: list[ModelResponsePart] = []
+    function_calls: list[ModelResponsePart] = []
+    moved = False
+    for part in parts:
+        if isinstance(part, ToolCallPart):
+            function_calls.append(part)
+        elif isinstance(part, NativeToolReturnPart):
+            moved = moved or bool(function_calls)
+            ordered.append(part)
+        else:
+            ordered.extend(function_calls)
+            function_calls.clear()
+            ordered.append(part)
+    ordered.extend(function_calls)
+    return ordered if moved else parts
 
 
 def _tool_return_content_from_parts(parts: list[UserContent]) -> ToolReturnContent:
