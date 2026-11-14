@@ -68,6 +68,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
+from .history_invariants import tool_pairing_violations
 
 
 def test_tool_no_ctx():
@@ -6014,3 +6015,28 @@ async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> N
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
     assert result.output.kind('approval') == 'question'
+
+
+async def test_retried_return_answers_a_call_with_an_empty_tool_call_id():
+    """A provider that sends '' as the call id gets the retry back under that same id, not a generated one."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(part, ToolReturnPart) for msg in messages for part in msg.parts):
+            return ModelResponse(parts=[ToolCallPart(tool_name='add', args={'a': 'not-an-int'}, tool_call_id='')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def add(a: int) -> int:
+        return a  # pragma: no cover
+
+    result = await agent.run('go')
+    messages = result.all_messages()
+    call = messages[1].parts[0]
+    retry = messages[2].parts[0]
+    assert isinstance(call, ToolCallPart)
+    assert isinstance(retry, ToolReturnPart)
+    assert call.tool_call_id == ''
+    assert retry.tool_call_id == ''
+    assert tool_pairing_violations(messages) == []

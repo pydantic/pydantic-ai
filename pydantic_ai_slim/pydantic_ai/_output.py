@@ -180,7 +180,7 @@ def build_retried_tool_return(
         outcome='retried',
         retry=_messages.RetryInfo(cause=cause),
     )
-    if tool_call_id:
+    if tool_call_id is not None:
         part.tool_call_id = tool_call_id
     return part
 
