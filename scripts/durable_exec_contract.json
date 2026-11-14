@@ -1556,6 +1556,7 @@
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_operation_backend.py::<module>"
       ]
@@ -4199,6 +4200,28 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
       ]
     },
+    "ModelRequest": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    },
+    "ModelRequest.metadata": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_framework_metadata"
+      ]
+    },
     "ModelResponse": {
       "engines": [
         "azure_durable_task",
@@ -4581,6 +4604,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_payload_converter.py::<module>"
       ]
     },
+    "_PYDANTIC_AI_METADATA_KEY": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    },
     "_RecordsContentFiles": {
       "engines": [
         "durable_exec"
@@ -4936,6 +4970,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.context_window"
       ]
     },
+    "Model.count_tokens": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.count_tokens_segment",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens"
+      ]
+    },
     "Model.customize_request_parameters": {
       "engines": [
         "temporal"
@@ -5062,12 +5109,14 @@
         "projected_field"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.count_tokens_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_stream_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.apply",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.build_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.from_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.messages",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_CompactMessagesTransport.dump",
@@ -5089,12 +5138,14 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.count_tokens_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._compact_messages_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._ensure_durable_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_id_for_request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.wrap_model_request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.apply",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.build_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_CompactMessagesTransport.load",
@@ -5137,6 +5188,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.count_tokens_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_stream_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._ensure_durable_model",
@@ -5144,6 +5196,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.build_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.from_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.model_request_parameters",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_CompactMessagesTransport.dump",
@@ -5165,12 +5218,14 @@
         "projected_field"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.count_tokens_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_stream_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.apply",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.build_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.from_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.model_settings",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_CompactMessagesTransport.dump",
@@ -5823,6 +5878,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.context_window"
       ]
     },
+    "WrapperModel.count_tokens": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens"
+      ]
+    },
     "WrapperModel.customize_request_parameters": {
       "engines": [
         "temporal"
@@ -5963,6 +6029,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._ensure_durable_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._find_model_id",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel._with_serving_wrapper",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.count_tokens",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::reject_serving_wrapper",
@@ -7340,6 +7407,18 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/usage.py": {
+    "RequestUsage": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
+      ]
+    },
     "RunUsage": {
       "engines": [
         "dbos",

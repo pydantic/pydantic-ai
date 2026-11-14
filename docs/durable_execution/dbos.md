@@ -245,6 +245,14 @@ A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflo
 
 The deadline bounds the agent run, not the workflow. To bound the whole workflow as well, start it inside DBOS's `SetWorkflowTimeout`, which cancels the workflow when it expires.
 
+### Counting Tokens Before a Request
+
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count runs as a `{name}__model.count_tokens` step ahead of each model request step, so recovery replays the recorded count instead of calling the provider again.
+
+!!! warning "Compatibility impact: recorded token-count steps"
+
+    Recording the count as a step adds a step ahead of each model request step of a run that sets `count_tokens_before_request=True`. Before upgrading, let in-flight workflows that set it finish, or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without `count_tokens_before_request` keep their existing step sequence.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate steps, with durable sleeps between checks.
