@@ -1,6 +1,7 @@
 """Model-aware choices, native request settings, and custom parameter editing."""
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx2 as httpx
@@ -21,7 +22,7 @@ from pydantic_clai2.ui.menus.custom_params import (
     edit_custom_params,
 )
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
-from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, is_save_and_close
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, model_settings_menu
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, make_context, pick
@@ -310,12 +311,40 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
     context, _ = make_context(tmp_path)
     source = ModelSettingsSource(context.store, 'openai:gpt-5.6')
     menu = FieldMenu(source)
-    keys = iter([*'reasoning', 'enter', 'R'])
+    keys = iter(['/', *'reasoning', 'enter', 'enter', 'R'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
     assert result.item is not None and result.item.value == 'openai_reasoning_effort'
     assert widget.run() == menu.reset_marker(None, result.item)
+
+
+def test_space_cycles_model_setting_and_save_close_persists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, _ = make_context(tmp_path)
+    model = 'openai:gpt-5.6'
+    source = ModelSettingsSource(context.store, model)
+    menu = FieldMenu(source, searchable=False)
+    row = next(row for row in menu.rows if row.key == 'openai_reasoning_effort')
+    assert len(row.choices) > 2
+    context.store.save_model_settings(model, {row.key: row.choices[0]})
+    initial = menu.rows.index(row)
+
+    def keys() -> Iterator[str]:
+        for expected in (*row.choices[1:], row.choices[0]):
+            yield ' '
+            assert source.current(row) == expected
+            assert context.store.model_settings(model) == {row.key: expected}
+        yield from ['down'] * (len(menu.rows) - initial)
+        yield 'enter'
+
+    key_source = keys()
+    monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(key_source))
+    result = menu.build(initial).run()
+    assert not result.cancelled
+    assert result.item is not None and is_save_and_close(result.item)
+    reopened, _ = make_context(tmp_path)
+    assert reopened.store.model_settings(model) == {row.key: row.choices[0]}
+    assert reopened.model_settings(model) == {**model_defaults(model=model), row.key: row.choices[0]}
 
 
 @pytest.mark.parametrize(('name', 'mode'), [('claude-sonnet-4-5', 'enabled'), ('claude-fable-5-1', 'adaptive')])

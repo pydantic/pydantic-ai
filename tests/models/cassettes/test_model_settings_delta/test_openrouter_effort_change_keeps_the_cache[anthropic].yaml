@@ -447,6 +447,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -462,9 +464,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793047739-WuNNsuA7bDjjqVak4ZXR
+        id: gen-1793405001-3Ov18cDlUUHUpGyLzJZN
         object: chat.completion
-        created: 1793047739
+        created: 1793405001
         model: anthropic/claude-opus-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -483,22 +485,22 @@ interactions:
           prompt_tokens: 10835
           completion_tokens: 31
           total_tokens: 10866
-          cost: 0.0028022
+          cost: 0.054791
           is_byok: false
           prompt_tokens_details:
-            cached_tokens: 10831
-            cache_write_tokens: 0
+            cached_tokens: 0
+            cache_write_tokens: 10831
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0028022
-            upstream_inference_prompt_cost: 0.0021822
+            upstream_inference_cost: 0.054791
+            upstream_inference_prompt_cost: 0.054171
             upstream_inference_completions_cost: 0.00062
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T20:49:01.523582+00:00
+  recorded_at: 2026-10-31T00:03:24.143541+00:00
 - request:
     method: POST
     uri: https://openrouter.ai/api/v1/chat/completions
@@ -955,6 +957,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -970,9 +974,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793047741-SlmBEAFDxbrHJN0i9Wo6
+        id: gen-1793405004-Gip6dZSV1u3zZlXkySis
         object: chat.completion
-        created: 1793047741
+        created: 1793405004
         model: anthropic/claude-opus-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -987,34 +991,34 @@ interactions:
             content: Item 0040 is on **shelf 3, bin 7** (revision 40, status verified).
             refusal: null
             reasoning: |+
-              Item 40 checks out: shelf 3, bin 7, revision 40, verified.
+              Item 0040 checks out: shelf 3, bin 7, revision 40 verified.
 
             reasoning_details:
             - type: reasoning.text
               text: |+
-                Item 40 checks out: shelf 3, bin 7, revision 40, verified.
+                Item 0040 checks out: shelf 3, bin 7, revision 40 verified.
 
               format: anthropic-claude-v1
               index: 0
               signature: >-
-                CAQSrwUKEAgTGAI4AUIIdGhpbmtpbmcSDFrWs0fvMIKFOE0vORoMIiJyi8eL2GJAwMpGIjDhr5+2Ttm+C14DSyZDwKV535ujxJXNa9lW8u33gadcmkmZLpqPZaoxRE+f0Hc3PYgqzATEYQ5sETi92qjNpOZrKEUHXH2LYqmspZrWlfZ0GEQb107yYcjjtIp8swYX9Y7BoF5S/5MlAvjC5ZZeMfddajGoncorHarrWX1aL0EReXtnpuhKLP/qz0vuZTcJPgcVJJr1K0NQJarGwh3QGZ2egavMWGzF82oR4fjyAjZSrxiwU469pihNjZZ3rvR4x4WUt9fX5cellV/ianRyLUCk6ONPqXd5YuqsrEzA7YMJVCJY7+d6uCdgALgXRPDyYrKVE/y+3SDqGPKJrbTKTGnaJy41gvcTSMAX4RymxYg7WyKzW6u3RfCqcc3ZoevulDgbvn08uTbg8l0t3OkuVPjPIgxUwkIS7f2JpgCRfAmJ8eLBjnYMdnQWvlHzUAm42UHU2KV8medq1vArBG4SxpgSXoA+zkZdc84jEAIPKaWISC+WyC7wa+tfTKTMFu+qRoqEvz4C3sNEnSCf+OgeoSMrGjm91WDBurvtCXPIt0n9KaQS1FglkDBt1rakbTsT7h2Ae/seZ+G+LTzkndu9i7XU3C1LQGznqB7pzzK5lJsnjwvPrI4lxYIGsA/n5KaAWX8OKNxR29iwQfOZQChRySV90jCG0DaaVg3NZ7Nzh2Sp9EDWUZzGFteg91WMq9tp0KedFaeNFJi32eXPd2DpX+KXjoCfIpUUh+XxI/nN0L1fyeVTXEC6M630vvN8CaAH6T1UURtZNDKYzpBj1d/H2e7wk3k/pkB8NCcb0yf0kkSoFasN5RT4M3q820bEL6HFZukZSd3jRYbv+QnLkGEUCQcYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1vcHVzLTUuNS0yMDI2MDkyMXxjbGF1ZGUtb24tYXdzIn0
+                CAQSqAUKEAgTGAI4AUIIdGhpbmtpbmcSDKlOSC3WE7ANBYUWiBoMQgfM8pLwV7js3ORkIjCn9isIadIt+djGh4JfFgkF2oVmZ6noA3tCcRCvnJ1d2ddCx7klpDfF84BpptJh/EUqxQTPxu9tTD3aA6UsSLPZgiCMcpDSrmPZUBOmVlKGl2BRFObG0HSMbgqSyBy5cyUShRwKbJUOpeOeJKB3g1WaQKzGEy6Qp4uiqXLuLc4LVC3AF1XE5b8I5f3LUu8odPDNX8SahGSDhkf0wFEvq5yveCV9tcRXTaRbJPUaUB2Fs0GwfolSr5acwBGyVjNCpCpGcOSeqzmj3tOSa6IuVSa/h8X4U/W9QWUwZuQjgCWn36/NvogjfErZNPmOkS4NxwhYSQ8WzFBu8aTshX2/aKtwMjwnXSoPXqWPpTcji6m3FTW8v/M1RkaSKXdauWAFrGpOiuj5cNI6pTN5Ae0k5WIMMUl968cvD16O+2ms5SvXQJPDQq5H29OFYJwDYZiG7Brl0F9OxWUxdzcjIRusFMxsckwRekemh0YQ67gvD+rVmZ5K6NaeUWtsR2etJyHh9n+V5Qzxb2HGEYNKtd/NV3w0543pUFkJZaLhWVwj2apawNHkg9tcJH+KUi+NhoNBxDgtVZJr+5ZOzvN5yAYiBZbGUXMuuBuoC7qThpRCP35qwpYKX4slWvWYcEMnHdi2BP3OH4T/gr93JitbnDu7cjcUgnIF8D+nGZFdNTnqO3T+H8YCnDeF3MaNWOI38JmIZP9ceTAxmbfSXHjveBb30eBuZN/gGwIVTALwd1/8GcWyhcdmYDwO6mvzaboOG/g9GGFUMUeZ+XJDjd6DnFa/3IT7fMxoH4efx1ypgNpieQdabClxz0pjwG/XVoZr7AwAdv4/QJD8RZ/zBBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1vcHVzLTUuNS0yMDI2MDkyMXxjbGF1ZGUtb24tYXdzIn0
         usage:
           prompt_tokens: 10873
-          completion_tokens: 60
-          total_tokens: 10933
-          cost: 0.0033898
+          completion_tokens: 59
+          total_tokens: 10932
+          cost: 0.0035522
           is_byok: false
           prompt_tokens_details:
-            cached_tokens: 10869
-            cache_write_tokens: 0
+            cached_tokens: 10831
+            cache_write_tokens: 38
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0033898
-            upstream_inference_prompt_cost: 0.0021898
-            upstream_inference_completions_cost: 0.0012
+            upstream_inference_cost: 0.0035522
+            upstream_inference_prompt_cost: 0.0023722
+            upstream_inference_completions_cost: 0.00118
           completion_tokens_details:
-            reasoning_tokens: 28
+            reasoning_tokens: 27
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T20:49:05.128019+00:00
+  recorded_at: 2026-10-31T00:03:27.003012+00:00

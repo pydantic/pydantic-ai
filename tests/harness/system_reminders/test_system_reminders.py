@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
@@ -207,6 +208,18 @@ def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
         for part in msg.parts
         if isinstance(part, SystemPromptPart) and part.scope == 'request'
     ]
+
+
+def _is_kept_copy(part: ModelRequestPart) -> bool:
+    """Return whether *part* is a `keep_user_messages` copy, by the marker `SummarizingCompaction` puts on its text."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(
+            isinstance(item, TextContent) and item.metadata == 'pydantic-ai-harness.compaction.kept-user-message.v1'
+            for item in part.content
+        )
+    )
 
 
 # --- Reminder validation ---
@@ -1027,7 +1040,12 @@ class TestLLMReminder:
         wrapped = [
             part.content for part in user_parts if isinstance(part.content, str) and part.content.startswith('<system>')
         ]
-        assert wrapped == [f'<system>{_GOAL_NOTE if source == "goal" else _LLM_NOTE}</system>']
+        # The quoted `</system>`, in the user's prompt or the reminder's data, gets the framework's lookalike note.
+        lookalike = [text for text in wrapped if 'looks like an application frame' in text]
+        assert len(lookalike) == 1
+        assert [text for text in wrapped if text not in lookalike] == [
+            f'<system>{_GOAL_NOTE if source == "goal" else _LLM_NOTE}</system>'
+        ]
         quoted = [part.content for part in user_parts if not isinstance(part.content, str)]
         if source == 'goal':
             # The goal is pointed at, not repeated: the user's text is only in their own prompt.
@@ -1653,9 +1671,8 @@ class TestEndToEnd:
             part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
-            and message.metadata
-            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
+            if _is_kept_copy(part)
         ]
         kept_texts = [
             part.content
@@ -1710,9 +1727,8 @@ class TestEndToEnd:
             part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
-            and message.metadata
-            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
+            if _is_kept_copy(part)
         ]
         assert kept == [
             UserPromptPart(

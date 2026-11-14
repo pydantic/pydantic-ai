@@ -45,7 +45,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, READINESS_WAIT_TIMEOUT, SlowBatchTestModel
-from ..conftest import try_import
+from ..conftest import no_leaked_tasks, try_import
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -707,23 +707,22 @@ async def test_exiting_the_capability_ends_its_queued_and_running_work() -> None
             await never.wait()
             raise AssertionError('unreachable')  # pragma: no cover
 
-    tasks_before = asyncio.all_tasks()
-    wrapped = HangingModel(pending_checks=1)
-    batching = BatchModelRequests(**FAST_POLLING, max_wait=None, max_requests=1)
-    agent = Agent(wrapped, capabilities=[batching])
-    async with batching:
-        checked = asyncio.create_task(agent.run('Check on me'))
-        await wrapped.wait_until(lambda m: m.status_checks == 1)
-        submitting = asyncio.create_task(agent.run('Hang on submission'))
-        await wrapped.wait_until(lambda m: isinstance(m, HangingModel) and m.submissions == 2)
-        batching._pool.max_requests = 2  # pyright: ignore[reportPrivateUsage]
-        queued = asyncio.create_task(agent.run('Queue me'))
-        await wrapped.wait_until(lambda m: m.encoded == 3)
+    with no_leaked_tasks():
+        wrapped = HangingModel(pending_checks=1)
+        batching = BatchModelRequests(**FAST_POLLING, max_wait=None, max_requests=1)
+        agent = Agent(wrapped, capabilities=[batching])
+        async with batching:
+            checked = asyncio.create_task(agent.run('Check on me'))
+            await wrapped.wait_until(lambda m: m.status_checks == 1)
+            submitting = asyncio.create_task(agent.run('Hang on submission'))
+            await wrapped.wait_until(lambda m: isinstance(m, HangingModel) and m.submissions == 2)
+            batching._pool.max_requests = 2  # pyright: ignore[reportPrivateUsage]
+            queued = asyncio.create_task(agent.run('Queue me'))
+            await wrapped.wait_until(lambda m: m.encoded == 3)
 
-    for run in (queued, submitting, checked):
-        with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
-            await run
-    assert asyncio.all_tasks() - tasks_before == {asyncio.current_task()} - tasks_before
+        for run in (queued, submitting, checked):
+            with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
+                await run
 
 
 async def test_closing_before_a_submission_starts_fails_its_requests() -> None:
@@ -1163,7 +1162,7 @@ async def test_a_batch_has_its_own_trace_linked_to_the_requests_in_it(capfire: C
         (batch.context.span_id, 'in_progress'),
         (batch.context.span_id, 'ended'),
     ]
-    assert not [span for span in spans if 'propagated trace context' in span.name]
+    assert not [span for span in spans if span.name.startswith('Found propagated')]
     for chat in chats:
         assert (chat.attributes or {})['pydantic_ai.batch.id'] == batch_id
         assert [link.context.span_id for link in chat.links] == [batch.context.span_id]

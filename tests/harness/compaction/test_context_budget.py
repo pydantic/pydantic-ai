@@ -44,7 +44,7 @@ from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
     ContextUsage,
-    ContextUsageEvent,
+    ContextUsageMeasuredEvent,
     DeduplicateFileReads,
     ReportContextUsage,
     SlidingWindowCompaction,
@@ -1027,7 +1027,7 @@ class TestReportContextUsage:
         request_context = _request_context(_history(2))
         assert await monitor.before_model_request(ctx, request_context) is request_context
 
-        assert [type(event) for event in ctx.emitted] == [ContextUsageEvent]
+        assert [type(event) for event in ctx.emitted] == [ContextUsageMeasuredEvent]
         event = ctx.emitted[0]
         assert event.window_tokens == 1_000
         assert event.used_tokens > 0
@@ -1619,8 +1619,8 @@ class TestInstructionDeltaCounting:
     @pytest.mark.parametrize(
         ('content', 'rendered'),
         [
-            ('New state', '<context id="agent:state">\nNew state\n</context>'),
-            (None, '<context id="agent:state">\nThis context has been withdrawn.\n</context>'),
+            ('New state', '<pyai:context id="agent:state">\nNew state\n</pyai:context>'),
+            (None, '<pyai:context id="agent:state">\nThis context has been withdrawn.\n</pyai:context>'),
         ],
     )
     def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:

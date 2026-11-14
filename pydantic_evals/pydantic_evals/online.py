@@ -30,7 +30,7 @@ import asyncio
 import functools
 import inspect
 import threading
-from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, LiteralString, Protocol
@@ -644,7 +644,13 @@ def _dispatch_on_error(
         **get_eval_context_kwargs(),
     )
     span_reference = _extract_span_reference(span)
-    coro = _online_internal.dispatch_evaluators(error_evaluators, context, span_reference, target, config)
+    _dispatch_on_running_loop_or_thread(
+        _online_internal.dispatch_evaluators(error_evaluators, context, span_reference, target, config)
+    )
+
+
+def _dispatch_on_running_loop_or_thread(coro: Coroutine[Any, Any, None]) -> None:
+    """Dispatch on the running event loop if there is one, otherwise on a background thread with its own loop."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -793,19 +799,9 @@ def _wrap_sync(
         # Extract span reference
         span_reference = _extract_span_reference(span)
 
-        # If there's a running event loop (sync function called from async context),
-        # dispatch on that loop. Otherwise, spawn a background thread with its own loop.
-        try:
-            asyncio.get_running_loop()
-            has_running_loop = True
-        except RuntimeError:
-            has_running_loop = False
-
-        coro = _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
-        if has_running_loop:
-            _online_internal.dispatch_async(coro)
-        else:
-            _online_internal.dispatch_in_background_thread(coro)
+        _dispatch_on_running_loop_or_thread(
+            _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
+        )
 
         return result
 

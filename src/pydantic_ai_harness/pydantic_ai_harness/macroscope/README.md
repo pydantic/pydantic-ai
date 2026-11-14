@@ -5,7 +5,29 @@ agent and hand the findings back for validation and fixing.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/macroscope/)
 
-![The model calls run_macroscope_review, which runs macroscope codereview --raw in the run's workspace. The CLI uploads the branch diff to Macroscope's service and streams findings back, and the tool returns them as a MacroscopeReview with a review id, a status and a list of MacroscopeIssue findings. The agent then checks each finding and fixes the real ones with its own file and shell tools. Setup problems, such as a missing or signed-out CLI, raise UserError and stop the run.](https://pydantic.dev/docs/ai/img/harness/macroscope.svg)
+```mermaid
+flowchart TB
+    accTitle: Macroscope: a code review the agent runs, checks and fixes
+    accDescr: The model calls run_macroscope_review of the Macroscope capability, gets a MacroscopeReview, checks findings and fixes the real ones with FileSystem or Shell. The tool runs macroscope codereview --raw in the workspace, which sends the branch diff to the Macroscope service for review and returns streamed findings. If the CLI is missing or not signed in, UserError stops the run.
+    subgraph agent["Your agent"]
+        model(["model"])
+        macroscope["Macroscope()<br/>run_macroscope_review"]:::capability
+        fix["FileSystem or Shell"]
+    end
+    subgraph workspace["Workspace"]
+        cli["macroscope<br/>codereview --raw"]
+    end
+    service["Macroscope service<br/>reviews the diff"]:::external
+    stopped["UserError<br/>the run stops"]:::blocked
+    model <-->|"tool call,<br/>MacroscopeReview"| macroscope
+    model -->|"checks findings,<br/>fixes the real ones"| fix
+    macroscope <-->|"runs, findings"| cli
+    cli <-->|"branch diff,<br/>streamed findings"| service
+    macroscope -.-x|"CLI missing or<br/>not signed in"| stopped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -132,8 +154,7 @@ for its shell and write tools.
 ## Telemetry
 
 `Macroscope` emits no spans of its own. Core's instrumentation records each
-`run_macroscope_review` call as a tool span, and the capability makes no decision
-worth a span of its own.
+`run_macroscope_review` call as a tool span.
 
 ## Two of them
 

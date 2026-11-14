@@ -4,8 +4,9 @@ import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
+import { PermissionsChip } from './components/PermissionsChip'
 import { Switches } from './components/Switches'
-import { Transcript } from './components/Transcript'
+import { Transcript, type Rewind } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { CommandMenu } from './components/CommandMenu'
@@ -23,7 +24,16 @@ import { DiffIcon, SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
 import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
-import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action, type Chat } from './state'
+import {
+  finishedCalls,
+  initial,
+  initialOrchestrator,
+  reduce,
+  reduceOrchestrator,
+  shownChat,
+  type Action,
+  type Chat,
+} from './state'
 import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
@@ -45,22 +55,52 @@ const NO_ATTACHMENTS: readonly Attachment[] = []
 const SessionTranscript = memo(function SessionTranscript({
   id,
   chat,
+  busy,
   onWorker,
+  onError,
 }: {
   id: string
   chat: Chat
+  busy: boolean
   onWorker: (id: string) => void
+  onError: (message: string) => void
 }) {
   const session = useMemo(() => sessionApi(id), [id])
+  const rewind = useCallback<Rewind>(
+    (runId, text) =>
+      session.rewind(runId, text).then(
+        () => true,
+        (error: unknown) => {
+          onError(error instanceof Error ? error.message : String(error))
+          return false
+        },
+      ),
+    [session, onError],
+  )
   const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: onWorker }), [chat.tasks, onWorker])
   return (
     <SessionContext.Provider value={session}>
       <WorkersContext.Provider value={links}>
-        <Transcript entries={chat.entries} running={chat.running} empty={null} />
+        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} busy={busy} />
       </WorkersContext.Provider>
     </SessionContext.Provider>
   )
 })
+
+/** `count` as it rises, at most once per `ms`, the latest each time; a drop, as when a turn ends, shows at once. */
+function useRising(count: number, ms: number): number {
+  const [shown, setShown] = useState(count)
+  const latest = useRef(count)
+  latest.current = count
+  if (count < shown) setShown(count)
+  const behind = count > shown
+  useEffect(() => {
+    if (!behind) return
+    const timer = window.setTimeout(() => setShown(latest.current), ms)
+    return () => window.clearTimeout(timer)
+  }, [behind, ms])
+  return Math.min(count, shown)
+}
 
 function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
@@ -295,11 +335,24 @@ export function App() {
     setChanges(false)
     setSidePanel(null)
   }, [])
-  // The files may have changed when a turn ends, so the count and the panel ask again then. While one runs, each asks
-  // only for a session or scope it has no answer for yet.
+  // The files may have changed when a turn ends, so the count, the panel, and the git chip ask again then. While one
+  // runs, each asks again as its tool calls finish, at most once a second.
   const changesActive = connection === 'open' && !chat.running
+  const finished = useMemo(
+    () => (chat.running ? finishedCalls(chat.entries.slice(chat.turnFrom)) : 0),
+    [chat.running, chat.entries, chat.turnFrom],
+  )
+  const edits = useRising(finished, 1000)
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
-  const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false, state.sessionsVersion).changes
+  const sessionChanges = useChanges(
+    session,
+    'session',
+    shown ?? '',
+    changesActive,
+    false,
+    state.sessionsVersion,
+    edits,
+  ).changes
   const changed = (sessionChanges?.files.length ?? 0) + (sessionChanges?.omitted ?? 0)
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
@@ -416,6 +469,10 @@ export function App() {
   const focusSessions = useCallback(() => {
     setSidebar(true)
     window.setTimeout(() => sidebarRef.current?.focusSearch())
+  }, [])
+  const toggleAttention = useCallback(() => {
+    setSidebar(true)
+    window.setTimeout(() => sidebarRef.current?.toggleAttention())
   }, [])
   const focusWorkers = useCallback(() => {
     setSidebar(true)
@@ -579,6 +636,9 @@ export function App() {
       } else if (mod && event.key === ',') {
         event.preventDefault()
         openSettings()
+      } else if (mod && event.altKey && event.code === 'KeyU') {
+        event.preventDefault()
+        toggleAttention()
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -600,7 +660,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions, toggleAttention])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -623,7 +683,12 @@ export function App() {
       ref={composer}
       running={chat.running}
       meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
-      controls={<Switches status={status} running={chat.running} onError={showError} />}
+      controls={
+        <>
+          <PermissionsChip status={status} onError={showError} />
+          <Switches status={status} running={chat.running} onError={showError} />
+        </>
+      }
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
@@ -720,8 +785,8 @@ export function App() {
                   // One per session, so an action still running for the last one cannot show over this one.
                   key={chat.session.id}
                   session={chat.session.id}
-                  // While a turn runs its edits are not done yet; each item after it may be a `/commit`'s.
-                  refresh={chat.running ? -1 : entries.length}
+                  // While a turn runs, each finished tool call may have edited files; each item after may be a `/commit`'s.
+                  refresh={chat.running ? -1 - edits : entries.length}
                   onNotice={showNotice}
                 />
               )}
@@ -819,7 +884,13 @@ export function App() {
           .sort()
           .map((id) => (
             <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
-              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} />
+              <SessionTranscript
+                id={id}
+                chat={chats[id] as Chat}
+                busy={live[id]?.busy ?? false}
+                onWorker={openWorker}
+                onError={showError}
+              />
             </Activity>
           ))}
         {!orchestrating && !workerTask && !fresh && (
@@ -892,7 +963,9 @@ export function App() {
           session={session}
           owner={shown ?? ''}
           active={changesActive}
+          connected={connection === 'open'}
           saved={state.sessionsVersion}
+          edits={edits}
           onClose={() => setChanges(false)}
         />
       )}

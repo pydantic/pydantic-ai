@@ -1,6 +1,5 @@
 """Messages queue first; explicit steering uses core delivery."""
 
-import asyncio
 from collections.abc import AsyncIterable, Sequence
 from io import StringIO
 from pathlib import Path
@@ -23,6 +22,7 @@ from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from tests.clai2.test_live_prompt import editor
+from tests.conftest import no_leaked_tasks
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -564,29 +564,28 @@ async def test_shell_echoes_steering_while_run_blocked(
     image = BinaryContent(data=b'image', media_type='image/png')
     marker = shell.images.attach([image]) if attachments else ''
     direction = f'change direction {marker}'.strip()
-    before = asyncio.all_tasks()
-    async with editor() as (live, _, _):
-        live.steer = shell.steer
-        async with anyio.create_task_group() as tasks:
-            tasks.start_soon(shell.run_turn, TurnStart(text='start'))
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await started.wait()
-            live.buffer.replace(direction)
-            if route == 'queued':
-                live.feed('enter')
-            live.feed('alt-enter')
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await echoed.wait()
-            assert not release.is_set()
-            assert transcript.getvalue().count(f'> {direction}') == 1
-            assert shell.images.notice == ''
-            assert live.buffer.text == ''
-            assert live.queued_messages == ()
-            if cancel:
-                tasks.cancel_scope.cancel()
-            else:
-                release.set()
-    assert asyncio.all_tasks() - before == set()
+    with no_leaked_tasks():
+        async with editor() as (live, _, _):
+            live.steer = shell.steer
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(shell.run_turn, TurnStart(text='start'))
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await started.wait()
+                live.buffer.replace(direction)
+                if route == 'queued':
+                    live.feed('enter')
+                live.feed('alt-enter')
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await echoed.wait()
+                assert not release.is_set()
+                assert transcript.getvalue().count(f'> {direction}') == 1
+                assert shell.images.notice == ''
+                assert live.buffer.text == ''
+                assert live.queued_messages == ()
+                if cancel:
+                    tasks.cancel_scope.cancel()
+                else:
+                    release.set()
     assert not shell.steer('after turn')
     prompts = [
         part.content
@@ -649,21 +648,20 @@ async def test_turn_drains_accepted_steering_before_finishing(
         assert result.outcome == ('failed' if fail else 'completed'), transcript.getvalue()
         completed.set()
 
-    before = asyncio.all_tasks()
-    async with anyio.create_task_group() as tasks:
-        tasks.start_soon(run)
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            await tool_started.wait()
-        assert shell.steer('first')
-        assert shell.steer('second')
-        model_release.set()
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            await model_done.wait()
-            await echo_started.wait()
-        assert not completed.is_set()
-        release.set()
-    assert completed.is_set()
-    assert asyncio.all_tasks() == before
+    with no_leaked_tasks():
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await tool_started.wait()
+            assert shell.steer('first')
+            assert shell.steer('second')
+            model_release.set()
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await model_done.wait()
+                await echo_started.wait()
+            assert not completed.is_set()
+            release.set()
+        assert completed.is_set()
     output = transcript.getvalue()
     assert output.count('> first') == output.count('> second') == 1
     assert output.index('> first') < output.index('> second')

@@ -20,6 +20,7 @@ from pydantic_ai import (
     UserPromptPart,
     XSearchTool,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles import ModelProfile
@@ -156,6 +157,29 @@ async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_mo
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
     assert 'reasoning_effort' not in kwargs[0]
+
+
+@pytest.mark.parametrize(
+    'model_name, sealed',
+    [
+        ('grok-4.3', True),
+        ('grok-4.3-latest', True),
+        ('grok-4.5', True),
+        ('grok-4.5-latest', True),
+        ('grok-4.6', True),
+        ('grok-4.7', True),
+        # Grok 4.20 measured worse with the sealed rendering, so it keeps plain `<system>` blocks.
+        ('grok-4.20', False),
+        ('grok-4.20-0309-reasoning', False),
+        ('grok-4', False),
+        ('grok-latest', False),
+    ],
+)
+def test_grok_model_profile_sealed_system_blocks(model_name: str, sealed: bool) -> None:
+    """Grok 4.3 through 4.7 get the sealed `<system>` rendering; Grok 4.20 and other ids don't."""
+    profile = grok_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('needs_sealed_system_blocks', False) is sealed
 
 
 def test_grok_model_profile_builtin_tools() -> None:
@@ -906,8 +930,12 @@ async def test_xai_builtin_file_search_tool(
                     FileSearchTool(
                         file_store_ids=[collection.collection_id],
                         max_num_results=1,
-                        instructions='Prioritize exact factual matches from the uploaded research memo.',
-                        retrieval_mode='semantic',
+                        provider_settings={
+                            'xai': {
+                                'instructions': 'Prioritize exact factual matches from the uploaded research memo.',
+                                'retrieval_mode': 'semantic',
+                            }
+                        },
                     )
                 )
             ],
@@ -1023,8 +1051,9 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
                 FileSearchTool(
                     file_store_ids=['col-1', 'col-2'],
                     max_num_results=5,
-                    instructions='Focus on recent documents.',
-                    retrieval_mode='hybrid',
+                    provider_settings={
+                        'xai': {'instructions': 'Focus on recent documents.', 'retrieval_mode': 'hybrid'}
+                    },
                 )
             )
         ],
@@ -1041,6 +1070,33 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
                     'limit': 5,
                     'instructions': 'Focus on recent documents.',
                     'hybrid_retrieval': {},
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_file_search_provider_field_deprecation(allow_model_requests: None):
+    """A deprecated field and a different nested option combine in one request."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'field `instructions` is deprecated'):
+        tool = FileSearchTool(
+            file_store_ids=['col-1'],
+            instructions='Legacy instructions.',
+            provider_settings={'xai': {'retrieval_mode': 'semantic'}},
+        )
+
+    await Agent(m, capabilities=[NativeTool(tool)]).run('Search my docs')
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1'],
+                    'instructions': 'Legacy instructions.',
+                    'semantic_retrieval': {},
                 }
             }
         ]

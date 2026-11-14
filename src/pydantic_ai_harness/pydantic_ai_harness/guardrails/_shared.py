@@ -11,16 +11,19 @@ from __future__ import annotations
 import functools
 import inspect
 import warnings
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from typing import Literal, assert_never
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Literal, assert_never
 
+from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
+from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.guardrails._exceptions import GuardrailError, InputBlocked, OutputBlocked, ToolBlocked
 
 
 class _Unset:
@@ -33,6 +36,13 @@ class _Unset:
 
     def __repr__(self) -> str:
         return '<unset>'
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        """Let a JSON schema of `GuardrailResult`, as a durable operation result, carry the default."""
+        return core_schema.is_instance_schema(
+            cls, serialization=core_schema.plain_serializer_function_ser_schema(lambda _: None)
+        )
 
 
 _UNSET = _Unset()
@@ -60,7 +70,7 @@ class GuardrailResult:
     message: str | None = None
     """For `block`, the refusal text. For `retry`, the instruction sent back to the model."""
 
-    replacement: object = _UNSET
+    replacement: Annotated[object, Field(exclude_if=lambda value: value is _UNSET)] = _UNSET
     """For `replace`, the value substituted for the inspected one.
 
     Defaults to a private sentinel rather than `None`, so `replace(None)` is a
@@ -70,12 +80,9 @@ class GuardrailResult:
     def __post_init__(self) -> None:
         """Reject field combinations the outcome contract does not allow."""
         match self.action:
-            case 'allow':
+            case 'allow' | 'approve':
                 if self.message is not None or self.replacement is not _UNSET:
-                    raise UserError("GuardrailResult(action='allow') must not set `message` or `replacement`.")
-            case 'approve':
-                if self.message is not None or self.replacement is not _UNSET:
-                    raise UserError("GuardrailResult(action='approve') must not set `message` or `replacement`.")
+                    raise UserError(f'GuardrailResult(action={self.action!r}) must not set `message` or `replacement`.')
             case 'replace':
                 if self.replacement is _UNSET:
                     raise UserError("GuardrailResult(action='replace') requires a `replacement` value.")
@@ -307,6 +314,98 @@ async def evaluate_all(
             continue
         return verdict, position
     return (GuardrailResult.replace(value) if replaced else GuardrailResult.allow()), len(guards) - 1
+
+
+_JSON_TYPES = (str, int, float, bool, type(None), dict, list)
+_CARRIED_ERRORS: dict[str, type[Exception]] = {
+    cls.__name__: cls
+    for cls in (GuardrailError, InputBlocked, OutputBlocked, ToolBlocked, ApprovalRequired, ModelRetry)
+}
+
+
+@dataclass
+class RaisedGuardError:
+    """A control-flow exception a guard raised inside a durable operation, carried out as data.
+
+    A durable engine would otherwise fail, and may retry, the operation instead of passing the
+    exception to the run. Only the exact types in `_CARRIED_ERRORS` are carried.
+    """
+
+    kind: str
+    args: list[Any] = field(default_factory=list[Any])
+    metadata: dict[str, Any] | None = None
+    live: Annotated[object, Field(exclude=True)] = field(default=None, repr=False, compare=False)
+    """The exception itself, kept in-process only: it is neither serialized nor pickled."""
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Drop the live exception, so an unpickled record rebuilds it from its fields."""
+        return {**self.__dict__, 'live': None}
+
+    @classmethod
+    def carry(cls, error: Exception) -> RaisedGuardError | None:
+        """Describe `error` as data, or return `None` for a type that is not carried."""
+        if type(error) is ToolBlocked:
+            raised = cls('ToolBlocked', [error.tool_name, error.reason])
+        elif type(error) is ApprovalRequired:
+            raised = cls('ApprovalRequired', metadata=error.metadata)
+        elif _CARRIED_ERRORS.get(type(error).__name__) is type(error):
+            raised = cls(type(error).__name__, list(error.args))
+        else:
+            return None
+        raised.live = error
+        return raised
+
+    def error(self) -> Exception:
+        """The exception the guard raised: the original in-process, a rebuilt one after a durable boundary."""
+        if isinstance(self.live, Exception):
+            return self.live
+        if self.kind == 'ApprovalRequired':
+            return ApprovalRequired(metadata=self.metadata)
+        return _CARRIED_ERRORS[self.kind](*self.args)
+
+
+@dataclass
+class RecordedVerdict:
+    """What a guard chain's durable operation records: its verdict, or the exception it raised.
+
+    `replacement_type` names a replacement's type when it is not plain JSON data, so a replacement
+    a JSON transport flattened is rebuilt as the value it replaces, and only then.
+    """
+
+    verdict: GuardrailResult | None = None
+    position: int = 0
+    replacement_type: str | None = None
+    raised: RaisedGuardError | None = None
+
+
+async def record_verdict(evaluation: Awaitable[tuple[GuardrailResult, int]]) -> RecordedVerdict:
+    """Await a guard chain inside its durable operation, returning a carried exception as data."""
+    try:
+        verdict, position = await evaluation
+    except Exception as error:
+        if (raised := RaisedGuardError.carry(error)) is None:
+            raise
+        return RecordedVerdict(raised=raised)
+    replacement_type = None
+    if verdict.action == 'replace' and not isinstance(verdict.replacement, _JSON_TYPES):
+        replacement_type = _type_name(type(verdict.replacement))
+    return RecordedVerdict(verdict, position, replacement_type=replacement_type)
+
+
+def _type_name(cls: type) -> str:
+    return f'{cls.__module__}.{cls.__qualname__}'
+
+
+def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[GuardrailResult, int]:
+    """Raise the exception a guard chain raised, or return its verdict with a flattened replacement rebuilt."""
+    if recorded.raised is not None:
+        raise recorded.raised.error()
+    verdict = recorded.verdict
+    assert verdict is not None
+    original_type = type(original)
+    if recorded.replacement_type == _type_name(original_type) and not isinstance(verdict.replacement, original_type):
+        verdict = GuardrailResult.replace(TypeAdapter(original_type).validate_python(verdict.replacement))
+    return verdict, recorded.position
 
 
 def direction_attributes(direction: str, action: str, tool_name: str | None) -> dict[str, str]:

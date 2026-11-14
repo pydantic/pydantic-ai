@@ -17,13 +17,13 @@
 <!-- rule:559 -->
 - Consolidate duplicate logic across conditional branches using combined conditions, extracted variables, or hoisted shared code — Reduces duplication, makes changes easier to maintain in one place, and clarifies that behavior is intentionally shared across branches
 <!-- rule:14 -->
-- Inline single-use helpers that only wrap property access or delegation — reduces nesting and cognitive load without sacrificing clarity — Eliminates unnecessary indirection that forces readers to jump between methods to understand simple operations, making code more direct and maintainable
+- Don't create single-use helpers: inline the code at its only call site. Three kinds of helper may have a single call site: an arm of a dispatch over part, event or message types, a pass of a multi-pass pipeline, and a helper you extract to bring a function under the cognitive complexity limit. Give each arm of more than one statement, and each pass, its own method or module function, like the `_map_thinking_part` and `_map_compaction_part` arms of `AnthropicModel._map_model_response` in `models/anthropic/__init__.py`. Place a complexity helper as [Extract a method](complexity.md#extract-a-method) says. Never write any of the three as a nested `def` — A single-use helper makes readers jump between definitions without buying reuse — A flat arm per type means a new type adds one arm rather than a nested branch, and complexipy counts a nested `def` toward the enclosing function, so it removes no complexity
 <!-- rule:21 -->
 - Extract model profile logic into dedicated `{provider}_model_profile()` functions in `profiles/{provider}.py` rather than inline in provider classes — Separates profile definitions from provider implementation, making profiles testable in isolation and easier to maintain across providers
 <!-- rule:263 -->
 - Extract repeated logic into helper methods or top-level functions when patterns recur (e.g., streaming vs non-streaming handlers, serialization, part types, message mappings, model adapters) — Prevents duplication bugs and makes changes easier to apply consistently across all code paths (like both streaming and non-streaming handlers)
 <!-- rule:176 -->
-- Scope helpers and constants to their single usage site — define inline or within the class/function that uses them, not at module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use
+- Scope constants, and helpers called more than once from one class or function, to that class or function rather than module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use. Exception: place a dispatch arm, a pipeline pass or a complexity helper as the single-use helper rule above says
 <!-- rule:345 -->
 - Extract duplicated logic (validation, types, activity definitions, transformations) to parent classes or shared utilities — prevents drift and reduces maintenance burden across implementations — Keeping shared code in one place (like `_call_tool_in_activity` in `TemporalWrapperToolset`) prevents inconsistencies when logic evolves across multiple implementations (`TemporalFunctionToolset`, `TemporalMCPServer`, etc.)
 <!-- rule:284 -->
@@ -136,4 +136,5 @@ Check these when working in specific areas:
 - **[Message History & Prompt Caching](message-history-and-caching.md)**: When enqueuing, editing, or rendering messages, contributing instructions or tools, wrapping content in tags, or converting history to or from a UI protocol
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 - **[Provider Adapters](provider-adapters.md)**: When mapping messages to or from a provider's wire format in a model adapter, adding a capability check, or adding a profile flag an adapter reads
+- **[Cognitive Complexity](complexity.md)**: When pre-commit or CI reports a function's cognitive complexity, or before you add a branch to a function that is already over the limit
 <!-- /braindump -->

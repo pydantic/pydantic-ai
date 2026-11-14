@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Protocol, cast
 
 import pydantic_core
@@ -44,14 +44,14 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
-    unavailable. A 400 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category in
-    the provider's own error code or message first.
+    unavailable. A 400, 413 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category
+    in the provider's own error code or message first.
     """
     if status_code in (401, 403):
         return ModelAuthenticationError
     if status_code == 404:
         return ModelNotFoundError
-    if status_code in (400, 422):
+    if status_code in (400, 413, 422):
         return ModelRequestRejectedError
     if status_code == 402:
         return ModelQuotaExceededError
@@ -123,11 +123,65 @@ def openai_compatible_category(
     if says_overloaded(code, error_type):
         return ModelOverloadedError
     if code == 'model_not_found':
-        # The Responses API sends it as a 400, the Chat Completions API as a 404.
+        # An error inside a stream carries no status, so only the code says what it is.
         return ModelNotFoundError
     if code == 'invalid_api_key':
         return ModelAuthenticationError
     return http_status_category(status_code, message) if status_code is not None else None
+
+
+def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
+    """Read an error response body that no SDK read, the way the provider SDKs read one.
+
+    Returns `text` parsed as JSON, or `None` when it isn't JSON; its `error` value, which OpenAI-compatible and Google
+    APIs send as `{"error": {...}}`, or the parsed object itself when it has no `error`, or `None` when it isn't an
+    object; and the string fields of that error object.
+    """
+    try:
+        parsed: object = pydantic_core.from_json(text) if text else None
+    except ValueError:
+        parsed = None
+    error = parsed.get('error', parsed) if is_str_dict(parsed) else None
+    fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+    return parsed, error, fields
+
+
+class MultiValueHeaders(Protocol):
+    """Response headers that can repeat a name, like `websockets`' `Headers`."""
+
+    def __iter__(self) -> Iterator[str]: ...
+
+    def get_all(self, key: str) -> list[str]: ...
+
+
+def joined_headers(headers: MultiValueHeaders) -> dict[str, str]:
+    """`headers` as a `dict`, with a repeated header's values joined as `httpx` joins them.
+
+    `dict()` of `websockets`' `Headers` raises `MultipleValuesError` on a repeated header, like two `Set-Cookie` lines.
+    """
+    return {name: ', '.join(headers.get_all(name)) for name in headers}
+
+
+def openai_compatible_response_error(
+    model_name: str, status_code: int, body: str | None, headers: Mapping[str, str]
+) -> ModelHTTPError:
+    """The error for an OpenAI-compatible error response that no SDK read, like a rejected WebSocket upgrade.
+
+    It gets the category, error code and error type the SDK's error for the same response gets, and keeps `body` as
+    the response text. A status below 400 isn't an error response, so it gets no category.
+    """
+    _, _, fields = parse_error_body(body)
+    code, error_type = fields.get('code'), fields.get('type')
+    category = openai_compatible_category(status_code, code, error_type, fields.get('message', body))
+    return ModelHTTPError.for_category(
+        category if status_code >= 400 else None,
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
 
 
 _ZAI_QUOTA_CODES = frozenset(
@@ -145,6 +199,16 @@ def zai_code_category(code: str | None) -> HTTPErrorCategory | None:
     return ModelQuotaExceededError if code in _ZAI_QUOTA_CODES else None
 
 
+def moonshot_type_category(error_type: str | None) -> HTTPErrorCategory | None:
+    """The error category for a Moonshot AI error `type`, where it differs from the HTTP status's.
+
+    Moonshot sends an exhausted balance or a suspended account as a 429 with the type `exceeded_current_quota_error`,
+    like its `rate_limit_reached_error`, so only the type tells them apart; see
+    https://forum.moonshot.ai/t/429-insufficient-balance/244.
+    """
+    return ModelQuotaExceededError if error_type == 'exceeded_current_quota_error' else None
+
+
 _GOOGLE_CONTEXT_WINDOW_MESSAGES = ('input token count', 'number of tokens allowed')
 """Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
 
@@ -153,28 +217,81 @@ variant drops the leading clause.
 """
 
 
-def google_error_reason(details: object) -> str | None:
+def google_error_details(body: object) -> list[dict[str, object]]:
+    """The `details` of a Google API error body, like its `google.rpc.ErrorInfo` and `google.rpc.QuotaFailure`."""
+    error = body.get('error') if is_str_dict(body) else None
+    details = error.get('details') if is_str_dict(error) else None
+    if not isinstance(details, list):
+        return []
+    return [detail for detail in cast(list[object], details) if is_str_dict(detail)]
+
+
+def google_error_reason(body: object) -> str | None:
     """The `reason` of the `google.rpc.ErrorInfo` in a Google API error body, like `'API_KEY_INVALID'`, if any."""
-    error = details.get('error') if is_str_dict(details) else None
-    error_details = error.get('details') if is_str_dict(error) else None
-    if isinstance(error_details, list):
-        for detail in cast(list[object], error_details):
-            if is_str_dict(detail) and isinstance(reason := detail.get('reason'), str):
-                return reason
+    for detail in google_error_details(body):
+        if isinstance(reason := detail.get('reason'), str):
+            return reason
     return None
 
 
-def google_status_category(status: str | None, message: object, reason: str | None = None) -> HTTPErrorCategory | None:
-    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
+def google_exceeds_daily_quota(body: object) -> bool:
+    """Whether a Google API error body's `google.rpc.QuotaFailure` says a daily quota was exceeded.
 
-    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
-    always a rate limit. It sends an invalid API key as `INVALID_ARGUMENT`, with the `reason` `API_KEY_INVALID`.
+    Gemini sends a `RESOURCE_EXHAUSTED` with a violation for each quota the request exceeded, like
+    `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` or `GenerateRequestsPerDayPerProjectPerModel-FreeTier`.
+    A daily quota resets at midnight Pacific time, see https://ai.google.dev/gemini-api/docs/rate-limits.
     """
-    if reason == 'API_KEY_INVALID':
+    for detail in google_error_details(body):
+        violations = detail.get('violations')
+        if isinstance(violations, list):
+            for violation in cast(list[object], violations):
+                if (
+                    is_str_dict(violation)
+                    and isinstance(quota_id := violation.get('quotaId'), str)
+                    and 'PerDay' in quota_id
+                ):
+                    return True
+    return False
+
+
+def google_retry_after(error: ModelHTTPError) -> float | None:
+    """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
+
+    Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string of seconds, like
+    `'14s'` or `'0.5s'`; one that's absent, doesn't end in `s`, holds no number before it, or is negative or
+    infinite says nothing.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    for detail in google_error_details(error.body):
+        if isinstance(raw := detail.get('retryDelay'), str) and raw.endswith('s'):
+            try:
+                seconds = float(raw[:-1])
+            except ValueError:
+                continue
+            if 0 <= seconds < float('inf'):
+                return seconds
+    return None
+
+
+def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:
+    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`, and the error `body`'s details.
+
+    Gemini sends `RESOURCE_EXHAUSTED` for both per-minute rate limits and the daily quota, with the same message, so
+    only the quotas listed in the body's `google.rpc.QuotaFailure` tell them apart; without them, it's a rate limit.
+    It sends an invalid API key as `INVALID_ARGUMENT`, with the `reason` `API_KEY_INVALID`.
+    """
+    if google_error_reason(body) == 'API_KEY_INVALID':
         return ModelAuthenticationError
     match status:
         case 'RESOURCE_EXHAUSTED':
-            return ModelRateLimitError
+            # The daily quota doesn't reset until midnight Pacific time, so waiting won't help.
+            return ModelQuotaExceededError if google_exceeds_daily_quota(body) else ModelRateLimitError
+        case 'FAILED_PRECONDITION' if isinstance(message, str) and 'billing' in message.lower():
+            # Like `Gemini API free tier is not available in your country. Please enable billing on your project in
+            # Google AI Studio.`; other preconditions, like `User location is not supported`, are rejected requests.
+            return ModelQuotaExceededError
         case 'UNAVAILABLE':
             # Like `The model is overloaded. Please try again later.`
             return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError

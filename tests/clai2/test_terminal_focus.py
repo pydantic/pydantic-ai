@@ -589,7 +589,7 @@ async def test_chat_opens_sessions_for_the_browser_beside_the_terminal(tmp_path:
     seen: list[dict[str, JsonValue]] = []
 
     def settings_for(project: ProjectSettings) -> Settings:
-        seen.append(project.overrides)
+        seen.append(project.pending)  # Not approved, so it waits; read from that folder all the same.
         return Settings(model='test')
 
     async def drive() -> None:

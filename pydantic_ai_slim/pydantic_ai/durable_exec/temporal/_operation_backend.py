@@ -37,9 +37,11 @@ from ._model_errors import (
 )
 from ._operation_names import TemporalOperationNamer
 from ._toolset import (
+    NON_RETRYABLE_ERRORS,
     ChildWorkflowOperationConfig,
     heartbeating,
     model_response_payload_errors,
+    non_retryable_subclasses_as_application_errors,
 )
 
 ParamsT = TypeVar('ParamsT')
@@ -259,13 +261,14 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
             semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
-                if model_operation:
-                    with model_errors_as_application_errors(self._non_retryable_model_errors):
-                        return await operation.handler(semantic_params)
-                if capability_operation:
-                    with retry_requests_as_application_errors():
-                        return await operation.handler(semantic_params)
-                return await operation.handler(semantic_params)
+                with non_retryable_subclasses_as_application_errors():
+                    if model_operation:
+                        with model_errors_as_application_errors(self._non_retryable_model_errors):
+                            return await operation.handler(semantic_params)
+                    if capability_operation:
+                        with retry_requests_as_application_errors():
+                            return await operation.handler(semantic_params)
+                    return await operation.handler(semantic_params)
 
         # Existing operation transports retain their shipped wire dataclasses and activity
         # signatures. New operation ids ride this generic registration path and only need a
@@ -297,8 +300,11 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
                 except Exception as e:
                     # Like an exception in an activity, fail this child workflow (subject to its retry policy) so
                     # the error reaches the parent's tool call, instead of failing the workflow task, which
-                    # Temporal would retry forever.
-                    raise ApplicationError(str(e), type=type(e).__name__) from e
+                    # Temporal would retry forever. The retry policy names the non-retryable classes, but not their
+                    # subclasses, which are marked here.
+                    raise ApplicationError(
+                        str(e), type=type(e).__name__, non_retryable=isinstance(e, NON_RETRYABLE_ERRORS)
+                    ) from e
 
             # UTF-8 hex preserves the full operation name while using only Python identifier characters.
             encoded_name = name.encode().hex()

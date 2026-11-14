@@ -184,7 +184,9 @@ the backend model takes over, calling the agent's tools as it goes. Those calls 
 [tool loop](tools.md#function-tools) as every other provider, including validation, retries,
 [dependencies](../dependencies.md), and [capability hooks](capabilities.md), and sends the
 results back. Speech and delegated work run independently, so the Live model can keep talking while
-that happens rather than leaving dead air.
+that happens rather than leaving dead air. Delegations run one at a time, though: when the user speaks
+a new request while a delegation is still under way, even one only waiting for a tool's result, Live
+delegates it once that one is done.
 
 In history, the round has the shape a [standard run](../message-history.md) gives it: the reply that
 delegated holds the backend's tool calls, their results follow it, and then comes the answer Live
@@ -400,8 +402,9 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
 why these are session-start settings rather than things to change mid-call. (The Live API can append
-to the instructions and reconfigure the delegation backend mid-session; Pydantic AI does not expose
-either yet.) Live exposes no turn-detection, truncation, or token-limit controls: it ignores `max_tokens`
+to Live's instructions and reconfigure the delegation backend mid-session. Pydantic AI uses the second to
+append [changes to the agent's instructions](capabilities.md#instructions-that-change) to the backend's, but
+doesn't expose either as a setting yet.) Live exposes no turn-detection, truncation, or token-limit controls: it ignores `max_tokens`
 and the [`TurnDetection`][pydantic_ai.realtime.TurnDetection] knobs, as a standard model ignores a tuning
 knob it doesn't support, along with `input_transcription_model`, since it always transcribes with its own
 model. It [raises](#what-raises) for push-to-talk, which it can't provide. `tool_choice` reaches the
