@@ -461,6 +461,11 @@ def fixture_repo(tmp_path: Path) -> Path:
                 named[key].missing
 
 
+            def through_an_enclosing_mapping(named: Mapping[str, Response]) -> None:
+                def nested(key: str) -> None:
+                    named.get(key).text
+
+
             def through_a_module_mapping(key: str) -> None:
                 _RESPONSES.get(key).text
 
@@ -657,6 +662,7 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                     'through_a_method',
                     'through_a_module_mapping',
                     'through_a_wrapped_mapping_field',
+                    'through_an_enclosing_mapping.nested',
                 ],
             ),
             'tools.py::is_context': (['import'], ['temporal'], ['guarded']),

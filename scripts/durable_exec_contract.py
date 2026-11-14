@@ -30,7 +30,7 @@ a `for` loop or comprehension over an iterable whose annotation or return annota
 `isinstance` narrowing, and a module-level type alias stands for the type it names. A name bound any
 other way, such as a `with ... as` target, a tuple-unpacked loop variable or a module-level loop
 variable, has no class, so a member read through it records nothing. A `.get(key)` call on a mapping
-whose annotation or return annotation is known, a `_MAPPINGS` type such as `dict[K, V]` or
+whose annotation or return annotation is known, an `_Index._MAPPINGS` type such as `dict[K, V]` or
 `Mapping[K, V]`, is a `V`; a subscript `mapping[key]` and the other mapping methods, such as
 `.values()`, `.pop()` and `.setdefault()`, have no class. An access on a typed name that
 the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
@@ -77,6 +77,7 @@ import re
 import subprocess
 import sys
 import tokenize
+from collections import ChainMap
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,9 +108,6 @@ ENGINES: dict[str, str] = {
 _TYPE_WRAPPERS = frozenset(
     {'Annotated', 'ClassVar', 'Final', 'NotRequired', 'Optional', 'ReadOnly', 'Required', 'Type', 'Union', 'type'}
 )
-
-# Mapping types, annotated `[K, V]`, whose `.get(key)` yields a `V`.
-_MAPPINGS = frozenset({'Dict', 'Mapping', 'MutableMapping', 'OrderedDict', 'defaultdict', 'dict'})
 
 # What `--touched` accepts before it makes any request: a pull request's repository, number and commits, and the
 # manifest's core files, which are the only paths it fetches.
@@ -199,6 +197,9 @@ Symbol = _Module | _ClassInfo | _ModuleValue
 
 class _Index:
     """Lazily parsed modules under `SOURCE_ROOTS`, and name resolution across them."""
+
+    # Mapping types, annotated `[K, V]`, whose `.get(key)` yields a `V`.
+    _MAPPINGS = frozenset({'Dict', 'Mapping', 'MutableMapping', 'OrderedDict', 'defaultdict', 'dict'})
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -374,7 +375,7 @@ class _Index:
                 return self.value_classes(module, _parse_annotation(source))
             case ast.BinOp(left=left, op=ast.BitOr(), right=right):
                 return self.value_classes(module, left) | self.value_classes(module, right)
-            case ast.Subscript(value=value, slice=ast.Tuple(elts=[_, item])) if _last_name(value) in _MAPPINGS:
+            case ast.Subscript(value=value, slice=ast.Tuple(elts=[_, item])) if _last_name(value) in self._MAPPINGS:
                 return self.annotation_classes(module, item)
             case ast.Subscript(value=value, slice=index) if _last_name(value) in _TYPE_WRAPPERS:
                 arguments = index.elts if isinstance(index, ast.Tuple) else [index]
@@ -652,8 +653,10 @@ class _EngineWalker(ast.NodeVisitor):
             ):
                 result = self.attribute_types(value, attr, returns=True)
                 if attr == 'get':
-                    # No walked class defines a mapping's `get`: what it yields comes from the mapping's annotation.
-                    annotations = self.annotations(value, self.scopes[-1].annotated)
+                    # No walked class defines a mapping's `get`: what it yields comes from the mapping's annotation,
+                    # which an enclosing function holds when the mapping is a name it binds.
+                    annotated = ChainMap(*(scope.annotated for scope in reversed(self.scopes)))
+                    annotations = self.annotations(value, annotated)
                     result |= frozenset[_ClassInfo]().union(
                         *(self.index.value_classes(module, annotation) for module, annotation in annotations)
                     )
