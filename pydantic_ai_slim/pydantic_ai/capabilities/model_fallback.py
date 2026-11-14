@@ -43,6 +43,8 @@ _SpecFallbackError = Literal[
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'ContentFilterError',
     'OutputTokenLimitExceeded',
 ]

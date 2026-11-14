@@ -29,7 +29,7 @@ Falling back is not retrying: the next model usually can't use the prompt cache 
 
 ## When to fall back
 
-By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, when the model [refuses](#refusals), and when the [output is cut off](#token-limit) by the token limit: `fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`.
+By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, or sends a response the model can't use, such as an empty stream (see [Handling Model API Errors](../models/overview.md#handling-model-api-errors)), when the model [refuses](#refusals), and when the [output is cut off](#token-limit) by the token limit: `fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`.
 
 The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model), whose default is `(ModelAPIError,)`:
 

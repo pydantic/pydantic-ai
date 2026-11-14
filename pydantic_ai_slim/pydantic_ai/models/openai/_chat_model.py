@@ -38,7 +38,7 @@ from openai.types.chat.completion_create_params import (
 from openai.types.shared import ReasoningEffort
 from pydantic import JsonValue, ValidationError
 
-from ... import UnexpectedModelBehavior, _utils, usage
+from ... import _utils, usage
 from ..._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from ..._http import to_httpx2_timeout
 from ..._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -50,7 +50,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...exceptions import UserError
+from ...exceptions import ModelEmptyResponseError, ModelInvalidResponseError, UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -622,6 +622,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return map_provider_details(response.choices[0])
 
+    def _first_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
+        """The completion's first choice, or a `ModelEmptyResponseError` if it has none."""
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name,
+                f'Empty response from {self.system} chat completions endpoint: no choices',
+                body=response.model_dump(warnings=False),
+            )
+        return response.choices[0]
+
     def _unmapped_provider_details(
         self, response: chat.ChatCompletion, content_parts: list[object], *, include: bool
     ) -> dict[str, Any]:
@@ -652,8 +662,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # * if the endpoint returns plain text, the return type is a string
         # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
-            raise UnexpectedModelBehavior(
-                f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint, expected JSON data',
+                body=response,
             )
 
         timestamp = _now_utc()
@@ -669,9 +681,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint: {e}',
+                # The completion as the SDK built it, without validating it, after the `created` and `finish_reason`
+                # fill-ins above.
+                body=response.model_dump(warnings=False),
+            ) from e
 
-        choice = response.choices[0]
+        choice = self._first_choice(response)
         finish_reason = self._map_finish_reason(choice.finish_reason)
         if missing_finish_reason:
             # Restore the missing value after validation, so it's not reported as the provider's.
@@ -833,9 +851,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.

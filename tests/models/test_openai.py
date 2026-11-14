@@ -57,7 +57,12 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError, OutputTokenLimitExceeded
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelEmptyResponseError,
+    ModelInvalidResponseError,
+    OutputTokenLimitExceeded,
+)
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     InstructionPart,
@@ -72,6 +77,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
@@ -5837,10 +5843,28 @@ async def test_invalid_response(allow_model_requests: None):
     )
     agent = Agent(m)
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelInvalidResponseError) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message.startswith(
         'Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion'
+    )
+    assert isinstance(exc_info.value, UnexpectedModelBehavior)
+    assert exc_info.value.body == snapshot(
+        {
+            'id': None,
+            'choices': None,
+            'created': 0,
+            'model': None,
+            'object': None,
+            'metadata': None,
+            'moderation': None,
+            'service_tier': None,
+            'system_fingerprint': None,
+            'usage': None,
+            'contentType': 'application/json',
+            'method': 'POST',
+            'pathname': '/bin/content-type/application/json/chat/completions',
+        }
     )
 
 
@@ -5851,11 +5875,78 @@ async def test_text_response(allow_model_requests: None):
     )
     agent = Agent(m)
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelInvalidResponseError) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message == snapshot(
         'Invalid response from openai chat completions endpoint, expected JSON data'
     )
+    assert isinstance(exc_info.value, UnexpectedModelBehavior)
+    assert isinstance(exc_info.value.body, str)
+
+
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error rather than an `IndexError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+
+    https://github.com/pydantic/pydantic-ai/issues/7909
+    """
+    response = completion_message(ChatCompletionMessage(content='unused', role='assistant'))
+    response.choices = []
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(response)))
+
+    with pytest.raises(
+        ModelEmptyResponseError, match='Empty response from openai chat completions endpoint'
+    ) as exc_info:
+        await Agent(m).run('hello')
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'choices': [],
+            'created': 1704067200,
+            'model': 'gpt-4o-123',
+            'object': 'chat.completion',
+            'metadata': None,
+            'moderation': None,
+            'service_tier': None,
+            'system_fingerprint': None,
+            'usage': None,
+        }
+    )
+
+
+async def test_empty_choices_fall_back(allow_model_requests: None):
+    """`FallbackModel` falls back on a completion without choices by default, as on any other model error.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
+    response = completion_message(ChatCompletionMessage(content='unused', role='assistant'))
+    response.choices = []
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(response)))
+
+    result = await Agent(FallbackModel(m, TestModel(custom_output_text='from fallback'))).run('hello')
+    assert result.output == 'from fallback'
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream([[]])))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(m).run_stream('hello'):
+            pass
+
+
+async def test_empty_stream_falls_back(allow_model_requests: None):
+    """`ModelFallback` falls back on a stream that ended before its first event by default.
+
+    Mocked because no provider sends an empty stream on demand.
+    """
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream([[]])))
+    agent = Agent(m, capabilities=[ModelFallback(TestModel(custom_output_text='from fallback'))])
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'from fallback'
 
 
 async def test_empty_response_skipped_in_history(allow_model_requests: None):

@@ -67,7 +67,13 @@ from ..._utils import (
     number_to_datetime,
 )
 from ...durable_exec._operation_backend import in_durable_unit
-from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
+from ...exceptions import (
+    ModelConnectionError,
+    ModelEmptyResponseError,
+    SuspendedResponseExpired,
+    UnsupportedSettingWarning,
+    UserError,
+)
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -1334,7 +1340,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
             raise response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)

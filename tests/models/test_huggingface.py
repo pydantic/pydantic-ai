@@ -21,6 +21,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelMessage,
     ModelOverloadedError,
     ModelRequest,
@@ -1366,3 +1367,42 @@ async def test_non_json_response_body_raises_model_api_error(allow_model_request
 
     assert exc_info.value.__cause__ is error
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error rather than an `IndexError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
+    response = completion_message(
+        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'unused', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
+    )
+    response.choices = []
+    model = HuggingFaceModel(
+        'hf-model', provider=HuggingFaceProvider(hf_client=MockHuggingFace.create_mock(response), api_key='x')
+    )
+
+    with pytest.raises(ModelEmptyResponseError, match='Empty response from huggingface: no choices') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.model_name == 'hf-model'
+    assert exc_info.value.body == snapshot(
+        {
+            'choices': [],
+            'created': 1704067200,
+            'id': '123',
+            'model': 'hf-model',
+            'system_fingerprint': None,
+            'usage': None,
+            'object': 'chat.completion',
+        }
+    )
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
+    mock_client = MockHuggingFace.create_stream_mock([[]])
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass
