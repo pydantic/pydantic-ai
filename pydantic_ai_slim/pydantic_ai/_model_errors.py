@@ -509,9 +509,10 @@ def transport_error_body(response: HTTPStatusResponse) -> tuple[object, dict[str
     once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
     in their connection error, though the provider did respond.
 
-    Returns the body, parsed as JSON, or its text when it isn't JSON or is `null`, or `None` when it's empty or the transport
-    closed the response without reading it; the error object in it, which most APIs wrap as `{"error": {...}}`, or
-    the body itself when it holds no `error`, or `{}` when it isn't an object; and the body's text.
+    Returns the body, parsed as JSON, or its text when it isn't JSON or is `null`, or `None` when it's empty or the
+    transport closed the response without reading it; the error object in it, which most APIs wrap as
+    `{"error": {...}}`, or the body itself when it holds no `error`, or `{}` when it isn't an object; and the body's
+    text.
     """
     try:
         content = response.content
