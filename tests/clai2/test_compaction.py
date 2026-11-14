@@ -17,6 +17,7 @@ from rich.console import Console
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -246,6 +247,50 @@ async def test_summariser_failure_falls_back_to_truncation() -> None:
     notice = await plugin.commands.execute_async('/compact')
     assert notice.startswith('Compacted 4 messages down to 2;')
     assert_truncated_without_a_summary(transcript)
+
+
+def summarise_badly(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Answer the conversation, but write only whitespace when asked for a summary, until retries run out."""
+    if '<messages>' in str(messages[0]):
+        return ModelResponse(parts=[TextPart(' \n')])
+    return ModelResponse(parts=[TextPart('reply')])
+
+
+async def stream_badly(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    [part] = summarise_badly(messages, info).parts
+    assert isinstance(part, TextPart)
+    yield part.content
+
+
+async def test_automatic_compaction_truncates_when_the_summary_fails() -> None:
+    """#12307: a summary the model gets wrong degrades to truncation instead of ending the turn."""
+    session = Session(Agent(FunctionModel(summarise_badly, stream_function=stream_badly)), deps=None)
+    plugin = make_plugin(session, context_window=1000, protected_tokens=0)
+    session.plugins = plugin.capabilities
+    session.replace_messages(
+        [
+            ModelRequest.user_text_prompt('first'),
+            ModelResponse(parts=[TextPart('reply')]),
+            ModelRequest.user_text_prompt('old ' * 1000),
+            ModelResponse(parts=[TextPart('reply')]),
+        ]
+    )
+    await session.prompt('new')
+    assert not any(
+        isinstance(part, UserPromptPart) and part.content == 'old ' * 1000
+        for message in session.messages
+        for part in message.parts
+    )
+    assert not any(isinstance(part, CompactionPart) for message in session.messages for part in message.parts)
+
+
+async def test_compact_raises_when_the_summary_fails() -> None:
+    """`/compact` shows the summariser's error rather than quietly truncating."""
+    before = two_turns()
+    transcript = Transcript(messages=before, model=FunctionModel(summarise_badly))
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        await make_plugin(transcript, protected_tokens=0).commands.execute_async('/compact')
+    assert transcript.messages == before
 
 
 def protected_tails(chain: FallbackCompaction[None]) -> list[int | None]:

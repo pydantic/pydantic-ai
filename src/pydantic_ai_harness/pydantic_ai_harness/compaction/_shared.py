@@ -673,6 +673,7 @@ async def compact_if_smaller(
     messages: list[ModelMessage],
     compact: Callable[[], Awaitable[list[ModelMessage]]],
     tokenizer: Callable[[str], int] | None = None,
+    skip_on: tuple[type[Exception], ...] = (),
 ) -> list[ModelMessage] | None:
     """Run *compact*, and return `None` when its result is not estimated smaller than *messages*.
 
@@ -680,11 +681,26 @@ async def compact_if_smaller(
     receipts the attempt recorded are discarded with it, and a `compact_messages` span with
     `compaction.skipped='not_smaller'` records the attempt's estimated size. A result that is smaller,
     or the unchanged history, is returned, and its receipts reach the enclosing `compact_with_span`.
+
+    An exception in *skip_on* rejects the attempt the same way, recorded as
+    `compaction.skipped='summary_failed'` with its `error.type`.
     """
     token = open_receipt_scope()
     try:
         compacted = await compact()
         receipts = drain_receipts()
+    except skip_on as error:
+        with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+            span.set_attributes(
+                {
+                    'compaction.strategy': strategy,
+                    'compaction.skipped': 'summary_failed',
+                    'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
+                    'compaction.messages_before': len(messages),
+                    'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+                }
+            )
+        return None
     finally:
         reset_receipt_scope(token)
     if _history_changed(messages, compacted):
