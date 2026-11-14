@@ -1329,11 +1329,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # terminal we will ever get for the response it was meant to close. Treating it as "no
             # information" leaves `_response_active` set forever, and every later `create_response()`
             # then queues behind a response that can never complete.
-            self._lifecycle.response_unreadable(self._active_response_id)
+            active_response_id = self._active_response_id
+            self._lifecycle.response_unreadable(active_response_id)
             self._clear_active_response()
             if self._pending_response:
                 inputs, answers = self._take_deferred_response_inputs()
                 await self._request_response(inputs, answers=answers)
+            if isinstance(active_response_id, str):
+                await self._close_tool_call_batch(active_response_id, barged_in=False)
             return [], False
         response = done.response
         function_call_only = bool(response.output) and all(item.type == 'function_call' for item in response.output)
@@ -1389,6 +1392,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             and self._active_response_id is not None
             and response_id != self._active_response_id
         )
+        active_response_id = self._active_response_id
         was_client_cancel = matches_active_response and self._cancel_sent
         if matches_active_response:
             self._clear_active_response()
@@ -1415,9 +1419,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # whether the provider refuses it on that response's account or the connection drops first. (xAI cancels
             # a response of its own for ours with another reason, and starts ours.)
             self._in_flight_cut_off = self._request_in_flight is not None
-        if isinstance(response_id, str):
+        batch_response_id = response_id if isinstance(response_id, str) else active_response_id
+        if isinstance(batch_response_id, str):
             await self._close_tool_call_batch(
-                response_id, barged_in=response.status == 'cancelled' and not was_client_cancel
+                batch_response_id, barged_in=response.status == 'cancelled' and not was_client_cancel
             )
         return matches_active_response, superseded
 

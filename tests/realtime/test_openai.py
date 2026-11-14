@@ -4431,6 +4431,45 @@ async def test_tool_result_triggers_response_when_idle() -> None:
     assert 'response.create' in ws.sent_types()
 
 
+@pytest.mark.parametrize(
+    'done_response',
+    [
+        'garbled',
+        {'status': 'completed', 'output': [{'type': 'function_call'}]},
+    ],
+)
+async def test_tool_result_triggers_response_after_response_done_without_readable_id(
+    done_response: Any,
+) -> None:
+    ws = PushWebSocket()
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    task = asyncio.create_task(_drain(conn))
+
+    ws.push({'type': 'response.created', 'event_id': 'e1', 'response': {'id': 'r1'}})
+    ws.push(
+        {
+            'type': 'response.function_call_arguments.done',
+            'event_id': 'e2',
+            'response_id': 'r1',
+            'item_id': 'i1',
+            'output_index': 0,
+            'call_id': 'c1',
+            'name': 't',
+            'arguments': '{}',
+        }
+    )
+    ws.push({'type': 'response.done', 'event_id': 'e3', 'response': done_response})
+    await _settle()
+
+    await conn.send(ToolResult(tool_call_id='c1', output='x'))
+    await _settle()
+    assert ws.sent_types() == ['conversation.item.create', 'response.create']
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 async def _drain(conn: OpenAIRealtimeConnection) -> None:
     async for _ in conn:
         pass
