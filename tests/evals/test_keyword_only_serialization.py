@@ -58,6 +58,16 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
             return len(ctx.output) >= self.minimum
 
+    @dataclass(kw_only=True, init=False)
+    class KeywordOnlyVarKeyword(Evaluator[str, str, str]):
+        minimum: int
+
+        def __init__(self, *, minimum: int, **kwargs: object) -> None:
+            self.minimum = minimum
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum
+
     @dataclass
     class Positional(Evaluator[str, str, str]):
         minimum: int
@@ -112,6 +122,7 @@ with try_import() as imports_successful:
         'KeywordOnlyFirstWithDefault': RoundTripCase(
             KeywordOnlyFirstWithDefault(minimum=4), {'minimum': 4}, KEYWORD_FORMS
         ),
+        'KeywordOnlyVarKeyword': RoundTripCase(KeywordOnlyVarKeyword(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
         'Positional': RoundTripCase(Positional(minimum=4), 4, frozenset({'short_spec'})),
         'PositionalWithKeywordOnlyDefault': RoundTripCase(
             PositionalWithKeywordOnlyDefault(minimum=4), 4, frozenset({'short_spec'}) | KEYWORD_FORMS
@@ -158,6 +169,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'KeywordOnlyField',
         'MixedFields',
         'KeywordOnlyFirstWithDefault',
+        'KeywordOnlyVarKeyword',
         'Positional',
         'PositionalWithKeywordOnlyDefault',
         'ObjectPositional',
