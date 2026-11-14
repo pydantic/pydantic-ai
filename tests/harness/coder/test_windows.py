@@ -268,7 +268,7 @@ class TestShellOnWindows:
         )
         assert 'ID: ' in started, started
         command_id = started.rsplit('ID: ', 1)[1].strip()
-        check = {'command_id': command_id}
+        check: dict[str, object] = {'command_id': command_id}
         with anyio.fail_after(60):
             while '[stderr]\nerr' not in (checked := await call_tool([shell, workspace], 'check_command', check)):
                 await anyio.sleep(0.5)  # pragma: lax no cover - depends on how fast PowerShell starts
