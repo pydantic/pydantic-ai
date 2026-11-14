@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .agentcore_sandbox import AgentCoreSandbox, AgentCoreSandboxBackend
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
@@ -99,6 +100,8 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'AgentCoreSandbox',
+    'AgentCoreSandboxBackend',
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
@@ -207,6 +210,8 @@ __all__ = [
 _LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'AgentCoreSandbox': 'agentcore_sandbox',
+    'AgentCoreSandboxBackend': 'agentcore_sandbox',
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
     'AskUser': 'ask_user',
