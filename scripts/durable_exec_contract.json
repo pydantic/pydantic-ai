@@ -2403,6 +2403,28 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::<module>"
       ]
     },
+    "AbstractCapability._can_supply_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
+      ]
+    },
+    "AbstractCapability._can_wrap_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
+      ]
+    },
     "AbstractCapability._cancellation_error_types": {
       "engines": [
         "durable_exec"
@@ -2688,6 +2710,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_serialization_name"
       ]
     },
+    "AbstractCapability.get_toolset": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.contributes_executing_toolset"
+      ]
+    },
     "AbstractCapability.get_wrapper_toolset": {
       "engines": [
         "dbos",
@@ -2699,6 +2732,17 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_wrapper_toolset",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.get_wrapper_toolset"
+      ]
+    },
+    "AbstractCapability.has_resolve_model_id": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
       ]
     },
     "AbstractCapability.has_wrap_run_event_stream": {

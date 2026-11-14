@@ -860,12 +860,46 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
-        """Reject capabilities added per-run inside a durable workflow or flow."""
+        """Reject per-run capabilities that need registering when the agent is built.
+
+        That's any capability contributing an executing toolset or `@durable_operation` methods, or choosing or
+        wrapping the model through `resolve_model_id`, `get_model` or `get_wrapper_model`.
+        """
         if not self.in_durable_context or not isinstance(
             self.get_durable_operation_backend(), RegisteredOperationBackend
         ):
             return
-        unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
+
+        def contributes_executing_toolset(capability: AbstractCapability[AgentDepsT]) -> bool:
+            toolset = capability.get_toolset()
+            if toolset is None:
+                return False
+            if callable(toolset):
+                # A dynamic toolset's contents are not known until runtime.
+                return True
+            try:
+                self._reject_runtime_toolsets(toolset)
+            except UserError:
+                return True
+            return False
+
+        def needs_registration(capability: AbstractCapability[AgentDepsT]) -> bool:
+            # Durable operations are only registered for capabilities bound at construction, and only the
+            # model ID crosses into the model request unit, so a per-run capability that chooses or wraps the
+            # model there would be bypassed.
+            return (
+                contributes_executing_toolset(capability)
+                or any(collect_capability_operations(leaf) for leaf in leaf_capabilities(capability))
+                or capability.has_resolve_model_id
+                or capability._can_supply_model
+                or capability._can_wrap_model
+            )
+
+        unsafe_capabilities = [
+            capability
+            for capability in capabilities
+            if not capability._safe_at_runtime and needs_registration(capability)
+        ]
         if not unsafe_capabilities:
             return
         names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))

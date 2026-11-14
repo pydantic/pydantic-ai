@@ -2916,8 +2916,8 @@ async def test_durability_unregistered_model_instance_errors(client: Client):
 # --- Runtime capability validation ---
 
 
-async def test_durability_validates_only_resolved_runtime_capability_layers():
-    """Temporal accepts resolved and safe per-run layers but rejects per-run dynamic layers."""
+async def test_per_run_hooks_only_capability_allowed_inside_workflow():
+    """Temporal permits hooks-only per-run capabilities but rejects executing toolsets."""
 
     @dataclass
     class _BaseOne(AbstractCapability[None]):
@@ -2933,7 +2933,8 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
 
     @dataclass
     class _ExtraTwo(AbstractCapability[None]):
-        pass
+        def get_toolset(self) -> FunctionToolset[None]:
+            return FunctionToolset()
 
     @dataclass
     class _SkipRequest(AbstractCapability[None]):
@@ -2955,7 +2956,6 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    # Only `in_workflow` is faked, so keep the default-ID hook and replay telemetry off the real workflow APIs.
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
@@ -2964,11 +2964,126 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
             return_value=False,
         ),
     ):
-        result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
+        result = await agent.run('hello', capabilities=[_ExtraOne()])
         assert result.output == 'skipped'
 
         with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
             await agent.run('hello', capabilities=[extra_factory])
+
+
+@dataclass
+class _SkipEveryModelRequest(AbstractCapability[None]):
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+
+@dataclass
+class _PerRunExternalToolset(AbstractCapability[None]):
+    def get_toolset(self) -> ExternalToolset[None]:
+        return ExternalToolset(tool_defs=[ToolDefinition(name='per_run_external')], id='per_run_external')
+
+
+@dataclass
+class _PerRunDynamicToolset(AbstractCapability[None]):
+    def get_toolset(self) -> Callable[[RunContext[None]], FunctionToolset[None]]:
+        def factory(ctx: RunContext[None]) -> FunctionToolset[None]:  # pragma: no cover
+            return FunctionToolset()
+
+        return factory
+
+
+@dataclass
+class _PerRunDurableOperation(AbstractCapability[None]):
+    id: str | None = 'per_run_operation'
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[None]) -> str:  # pragma: no cover
+        return 'fetched'
+
+
+@dataclass
+class _PerRunModelResolver(AbstractCapability[None]):
+    async def resolve_model_id(
+        self, ctx: ModelResolutionContext[None], *, model_id: str
+    ) -> Model | None:  # pragma: no cover
+        return None
+
+
+@dataclass
+class _PerRunModelSupplier(AbstractCapability[None]):
+    def get_model(self) -> Model:
+        return TestModel()
+
+
+@dataclass
+class _PerRunModelWrapper(AbstractCapability[None]):
+    def get_wrapper_model(self, model: Model) -> Model | None:  # pragma: no cover
+        return None
+
+
+@dataclass
+class _HooksOnlyWrapper(WrapperCapability[None]):
+    pass
+
+
+class _ModelWrappingCombined(CombinedCapability[None]):
+    def get_wrapper_model(self, model: Model) -> Model | None:  # pragma: no cover
+        return None
+
+
+@pytest.mark.parametrize(
+    ('capability', 'allowed'),
+    [
+        pytest.param(_PerRunExternalToolset(), True, id='non-executing-toolset'),
+        pytest.param(_HooksOnlyWrapper(wrapped=_SkipEveryModelRequest()), True, id='hooks-only-wrapper'),
+        pytest.param(_PerRunDynamicToolset(), False, id='dynamic-toolset'),
+        pytest.param(_PerRunDurableOperation(), False, id='durable-operation'),
+        pytest.param(_PerRunModelResolver(), False, id='resolve-model-id'),
+        pytest.param(_PerRunModelSupplier(), False, id='supplies-model'),
+        pytest.param(_PerRunModelWrapper(), False, id='wraps-model'),
+        pytest.param(
+            _HooksOnlyWrapper(wrapped=CombinedCapability([_PerRunModelWrapper()])),
+            False,
+            id='wrapper-over-combined-wraps-model',
+        ),
+        pytest.param(
+            _HooksOnlyWrapper(wrapped=_ModelWrappingCombined([_SkipEveryModelRequest()])),
+            False,
+            id='wrapper-over-model-wrapping-combined',
+        ),
+    ],
+)
+async def test_per_run_capability_needing_registration_rejected_inside_workflow(
+    capability: AbstractCapability[None], allowed: bool
+):
+    """A per-run capability is only allowed when nothing it adds needs registering when the agent is built.
+
+    Durable operations are registered for construction-time capabilities only, and only the model ID crosses into
+    the model request activity, so per-run capabilities that choose the model are refused too.
+    """
+    agent = Agent(
+        TestModel(),
+        name='runtime_capability_registration',
+        deps_type=type(None),
+        capabilities=[_SkipEveryModelRequest(), TemporalDurability()],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.unsafe.is_replaying_history_events',
+            return_value=False,
+        ),
+    ):
+        if allowed:
+            result = await agent.run('hello', capabilities=[capability])
+            assert result.output == 'skipped'
+        else:
+            with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+                await agent.run('hello', capabilities=[capability])
 
 
 # --- get_serialization_name returns None ---

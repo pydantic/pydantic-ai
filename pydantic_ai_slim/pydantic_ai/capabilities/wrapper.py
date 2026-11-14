@@ -315,6 +315,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_model(self, model: Model) -> Model | None:
         return self.wrapped.get_wrapper_model(model)
 
+    @property
+    def _can_wrap_model(self) -> bool:
+        return type(self).get_wrapper_model is not WrapperCapability.get_wrapper_model or self.wrapped._can_wrap_model
+
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # Every hook here delegates to `wrapped`, which the session asks for itself.
         return self._realtime_uncalled_hooks_overriding(WrapperCapability)
