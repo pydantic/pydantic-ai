@@ -181,6 +181,7 @@ _CAPABILITY_PAGE_META = {
     'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
+    'computer-use.md': ('computer_use', 'Computer Use'),
     'youdotcom.md': ('youdotcom', 'You.com'),
     'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),

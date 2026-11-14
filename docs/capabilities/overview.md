@@ -103,6 +103,7 @@ Finding and reading things on the open web.
 | [Keenable Search](../harness/keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](https://pydantic.dev/docs/ai/harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
+| [Computer Use](https://pydantic.dev/docs/ai/harness/computer-use/) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
 ### Reasoning, planning & delegation {#reasoning-planning-delegation}
 

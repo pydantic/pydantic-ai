@@ -190,6 +190,7 @@ Finding and reading things on the open web.
 | [Keenable Search](keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](browser-use.md) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](playwright.md) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
+| [Computer Use](computer-use.md) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
 ### Reasoning, planning & delegation
 

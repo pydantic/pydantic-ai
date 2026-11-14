@@ -2,7 +2,8 @@
 
 Web research and browser capabilities: `Researcher` (a ready-made research stack), `ExaSearch` /
 `ExaAgent` (Exa API), `YouSearch` / `YouResearch` (You.com API), `KeenableSearch` (Keenable API, keyless),
-`BrowserUse` (hand a goal to an autonomous browser agent), and `PlaywrightBrowser` (the model drives Chromium itself). All are
+`BrowserUse` (hand a goal to an autonomous browser agent), `PlaywrightBrowser` (the model drives Chromium itself),
+and `ComputerUse` (the model clicks and types on the workspace's desktop from screenshots). All are
 capabilities passed in `Agent(capabilities=[...])`.
 
 ## Which one to use
@@ -16,6 +17,7 @@ capabilities passed in `Agent(capabilities=[...])`.
 | Synthesized, cited answer or multi-step research in one tool call | `ExaSearch(include_deep_search=True)`, `ExaAgent`, or `YouResearch` |
 | Fuzzy goal on unknown pages ("find the Pro plan price") | `BrowserUse` |
 | Known, repeatable flows, logged-in pages, JS-rendered SPAs, deterministic actions | `PlaywrightBrowser` |
+| Desktop applications, or a site exactly as a person sees it | `ComputerUse` |
 
 Core is enough when the model's provider has native search/fetch or DuckDuckGo plus markdownify
 fetching is acceptable. `WebSearch()` and `WebFetch()` with no arguments are native-only and raise on
@@ -383,6 +385,61 @@ Gotchas:
 - No uploads or downloads. Tool errors come back as strings the model can act on.
 - Use one browser capability per agent; `BrowserUse` and `PlaywrightBrowser` do not share sessions.
 
+## ComputerUse
+
+One `computer` tool: the model sends a list of mouse and keyboard actions, they run on
+`ctx.workspace`'s display, and the tool returns a screenshot. Needs a workspace whose backend
+implements `SupportsDisplay` and a model that accepts images. A model without image input fails before
+its request. A workspace without a display fails the run at its start; under durable execution, the
+first `computer` call or native tool size read fails it instead.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ComputerUse
+
+# `my_desktop_sandbox`: a capability whose workspace has a display (`SupportsDisplay`).
+agent = Agent('test', capabilities=[my_desktop_sandbox, ComputerUse()])
+```
+
+Fields: `settle_seconds=0` (pause after acting before a zoom or the closing screenshot; set it if screenshots catch pages mid-load), `action_limits` (a `ComputerUseActionLimits` capping one action, such as `max_wait_seconds`; no limits by default), `native=True` (adds a `ComputerTool`
+so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model, for example so
+GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
+limits (100 images on 200k-context Claude, 20 MB on Gemini).
+
+Reading a run: calls and results are `ComputerCallPart` (`actions`, `safety_checks`) and `ComputerReturnPart`
+(`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the
+tool name. Each finished call emits `ActionsPerformedEvent` (`result`, the call's `ComputerResult`) in the
+`computer_use` namespace.
+
+A workspace backend with a screen implements `SupportsDisplay` (a `display` property returning a `Display` or `None`);
+`Display` and its optional `SupportsZoom` and `SupportsCursorPosition` live in
+`pydantic_ai_harness.computer_use`, not in core `pydantic_ai.workspaces`.
+
+Gotchas:
+
+- Calls run without asking. A call OpenAI flagged (`ComputerCallPart.safety_checks`, each a `SafetyCheck` with
+  `code` and `message`) waits for approval, as OpenAI asks; resolve it with
+  `HandleDeferredToolCalls` (approve, or `ToolDenied`) or `DeferredToolRequests` output, or the run ends with an
+  error. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
+  `tool_def.tool_kind == COMPUTER_KIND.id` (from `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false and an
+  action in the validated `args['actions']` isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test
+  `isinstance(call, ComputerCallPart)`: a call whose arguments a hook repaired arrives as a plain `ToolCallPart`.
+- Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
+  pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
+  each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
+  scaled down, ends the run with a `UserError` before its request. Each `ComputerCallPart` is labelled with its
+  model's `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels`; a custom runner reads those instead of
+  the run's model.
+- Screenshots are sent at the screen's size: a screen larger than the model takes (profile
+  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) stops the run before the call acts,
+  with an error naming the largest size that fits. 1280x800 fits every model.
+- Under durable execution each `computer` call's screen work is one unit, so replay and recovery don't repeat a finished
+  call. One cut off before it was recorded retries under the engine's config for capability steps; on Temporal set
+  `activity_config` with a longer `start_to_close_timeout` and `RetryPolicy(maximum_attempts=1)`. When the engine gives
+  up, the model is told to take a screenshot first.
+- Under Temporal, screenshots pass the 2 MB payload limit after a few steps; configure external storage.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/researcher/
@@ -393,3 +450,4 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/playwright/
 - https://pydantic.dev/docs/ai/capabilities/web-search/
 - https://pydantic.dev/docs/ai/capabilities/web-fetch/
+- https://pydantic.dev/docs/ai/harness/computer-use/
