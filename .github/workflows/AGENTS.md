@@ -11,7 +11,11 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A new review cannot clear douwebot findings already on a head, so a later request for that head skips the review and comments with a link to the review that left them; an approval's optional findings stop blocking once their threads are resolved; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
+
+`.github/scripts/douwebot_opencode_result.py` unwraps a Markdown code fence that ends the OpenCode answer.
+It then validates the JSON object that ends the answer, so prose before the object passes, even prose that holds a `{`.
+Text after the object or the closing fence still fails.
 
 If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
 Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
@@ -210,15 +214,17 @@ Size S remains a manual policy judgment. Merge groups receive success without re
 members because the review requirements are enforced before admission.
 
 A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
-review-body findings on that head, including optional or resolved findings. A clean retry may
+review-body findings on that head. The one exception is an inline finding that an approval marks optional with the
+`Optional:` prefix: it stops blocking once its review thread is resolved. Blocking findings, unresolved optional ones
+and review-body findings still block, resolved or not. A clean retry may
 supersede an empty incomplete review, but cannot erase earlier findings. PR Bots uses a read-only
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
 A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-zai` for OpenCode on the GLM Coding Plan. Reviews from before the Coding Plan replaced DeepInfra carry `engine=opencode-deepinfra`, which the gate still reads.
 
-`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
-inline-comment changes with a read-only token, including on forks. Its completion wakes
+`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews,
+inline-comment changes and review-thread resolution with a read-only token, including on forks. Its completion wakes
 `PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
 which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
@@ -262,12 +268,29 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. The job validates the model's answer
-  against its schema. When a Markdown code fence ends the answer, the job validates only that fenced
-  block, so prose before the fence passes; text after it still fails. The check's `max_steps` and
+  against its schema. As in douwebot, the job unwraps a Markdown code fence that ends the answer, then
+  validates the JSON object that ends the answer, so prose before the object passes; text after the
+  object or the fence still fails. The check's `max_steps` and
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
+  on every outcome, a failed, rejected or cancelled review included. The span names the provider and
+  plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
+  review took. When the review's run completes or reaches its time budget, the span adds its steps,
+  tokens and duration. A validated answer adds the outcome and the number of findings. A review that
+  raised has the outcome `FAILED`, the exception's class name and an error status. When the last
+  run's process failed, the span adds the type, status and provider code of its stream's last
+  `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
+  ends, a run the chain moved past included, it exports a child
+  [`OpenCode run` span](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan) with the same
+  failure fields and its own steps and tokens. When Actions cancels a job, it sends SIGINT to the
+  step's entry process and SIGTERM 7.5 s later, then kills the process tree 2.5 s after that; see
+  [workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
+  The review step `exec`s the runner, so the runner is that process. The first signal raises
+  `KeyboardInterrupt` in it and the runner ignores the rest, so a cancelled review exports its run
+  span and then its review span in those 10 s. The run span's export waits up to 5 s and the
+  review span's up to 30 s, so a Logfire that answers slowly can still lose the review span.
+  OpenCode's own spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
   artifacts are public, so they carry no private report. A
@@ -309,9 +332,9 @@ credential included.
   the Claude prompt, through the `category-prompt` YAML anchor, plus `TOOL_GUIDANCE` from
   `.github/scripts/category_classify_opencode.py`, which names each prefetched file. Edit the classification rules
   in the Claude step's prompt only.
-- The answer must be one JSON object whose only field is an allowed `category`. When a Markdown code fence ends the
-  answer, the job validates only that fenced block, as `PR Review Checks` does. Any other answer fails the job, and
-  no label is applied. `category-apply` applies the category from whichever job set it.
+- The answer must end with one JSON object whose only field is an allowed `category`. Prose before the object passes,
+  and so does a Markdown code fence that wraps the object and ends the answer, as in `PR Review Checks`. Any other
+  answer fails the job, and no label is applied. `category-apply` applies the category from whichever job set it.
 
 # OpenCode falls back from OpenCode Go to the GLM Coding Plan
 
@@ -321,43 +344,85 @@ OpenCode threat detection. `run_with_fallback` in `.github/scripts/douwebot_open
 this chain:
 
 1. `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`.
-2. `zai-coding-plan/glm-5.3-flash` with `ZAI_API_KEY`, the primary Z.AI Coding Plan account.
-3. `zai-coding-plan/glm-5.3-flash` with `ZAI_BACKUP_API_KEY`, the backup account.
+2. `zai-coding-plan/glm-5.3-flash` on the first Z.AI Coding Plan account: `ZAI_API_KEY`, the primary, or
+   `ZAI_BACKUP_API_KEY`, the backup.
+3. `zai-coding-plan/glm-5.3-flash` on the other account.
 
-A run moves to the next provider only when all of these hold:
+The workflow's run number plus the run's place in its job matrix picks the first account: the primary when the sum is
+even, the backup when it is odd. Run numbers count up within a workflow, so consecutive runs alternate accounts. Each
+`PR Review Checks` review passes its check's place in the `detect` matrix, so the checks of one run alternate too.
+Every other caller is a single job and passes 0. Replayed on the 12 `PR Review Checks` runs that started together at
+06:28Z on 2026-11-12, such as [run 43168376242](https://github.com/pydantic/pydantic-ai/actions/runs/43168376242),
+this rule puts 16 of their 33 reviews on the primary first and 17 on the backup. Without `ZAI_BACKUP_API_KEY`, the
+chain is Go, then the primary.
 
-- OpenCode exited non-zero, and its event stream has no `step_finish` event.
-- The stream's last `error` event has a type the refusing provider hands over: `provider.go-limit` or
-  `provider.quota` from Go, and `provider.quota` from the primary Coding Plan. OpenCode 2.2.5 does not retry these
-  types; see `toSessionError` in
+A run moves to the next provider when OpenCode exited non-zero, the next account's key is set, and one of these holds:
+
+- The provider refused the run before its first step: the event stream has no `step_finish` event, and its last
+  `error` event has a type the refusing provider hands over. That is `provider.go-limit` or `provider.quota` from Go,
+  and `provider.quota` or `provider.rate-limit` from the first Coding Plan account. OpenCode 2.2.5 retries a rate
+  limit within the run before it writes `provider.rate-limit`, and does not retry the other types; see `isRetryable`
+  in [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) and
+  `toSessionError` in
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
-- The next account's key is set. The chain leaves out a Z.AI account without a key.
+- The first Coding Plan account rate-limited the run after it took steps: the stream has a `step_finish` event, and
+  its last `error` event is a `provider.rate-limit`. The job log says that account rate-limited the run after it took
+  steps, and names the account that restarts it.
+
+The next provider runs the whole run again from scratch, as its own `Attempt`. Each provider runs a run at most once,
+so a run restarts at most once. Go never restarts a run. A `provider.quota` after a step fails the job. The chain
+leaves out a Z.AI account without a key.
 
 OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
 `provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
 expired plan (`1309`), a plan without the model (`1311`) and an empty balance (`1113`), so each hands the run to the
-backup account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
+other account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
 request-rate limits and `1305` overload; see `classify` in
 [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
-limit that outlasts those retries fails the job; the backup account does not serve it.
+limit that outlasts those retries hands the run to the other account too, before or after the run took steps.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
-invalid answer. Without `ZAI_BACKUP_API_KEY`, a run the primary Coding Plan refuses fails the job. A fallback run gets
-only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
-sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
-`compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
+invalid answer. A run the other account also refuses or rate-limits fails the job. A fallback run, a restart
+included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
+so each Z.AI run sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
+`compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
-`type` and `status` of its stream's last `error` event. It prints a type only when the type is shaped like
-OpenCode's own, such as `provider.auth`. It never prints the error message or response body, which can repeat the
-provider's response. When `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
-the reason: a fixed message from `final_text` in `.github/scripts/douwebot_opencode_result.py`, the sorted validation
-error types, or the exception's class name. It never prints model text, because the answer can hold a private
-report. A Z.AI run sends Z.AI the same content a Go run sends Go, fork pull request content included. Start any new
-CI OpenCode run through `run_with_fallback`.
+`type` and `status` of its stream's last `error` event. It also names the provider's `error.code` from that event's
+response body, such as Z.AI's `1302` request-rate limit or `1305` overload, both of which OpenCode types
+`provider.rate-limit`. It prints a type only when the type is shaped like OpenCode's own, such as `provider.auth`. It
+prints a code only when the code is one to six digits. It never prints the error message or the rest of the response body,
+which can repeat the provider's response. When douwebot, `PR Review Checks` or threat detection rejects a run's
+stream or answer, the job log names the reason: a fixed message from `final_text` in
+`.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It
+never prints model text, because the answer can hold a private report. A Z.AI run sends Z.AI the same content a Go
+run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+
+With `LOGFIRE_TOKEN` set, `run_with_fallback` makes each run export OpenCode's spans and logs to Logfire over OTLP.
+douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and `PR Review Checks` set the token. Each
+run's resource attributes name the repository, `github.run_id`, `github.run_attempt` and `github.job`, then the
+caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place in the chain, counting
+from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
+accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
+attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
+
+As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
+`opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
+`opencode_fallback.provider`. It also counts the `step_finish` events in the run's stream and the tokens they report,
+every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
+or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
+adds the error type, status and provider code the job log names, as `opencode_fallback.error_type`,
+`opencode_fallback.error_status` and `opencode_fallback.error_code`, and whether the stream holds a `step_finish`, as
+`opencode_fallback.step_finish`. Outside the job log, these spans are the only record of how a run the chain moved past
+failed. A `PR Review Checks` review's run spans are children of its review span; every other chain's runs share a trace
+of their own.
+
+Threat detection does not set the token. Its `gh-aw.detector.result` span records each detection's usage and outcome,
+and the provider and plan of its last run, which the detector step writes as its `provider` and `plan` outputs.
 
 The Coding Plan runs draw on the same accounts as the gh-aw agent workflows, and the primary also serves Pydanty; see
 [Shared Z.AI account limits](#shared-zai-account-limits). `PR Review Checks` starts several reviews per pull request
-in parallel, so one Go limit can move all of them onto the Coding Plan at once.
+in parallel, so one Go limit can move all of them onto the Coding Plan at once. The alternating first account splits
+them across both accounts.
 
 # A copy of the repository picks the `CI` Linux runner
 
@@ -476,8 +541,8 @@ The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; u
 
 Treat Pydanty, these workflows and the [OpenCode fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan)
 as consumers of the primary Z.AI account. The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
-`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows and the OpenCode
-fallback use it only when the primary account cannot serve a run. Pydanty never uses it.
+`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows use it only when the
+primary account cannot serve a run. The OpenCode fallback splits its runs across both accounts. Pydanty never uses it.
 Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
 Include delegates and SDK retries in the request timeline.
 
@@ -511,6 +576,27 @@ decision. A blocked gate must skip inference without emitting a passing review o
 fabricated agent result. The non-model provider-health monitor owns incident issue
 creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
 failed-job reporting (`report-failed-jobs`) for these workflows.
+
+Every decision, the gate's and the agent-start recheck's, also exports one
+`Z.AI provider health decision` span over OTLP/HTTP JSON:
+
+- The controller reads the OTLP endpoint, `Authorization` header, service name and resource
+  attributes that `shared/otel-logfire.md` compiles into each lock's workflow-level `env:`.
+  Add no Logfire secret to these jobs or steps.
+- Without the token, as on fork pull request events, it sends nothing. A failed export prints a
+  warning and never changes the decision or the exit code.
+- It sends with redirects disabled, as the Z.AI quota check does.
+- `github.job` is `provider_health` for the gate and `agent` for the recheck. The recheck joins
+  gh-aw's agent-job trace. The gate runs before gh-aw starts that trace, so its span starts its own;
+  join the two by the `github.run_id` resource attribute.
+- The span carries `provider_health.ready`, `.reason` and `.account`. Each checked account adds
+  `provider_health.<account>.ready`, `.reason` and `.quota.*`, the artifact's quota fields. A gate
+  that checked only the primary reports the decision as the primary's.
+- `PR Review Checks` gives the controller to the `telemetry` check as a joint path, so the
+  `general` check still reviews it.
+
+The runner's `Workflow finished` log adds `failure_kind` and `http_status` from the failure the
+record receives, and `zai_error_code` from a model HTTP error's body.
 
 The gate checks the primary account first. When the primary's own provider incident or its quota
 blocks it, and `ZAI_BACKUP_API_KEY` is set, the gate checks the backup account the same way. A

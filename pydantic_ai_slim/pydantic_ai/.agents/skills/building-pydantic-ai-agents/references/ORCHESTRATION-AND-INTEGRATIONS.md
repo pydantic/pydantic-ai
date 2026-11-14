@@ -86,7 +86,7 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
-For human-in-the-loop approval inside the run, see `RequestInput` in [Tools Advanced](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop): it waits in process by default and durably on AWS Lambda durable functions; on Temporal, DBOS and Prefect the engine refuses it with `UserError` (an unrecorded wait could diverge from the journal on replay), so end the run with `DeferredToolRequests` output there.
+For human-in-the-loop approval inside the run, see a `HandleDeferredToolCalls` handler that takes a resume token in [Tools Advanced](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop): it waits in process by default and durably on AWS Lambda durable functions; on Temporal, DBOS and Prefect the engine refuses it with `UserError` (an unrecorded wait could diverge from the journal on replay), so end the run with `DeferredToolRequests` output there.
 
 For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
 

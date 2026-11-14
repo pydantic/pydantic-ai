@@ -5,12 +5,13 @@ truncating, spilling to a queryable file, or summarizing -- so an oversized payl
 not persist in history and get re-sent on every later model request. Combine the three
 modes through an ordered list of size `bands`.
 
-Spilled payloads are written to the run's workspace by default (`WorkspaceStore`) and read
+Spilled payloads are written to the run's workspace by default (`WorkspaceOverflowStore`) and read
 back on demand through the registered `read_tool_result` tool, or through `FileSystem`'s
 `read_file`, which supersedes it for spills in the run's workspace; the `OverflowStore`
 protocol is the seam for any other backend.
 """
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -27,14 +28,14 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     indented_json,
     json_lines,
 )
-from pydantic_ai_harness.tool_output_limits._store import LocalFileStore, OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import LocalFileOverflowStore, OverflowStore, WorkspaceOverflowStore
 
 __all__ = [
     'READ_TOOL_NAME',
     'READ_TOOL_RESULT_KIND',
     'Action',
     'Band',
-    'LocalFileStore',
+    'LocalFileOverflowStore',
     'OverflowStore',
     'Serializer',
     'ToolOutputLimits',
@@ -44,7 +45,17 @@ __all__ = [
     'SummarizeFunc',
     'Truncate',
     'TruncationStrategy',
-    'WorkspaceStore',
+    'WorkspaceOverflowStore',
     'indented_json',
     'json_lines',
 ]
+
+_RENAMED = {'LocalFileStore': LocalFileOverflowStore, 'WorkspaceStore': WorkspaceOverflowStore}
+
+
+def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, __name__)
+        return renamed
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
