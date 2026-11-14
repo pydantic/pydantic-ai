@@ -277,6 +277,7 @@ async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict
         'ref': result.workspace.ref.id,
         'working_dir': await result.workspace.working_dir(),
         'note': await result.workspace.read_text('note.txt'),
+        'cwd': (await result.workspace.run(['pwd'], cwd='sub')).stdout,
     }
 
 
@@ -371,13 +372,15 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
 
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:
     shutil.rmtree(agents.local_dir, ignore_errors=True)
-    os.makedirs(agents.local_dir)
+    # A subdirectory, so the scenario's `pwd` only prints it if `cwd` crossed the journal.
+    os.makedirs(os.path.join(agents.local_dir, 'sub'))
     try:
         assert await run('local', None) == {
             'output': '{"write_note":"on disk"}',
             'ref': agents.local_dir,
             'working_dir': os.path.realpath(agents.local_dir),
             'note': 'on disk',
+            'cwd': f'{os.path.realpath(agents.local_dir)}/sub\n',
         }
         with open(os.path.join(agents.local_dir, 'note.txt'), encoding='utf-8') as note:
             assert note.read() == 'on disk'

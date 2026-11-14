@@ -44,14 +44,14 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
-    unavailable. A 400 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category in
-    the provider's own error code or message first.
+    unavailable. A 400, 413 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category
+    in the provider's own error code or message first.
     """
     if status_code in (401, 403):
         return ModelAuthenticationError
     if status_code == 404:
         return ModelNotFoundError
-    if status_code in (400, 422):
+    if status_code in (400, 413, 422):
         return ModelRequestRejectedError
     if status_code == 402:
         return ModelQuotaExceededError
@@ -198,6 +198,27 @@ def google_exceeds_daily_quota(body: object) -> bool:
                 ):
                     return True
     return False
+
+
+def google_retry_after(error: ModelHTTPError) -> float | None:
+    """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
+
+    Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string of seconds, like
+    `'14s'` or `'0.5s'`; one that's absent, doesn't end in `s`, holds no number before it, or is negative or
+    infinite says nothing.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    for detail in google_error_details(error.body):
+        if isinstance(raw := detail.get('retryDelay'), str) and raw.endswith('s'):
+            try:
+                seconds = float(raw[:-1])
+            except ValueError:
+                continue
+            if 0 <= seconds < float('inf'):
+                return seconds
+    return None
 
 
 def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:

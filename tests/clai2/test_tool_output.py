@@ -11,7 +11,7 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import FunctionToolCallEvent
 from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
-from pydantic_ai_harness.filesystem import FileEditedEvent
+from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -127,7 +127,7 @@ async def test_shell_line_limit_across_chunks(limit: int) -> None:
             status_path='/tmp/status',
             exit_code=0,
             truncated=False,
-            total_lines=4,
+            line_count=4,
         )
     )
     text = output.getvalue()
@@ -157,7 +157,7 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
             status_path='/tmp/status',
             exit_code=0,
             truncated=False,
-            total_lines=3,
+            line_count=3,
         )
     )
     text = output.getvalue()

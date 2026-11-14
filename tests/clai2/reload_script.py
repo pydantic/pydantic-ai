@@ -14,6 +14,7 @@ import prompt_toolkit
 import pytest
 from prompt_toolkit.completion import CompleteEvent, Completer
 from prompt_toolkit.document import Document
+from prompt_toolkit.utils import Event
 from rich.console import Console
 from rich.text import Text
 
@@ -115,6 +116,8 @@ async def main(root: Path, mode: str) -> None:
 
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             completer = kwargs['completer']
             assert isinstance(completer, Completer)
             self.completer = completer
@@ -148,7 +151,9 @@ async def main(root: Path, mode: str) -> None:
                         (package / 'new_module.py').write_text('VALUE = 1\n')
                         app.write_text(updated + '\nfrom . import new_module\nraise RuntimeError("bad import")\n')
                     elif mode == 'harness':
-                        app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
+                        app.write_text(
+                            updated + '\nfrom pydantic_ai_harness.sub_agents import _missing_reload_symbol\n'
+                        )
                     elif mode == 'build':
                         runtime.write_text(
                             updated_runtime.replace(

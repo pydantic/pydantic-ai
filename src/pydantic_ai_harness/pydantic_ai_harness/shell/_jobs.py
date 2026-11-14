@@ -417,12 +417,16 @@ class Job:
             if await self._signal('0'):
                 await self._signal('KILL')
             return
+        # The grace period is counted in the time slept, not read from a clock, so a durable engine that
+        # records each signal replays the same ones (as `run_persistent_command`'s foreground wait).
         interval = POLL_MIN
-        with anyio.move_on_after(_KILL_GRACE_PERIOD):
-            while await self._signal('0'):
-                await anyio.sleep(interval)
-                interval = min(interval * 2, POLL_MAX)
-            return
+        waited = 0.0
+        while waited < _KILL_GRACE_PERIOD:
+            if not await self._signal('0'):
+                return
+            await anyio.sleep(interval)
+            waited += interval
+            interval = min(interval * 2, POLL_MAX)
         await self._signal('KILL')
 
     async def _signal(self, name: str) -> bool:

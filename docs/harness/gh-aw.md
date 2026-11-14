@@ -38,7 +38,30 @@ not what this page builds. Here the agent is a Python
 the inner driver of its copilot engine (and pi on Node); it has no effect on an
 import-based engine like this one, so it is not part of the configuration below.
 
-![A new issue triggers the compiled gh-aw workflow. Its agent job runs the pydantic-ai engine in a container behind an egress firewall: the engine starts clai2 with your agent, named by PAI_AGENT, plus the workflow model and prompt. Model requests go through gh-aw's api-proxy, which holds the provider key, and the agent's GitHub and safe-output tools, such as github_issue_read and safeoutputs_add_comment, come from gh-aw's MCP gateway. After a threat-detection job checks the output, a separate add-comment job posts the comment with its own token.](../img/harness/gh-aw.svg)
+```mermaid
+flowchart TB
+    accTitle: gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow
+    accDescr: An opened issue triggers the agent job, a container behind an egress firewall, where the pydantic-ai engine starts clai2 and runs your Agent named by PAI_AGENT. The agent reaches the model through the api-proxy, which holds the provider key, and calls MCP gateway tools. Its output goes to the threat detection job, then the add-comment job posts the comment with its own token.
+    issue["issue opened"]:::external
+    subgraph job["Agent job: container behind egress firewall"]
+        engine["pydantic-ai engine<br/>starts clai2"]:::capability
+        agent["your Agent<br/>named by PAI_AGENT"]
+    end
+    proxy["api-proxy<br/>holds the<br/>provider key"]:::external
+    gateway["MCP gateway<br/>github_issue_read,<br/>safeoutputs_add_comment"]:::external
+    detect["threat<br/>detection job"]:::external
+    model(["model"])
+    comment["add-comment job<br/>posts the comment<br/>with its own token"]:::external
+    issue -->|"triggers"| engine
+    engine -->|"imports and runs"| agent
+    agent -->|"placeholder token"| proxy
+    proxy -->|"model requests"| model
+    agent <-->|"tool calls"| gateway
+    agent -->|"output"| detect
+    detect --> comment
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Prerequisites
 
@@ -299,9 +322,11 @@ Post your triage as a single comment on that issue.
   adds to requests that carry none. Under `PAI_BASE_URL` everything stays on the generic
   Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
-  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
-  when resolving an imported target, it adds the checkout to `sys.path` after loading the
-  framework packages.
+  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode.
+  It appends the checkout to `sys.path`, after installed packages, only for an imported target
+  whose top-level name nothing installed has, such as `my_agent:agent`. A checkout target whose
+  top-level name is also installed resolves against the installed package instead, so it usually
+  fails with `ModuleNotFoundError`.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue

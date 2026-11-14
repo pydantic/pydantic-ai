@@ -4346,7 +4346,7 @@ async def test_mistral_foreign_tool_call_ids_are_rewritten(
 async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
     allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture, image_content: BinaryImage
 ):
-    """The `<tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
+    """The `<pyai:tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
     provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
     agent = Agent(MistralModel('mistral-small-latest', provider=provider))
 
@@ -4370,8 +4370,8 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
         for message in cast(list[dict[str, Any]], body['messages'])
         if message['role'] == 'user' and isinstance(message['content'], list)
         for chunk in cast(list[dict[str, Any]], message['content'])
-        if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
+        if chunk['type'] == 'text' and chunk['text'].startswith('<pyai:tool_result')
     ]
-    assert tags == snapshot(
-        [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
-    )
+    assert tags == [
+        f'<pyai:tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">'
+    ]

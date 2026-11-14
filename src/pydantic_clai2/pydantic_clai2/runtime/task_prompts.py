@@ -16,7 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 
 TASK_PROMPT = 'clai2_task_prompt'
 """Run metadata marking a run that prompts a task for the user, so observers can tell it from a turn."""
