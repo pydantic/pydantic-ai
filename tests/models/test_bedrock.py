@@ -2549,6 +2549,91 @@ async def test_bedrock_media_kind_delivered_in_tool_result(
         assert 'See file' not in json.dumps(request_json(request))
 
 
+@pytest.mark.parametrize('via_gateway', [False, True], ids=['bedrock', 'gateway'])
+async def test_bedrock_openai_converse_file_inputs(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, via_gateway: bool
+):
+    """GPT-5.6, GPT-6 and GPT-6.1 on Converse get a tool's image after the `toolResult`, and a tool's document as a note.
+
+    Their AWS model cards say Converse rejects `document` blocks and an `image` inside a `toolResult` for these models
+    (https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html). A document in the user
+    prompt is still sent, as for any model that can't read a file the user chose.
+
+    Not a VCR test: the request is captured from a mocked client until a live recording is made.
+    """
+    provider = (
+        gateway_provider('bedrock', api_key='test-api-key', base_url='https://gateway.pydantic.info/proxy')
+        if via_gateway
+        else bedrock_provider
+    )
+    model = BedrockConverseModel('us.openai.gpt-6.1-terra', provider=provider)
+    agent = Agent(model)
+    image = BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', identifier='chart')
+    document = BinaryContent(data=b'%PDF-1.4', media_type='application/pdf', identifier='report')
+
+    @agent.tool_plain
+    def get_files() -> list[BinaryContent]:
+        return [image, document]
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    usage = {'inputTokens': 1, 'outputTokens': 1}
+    mock_converse.side_effect = [
+        {
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [{'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': usage,
+        },
+        {
+            'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+            'stopReason': 'end_turn',
+            'usage': usage,
+        },
+    ]
+
+    await agent.run(['Summarize this report, then the files.', document])
+
+    assert mock_converse.call_args.kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Summarize this report, then the files.'},
+                    {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}},
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'tooluse_1',
+                            'content': [
+                                {'text': 'See file chart.'},
+                                {
+                                    'text': 'File report (application/pdf, 8 bytes) was not sent: this model cannot read documents.'
+                                },
+                            ],
+                            'status': 'success',
+                        }
+                    },
+                    {'text': '<pyai:tool_result tool_name="get_files" tool_call_id="tooluse_1" file_id="chart">'},
+                    {'image': {'format': 'png', 'source': {'bytes': b'\x89PNG\r\n\x1a\n'}}},
+                    {'text': '</pyai:tool_result>'},
+                ],
+            },
+        ]
+    )
+
+
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
     agent = Agent(m)
