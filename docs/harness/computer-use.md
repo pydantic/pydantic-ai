@@ -52,7 +52,9 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-Every model gets `computer` as a regular function tool.
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
+  [OpenAI](../models/openai.md#native-tools).
+- Every other model gets `computer` as a regular function tool.
 
 Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
@@ -136,8 +138,12 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 
 Some models only take screenshots up to a size, set by
 [`computer_use_screenshot_max_side`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side] and
-`computer_use_screenshot_max_pixels` in their profile. `ComputerUse` sends screenshots at the screen's size, so a
-larger screen stops the run with an error naming the largest size that fits. A 1280x800 screen fits every model.
+`computer_use_screenshot_max_pixels` in their profile:
+
+- GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
+
+`ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
+largest size that fits. A 1280x800 screen fits every model.
 
 ## When something goes wrong
 

@@ -886,9 +886,13 @@ class MemoryTool(AbstractNativeTool):
 class ComputerTool(AbstractNativeTool):
     """A provider's native computer use tool, whose calls the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool runs.
 
-    Pydantic AI Harness's `ComputerUse` adds it. A model adapter sends it in place of that tool, turns the provider's
-    calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the results back into the
-    provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+    Pydantic AI Harness's `ComputerUse` adds it with each step's display size. A model adapter sends it in place of
+    that tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
+    results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+
+    Supported by:
+
+    * OpenAI Responses, on models whose profile sets `openai_supports_computer_tool`
     """
 
     display_size: tuple[int, int]

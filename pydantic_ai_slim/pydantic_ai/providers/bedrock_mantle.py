@@ -5,8 +5,13 @@ from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIModelProfile,
+    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 try:
@@ -70,7 +75,10 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
         # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
         # provider error.
-        supported_native_tools=frozenset(),
+        supported_native_tools=frozenset({ComputerTool}),
+        # OpenAI's native `computer` tool works on the `/openai/v1` endpoint as on OpenAI's own API, for the
+        # models that take it there.
+        openai_supports_computer_tool=interface == 'openai-responses' and _is_computer_use_model(base_model_name),
     )
     if interface == 'responses':
         # Mantle's `/v1/responses` endpoint rejects `tool_choice='required'` for GPT-OSS ("Supported options:

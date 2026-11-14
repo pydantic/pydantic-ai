@@ -19,6 +19,7 @@ from pydantic_core import to_json
 
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
+from ...computer_use import COMPUTER_KIND
 from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
@@ -30,6 +31,7 @@ from ._citations import (
     responses_citations_provider_details,
     responses_output_text_annotation_ta,
 )
+from ._computer import map_computer_call
 from ._errors import map_api_errors, response_error, response_error_type
 from ._history_digest import Hasher, with_history_digest
 from ._model_names import OpenAIModelName
@@ -454,7 +456,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         match item:
             case responses.ResponseFunctionToolCall():
                 yield self._handle_function_call_part(item)
-            case responses.ResponseReasoningItem():
+            case responses.ResponseComputerToolCall() | responses.ResponseReasoningItem():
+                # A computer call's actions arrive whole in its done event, where it's mapped.
                 pass
             case responses.ResponseOutputMessage():
                 if item.phase is not None:
@@ -559,6 +562,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         match item:
             case responses.ResponseFunctionToolCall(id=str(item_id)) if item_id:
                 yield from self._map_function_call_done(item, item_id)
+            case responses.ResponseComputerToolCall():
+                yield from self._map_computer_call_done(item)
             case responses.ResponseReasoningItem():
                 if signature := item.encrypted_content:  # pragma: no branch
                     # Add the signature to the part corresponding to the first summary/raw CoT
@@ -594,6 +599,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
             case _:
                 pass
+
+    def _computer_call_id(self, item: responses.ResponseComputerToolCall) -> str:
+        return stored_tool_call_id(
+            item.call_id,
+            response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
+            provider_response_id=self.provider_response_id,
+            timestamp=self.timestamp,
+        )
+
+    def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
+        if not (computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
+            return
+        # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
+        # call starts complete here and keeps its place among the other parts.
+        call = map_computer_call(item, computer_name, self._computer_call_id(item), self.provider_name)
+        yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str

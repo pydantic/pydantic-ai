@@ -11,6 +11,7 @@ from pydantic_ai.profiles.openai import (
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
+    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
     # Keep the provider-specific specialization private; the provider only selects it.
     _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     openai_model_profile,
@@ -149,6 +150,10 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Set here, not in `openai_model_profile`, because the native `computer` tool is unverified on the
+                # OpenAI-compatible endpoints that share that profile.
+                # https://developers.openai.com/api/docs/guides/tools-computer-use
+                openai_supports_computer_tool=_is_computer_use_model(model_name),
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
                 # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.

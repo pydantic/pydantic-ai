@@ -16,6 +16,7 @@ from .._json_schema import (
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -29,11 +30,11 @@ if TYPE_CHECKING:
     from ..realtime.profiles import RealtimeModelProfile
 
 _OPENAI_BASE_BUILTINS = frozenset(
-    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ComputerTool}
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below."""
+profile below, and `ComputerTool` by `openai_supports_computer_tool`."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -531,6 +532,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_supports_computer_tool: bool
+    """Whether the Responses API accepts the native `computer` tool for this model. Default: False.
+
+    When enabled, `OpenAIResponsesModel` sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] as OpenAI's
+    native computer tool in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
+    Otherwise that tool is a function tool.
+    """
+
     openai_responses_tool_choice_accepts_additional_tools: bool
     """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
     declares. Default: `False`.
@@ -696,6 +705,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
+    if _is_computer_use_model(model_name):
+        # gpt-5.4 and gpt-5.6 click exactly up to 2560x1440 and miss by hundreds of pixels at 3840x2160. gpt-5.5 clicks
+        # exactly up to 1920x1200 but often misses from 2048x1280 up.
+        max_side, max_height = (1920, 1200) if model_name.startswith('gpt-5.5') else (2560, 1440)
+        profile['computer_use_screenshot_max_side'] = max_side
+        profile['computer_use_screenshot_max_pixels'] = max_side * max_height
     if model_name.startswith('gpt-oss'):
         # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
         # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so
@@ -703,6 +718,17 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def _is_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI serves its native `computer` tool to the model.
+
+    GPT-5.4 (also mini and pro), GPT-5.5 (also pro), GPT-5.6 and GPT-6 take it. GPT-5.4 nano, GPT-5.3 Codex and GPT-5.2
+    reject it, unlike tool search. A new family gets the `computer` function tool until it is added here.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
 
 
 def _gpt_oss_schema_profile(model_name: str) -> ModelProfile:  # pyright: ignore[reportUnusedFunction]

@@ -779,6 +779,12 @@ A call of the `computer` kind runs only when the response it came in finished no
 
 `ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
 
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| OpenAI Responses | ✅ | On models whose profile sets [`openai_supports_computer_tool`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_computer_tool]. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
+
 ## Memory Tool
 
 The [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] enables your agent to use memory.

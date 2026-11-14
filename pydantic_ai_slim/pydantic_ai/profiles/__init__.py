@@ -167,7 +167,8 @@ class ModelProfile(TypedDict, total=False):
     [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], and a
     computer use capability such as Pydantic AI Harness's `ComputerUse` refuses a larger screen. Claude profiles set
     it and `computer_use_screenshot_max_pixels`, since Claude refuses a larger image, or with its older computer use
-    tools gets it scaled down and answers in the smaller image's pixels.
+    tools gets it scaled down and answers in the smaller image's pixels. OpenAI's computer use models set it too: they
+    take a 4K screenshot but click less accurately on one.
     """
 
     computer_use_screenshot_max_pixels: int
