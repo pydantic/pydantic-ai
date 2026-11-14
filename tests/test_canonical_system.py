@@ -1012,13 +1012,6 @@ thought
 </think>\
 """
                         },
-                        {
-                            'text': """\
-<think>
-
-</think>\
-"""
-                        },
                         {'text': 'answer'},
                     ],
                 },
