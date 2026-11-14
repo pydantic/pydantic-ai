@@ -249,6 +249,8 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+The text is passed as a `str`. A function whose argument is a Pydantic model, dataclass or `TypedDict` instead, even one with a single `str` field, raises a [`UserError`][pydantic_ai.exceptions.UserError] when the agent is created. To turn the text into a model, take a `str` and build the model inside the function.
+
 Some models cannot write text at all, and say so through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on their profile — [decision models](models/decision.md) such as [TypeSafe's Jev](models/typesafe.md) are. On those, any `output_type` that leaves text output available is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent: the default `str`, a `str` among several output types, a `TextOutput` function, and [`PromptedOutput`](#prompted-output), which asks for its structured data as text. Give such a model a structured `output_type`, such as a `BaseModel` or a union of them, instead.
 
 !!! note
@@ -915,11 +917,11 @@ if result.response.finish_reason == 'length':
 
 Structured output is validated, so output that was cut off is usually caught:
 
-- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
+- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
 - With [tool output](#tool-output), an output tool call whose arguments were cut off is sent back to the model like any other invalid arguments, and raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] once the [output retries](retries.md#output-retries) are used up.
-- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `UnexpectedModelBehavior`.
+- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `OutputTokenLimitExceeded`.
 
-To get the whole answer, raise `max_tokens` or ask for a shorter one.
+To get the whole answer, raise `max_tokens`, ask for a shorter one, or have [another model take over](capabilities/model-fallback.md#token-limit).
 
 ## Streamed Results
 

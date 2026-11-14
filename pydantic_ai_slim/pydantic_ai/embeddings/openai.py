@@ -2,6 +2,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+import httpx2
+
 from pydantic_ai import _model_errors, _utils
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models import check_allow_model_requests
@@ -17,7 +19,6 @@ from .settings import EmbeddingSettings
 try:
     import tiktoken
     from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
-    from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
     from openai.types.create_embedding_response import Usage
 
     from pydantic_ai.models.openai import OMIT
@@ -26,6 +27,9 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI embeddings model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+LatestOpenAIEmbeddingModelNames = Literal['text-embedding-3-large', 'text-embedding-3-small']
+"""Latest OpenAI embeddings models."""
 
 OpenAIEmbeddingModelName = str | LatestOpenAIEmbeddingModelNames
 """Possible OpenAI embeddings model names.
@@ -151,6 +155,9 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         except APIConnectionError as e:
             timeout = isinstance(e, APITimeoutError)
             raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+            raise _model_errors.transport_status_error(self.model_name, e.response) from e
 
         embeddings = [item.embedding for item in response.data]
 

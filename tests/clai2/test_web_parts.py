@@ -48,9 +48,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
-from pydantic_ai_harness.filesystem import (
+from pydantic_ai_harness.file_system import (
     EditFileCallPart,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileSystem,
     FileWrittenEvent,
@@ -160,7 +160,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(CommandOutputEvent(tool_call_id='c1', text='a.py\n')) == [ToolOutput(id='c1', text='a.py\n')]
     assert translate(CommandOutputEvent(tool_call_id=None, text='lost')) == []
     finished = CommandFinishedEvent(
-        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, total_lines=1
+        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, line_count=1
     )
     assert translate(finished) == [ShellDone(id='c1', exit_code=0)]
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
@@ -181,8 +181,8 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
         == []
     )
 
-    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestEvent:
-        return FileChangeRequestEvent(
+    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestedEvent:
+        return FileChangeRequestedEvent(
             tool_call_id=call_id,
             path='n.py',
             root_dir='/w',
@@ -200,7 +200,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FileWrittenEvent(tool_call_id='w2', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id='w3', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id=None, path='n.py', root_dir='/w', content_hash='h')) == []
-    edit_request = FileChangeRequestEvent(
+    edit_request = FileChangeRequestedEvent(
         tool_call_id='e2', path='a.py', root_dir='/w', operation='edit', diff='', truncated=False
     )
     assert translate(edit_request) == []
@@ -729,15 +729,19 @@ async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path)
 
 
 async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
+    output = io.StringIO()
     with pytest.raises(BaseExceptionGroup) as raised:
         await run_web(
             settings_for=lambda project: Settings(model='test'),
             store=SettingsStore(tmp_path / 'c.db'),
-            project=ProjectSettings(),
-            console=Console(file=io.StringIO()),
+            project=ProjectSettings(path=tmp_path / '.clai' / 'settings.json', pending={'run.permissions': 'full'}),
+            console=Console(file=output, width=200),
             resume='00000000-0000-0000-0000-000000000000',
         )
     assert raised.group_contains(LookupError, match='No saved session')
+    assert 'not applied until you approve them with /project approve in a CLAI session: permissions' in (
+        output.getvalue()
+    ), 'the launch names the project settings it leaves out'
 
 
 async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
@@ -814,7 +818,7 @@ def test_web_flag_reads_a_private_token_file(
     elsewhere = tmp_path / 'checkout'
     elsewhere.mkdir()
 
-    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+    def enter_worktree(*, name: str, headless: bool, store: object) -> Worktree:
         os.chdir(elsewhere)
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 
@@ -998,8 +1002,8 @@ def test_dump_names_the_session_of_a_per_session_message() -> None:
         'id': 'live1',
         'text': 'hi',
     }
-    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', title=None, workspace='/w')])
+    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', busy=True, title=None, workspace='/w')])
     assert json.loads(dump(live)) == {
         'type': 'live',
-        'sessions': [{'id': 'c1', 'state': 'queued', 'title': None, 'workspace': '/w'}],
+        'sessions': [{'id': 'c1', 'state': 'queued', 'busy': True, 'title': None, 'workspace': '/w'}],
     }

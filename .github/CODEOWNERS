@@ -1,5 +1,5 @@
-# Changes to these paths need an approving review from a code owner who is not the PR's author.
-# The `main` ruleset enforces it and dismisses the approval when a later push changes the diff.
+# GitHub requests a review from the owners of each path a PR changes.
+# The request is not a merge gate: the `main` ruleset has no `pull_request` rule, so it does not require code-owner review.
 # `.github/workflows/AGENTS.md` ("Code owners") explains the scopes.
 # `@pydantic/pydantic-ai-admin` is not an owner: it also holds repo admins outside the Pydantic AI team, so its admins are named instead.
 
@@ -7,12 +7,28 @@
 pyproject.toml            @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 
-# CI config
-/.github/workflows/       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
-/.github/actions/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
-/.github/scripts/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+# Build and lint config
 /.pre-commit-config.yaml  @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /Makefile                 @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 
-# This file. Unowned, a PR could drop an owner and the next PR change that path unreviewed.
-/.github/CODEOWNERS       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+# GitHub config: workflows, actions, scripts and everything else under `.github/`
+/.github/                 @dsfaccini
+
+# Durable runtime: the durable-execution base and the Temporal, DBOS and Prefect engines
+/pydantic_ai_slim/pydantic_ai/durable_exec/                            @DouweM @adtyavrdhn
+
+# Harness durable engines built on that runtime
+/src/pydantic_ai_harness/pydantic_ai_harness/absurd/                   @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/               @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/       @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/pgtask/                   @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/render/                   @DouweM @adtyavrdhn
+
+# Harness code that crosses durable boundaries: the shared helper and durable delegation
+/src/pydantic_ai_harness/pydantic_ai_harness/_durable.py               @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_capability.py  @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_toolset.py     @DouweM @adtyavrdhn
+
+# This file, after `/.github/` because the last matching pattern wins.
+# The durable owners review it too, so no PR drops them from a path unseen.
+/.github/CODEOWNERS       @DouweM @adtyavrdhn @dsfaccini

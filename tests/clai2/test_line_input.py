@@ -11,7 +11,7 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_clai2.ui.menus.menu_worker import holding_output
+from pydantic_clai2.ui.menus.menu_worker import holding_output, without_terminal
 from pydantic_clai2.ui.prompt.line_input import LineInput, read_line
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, TranscriptKey
@@ -58,6 +58,12 @@ async def test_hidden_answer_is_counted_and_pastes_join_into_one_line(key_pipe: 
         assert await read_line(PROMPT, console=console, hidden=True) == 'https://example.com/callback'
     assert 'callback' not in terminal.getvalue()
     assert [line for line in terminal.lines() if line][-1] == '[28 characters]'
+
+
+async def test_ctrl_enter_confirms(key_pipe: PipeInput) -> None:
+    _, console = live_console(SurfaceTerminal(width=80, height=24))
+    key_pipe.send_text('typed\x1b[13;5u')
+    assert await read_line(PROMPT, console=console) == 'typed'
 
 
 @pytest.mark.parametrize('key', ['\x1b', '\x03'])
@@ -135,3 +141,12 @@ async def test_without_the_live_editor_it_is_a_plain_prompt() -> None:
         assert await read_line('> ', console=console) == 'pasted value'
         pipe.send_text('\x03')
         assert await read_line('> ', console=console) is None
+
+
+async def test_without_a_terminal_or_dialogs_it_refuses() -> None:
+    """A plain prompt would read EOF there and return as if cancelled."""
+    with (
+        without_terminal('/login paste'),
+        pytest.raises(ValueError, match=r'/login paste .* this CLAI has no terminal'),
+    ):
+        await read_line('> ', console=Console(file=io.StringIO()))

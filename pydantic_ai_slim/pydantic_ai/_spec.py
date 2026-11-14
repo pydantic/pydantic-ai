@@ -10,19 +10,23 @@ import inspect
 import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypeVar, cast
+from contextlib import suppress
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, TypeVar, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    GetPydanticSchema,
     RootModel,
+    TypeAdapter,
     ValidationError,
     field_validator,
     model_serializer,
     model_validator,
     with_config,
 )
-from pydantic_core import to_jsonable_python
+from pydantic.errors import PydanticInvalidForJsonSchema
+from pydantic_core import PydanticOmit, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
@@ -52,7 +56,7 @@ class NamedSpec(BaseModel):
 
     Supports three short forms:
     * `'MyClass'` — no arguments
-    * `{'MyClass': single_arg}` — a single positional argument
+    * `{'MyClass': single_arg}` — a single positional argument, unless it is a mapping with string keys
     * `{'MyClass': {k1: v1, k2: v2}}` — keyword arguments
     """
 
@@ -288,50 +292,120 @@ def build_schema_types(
     schema_types: list[Any] = []
     for name, cls in registry.items():
         target = get_schema_target(cls) if get_schema_target is not None else cls
-        type_hints = get_function_type_hints(target)
-        type_hints.pop('return', None)
-
-        # Filter out non-serializable types (TypeVars, Callables) from unions
-        type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
-
-        required_type_hints: dict[str, Any] = {}
-
-        for p in inspect.signature(target).parameters.values():
-            # Skip self/cls (unbound instance/class methods) and *args/**kwargs
-            if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
-                type_hints.pop(p.name, None)
-                continue
-            if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
-                type_hints.pop(p.name, None)
-                continue
-            # Skip params whose type was entirely filtered out
-            if p.name not in type_hints:
-                continue
-            type_hints.setdefault(p.name, Any)
-            if p.default is not p.empty:
-                type_hints[p.name] = NotRequired[type_hints[p.name]]
-            else:
-                required_type_hints[p.name] = type_hints[p.name]
-
-        def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
-            td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)
+        type_hints, required_type_hints = _spec_param_type_hints(target)
+        keyword_only_params = _keyword_only_spec_params(target, type_hints)
 
         # Shortest form: just the name
         if len(type_hints) == 0 or not required_type_hints:
             schema_types.append(Literal[name])
 
-        # Short form: can be called with only one parameter
-        if len(type_hints) == 1:
-            [type_hint_type] = type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
-        elif len(required_type_hints) == 1:  # pragma: no branch
-            [type_hint_type] = required_type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
+        # Short form: the single argument must accept a positional value.
+        short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
+        object_rejecting_type = _object_rejecting_type(target, name, type_hints)
+        if len(short_type_hints) == 1 and short_type_hints.keys().isdisjoint(keyword_only_params):
+            [type_hint_type] = short_type_hints.values()
+            schema_types.append(_make_typed_dict('short_spec', name, {name: object_rejecting_type or type_hint_type}))
 
-        # Long form: multiple parameters, possibly required
-        if len(type_hints) > 1:
-            params_td = _make_typed_dict('spec_params', type_hints)
-            schema_types.append(_make_typed_dict('spec', {name: params_td}))
+        # Keyword form: required for keyword-only or multiple parameters, or a sole parameter accepting an object.
+        if len(type_hints) > 1 or keyword_only_params or object_rejecting_type:
+            params_td = _make_typed_dict('spec_params', name, type_hints)
+            schema_types.append(_make_typed_dict('spec', name, {name: params_td}))
 
     return schema_types
+
+
+def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`.
+
+    The second dict holds the type hints of its required parameters only.
+    """
+    type_hints = get_function_type_hints(target)
+    type_hints.pop('return', None)
+
+    # Filter out non-serializable types (TypeVars, Callables) from unions
+    type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
+
+    required_type_hints: dict[str, Any] = {}
+
+    for p in inspect.signature(target).parameters.values():
+        # Skip self/cls (unbound instance/class methods) and *args/**kwargs
+        if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            type_hints.pop(p.name, None)
+            continue
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            type_hints.pop(p.name, None)
+            continue
+        # Skip params whose type was entirely filtered out
+        if p.name not in type_hints:
+            continue
+        type_hints.setdefault(p.name, Any)
+        if p.default is not p.empty:
+            type_hints[p.name] = NotRequired[type_hints[p.name]]
+        else:
+            required_type_hints[p.name] = type_hints[p.name]
+
+    return type_hints, required_type_hints
+
+
+def _accepts_var_keyword(target: Callable[..., object]) -> bool:
+    return any(p.kind == p.VAR_KEYWORD for p in inspect.signature(target).parameters.values())
+
+
+def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping[str, Any]) -> set[str]:
+    """The names of `target`'s keyword-only spec parameters.
+
+    A target accepting `**kwargs` keeps its existing mapping schema, so none of its parameters count.
+    """
+    if _accepts_var_keyword(target):
+        return set()
+    params = inspect.signature(target).parameters.values()
+    return {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+
+
+def _object_rejecting_type(target: Callable[..., object], name: str, type_hints: Mapping[str, Any]) -> object | None:
+    """The type of `target`'s sole spec parameter with string-keyed objects rejected, if its schema accepts an object.
+
+    The loader reads a string-keyed dict in the short form as keyword arguments, so such a parameter takes those in the
+    keyword form only. A YAML mapping with a non-string key stays a positional value. A target accepting `**kwargs`
+    keeps its schema. So does a parameter whose type has no JSON schema, since the schema's union drops that short form.
+    """
+    if len(type_hints) != 1 or _accepts_var_keyword(target):
+        return None
+    [type_hint] = type_hints.values()
+    with suppress(PydanticOmit, PydanticInvalidForJsonSchema):
+        json_schema = TypeAdapter(_make_typed_dict('short_spec', name, {name: type_hint})).json_schema()
+        if _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {})):
+            reject_objects = GetPydanticSchema(
+                get_pydantic_json_schema=lambda core_schema, handler: {
+                    'allOf': [
+                        handler(core_schema),
+                        {'not': {'type': 'object', 'propertyNames': {'type': 'string'}}},
+                    ]
+                }
+            )
+            return Annotated[type_hint, reject_objects]
+    return None
+
+
+def _json_schema_accepts_object(
+    schema: Mapping[str, Any], defs: Mapping[str, Any], followed_refs: frozenset[str] = frozenset()
+) -> bool:
+    """Whether `schema`, a JSON schema Pydantic generated with `defs` as its `$defs`, can accept a JSON object.
+
+    A schema without a `type`, such as the one for `Any`, counts as accepting one. A wrong yes only adds the keyword
+    form and rejects objects the type already rejects. A `$ref` outside `defs`, such as an external one from a custom
+    JSON schema, or one already followed in a cycle, counts as not accepting one, which leaves the short form as is.
+    """
+    if (ref := schema.get('$ref')) is not None:
+        key = ref.removeprefix('#/$defs/')
+        if key not in defs or key in followed_refs:
+            return False
+        return _json_schema_accepts_object(defs[key], defs, followed_refs | {key})
+    if (members := schema.get('anyOf', schema.get('oneOf'))) is not None:
+        return any(_json_schema_accepts_object(member, defs, followed_refs) for member in members)
+    return schema.get('type', 'object') == 'object'
+
+
+def _make_typed_dict(cls_name_prefix: str, name: str, fields: dict[str, Any]) -> Any:
+    td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
+    return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)

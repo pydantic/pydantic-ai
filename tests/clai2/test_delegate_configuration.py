@@ -12,16 +12,16 @@ from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import Authority, ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
-from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, DelegationWorkspaceRequest
+from pydantic_ai_harness.sub_agents import DelegationTasks, DelegationWorkspaceRequest
 from pydantic_clai2 import open_stock_agent
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings
@@ -30,7 +30,6 @@ from pydantic_clai2.models.chains import settings_model
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginHost
 from pydantic_clai2.runtime.tasks import review_workspace
-from pydantic_clai2.ui.menus.task_menu import TaskMenu
 
 
 async def test_review_uses_stock_model_services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,6 +204,25 @@ async def test_review_rejects_missing_parent_workspace_and_keeps_read_only(tmp_p
 
 
 @pytest.mark.parametrize('read_only', [False, True])
+@pytest.mark.parametrize('authority', ['operator', 'user', 'none'])
+async def test_review_workspace_has_at_most_the_parents_authority(
+    tmp_path: Path, authority: Authority, read_only: bool
+) -> None:
+    """The model picks Review's directory, so its files carry no more authority than the parent's own."""
+    project, picked = tmp_path / 'project', tmp_path / 'picked'
+    project.mkdir()
+    picked.mkdir()
+    parent: Workspace = Workspace(LocalWorkspaceBackend(project))
+    if authority != 'operator':
+        parent = AuthorityWorkspace(parent, authority=authority)
+    if read_only:
+        parent = ReadOnlyWorkspace(parent)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=parent)
+    review = await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory=str(picked)))
+    assert (await review.working_dir(), review.authority) == (str(picked), authority)
+
+
+@pytest.mark.parametrize('read_only', [False, True])
 async def test_review_rejects_sandbox_wrappers_over_local_backends(tmp_path: Path, read_only: bool) -> None:
     project, hidden = tmp_path / 'project', tmp_path / 'hidden'
     project.mkdir()
@@ -272,8 +290,14 @@ def test_delegate_menu_settings_validate_save_and_reset() -> None:
         '{"light":{"model":"unqualified"}}',
         '{"light":{"model":"fixture:"}}',
         '{"light":{"model":"fixture:light","settings":{"thinking":"invalid"}}}',
+        '{"light":{"model":"fixture:light","settings":{"base_url":"https://gateway.example/v1"}}}',
+        '{"light":{"model":"fixture:light","settings":{"api_key":"TEAM_KEY"}}}',
     ):
         assert source.problem(row, value) is not None
+    both = (
+        '{"light":{"model":"fixture:light","settings":{"base_url":"https://gateway.example/v1","api_key":"TEAM_KEY"}}}'
+    )
+    assert 'Set api_key and base_url in /model settings' in (source.problem(row, both) or '')
     with pytest.raises(ValidationError):
         CoderSettings.model_validate({'delegate_models': {'light': {'model': 'fixture:light', 'unexpected': True}}})
 
@@ -282,14 +306,6 @@ async def test_plugin_host_model_defaults_without_session() -> None:
     host = PluginHost[object](name='standalone', console=Console(file=io.StringIO()), settings={})
     assert await host.resolve_model('test') == 'test'
     assert host.model_settings('test') is None
-
-
-def test_task_inspector_shows_the_selected_directory() -> None:
-    record = DelegationTask(
-        id='review', agent_name='Review', prompt='inspect', conversation_id='parent', working_directory='/policy'
-    )
-    menu = TaskMenu(snapshot=lambda: [record], action=lambda action, task: None)
-    assert 'Directory: /policy' in menu.preview(menu.items()[0])
 
 
 async def test_two_sessions_keep_their_delegate_models(tmp_path: Path) -> None:

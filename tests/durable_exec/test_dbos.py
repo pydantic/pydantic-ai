@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -21,6 +22,7 @@ from unittest.mock import AsyncMock, patch
 import httpx2
 import pytest
 from httpx import AsyncClient
+from packaging.version import Version
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -110,26 +112,24 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
-from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, without_admin_server
 from ..realtime_connections import InferredConnection
 
-try:
-    from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from dbos._error import DBOSAwaitedWorkflowCancelledError
-    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
+# Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
+pytest.importorskip('dbos')
 
-    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
-    from pydantic_ai.durable_exec.dbos import (
-        DBOSAgent,  # pyright: ignore[reportDeprecated]
-        DBOSDurability,
-        DBOSModel,
-        StepConfig,
-    )
-    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
-    from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from dbos import DBOS, DBOSConfig, SetWorkflowID
+from dbos._error import DBOSAwaitedWorkflowCancelledError
 
-except ImportError:  # pragma: lax no cover
-    pytest.skip('DBOS is not installed', allow_module_level=True)
+from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
+from pydantic_ai.durable_exec.dbos import (
+    DBOSAgent,  # pyright: ignore[reportDeprecated]
+    DBOSDurability,
+    DBOSModel,
+    StepConfig,
+)
+from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 try:
     import logfire
@@ -214,10 +214,9 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
     dbos_config: DBOSConfig = {
         'name': 'pydantic_dbos_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
-        'run_admin_server': False,
         'enable_otlp': True,
     }
-    dbos = DBOS(config=dbos_config)
+    dbos = DBOS(config=without_admin_server(dbos_config))
     DBOS.launch()
     try:
         yield dbos
@@ -577,22 +576,22 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -652,7 +651,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -673,7 +672,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -706,7 +705,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -832,7 +831,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -2385,10 +2384,10 @@ async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
     assert result.output == snapshot("""\
-<context id="toolset:mcp">
+<pyai:context id="toolset:mcp">
 Be a helpful assistant.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
 
 
@@ -2934,7 +2933,8 @@ async def cancel_own_workflow() -> str:
     workflow_id = DBOS.workflow_id
     assert workflow_id is not None
     await DBOS.cancel_workflow_async(workflow_id)
-    return 'workflow cancelled'
+    # On `dbos` 3.x a workflow cancelling itself doesn't return from `cancel_workflow_async`; older versions do.
+    return 'workflow cancelled'  # pragma: lax no cover
 
 
 async def test_dbos_durability_workflow_cancellation_carries_run_state(dbos: DBOS) -> None:
@@ -6377,6 +6377,10 @@ async def child_workflow_lead_workflow() -> str:
     return (await child_workflow_lead.run('Explain tides.', timeout=3600)).output
 
 
+@pytest.mark.skipif(
+    Version(version('dbos')) < Version('2.27'),
+    reason="`dbos` 2.27 stopped re-running a completed async workflow's body when it is invoked again (dbos-inc/dbos-transact-py#762)",
+)
 async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps."""
     child_workflow_calls.clear()
@@ -6784,12 +6788,18 @@ async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
     ],
     ids=lambda error: type(error).__name__,
 )
+@pytest.mark.skipif(
+    Version(version('dbos')) < Version('2.14'),
+    reason='`dbos` 2.14 added `serialize_exception` and `DBOSDefaultSerializer`',
+)
 def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError) -> None:
     """A step that failed after its stream produced output is raised on replay with what the stream produced.
 
     DBOS records a step's error by pickling it and raises the unpickled copy when a recovered workflow replays the
     step, so the run treats it as a stream that failed after it started, as the run that recorded it did.
     """
+    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
+
     partial = ModelResponse(parts=[TextPart('partial')], usage=RequestUsage(input_tokens=5, output_tokens=1))
     mark_streamed_before_failing(error, partial)
     recorded, serialization = serialize_exception(error, None, DBOSDefaultSerializer)

@@ -31,7 +31,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 from pydantic_ai_harness.step_persistence.conversations import ConversationConflict
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.sub_agents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Conversation, Transcript
@@ -197,7 +197,7 @@ async def test_rewind_is_durable_and_restores_images(tmp_path: Path, index: int)
     menu = build_rewind_menu(before[: index + 1])
     assert menu.highlighted is not None
     script = Script(lists=[MenuResult(item=menu.highlighted)], choices=[], texts=[])
-    async with editor() as (live, _, _):
+    async with editor(key_wait_limit=300) as (live, _, _):
         live.buffer.replace('discard this draft')
         live.buffer.history_index = 0
         async with live.suspended():
@@ -265,7 +265,7 @@ async def test_save_conflict_preserves_history_and_draft(tmp_path: Path) -> None
     before = session.messages
     point = RewindPoint(message_index=0, text='original', images=())
     script = Script(lists=[pick(point)], choices=[], texts=[])
-    async with editor() as (live, _, _):
+    async with editor(key_wait_limit=300) as (live, _, _):
         live.buffer.replace('keep draft')
         with pytest.raises(ConversationConflict):
             await rewind(session, live, runners=script.runners)

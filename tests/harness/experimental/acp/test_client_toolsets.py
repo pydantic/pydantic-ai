@@ -20,10 +20,10 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Wor
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from pydantic_ai_harness.experimental.acp import (
-    AcpFileSystemToolset,
-    AcpSession,
-    AcpSessionConfig,
-    AcpTerminalToolset,
+    ACPFileSystemToolset,
+    ACPSession,
+    ACPSessionConfig,
+    ACPTerminalToolset,
     PydanticAIACPAgent,
     acp_filesystem,
     acp_terminal,
@@ -36,8 +36,8 @@ def _ctx() -> RunContext[None]:
     return RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=1)
 
 
-def _session(client: Client, capabilities: schema.ClientCapabilities | None) -> AcpSession:
-    return AcpSession(
+def _session(client: Client, capabilities: schema.ClientCapabilities | None) -> ACPSession:
+    return ACPSession(
         cwd='/ws',
         mcp_servers=[],
         client_capabilities=capabilities,
@@ -74,8 +74,8 @@ async def test_session_toolset_capability_is_scanned_for_approval() -> None:
         executed.append('approved')
         return 'done'
 
-    def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-        return AcpSessionConfig(deps=None, capabilities=[Toolset(tools)])
+    def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+        return ACPSessionConfig(deps=None, capabilities=[Toolset(tools)])
 
     adapter = PydanticAIACPAgent(Agent(TestModel()), session_config=session_config)
     client = ApprovingClient()
@@ -91,14 +91,14 @@ async def test_session_toolset_capability_is_scanned_for_approval() -> None:
 
 async def test_read_file_reads_through_the_client() -> None:
     client = RecordingClient({'/ws/a.py': 'hello'})
-    ts = AcpFileSystemToolset[None](client=client, session_id='sid')
+    ts = ACPFileSystemToolset[None](client=client, session_id='sid')
     assert await ts.read_file('/ws/a.py') == 'hello'
     assert client.reads == [('/ws/a.py', 'sid')]  # path and session id reached the client unchanged
 
 
 async def test_write_file_writes_through_the_client() -> None:
     client = RecordingClient()
-    ts = AcpFileSystemToolset[None](client=client, session_id='sid')
+    ts = ACPFileSystemToolset[None](client=client, session_id='sid')
     result = await ts.write_file(_ctx(), '/ws/b.py', 'data')
     assert client.writes == [('/ws/b.py', 'data', 'sid')]
     assert client.files['/ws/b.py'] == 'data'
@@ -109,7 +109,7 @@ async def test_relative_paths_resolve_against_the_session_cwd() -> None:
     # ACP requires absolute paths on the wire, but a model routinely emits workspace-relative
     # ones (the local FileSystem tools take them); with a cwd the toolset resolves them.
     client = RecordingClient({'/ws/src/a.py': 'code'})
-    ts = AcpFileSystemToolset[None](client=client, session_id='sid', cwd='/ws')
+    ts = ACPFileSystemToolset[None](client=client, session_id='sid', cwd='/ws')
     assert await ts.read_file('src/a.py') == 'code'
     await ts.write_file(_ctx(), 'src/b.py', 'new')
     assert client.reads == [('/ws/src/a.py', 'sid')]
@@ -118,16 +118,16 @@ async def test_relative_paths_resolve_against_the_session_cwd() -> None:
 
 async def test_absolute_paths_and_cwdless_toolsets_pass_paths_through() -> None:
     client = RecordingClient({'/elsewhere/a.py': 'x', 'raw.txt': 'y'})
-    with_cwd = AcpFileSystemToolset[None](client=client, session_id='sid', cwd='/ws')
+    with_cwd = ACPFileSystemToolset[None](client=client, session_id='sid', cwd='/ws')
     assert await with_cwd.read_file('/elsewhere/a.py') == 'x'  # absolute paths are not rewritten
-    without_cwd = AcpFileSystemToolset[None](client=client, session_id='sid')
+    without_cwd = ACPFileSystemToolset[None](client=client, session_id='sid')
     assert await without_cwd.read_file('raw.txt') == 'y'  # no cwd: passed through unchanged
     assert client.reads == [('/elsewhere/a.py', 'sid'), ('raw.txt', 'sid')]
 
 
 async def test_filesystem_registers_read_file_and_write_file_tools() -> None:
     # The tool names match the local FileSystem capability so the default presenter renders them.
-    ts = AcpFileSystemToolset[None](client=RecordingClient(), session_id='sid')
+    ts = ACPFileSystemToolset[None](client=RecordingClient(), session_id='sid')
     assert set(await ts.get_tools(_ctx())) == {'read_file', 'write_file'}
 
 
@@ -154,7 +154,7 @@ async def test_acp_filesystem_read_only_client_reads_via_acp_and_writes_locally(
     # rather than the client (coherent only when the agent shares that disk -- see the helper docs).
     client = RecordingClient({str(tmp_path / 'notes.txt'): 'hello'})
     session = _session(client, _fs_caps(read=True, write=False))
-    session = AcpSession(
+    session = ACPSession(
         cwd=str(tmp_path),
         mcp_servers=session.mcp_servers,
         client_capabilities=session.client_capabilities,
@@ -195,12 +195,12 @@ def test_acp_filesystem_returns_none_when_no_readable_filesystem(
 
 async def test_run_command_creates_a_terminal_in_the_session_cwd() -> None:
     client = RecordingClient(output='ok')
-    await AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws').run_command('ls')
+    await ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws').run_command('ls')
     assert client.created == [('ls', '/ws')]
 
 
 async def test_terminal_registers_run_command_tool() -> None:
-    ts = AcpTerminalToolset[None](client=RecordingClient(), session_id='sid')
+    ts = ACPTerminalToolset[None](client=RecordingClient(), session_id='sid')
     assert set(await ts.get_tools(_ctx())) == {'run_command'}
 
 
@@ -211,7 +211,7 @@ async def test_run_command_stays_native_under_code_mode() -> None:
     quoted as a Python string, running the outer script locally and the inner one in the
     editor's terminal.
     """
-    ts = AcpTerminalToolset[None](client=RecordingClient(), session_id='sid')
+    ts = ACPTerminalToolset[None](client=RecordingClient(), session_id='sid')
     wrapper = CodeMode[None]().get_wrapper_toolset(ts)
     assert isinstance(wrapper, CodeModeToolset)
 
@@ -239,14 +239,14 @@ async def test_run_command_stays_native_under_code_mode() -> None:
 )
 async def test_run_command_formats_output_and_releases(kwargs: dict[str, object], expected: str) -> None:
     client = RecordingClient(**kwargs)  # pyright: ignore[reportArgumentType]
-    result = await AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws').run_command('cmd')
+    result = await ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws').run_command('cmd')
     assert result == expected
     assert client.released == ['term-1']  # the terminal is always released
 
 
 async def test_run_command_kills_and_releases_the_terminal_on_cancel() -> None:
     client = RecordingClient(block_exit=True)
-    ts = AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
+    ts = ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
     async with anyio.create_task_group() as tg:
         tg.start_soon(ts.run_command, 'sleep 100')
         await client.exit_event.wait()  # the terminal exists and the command is running
@@ -261,7 +261,7 @@ async def test_run_command_cancelled_during_create_still_kills_the_terminal() ->
     # on the wire, so the client started the command regardless; the late-learned terminal must
     # still be killed and released, not leaked running in the editor.
     client = RecordingClient(block_create=True)
-    ts = AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
+    ts = ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
     task = asyncio.ensure_future(ts.run_command('sleep 100'))
     await asyncio.wait_for(client.create_event.wait(), timeout=5)
     task.cancel()
@@ -289,7 +289,7 @@ async def test_run_command_cancelled_during_a_failing_create_has_nothing_to_clea
             raise RuntimeError('client could not create a terminal')
 
     client = _CreateFails()
-    ts = AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
+    ts = ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
     task = asyncio.ensure_future(ts.run_command('sleep 100'))
     await asyncio.wait_for(client.create_event.wait(), timeout=5)
     task.cancel()
@@ -317,7 +317,7 @@ async def test_run_command_create_failure_propagates() -> None:
             raise RuntimeError('no terminal for you')
 
     client = _CreateRaises()
-    ts = AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
+    ts = ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
     with pytest.raises(RuntimeError, match='no terminal'):
         await ts.run_command('ls')
     assert client.released == []  # nothing came into existence, so nothing is released
@@ -332,7 +332,7 @@ async def test_run_command_cancel_survives_a_failing_kill() -> None:
             raise RuntimeError('client kill failed')
 
     client = _KillRaises(block_exit=True)
-    ts = AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
+    ts = ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
     async with anyio.create_task_group() as tg:
         tg.start_soon(ts.run_command, 'sleep 100')
         await client.exit_event.wait()

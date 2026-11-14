@@ -7,10 +7,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
+import httpx2
+
+from pydantic_ai import _model_errors
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.models._decode_errors import check_json_response, map_decode_errors
+from pydantic_ai.native_tools import ImageQuality
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -23,7 +27,6 @@ from .settings import ImageGenerationSettings
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
-    from openai.types.image_model import ImageModel as LatestOpenAIImageModelNames
     from openai.types.images_response import ImagesResponse, Usage
 
     from pydantic_ai.models.openai import OMIT
@@ -33,8 +36,16 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+LatestOpenAIImageModelNames = Literal[
+    'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'
+]
+"""Latest OpenAI image generation models."""
+
 OpenAIImageGenerationModelName = str | LatestOpenAIImageModelNames
-"""Possible OpenAI image generation model names."""
+"""Possible OpenAI image generation model names.
+
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too, as a `str`.
+"""
 
 _UNSUPPORTED_MODEL_NAMES = frozenset(('dall-e-2', 'dall-e-3'))
 """DALL·E models the OpenAI SDK's `ImageModel` literal admits but this adapter does not implement.
@@ -80,8 +91,8 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     different concepts for pixel sizes, aspect ratios, and resolution tiers.
     """
 
-    openai_quality: Literal['low', 'medium', 'high', 'auto']
-    """GPT Image quality setting."""
+    openai_quality: ImageQuality
+    """GPT Image quality setting. `gpt-image-2` and earlier models reject `xhigh` and `max`."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
     """OpenAI image background setting."""
@@ -106,8 +117,9 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
 class OpenAIImageGenerationModel(ImageGenerationModel):
     """OpenAI image generation model implementation.
 
-    This model works with OpenAI's Images API and the GPT Image model family, such as `gpt-image-2`,
-    `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
+    This model works with OpenAI's Images API and the GPT Image model family, such as
+    `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, and
+    `gpt-image-1-mini`.
 
     The `dall-e-2` and `dall-e-3` models are not supported and raise a
     [`UserError`][pydantic_ai.exceptions.UserError] on construction, even though they are part of the
@@ -270,6 +282,9 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+            raise _model_errors.transport_status_error(self.model_name, e.response) from e
 
         return self._map_response(prompt, check_json_response(self.model_name, response))
 

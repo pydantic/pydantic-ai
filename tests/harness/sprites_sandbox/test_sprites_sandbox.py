@@ -4,8 +4,11 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
+import shlex
 import signal
 import sys
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -50,7 +53,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
 from .conftest import live_token
-from .fake_sprites import SpriteTransport
+from .fake_sprites import FakeExecSocket, SpriteTransport
 
 
 def context(conversation: str = 'chat') -> RunContext[None]:
@@ -591,7 +594,7 @@ class TestSpritesSandbox:
         assert ('connection' if attach else 'creation') in str(caught.value)
         assert transport.execs == []
 
-    async def test_run_deadline_starts_once_the_sprite_is_acquired(
+    async def test_only_the_handshake_bound_applies_while_the_exec_socket_opens(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         transport.names.add('remote')
@@ -614,7 +617,9 @@ class TestSpritesSandbox:
         backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'))
 
         assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
-        assert deadlines[-1] >= acquired_at[0] + 60
+        # Only the handshake's bound, taken after acquisition, applies; the command's 60 s start once the socket opens.
+        handshake_timeout = _backend._HANDSHAKE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
+        assert acquired_at[0] + handshake_timeout <= deadlines[-1] < acquired_at[0] + 60
 
     async def test_a_created_sprite_gets_its_working_directory(self, transport: SpriteTransport) -> None:
         directory = transport.root / 'new' / 'nested'
@@ -884,13 +889,23 @@ class TestSpritesSandbox:
         # Three attempts for the command; with no socket opened there is no stderr capture to read back.
         assert (transport.connects, transport.execs) == (3, [])
 
-    async def test_timeout_during_a_stalled_handshake_reads_no_capture(self, transport: SpriteTransport) -> None:
+    async def test_the_command_timeout_starts_once_the_exec_socket_is_open(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # The handshake alone outlasts the timeout; the command itself is fast.
+        transport.exec_latency = 0.5
+        assert (await backend.run(['echo', 'ok'], timeout=0.3)).stdout == 'ok\n'
+
+    async def test_a_stalled_handshake_fails_after_its_retries(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._HANDSHAKE_TIMEOUT', 0.05)
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
         transport.exec_latency = 5
-        with pytest.raises(WorkspaceTimeoutError):
+        with pytest.raises(NetworkError, match='handshake'):
             await backend.run(['true'], timeout=0.3)
-        assert (transport.connects, transport.execs) == (1, [])
+        assert (transport.connects, transport.execs) == (3, [])
 
     async def test_exec_handshake_retries_when_command_cannot_have_started(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
@@ -1070,29 +1085,76 @@ class TestSpritesSandbox:
         assert transport.execs[0].process.wait(timeout=1) == -signal.SIGKILL
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
-    async def test_timeout_keeps_partial_stderr_and_removes_capture(self, transport: SpriteTransport) -> None:
+    async def test_timeout_keeps_partial_stderr_and_removes_capture(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
-        with pytest.raises(WorkspaceTimeoutError) as caught:
-            await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.3)
-        assert caught.value.stderr == 'ready'
-        assert not Path(transport.execs[0].query['cmd'][4]).exists()
-
-    async def test_timeout_reads_stderr_back_over_a_slow_exec(self, transport: SpriteTransport) -> None:
-        backend = SpritesSandboxBackend()
-        await backend.get_sandbox()
-        caught: list[WorkspaceTimeoutError] = []
+        # The deadline reads the event loop's clock, which only passes it once the command has written its stderr.
+        loop = asyncio.get_running_loop()
+        real_loop_time = loop.time
+        skipped = 0.0
+        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
 
         async def run() -> None:
-            with pytest.raises(WorkspaceTimeoutError) as error:
-                await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.5)
-            caught.append(error.value)
+            with pytest.raises(WorkspaceTimeoutError) as caught:
+                await backend.run('printf ready >&2; exec sleep 7200', shell=True, timeout=3600)
+            assert caught.value.stderr == 'ready'
 
         async with anyio.create_task_group() as group:
             group.start_soon(run)
             await transport.exec_started.wait()
-            # Only the exec that reads the capture back pays the handshake time of a live Sprite.
-            transport.exec_latency = 1.5
+            capture = Path(transport.execs[0].query['cmd'][4])
+            with anyio.fail_after(300):
+                while not capture.exists() or capture.read_text(encoding='utf-8') != 'ready':
+                    await anyio.sleep(0.01)
+            skipped = 3600.0
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
+    async def test_timeout_reads_stderr_back_over_a_slow_exec(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # Deadlines read the event loop's clock, which only this test moves: a slow runner cannot make the
+        # command's deadline pass before its stderr reaches the capture.
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        monkeypatch.setattr(loop, 'time', lambda: now)
+        connect = transport.connect
+
+        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            nonlocal now
+            if transport.execs:
+                # Only the exec that reads the capture back pays the handshake time of a live Sprite.
+                now += 1.5
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
+        printed = tmp_path / 'printed'
+        os.mkfifo(printed)
+        caught: list[WorkspaceTimeoutError] = []
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as error:
+                await backend.run(
+                    f'printf ready >&2; : > {shlex.quote(str(printed))}; exec sleep 5', shell=True, timeout=0.5
+                )
+            caught.append(error.value)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            # Opening the FIFO returns once the command opens it too, after it has printed. The frozen clock
+            # cannot bound that wait, so the event's own timeout does, in real time. Hang guard only.
+            read = threading.Event()
+
+            def read_fifo() -> None:
+                printed.read_bytes()
+                read.set()
+
+            threading.Thread(target=read_fifo, daemon=True).start()
+            assert await anyio.to_thread.run_sync(read.wait, 120, abandon_on_cancel=True)
+            now += 0.5
         assert caught[0].stderr == 'ready'
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
@@ -1140,10 +1202,10 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
-    @pytest.mark.parametrize('timeout', [0, -1, float('inf')])
-    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: float) -> None:
-        with pytest.raises(ValueError, match='timeout'):
-            await SpritesSandboxBackend().run(['true'], timeout=timeout)
+    @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
+    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
+        with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
+            await SpritesSandboxBackend().run(['true'], timeout=timeout)  # pyright: ignore[reportArgumentType]
 
     def test_run_signature_matches_the_protocol(self) -> None:
         assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)
