@@ -111,6 +111,7 @@ from .._special_tokens import (
     restore_special_tokens_in_response,
     restore_special_tokens_in_stream,
 )
+from .._tool_status import TOOL_STATUS_TEXTS
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
@@ -2019,7 +2020,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
         them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        replaced with stable hashes that do. When it sets `needs_json_string_tool_returns`, a successful
+        tool return of a string goes out as a `{"tool_output": ...}` JSON string field.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2077,6 +2079,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
             sealed=self._seals_system_blocks,
         )
+        # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
+        messages = _tool_returns_as_json_strings(messages, self.profile)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # After retry feedback becomes user text, and before any step below renders the application's own text.
         messages = break_special_tokens_in_messages(messages, self.profile, self.accepts_stateless_artifacts)
@@ -4946,6 +4950,39 @@ def _text_file_content(item: object) -> str | None:
     if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
         return item.data.decode(errors='replace')
     return None
+
+
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Send each successful string tool return as a JSON string field, where the profile asks for it.
+
+    See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
+    replaced one for one, and only in the outgoing copy. The status text Pydantic AI writes for an output tool or a
+    skipped call isn't a tool's output, so it's left as is. Returns the original list when nothing changed.
+    """
+    if not profile.get('needs_json_string_tool_returns', False):
+        return messages
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
+            if _parts_changed(parts, message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
+    if (
+        not isinstance(part, ToolReturnPart)
+        or part.outcome != 'success'
+        or not isinstance(part.content, str)
+        or part.content in TOOL_STATUS_TEXTS
+    ):
+        return part
+    return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
 
 
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
