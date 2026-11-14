@@ -2483,6 +2483,7 @@
     },
     "AbstractCapability._realtime_uncalled_hooks": {
       "engines": [
+        "azure_durable_task",
         "durable_exec",
         "temporal"
       ],
@@ -2491,11 +2492,13 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._realtime_uncalled_hooks",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._realtime_uncalled_hooks"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._realtime_uncalled_hooks",
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::AzureDurableTaskDurability._realtime_uncalled_hooks"
       ]
     },
     "AbstractCapability._realtime_uncalled_hooks_overriding": {
       "engines": [
+        "azure_durable_task",
         "durable_exec",
         "temporal"
       ],
@@ -2504,7 +2507,8 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._realtime_uncalled_hooks",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._realtime_uncalled_hooks"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._realtime_uncalled_hooks",
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::AzureDurableTaskDurability._realtime_uncalled_hooks"
       ]
     },
     "AbstractCapability._safe_at_runtime": {
@@ -2555,6 +2559,7 @@
     },
     "AbstractCapability.before_model_request": {
       "engines": [
+        "azure_durable_task",
         "durable_exec",
         "temporal"
       ],
@@ -2563,7 +2568,8 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.before_model_request",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability.before_model_request"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability.before_model_request",
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::AzureDurableTaskDurability.before_model_request"
       ]
     },
     "AbstractCapability.before_run": {
