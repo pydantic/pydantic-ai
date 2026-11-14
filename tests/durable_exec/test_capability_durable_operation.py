@@ -4,7 +4,7 @@ import copy
 import gc
 import re
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -14,7 +14,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
@@ -67,7 +67,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchedModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
@@ -77,7 +77,13 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import, without_admin_server
 from ..model_lifecycle_utils import LifecycleTrackingModel
-from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
+from .preamble_text import (
+    RunAndStreamResult,
+    StructuredOutput,
+    plain_run_and_stream,
+    preamble_text_agents,
+    run_and_stream,
+)
 
 with try_import() as logfire_installed:
     from logfire.testing import CaptureLogfire
@@ -791,6 +797,46 @@ async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them(
             ),
         ]
     )
+
+
+async def _preamble_text_before_output_tool_then_failure(
+    _messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'Preamble text.'
+    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_1')}
+    raise ModelAPIError('function', 'stream broke')
+
+
+async def test_durable_stream_replay_classifies_a_failed_stream_as_the_unit_prepared_it() -> None:
+    """A stream that fails after text and a tool call replays them as the unit's model classified them, then raises.
+
+    The unit hands back what the stream produced before it failed, and the replay classifies those parts against the
+    parameters the unit's model prepared, so the run sees the same final result before the error as a plain run.
+    """
+
+    async def final_result_tool_names_until_failure(agent: Agent[object, StructuredOutput]) -> list[str | None]:
+        tool_names: list[str | None] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                if isinstance(event, FinalResultEvent):
+                    tool_names.append(event.tool_name)
+
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            await agent.run('hello', event_stream_handler=handler)
+        return tool_names
+
+    def agent(capabilities: list[AbstractCapability[object]]) -> Agent[object, StructuredOutput]:
+        return Agent(
+            FunctionModel(stream_function=_preamble_text_before_output_tool_then_failure),
+            name='durability_preamble_text_then_failure',
+            output_type=StructuredOutput,
+            capabilities=capabilities,
+        )
+
+    durable = await final_result_tool_names_until_failure(agent([RecordingDurability()]))
+    assert durable == await final_result_tool_names_until_failure(agent([]))
+    assert durable == snapshot(['final_result'])
 
 
 async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:
