@@ -196,6 +196,13 @@ class _BedrockGlm53JsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutCon
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
 
 
+class _BedrockMiniMaxJsonSchemaTransformer(BedrockJsonSchemaTransformer):
+    # MiniMax stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas are inlined,
+    # as `minimax_model_profile` does. See https://github.com/pydantic/pydantic-ai/issues/12077.
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+
 class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
@@ -645,11 +652,14 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
     models_that_support_structured_output = ('minimax-m2',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
+    family_profile = minimax_model_profile(model_name)
     return merge_profile(
-        minimax_model_profile(model_name),
+        family_profile,
         BedrockModelProfile(
             supported_native_tools=frozenset(),
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockMiniMaxJsonSchemaTransformer if family_profile is not None else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),

@@ -45,6 +45,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.minimax import minimax_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
@@ -67,7 +68,7 @@ with try_import() as bedrock_imports:
         _BedrockAnthropicJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockGlm53JsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
-        bedrock_minimax_model_profile,
+        _BedrockMiniMaxJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
 
 with try_import() as cohere_imports:
@@ -1525,6 +1526,31 @@ def test_bedrock_zai_glm_5_3():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_minimax():
+    """MiniMax via Bedrock: upstream `minimax_model_profile` (thinking, `$defs` inlined) + Bedrock tool/output overrides."""
+    assert _normalize(BedrockProvider.model_profile('us.minimax.minimax-m2.5')) == snapshot(
+        {
+            'json_schema_transformer': _BedrockMiniMaxJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supported_native_tools': frozenset(),
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'supports_video_input': False,
+        }
+    )
+    # An id the family profile doesn't describe keeps Bedrock's own transformer.
+    assert _normalize(BedrockProvider.model_profile('minimax.minimax-m3.5')) == snapshot(
+        {
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_deepseek_v3_2():
     """DeepSeek V3.2 via Bedrock: Bedrock-specific thinking override on top of upstream `deepseek_model_profile`."""
     profile = BedrockProvider.model_profile('deepseek.v3.2')
@@ -2914,8 +2940,44 @@ def test_together_qwen():
                 }
             ),
         ),
+        # MiniMax documents no `response_format` for these models, so `NativeOutput` is unsupported here:
+        # https://platform.minimax.io/docs/api-reference/text-openai-api
         (
             'MiniMaxAI/MiniMax-M3',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'minimax/minimax-m3.1-flash',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'minimaxai/minimax-m2.7',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        # A MiniMax id the family profile doesn't describe keeps the OpenAI-compatible default.
+        (
+            'MiniMaxAI/MiniMax-M2-her',
             snapshot(
                 {
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -3006,7 +3068,23 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
         (
             'MiniMaxAI/MiniMax-M3',
             snapshot(
-                {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'MiniMaxAI/MiniMax-M2.7',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
             ),
         ),
     ],
@@ -3736,68 +3814,66 @@ def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_na
     assert profile.get('supports_forced_tool_choice') is False
 
 
-def test_minimax_routes_resolve_family_profile_and_negatives():
-    from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
-    from pydantic_ai.profiles.minimax import minimax_model_profile
-
-    for model_id in (
-        'minimax-m2',
-        'minimax-m2.1',
-        'minimax-m2.5',
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'minimax-m3.1-flash',
         'minimax-m2.7',
         'minimax-m2.7-highspeed',
-        'minimax-m2.5-highspeed',
-        'minimax-m2.1-highspeed',
-        'minimax-m3.1-flash',
-        'minimax-m3',
-        'minimax-m1',
-        'minimax-m1-80k',
-    ):
-        profile = minimax_model_profile(model_id)
-        assert profile is not None, model_id
-        assert profile.get('json_schema_transformer') is InlineDefsJsonSchemaTransformer, model_id
-
-    for model_id in (
-        'minimax-m2',
-        'minimax-m2.1',
         'minimax-m2.5',
-        'minimax-m2.7',
-        'minimax-m2.7-highspeed',
         'minimax-m2.5-highspeed',
+        'minimax-m2.1',
         'minimax-m2.1-highspeed',
-        'minimax-m3.1-flash',
-    ):
-        profile = minimax_model_profile(model_id)
-        assert profile is not None and profile.get('thinking_always_enabled') is True, model_id
+        'minimax-m2',
+    ],
+)
+def test_minimax_always_thinking(model_name: str):
+    """M3.1-Flash and the M2 family reject turning thinking off; the `-highspeed` ids take their base model's flags."""
+    profile = minimax_model_profile(model_name)
+    assert profile is not None
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
 
+
+def test_minimax_m3_hybrid_thinking():
     profile = minimax_model_profile('minimax-m3')
     assert profile is not None
-    assert profile.get('supports_thinking') is True
-    assert profile.get('thinking_enabled_by_default') is True
-    assert profile.get('thinking_always_enabled') is not True
-
-    for model_id in ('minimax-m1', 'minimax-m1-80k'):
-        profile = minimax_model_profile(model_id)
-        assert profile is not None and profile.get('supports_thinking') is not True, model_id
-
-    assert minimax_model_profile('minimax-m2-her') is None
-    assert minimax_model_profile('minimax-01') is None
-    assert minimax_model_profile('other-vendor-model') is None
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_enabled_by_default': True,
+        }
+    )
 
 
-@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
-def test_bedrock_minimax_profile_composes_family_profile():
-    from pydantic_ai.profiles.minimax import minimax_model_profile
+@pytest.mark.parametrize('model_name', ['minimax-m1', 'minimax-m1-80k'])
+def test_minimax_m1_no_thinking(model_name: str):
+    profile = minimax_model_profile(model_name)
+    assert profile is not None
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
-    bedrock_profile = bedrock_minimax_model_profile('minimax-m2.5')
-    assert bedrock_profile is not None
-    assert bedrock_profile.get('supports_thinking') is True
-    assert bedrock_profile.get('thinking_always_enabled') is True
-    assert bedrock_profile.get('supports_json_schema_output') is True
-    assert bedrock_profile.get('supported_native_tools') == frozenset()
-    minimax_profile = minimax_model_profile('minimax-m2.5')
-    assert minimax_profile is not None
-    assert bedrock_profile.get('json_schema_transformer') is not minimax_profile.get('json_schema_transformer')
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'minimax-m2-her',
+        'minimax-01',
+        # Unpublished ids, and spellings other than MiniMax's own, get no flags.
+        'minimax-m3.5',
+        'minimax-m3.1',
+        'minimax-m2.9',
+        'minimax-m10',
+        'minimax-m3p1-flash',
+    ],
+)
+def test_minimax_unmatched(model_name: str):
+    assert minimax_model_profile(model_name) is None
 
 
 def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
