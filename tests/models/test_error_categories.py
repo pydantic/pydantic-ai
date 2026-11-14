@@ -1041,6 +1041,64 @@ CASES = [
         },
     ),
     Case(
+        id='mistral-context-window-prompt-too-long',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'Prompt 142251 > 131072 maximum context length',
+                'type': 'invalid_request_prompt_too_long',
+                'param': None,
+                'code': '3059',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3059',
+            'provider_error_type': 'invalid_request_prompt_too_long',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'reasoning_effort none is not supported for this model, supported values: '
+                "[<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_REJECTED,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3051',
+            'provider_error_type': 'invalid_request_invalid_args',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args-structured-message',
+        model=_mistral,
+        handler=_json(
+            422,
+            {
+                'object': 'error',
+                'message': {'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required'}]},
+                'type': 'invalid_request_invalid_args',
+                'code': '3051',
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 422, 'provider_error_code': '3051'},
+    ),
+    Case(
         id='mistral-rate-limit',
         model=_mistral,
         handler=_json(429, {'object': 'error', 'message': 'Requests rate limit exceeded', 'type': 'rate_limited'}),
