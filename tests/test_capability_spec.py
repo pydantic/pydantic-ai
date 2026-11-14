@@ -91,6 +91,9 @@ pytestmark = []
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
+with try_import() as jsonschema_imports_successful:
+    from jsonschema.validators import validator_for
+
 
 def test_capability_top_level_export() -> None:
     assert TopLevelCapability is Capability
@@ -1723,16 +1726,78 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {
                                     'oneOf': [
-                                        {'$ref': '#/$defs/WebSearchTool'},
-                                        {'$ref': '#/$defs/XSearchTool'},
-                                        {'$ref': '#/$defs/CodeExecutionTool'},
-                                        {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/ImageGenerationTool'},
-                                        {'$ref': '#/$defs/MemoryTool'},
-                                        {'$ref': '#/$defs/MCPServerTool'},
-                                        {'$ref': '#/$defs/FileSearchTool'},
-                                        {'$ref': '#/$defs/AdvisorTool'},
-                                        {'$ref': '#/$defs/ToolSearchTool'},
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/WebSearchTool'},
+                                                {'properties': {'kind': {'const': 'web_search'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/XSearchTool'},
+                                                {'properties': {'kind': {'const': 'x_search'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/CodeExecutionTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'code_execution'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/WebFetchTool'},
+                                                {'properties': {'kind': {'const': 'web_fetch'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ImageGenerationTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'image_generation'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/MemoryTool'},
+                                                {'properties': {'kind': {'const': 'memory'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/MCPServerTool'},
+                                                {'properties': {'kind': {'const': 'mcp_server'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/FileSearchTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'file_search'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/AdvisorTool'},
+                                                {'properties': {'kind': {'const': 'advisor'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ToolSearchTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'tool_search'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
                                     ]
                                 },
                                 {'type': 'null'},
@@ -2738,6 +2803,38 @@ def test_agent_from_spec_builtin_tool_explicit_form():
     builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.parametrize(
+    ('arguments', 'tool'),
+    [
+        pytest.param({'kind': 'code_execution'}, CodeExecutionTool(), id='code-execution'),
+        pytest.param({'kind': 'web_search'}, WebSearchTool(), id='web-search'),
+        pytest.param(
+            {'kind': 'web_search', 'search_context_size': 'high'},
+            WebSearchTool(search_context_size='high'),
+            id='web-search-with-options',
+        ),
+    ],
+)
+def test_native_tool_flat_form_schema(arguments: dict[str, str], tool: AbstractNativeTool):
+    """The schema accepts each `NativeTool` flat form, which loads as the tool its `kind` names."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': arguments}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [tool]
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+def test_native_tool_flat_form_schema_requires_kind():
+    """The schema rejects a `NativeTool` flat form without `kind`, which loads as no native tool."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'search_context_size': 'high'}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec))
+    with pytest.raises(ValueError, match="Failed to instantiate capability 'NativeTool'"):
+        Agent.from_spec(spec)
 
 
 def test_save_schema(tmp_path: str):
