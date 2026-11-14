@@ -68,7 +68,7 @@ def _waits_for_pipes() -> bool:
     return _ANYIO_WAITS_FOR_PIPES
 
 
-async def _shielded(awaitable: Awaitable[object], deadline: float) -> None:
+async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
     """Finish or cancel bounded work even when the caller is cancelled."""
     timed_out = False
 
@@ -114,13 +114,21 @@ def _raise_command_timeout(
     *,
     error: TimeoutError,
     denial: PermissionError | None,
+    child_denial: PermissionError | None,
 ) -> NoReturn:
     stdout = stdout_buffer.decode('utf-8', errors='replace')
     stderr = stderr_buffer.decode('utf-8', errors='replace')
+    if child_denial is not None:
+        raise WorkspaceTimeoutError(
+            f'command timed out after {timeout:g}s; killing its process group and the direct child '
+            'was denied, so the command may still be running',
+            stdout=stdout,
+            stderr=stderr,
+        ) from child_denial
     if denial is not None:
         raise WorkspaceTimeoutError(
             f'command timed out after {timeout:g}s; killing its process group was '
-            'denied, so at most the direct child was killed',
+            'denied, so only the direct child was killed and grandchildren may survive',
             stdout=stdout,
             stderr=stderr,
         ) from denial
@@ -400,10 +408,12 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
             await _shielded(self._close(running_process), anyio.current_time() + _REAP_GRACE)
         except BaseException as error:
-            denial = await self._terminate(running_process)
+            denial, child_denial = await self._terminate(running_process)
             # Without a command timeout, a `TimeoutError` is only a stalled reap's grace period.
             if isinstance(error, TimeoutError) and timeout is not None:
-                _raise_command_timeout(timeout, stdout_buffer, stderr_buffer, error=error, denial=denial)
+                _raise_command_timeout(
+                    timeout, stdout_buffer, stderr_buffer, error=error, denial=denial, child_denial=child_denial
+                )
             raise
         # A process can still finish after its working directory is deleted; don't report
         # that as an ordinary exit from a live workspace.
@@ -505,8 +515,8 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 pipe.close()
         await process.aclose()
 
-    async def _terminate(self, process: anyio.abc.Process) -> PermissionError | None:
-        """Kill the process group and reap it; return a group-kill denial."""
+    async def _terminate(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
+        """Kill the process group, or else the direct child, and reap it; return the group and child kill denials."""
         denial = None
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -515,17 +525,14 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         except PermissionError as error:
             denial = error
             try:
-                with suppress(ProcessLookupError):
-                    process.kill()
-            except PermissionError:
-                # The direct child is unkillable too, but it may exit on its own: wait bounded and
-                # shielded for that instead of tearing down, since close-time transport cleanup on
-                # a live process can re-raise this denied kill itself.
-                try:
-                    await _shielded(process.wait(), anyio.current_time() + _REAP_GRACE)
-                except TimeoutError:
-                    return denial
+                process.kill()
+            except ProcessLookupError:
+                pass
+            except PermissionError as child_denial:
+                # Skip the reap: nothing can force the exit it waits for, and once cancelled
+                # `Process.aclose()` shields that wait, so `_REAP_GRACE` cannot bound it.
+                return denial, child_denial
         # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
         with suppress(TimeoutError):
             await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
-        return denial
+        return denial, None
