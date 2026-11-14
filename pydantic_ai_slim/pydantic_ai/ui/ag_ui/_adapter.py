@@ -780,7 +780,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           no trusted message-level carrier for framework or provider state; general client-controlled
           metadata must not be restored as server-side state. The one thing `load_messages` keeps in
           the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
-          last message dumped from each `ModelMessage`.
+          last chat message dumped from each `ModelMessage`, never on an activity message dumped beside one,
+          or on the last activity message when the message dumps to nothing else.
         - A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] comes back,
           with its `provider_name`, only from a part that carries the response's `provider_name`: a
           `ThinkingPart`, a `CompactionPart`, or a `FilePart` with `preserve_file_data=True`. Its other
@@ -882,10 +883,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(msg)
             # `load_messages` kept the id of the last AG-UI message merged into `msg`, so it goes back on the
-            # last AG-UI message dumped from it. The others keep their fresh ids: several tool results in one
-            # request become several `ToolMessage`s, and those need distinct ids.
+            # last chat message dumped from it. The others keep their fresh ids: several tool results in one
+            # request become several `ToolMessage`s, and those need distinct ids. An `ActivityMessage` is
+            # skipped: it carries a framework record the run added after the client's message, such as the
+            # settings change behind a user prompt, and `@ag-ui/client` never sends it back, so the id has
+            # to stay on the message the client will resend for a regenerate or edit to find the stored turn
+            # (https://github.com/pydantic/pydantic-ai/issues/12691). A message that dumps to activities
+            # alone keeps the id on the last of them.
             if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
-                dumped[-1].id = ui_message_id
+                target = next((m for m in reversed(dumped) if not isinstance(m, ActivityMessage)), dumped[-1])
+                target.id = ui_message_id
             result.extend(dumped)
 
         return result

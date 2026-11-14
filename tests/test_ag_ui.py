@@ -2784,6 +2784,48 @@ def test_load_dump_message_id_on_merged_and_split_messages() -> None:
     uuid.UUID(dumped[3].id)
 
 
+def test_load_dump_message_id_skips_activity_messages() -> None:
+    """The kept id goes on the last chat message dumped from a `ModelMessage`, never on a trailing activity.
+
+    A run records a `ModelSettingsDeltaPart` behind the user prompt that set a thinking effort, and a
+    `CompactionPart` in the response that compacted; both dump as activity messages after the chat message
+    the client sent. `@ag-ui/client` doesn't send activity messages back, so the id has to stay on the user
+    message for a regenerate or edit after a reload to find the stored turn. A message that dumps to
+    activities alone keeps the id on the last of them.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Think about it.'),
+                ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+            ],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'usr-1'}},
+        ),
+        ModelResponse(
+            parts=[TextPart('Done.'), CompactionPart(content='Summary of the conversation so far.')],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'asst-1'}},
+        ),
+        ModelRequest(
+            parts=[ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'act-1'}},
+        ),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(messages)
+
+    assert [(type(m).__name__, m.id) for m in dumped] == [
+        ('UserMessage', 'usr-1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', 'asst-1'),
+        ('ActivityMessage', IsStr()),
+        ('ActivityMessage', 'act-1'),
+    ]
+    uuid.UUID(dumped[1].id)
+    uuid.UUID(dumped[3].id)
+
+
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
     """AG-UI does not trust a client round-trip with framework or provider response state.
 
@@ -11864,6 +11906,38 @@ async def test_server_message_history_drops_client_supplied_capability_loads():
 
     assert tools_seen[-1] == ['load_capability']
     assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
+
+
+async def test_server_message_history_regenerate_after_reload_with_settings_delta():
+    """A reload through `dump_messages` followed by a resend of the user message still replaces the turn.
+
+    The run records a `ModelSettingsDeltaPart` behind the first user prompt when the agent sets a thinking
+    effort, and it dumps as an activity message after the user message. The stored id has to stay on the
+    user message: the client resends it with the id it reloaded, and the server replaces the stored turn
+    only when that id matches, so a misplaced id appends the turn a second time instead.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        model_settings={'thinking': 'low'},
+    )
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+
+    reloaded = AGUIAdapter.dump_messages(stored)
+    assert [(type(m).__name__, m.id) for m in reloaded] == [
+        ('UserMessage', 'u1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', IsStr()),
+    ]
+
+    [user_message] = [m for m in reloaded if isinstance(m, UserMessage)]
+    persisted = await _server_history_turn(agent, create_input(user_message), stored)
+
+    prompts = [part for message in persisted for part in message.parts if isinstance(part, UserPromptPart)]
+    assert len(prompts) == 1
 
 
 @pytest.mark.parametrize('with_follow_up', [False, True])

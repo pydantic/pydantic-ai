@@ -26,6 +26,8 @@ A fourth property covers apps that keep the history on the server instead:
 
 `test_conversation_store_round_trip` covers apps that give the adapter a `conversation_store`: the client hands
 the app the saved entries' ids without adding them to its messages, and its retry replaces the right stored turn.
+`test_conversation_store_regenerate_after_reload` retries from a client hydrated with `dump_messages()`, as after a
+page reload, and checks that the retry still replaces the stored turn.
 
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
@@ -1089,9 +1091,13 @@ class Client(ABC):
         self.sent_ids.append([message['id'] for message in body['messages']])
         return json.dumps(body).encode()
 
-    def regenerate(self) -> bytes:
-        """Retry the client's last response, the way each client's app does it."""
-        body = self.driver.request(f'{self.protocol}.regenerate', session=self.session)
+    def regenerate(self, hydrate: list[ModelMessage] | None = None) -> bytes:
+        """Retry the client's last response, the way each client's app does it, after hydrating it if given."""
+        params: dict[str, Any] = {}
+        if hydrate is not None:
+            dumped = self.adapter_type.dump_messages(hydrate)
+            params['messages'] = to_jsonable_python(dumped, by_alias=True, exclude_none=True)
+        body = self.driver.request(f'{self.protocol}.regenerate', session=self.session, **params)
         self.sent_ids.append([message['id'] for message in body['messages']])
         return json.dumps(body).encode()
 
@@ -1480,6 +1486,49 @@ async def test_conversation_store_round_trip(protocol: Protocol, js_driver: JSDr
     conversation = await store.load(session, scope='alice')
     assert conversation is not None
     assert len(conversation.messages) == 4
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js_driver: JSDriver) -> None:
+    """A retry from a client hydrated with `dump_messages()` replaces the stored turn, through the real client.
+
+    The agent sets a thinking effort, so the run records a `ModelSettingsDeltaPart` behind the user prompt, which
+    AG-UI dumps as an activity message after the user message. The hydrated user message has to keep its stored
+    id: the client resends it on the retry, and the server replaces the turn only when that id matches
+    (https://github.com/pydantic/pydantic-ai/issues/12691).
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return ModelResponse(parts=[TextPart(f'Answer number {len(seen)}.')])
+
+    scenario = Scenario(
+        id='regenerate_after_reload', script=script, agent_kwargs={'model_settings': {'thinking': 'low'}}
+    )
+    agent, _ = scenario.agent()
+    store = InMemoryConversationStore()
+    session = f'regenerate-after-reload-{protocol}'
+    client = CLIENTS[protocol](js_driver, session, {'conversation_store': store, 'conversation_scope': 'alice'})
+
+    async def run_turn(body: bytes) -> list[ModelMessage]:
+        adapter = client.adapter(agent, body)
+        client.receive([chunk async for chunk in adapter.encode_stream(adapter.run_stream())])
+        conversation = await store.load(session, scope='alice')
+        assert conversation is not None
+        return conversation.messages
+
+    stored = await run_turn(client.submit('Question 1', None))
+    assert any(isinstance(part, ModelSettingsDeltaPart) for message in stored for part in message.parts)
+
+    # The page reloads: the app hydrates the client from the store, and the user retries the answer.
+    stored = await run_turn(client.regenerate(hydrate=stored))
+
+    [first_ids, retry_ids] = client.sent_ids
+    assert retry_ids == first_ids
+    assert [type(message).__name__ for message in stored] == ['ModelRequest', 'ModelResponse']
+    assert stored[-1].parts == [TextPart('Answer number 2.')]
+    assert [len(messages) for messages in seen] == [1, 1]
 
 
 def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
