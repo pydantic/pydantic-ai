@@ -1084,6 +1084,21 @@ CASES = [
         },
     ),
     Case(
+        id='mistral-invalid-args-structured-message',
+        model=_mistral,
+        handler=_json(
+            422,
+            {
+                'object': 'error',
+                'message': {'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required'}]},
+                'type': 'invalid_request_invalid_args',
+                'code': '3051',
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 422, 'provider_error_code': '3051'},
+    ),
+    Case(
         id='mistral-rate-limit',
         model=_mistral,
         handler=_json(429, {'object': 'error', 'message': 'Requests rate limit exceeded', 'type': 'rate_limited'}),
