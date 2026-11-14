@@ -233,7 +233,7 @@ class AbstractNativeTool(ABC):
             # The discriminator is a function, so the union's JSON schema is a `oneOf` with no mapping, and each
             # tool's `kind` is a plain string with a default. Pinning `kind` keeps `{'kind': 'code_execution'}` from
             # matching several members; it's required because a document without one loads as no built-in tool.
-            # The `kind` default binds each member's own kind: a closure would see only the last one.
+            # `kind=tool._declared_kind()` binds each member's own kind: a closure would see only the last one.
             tools_annotated = [
                 Annotated[
                     tool,
