@@ -13,6 +13,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, Tool, ToolReturnPart
+from pydantic_ai._json_schema import resolve_json_pointer
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
@@ -190,6 +191,29 @@ def test_recursive_model_stays_strict_compatible():
 
     assert transformer.walk()['properties']['children'] == {'type': 'array', 'items': {'$ref': '#'}}
     assert transformer.is_strict_compatible is True
+
+
+def test_percent_encoded_json_pointer_ref_stays_unresolved():
+    """A percent-encoded JSON-pointer `$ref` is sent verbatim and blocks inferred strict mode.
+
+    Unit test: the schema's own pointer resolves once (`from%20address` -> `from address`), while the
+    OpenAI transformer leaves the encoded ref unre-written; `is_strict_compatible` is only set during
+    `walk()`, so the assertion follows it.
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'from address': ADDRESS_SCHEMA,
+            'to': {'$ref': '#/properties/from%20address'},
+        },
+        'required': ['from address', 'to'],
+        'additionalProperties': False,
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema)
+
+    assert resolve_json_pointer(schema, '#/properties/from%20address') == ADDRESS_SCHEMA
+    assert transformer.walk()['properties']['to'] == {'$ref': '#/properties/from%20address'}
+    assert transformer.is_strict_compatible is False
 
 
 SENT_PARAMETERS: dict[str, Any] = {

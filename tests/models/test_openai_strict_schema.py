@@ -908,6 +908,30 @@ def test_openai_strict_size_limits_keep_explicit_strict():
     assert transformer.is_strict_compatible is True
 
 
+def test_gpt_oss_inlines_percent_encoded_json_pointer_ref() -> None:
+    transformer_type = openai_model_profile('gpt-oss-120b').get('json_schema_transformer')
+    assert transformer_type is not None
+
+    schema = {
+        'type': 'object',
+        'properties': {'address': {'$ref': '#/$defs/Address%20Book'}},
+        'required': ['address'],
+        '$defs': {
+            'Address Book': {
+                'type': 'object',
+                'properties': {'street': {'type': 'string'}},
+                'required': ['street'],
+                'additionalProperties': False,
+            }
+        },
+    }
+    transformer = transformer_type(schema, strict=None)
+    result = transformer.walk()
+
+    assert '$defs' not in result
+    assert result['properties']['address']['properties']['street'] == {'type': 'string'}
+
+
 @pytest.mark.parametrize('api', ['chat', 'responses'])
 async def test_openai_deeply_nested_tool_is_sent_non_strict(
     api: Literal['chat', 'responses'],

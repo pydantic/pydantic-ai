@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, cast
+from urllib.parse import unquote
 
 from pydantic import JsonValue
 
@@ -176,13 +177,14 @@ def _json_pointer_path(ref: str) -> str:
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
 
-    Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the MCP
-    TypeScript SDK uses, points a reused subschema at its first occurrence instead.
+    RFC 6901 URI fragments are percent-decoded once before token splitting. Not every producer collects shared
+    subschemas into `$defs`: `zod-to-json-schema`, which the MCP TypeScript SDK uses, points a reused subschema at
+    its first occurrence instead.
     """
     if ref != '#' and not ref.startswith('#/'):
         return None
     node: JsonValue = schema
-    for token in ref.split('/')[1:]:
+    for token in unquote(ref).split('/')[1:]:
         token = token.replace('~1', '/').replace('~0', '~')
         if isinstance(node, dict):
             node = node.get(token)
@@ -336,7 +338,11 @@ class JsonSchemaTransformer(ABC):
         `None` when the `$ref` stays, as a recursive one does.
         """
         # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
-        key = ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~') if ref.startswith('#/$defs/') else ref
+        key = (
+            unquote(ref.removeprefix('#/$defs/')).replace('~1', '/').replace('~0', '~')
+            if ref.startswith('#/$defs/')
+            else ref
+        )
         if key in self.refs_stack:
             if key not in self.defs:
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
