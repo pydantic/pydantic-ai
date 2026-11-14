@@ -441,11 +441,18 @@ dataset = Dataset(
             query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
-        # Check duration constraints
+        # Every llm_call is <=2s; the task root is named task_execution
         HasMatchingSpan(
             query={
-                'name_equals': 'llm_call',
-                'max_duration': 2.0,  # seconds
+                'name_equals': 'task_execution',
+                'not_': {'and_': [
+                    {'name_equals': 'llm_call'},
+                    {'not_': {'max_duration': 2.0}},
+                ]},
+                'no_descendant_has': {'and_': [
+                    {'name_equals': 'llm_call'},
+                    {'not_': {'max_duration': 2.0}},
+                ]},
             },
             evaluation_name='llm_fast_enough',
         ),
