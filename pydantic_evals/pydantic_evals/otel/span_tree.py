@@ -34,6 +34,19 @@ SpanStatus = Literal['unset', 'ok', 'error']
 
 __all__ = 'SpanNode', 'SpanQuery', 'SpanStatus', 'SpanTree'
 
+_DURATION_ADAPTER = TypeAdapter(float | timedelta)
+"""Decodes durations accepted by `SpanQuery` and `MaxDuration`, including ISO-8601 strings like 'PT5S'."""
+
+
+def _decode_duration(value: float | timedelta) -> timedelta:
+    """Decode a duration from a `timedelta`, a number of seconds, or an ISO-8601 duration string."""
+    if isinstance(value, timedelta):
+        return value
+    decoded = _DURATION_ADAPTER.validate_python(value)
+    if isinstance(decoded, timedelta):
+        return decoded
+    return timedelta(seconds=decoded)
+
 
 class SpanQuery(TypedDict, total=False):
     """A serializable query for filtering SpanNodes based on various conditions.
@@ -330,14 +343,10 @@ class SpanNode:
 
     def _duration_matches(self, query: SpanQuery) -> bool:
         if (min_duration := query.get('min_duration')) is not None:
-            if not isinstance(min_duration, timedelta):
-                min_duration = timedelta(seconds=min_duration)
-            if self.duration < min_duration:
+            if self.duration < _decode_duration(min_duration):
                 return False
         if (max_duration := query.get('max_duration')) is not None:
-            if not isinstance(max_duration, timedelta):
-                max_duration = timedelta(seconds=max_duration)
-            if self.duration > max_duration:
+            if self.duration > _decode_duration(max_duration):
                 return False
         return True
 

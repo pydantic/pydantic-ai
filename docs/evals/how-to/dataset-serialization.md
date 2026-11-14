@@ -402,7 +402,7 @@ evaluators:
 evaluators:
 - IsInstance: str
 - Contains: "required text"
-- MaxDuration: 2.0
+- MaxDuration: 2.0  # seconds, or an ISO-8601 duration string like PT5S
 ```
 
 The short form passes its value as the first positional argument, so a keyword-only parameter uses the dict form even when it is the only one:
