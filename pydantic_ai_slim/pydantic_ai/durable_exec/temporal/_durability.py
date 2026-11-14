@@ -534,7 +534,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
                 'child workflow because direct activity registration would omit required workflow definitions. '
                 'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
-                'the workflow via `__pydantic_ai_agents__`.'
+                'the workflow via `__pydantic_ai_agents__`. For an activity-only worker, use '
+                '`AgentPlugin(agent, register_workflows=False)`.'
             )
         return activities
 
@@ -755,8 +756,14 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
         return result
 
 
-def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Callable[..., Any]], list[type]]:
-    """Return the activities and workflow definitions a worker must register for `durability`."""
+def worker_registrations(
+    durability: TemporalDurability[Any], *, include_workflows: bool = True
+) -> tuple[list[Callable[..., Any]], list[type]]:
+    """Return the activities and workflow definitions a worker must register for `durability`.
+
+    With `include_workflows=False`, return no workflow definitions and leave `registered_child_workflow_names` alone,
+    since the worker isn't configured with them.
+    """
     backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
     if backend is None:
         return [], []
@@ -765,6 +772,8 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
     # A worker only registers the child workflows of toolsets that select one, so workers for agents that don't use
     # the feature keep exactly their activity registrations.
     workflows: list[type] = []
+    if not include_workflows:
+        return activities, workflows
     for registration in registrations:
         if not isinstance(registration, type):
             continue

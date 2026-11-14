@@ -170,8 +170,10 @@ async def test_child_workflow_metadata_added_after_worker_configured(client: Cli
     assert cause.message == snapshot(
         "Toolset 'late_child_tools' has a tool configured to run as a Temporal child workflow, but its child "
         'workflow was not registered with the worker, because no tool in the toolset had `child_workflow` metadata '
-        'when the worker was configured. Set the metadata on the tool, or with a `SetToolMetadata` capability, '
-        'before creating the worker, and register the worker through `PydanticAIPlugin` or `AgentPlugin`.'
+        'when the worker was configured, or because the worker was configured with '
+        '`AgentPlugin(agent, register_workflows=False)`. Set the metadata on the tool, or with a `SetToolMetadata` '
+        'capability, before creating the worker, and register the worker that runs this workflow through '
+        '`PydanticAIPlugin` or `AgentPlugin` without `register_workflows=False`.'
     )
 
 
@@ -672,6 +674,63 @@ async def test_child_workflow_runs_nested_durable_agent(client: Client) -> None:
     # The nested agent's model request is a durable activity in the child's history, not the parent's.
     assert _scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
     assert 'agent__nested_sub_agent__model_request' not in _scheduled_activity_types(history)
+
+
+@workflow.defn
+class SplitWorkersDelegatingWorkflow:
+    # No `__pydantic_ai_agents__`, so the client's `PydanticAIPlugin` registers no activities on the workflow worker.
+    @workflow.run
+    async def run(self) -> str:
+        return (await delegating_agent.run('delegate this')).output
+
+
+async def test_activity_only_worker_registers_no_child_workflows(client: Client) -> None:
+    workflow_id = 'test_activity_only_worker_registers_no_child_workflows'
+    durability = TemporalDurability.from_agent(delegating_agent)
+    assert durability is not None
+    _, child_workflows = worker_registrations(durability)
+    assert child_workflows
+
+    # By default, the plugin registers the agent's child workflow on whatever worker it's attached to.
+    default_config = AgentPlugin(delegating_agent).configure_worker({'workflows': []})
+    assert default_config.get('workflows') == child_workflows  # pyright: ignore[reportUnknownMemberType]
+
+    # An activity-only plugin doesn't record the child workflow as registered in this process, so the workflow-side
+    # guard still fails a run whose workflow worker lacks it. The `worker_registrations` call above recorded it for
+    # the workflow worker below, which registers the child workflow classes itself.
+    registered = set(registered_child_workflow_names)
+    registered_child_workflow_names.clear()
+    try:
+        activity_plugin = AgentPlugin(delegating_agent, register_workflows=False)
+        assert registered_child_workflow_names == set()
+    finally:
+        registered_child_workflow_names.update(registered)
+
+    workflow_worker = Worker(
+        client, task_queue=TASK_QUEUE, workflows=[SplitWorkersDelegatingWorkflow, *child_workflows]
+    )
+    activity_worker = Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        plugins=[activity_plugin, AgentPlugin(sub_agent, register_workflows=False)],
+    )
+    assert workflow_worker.config(active_config=True).get('activities') == []  # pyright: ignore[reportUnknownMemberType]
+    assert activity_worker.config(active_config=True).get('workflows') == []  # pyright: ignore[reportUnknownMemberType]
+
+    # Every activity, in the parent and in the child, can only run on the activity-only worker.
+    async with workflow_worker, activity_worker:
+        result = await client.execute_workflow(
+            SplitWorkersDelegatingWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
+        )
+
+    assert 'success (no tool calls)' in result
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    child_start = _child_start(history)
+    assert child_start.workflow_type.name == (
+        'agent__delegating_agent__toolset__delegation_tools__call_tool__child_workflow'
+    )
+    child_history = await client.get_workflow_handle(child_start.workflow_id).fetch_history()
+    assert _scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
 
 
 class _ChildWorkflow(Protocol):
