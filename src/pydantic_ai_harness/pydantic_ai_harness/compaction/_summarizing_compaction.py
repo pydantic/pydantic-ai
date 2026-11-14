@@ -48,7 +48,7 @@ from pydantic_ai_harness.compaction._capability_loads import (
     is_load_part,
     keep_loaded_state,
 )
-from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
@@ -63,6 +63,7 @@ from pydantic_ai_harness.compaction._shared import (
     compact_if_smaller,
     compact_with_span,
     context_for_request,
+    estimate_text_tokens,
     estimate_token_count,
     exceeds,
     find_safe_cutoff,
@@ -71,6 +72,7 @@ from pydantic_ai_harness.compaction._shared import (
     is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
+    record_span_attributes,
     resolve_token_trigger,
     split_legacy_memory,
     validate_token_trigger,
@@ -254,46 +256,84 @@ def format_transcript(
     returns, and the deltas a load leaves) are left out: which capabilities are loaded is carried by those
     records, which a compaction records again after the summary, never by the summary.
     """
-    elements: list[str] = []
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            rendered = [
-                _request_part_element(part, skip_previous_summary, tool_return_max_chars) for part in message.parts
-            ]
+    return '\n'.join(
+        element
+        for _, element in _transcript_entries(
+            messages,
+            skip_previous_summary=skip_previous_summary,
+            tool_return_max_chars=tool_return_max_chars,
+        )
+    )
+
+
+def _entry(
+    role: _TranscriptRole,
+    content: str,
+    *,
+    name: str | None = None,
+    cause: str | None = None,
+    max_chars: int | None = None,
+    core_framed: bool = False,
+) -> tuple[_TranscriptEntryKind, str]:
+    """One `<message>` element, tagged with the role it was rendered for."""
+    return role, _message_element(role, content, name=name, cause=cause, max_chars=max_chars, core_framed=core_framed)
+
+
+def _tool_return_entry(part: ToolReturnPart, max_chars: int | None) -> tuple[_TranscriptEntryKind, str]:
+    """The entry for a tool return: `retry_feedback` carrying its cause when the call was retried."""
+    retried = part.outcome == 'retried'
+    return _entry(
+        'retry_feedback' if retried else 'tool_return',
+        tool_return_text(part),
+        name=part.tool_name,
+        cause=part.retry.cause if retried and part.retry is not None else None,
+        max_chars=max_chars,
+    )
+
+
+def _transcript_entries(
+    messages: Sequence[ModelMessage],
+    *,
+    skip_previous_summary: bool = False,
+    tool_return_max_chars: int | None = 500,
+) -> list[tuple[_TranscriptEntryKind, str]]:
+    """`format_transcript`'s elements, each tagged with the role it was rendered for.
+
+    The tag is what lets `_fit_transcript` shrink tool output first: the body of a
+    `tool_return` or `retry_feedback` entry is what a summary can do without longest, while the
+    user and assistant text around it is what the summary is for.
+    """
+    entries: list[tuple[_TranscriptEntryKind, str]] = []
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            rendered = [_request_part_entry(part, skip_previous_summary, tool_return_max_chars) for part in msg.parts]
         else:
-            rendered = [_response_part_element(part) for part in message.parts]
-        elements.extend(element for element in rendered if element is not None)
-    return '\n'.join(elements)
+            rendered = [_response_part_entry(part) for part in msg.parts]
+        entries.extend(entry for entry in rendered if entry is not None)
+    return entries
 
 
-def _request_part_element(
+def _request_part_entry(
     part: ModelRequestPart, skip_previous_summary: bool, tool_return_max_chars: int | None
-) -> str | None:
-    """The transcript element for a request part, or `None` for a part the transcript leaves out."""
+) -> tuple[_TranscriptEntryKind, str] | None:
+    """The transcript entry for a request part, or `None` for a part the transcript leaves out."""
     if is_load_part(part):
         return None
     match part:
         case UserPromptPart() if (origin := harness_data_origin(part)) is not None:
-            return _harness_data_element(origin, user_prompt_text(part), tool_return_max_chars)
+            return 'harness_data', _harness_data_element(origin, user_prompt_text(part), tool_return_max_chars)
         case UserPromptPart() if _is_kept_user_part(part):
             # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
             return None
         case UserPromptPart():
-            return _message_element('user', user_prompt_text(part))
+            return _entry('user', user_prompt_text(part))
         # A request-scoped prompt applied to its own request only, so it's no lasting context.
         case SystemPromptPart() if part.scope != 'request' and not (skip_previous_summary and is_legacy_summary(part)):
-            return _message_element('system', part.content)
+            return _entry('system', part.content)
         case ToolReturnPart():
-            retried = part.outcome == 'retried'
-            return _message_element(
-                'retry_feedback' if retried else 'tool_return',
-                tool_return_text(part),
-                name=part.tool_name,
-                cause=part.retry.cause if retried and part.retry is not None else None,
-                max_chars=tool_return_max_chars,
-            )
+            return _tool_return_entry(part, tool_return_max_chars)
         case RetryFeedbackPart():
-            return _message_element(
+            return _entry(
                 'retry_feedback',
                 part.model_response(),
                 cause=part.retry.cause,
@@ -301,17 +341,17 @@ def _request_part_element(
                 core_framed=True,
             )
         case CompactionPart() if part.content and not (skip_previous_summary and is_summary_part(part)):
-            return _message_element('summary', part.content)
+            return _entry('summary', part.content)
         case _:
             return None
 
 
-def _response_part_element(part: ModelResponsePart) -> str | None:
-    """The transcript element for a response part, or `None` for a part the transcript leaves out."""
+def _response_part_entry(part: ModelResponsePart) -> tuple[_TranscriptEntryKind, str] | None:
+    """The transcript entry for a response part, or `None` for a part the transcript leaves out."""
     if isinstance(part, TextPart):
-        return _message_element('assistant', part.content)
+        return _entry('assistant', part.content)
     if isinstance(part, ToolCallPart) and not is_load_part(part):
-        return _message_element('tool_call', f'{part.args}', name=part.tool_name)
+        return _entry('tool_call', f'{part.args}', name=part.tool_name)
     return None
 
 
@@ -319,6 +359,178 @@ _TranscriptRole: TypeAlias = Literal[
     'user', 'system', 'assistant', 'tool_call', 'tool_return', 'retry_feedback', 'summary'
 ]
 """The `role` of a `<message>` element in the summarizer transcript."""
+
+_TranscriptEntryKind: TypeAlias = _TranscriptRole | Literal['harness_data']
+"""What a transcript entry holds: a `<message>` role, or a `<harness_data>` element."""
+
+_OMITTED_TOOL_OUTPUT = "[... tool output dropped to fit the summarizer's context window ...]"
+"""Body an oversized tool-output entry is reduced to when the summarizer request has to shrink."""
+
+_OMITTED_TRANSCRIPT_HEAD = "[... earlier transcript omitted to fit the summarizer's context window ...]"
+"""Prefix of a request whose oldest entries had to be cut entirely."""
+
+_TOOL_OUTPUT_KINDS: frozenset[str] = frozenset({'tool_return', 'retry_feedback'})
+"""Entry kinds whose body is dropped first: what a tool printed, which a summary can do without."""
+
+_SUMMARY_OUTPUT_RESERVE_TOKENS = 8_192
+"""Most tokens of the summarizer's window kept free for the summary it writes back."""
+
+
+@dataclass(frozen=True)
+class _TrimmedTranscript:
+    """A transcript fitted to a token budget, with what it took to fit it."""
+
+    text: str
+    dropped_tool_results: int
+    dropped_entries: int
+
+
+def _without_body(element: str) -> str:
+    """*element* with its body replaced by `_OMITTED_TOOL_OUTPUT`, its `<message>` tag kept."""
+    # `_message_element` is the only producer of these elements and always writes `...>\n{body}\n</message>`,
+    # with `>` escaped in its attributes, so the first `>` ends the opening tag.
+    return f'{element[: element.index(">") + 1]}\n{_OMITTED_TOOL_OUTPUT}\n</message>'
+
+
+def _keep_element_tail(
+    element: str,
+    max_tokens: int,
+    tokenizer: Callable[[str], int] | None,
+    marker: str = _OMITTED_TRANSCRIPT_HEAD,
+) -> str:
+    """*element* with the longest tail of its body that fits *max_tokens*, its own tags kept.
+
+    The head of the body goes rather than its middle or its tail: the newest turn is what the summary
+    has to carry. The tags stay because the opening one is a label: `role="tool_return"` and
+    `<harness_data origin=...>` are what tell the summarizer a tool printed this rather than a user
+    asking for it, so a body cut out of its wrapper would read as plain instructions. The binary
+    search asks the tokenizer rather than assuming it counts characters, so a real tokenizer still
+    lands under the budget. A budget too small for the marker alone leaves the tags around the
+    marker, which is a request the provider may still reject but the closest thing to fitting.
+
+    *marker* is what says the body was cut, and is empty when the caller prefixed the whole request
+    with it instead.
+    """
+    # `_message_element` and `_harness_data_element` are the only producers of these elements and
+    # always write `...>\n{body}\n</...>`, with `>` escaped in their attributes and `<` in the body,
+    # so the first and the last newline bracket the body.
+    opening, _, rest = element.partition('\n')
+    body, _, closing = rest.rpartition('\n')
+    fixed = f'{opening}\n{marker}\n{closing}'
+    start, end = 0, len(body)
+    while start < end:
+        middle = (start + end) // 2
+        # The whole wrapped candidate is what the request carries, not just its body: the newline
+        # before the closing tag costs a token too, so measuring a tail against what is left of the
+        # budget after the tags can land one over it.
+        if estimate_text_tokens(f'{opening}\n{marker}\n{body[middle:]}\n{closing}', tokenizer) <= max_tokens:
+            end = middle
+        else:
+            start = middle + 1
+    if not (tail := body[start:]):
+        return fixed
+    return f'{opening}\n{marker}\n{tail}\n{closing}'
+
+
+def _keep_newest(
+    elements: Sequence[str],
+    sizes: Sequence[int],
+    total: int,
+    max_tokens: int,
+    tokenizer: Callable[[str], int] | None,
+) -> tuple[str, int]:
+    """The text of the newest entries that fit *max_tokens*, and how many whole entries that dropped.
+
+    Entries go from the oldest end and whole. The per-entry sum decides how far to go rather than a
+    re-measurement per candidate cut, so a long history costs one tokenizer call per entry; that sum
+    leaves out the separators between the entries, though, so the joined text can still be over
+    budget. It then drops whole entries from the oldest end rather than cutting the head of an
+    element, and only a single entry left too large keeps a tail of its body.
+
+    Dropping an entry also writes `_OMITTED_TRANSCRIPT_HEAD` in front of the text, because a
+    summarizer that reads a transcript starting mid-conversation writes its `## Intent` section from
+    whatever turn happens to be first. That marker is part of the request, so once an entry is
+    dropped its own tokens come off the budget too; while none has been, nothing is reserved for it.
+    """
+    head = f'{_OMITTED_TRANSCRIPT_HEAD}\n'
+    head_tokens = estimate_text_tokens(head, tokenizer)
+    start = 0
+    while len(elements) - start > 1 and total + (head_tokens if start else 0) > max_tokens:
+        total -= sizes[start]
+        start += 1
+    kept = list(elements[start:])
+    # Each candidate is the suffix left after dropping one more entry, and a longer suffix always costs
+    # at least as much as a shorter one, so the count comes from searching the start index rather than
+    # from one re-join per dropped entry: a history of many small entries would otherwise rebuild the
+    # transcript once per entry.
+    low, high = 0, len(kept) - 1
+    while low < high:
+        middle = (low + high) // 2
+        suffix = '\n'.join(kept[middle:])
+        fitted = estimate_text_tokens(suffix, tokenizer) + (head_tokens if start + middle else 0)
+        if fitted > max_tokens:
+            low = middle + 1
+        else:
+            high = middle
+    if low:
+        kept = kept[low:]
+        start += low
+    text = '\n'.join(kept)
+    if estimate_text_tokens(text, tokenizer) + (head_tokens if start else 0) > max_tokens:
+        text = _keep_element_tail(
+            kept[0],
+            max_tokens - head_tokens if start else max_tokens,
+            tokenizer,
+            marker='' if start else _OMITTED_TRANSCRIPT_HEAD,
+        )
+    return (f'{head}{text}' if start else text), start
+
+
+def _fit_transcript(
+    entries: Sequence[tuple[_TranscriptEntryKind, str]],
+    max_tokens: int,
+    tokenizer: Callable[[str], int] | None = None,
+) -> _TrimmedTranscript | None:
+    """*entries* fitted to *max_tokens*, or `None` when they already fit.
+
+    Tool output goes first, oldest first, and only its body: a summary rarely needs what a tool
+    printed, while the call's tag and name still tell it that a call happened. Whole entries are then
+    dropped from the oldest end, and a last entry too large on its own keeps only a tail of its body,
+    inside the tags that say what it is.
+
+    Sizes are accounted per entry rather than by re-measuring the joined text, so a long history costs
+    one tokenizer call per entry instead of one per candidate cut. What decides whether the entries
+    fit is the joined text, though, and the per-entry sum is not it: the separators between the
+    entries and each entry's own rounding are missing from that sum, so it can sit under the budget
+    while the request it describes is over it. The joined text is measured once up front and carried
+    alongside the sum, so the tool output keeps shrinking until the request itself fits rather than
+    until the entries' own sizes do.
+    """
+    elements = [element for _, element in entries]
+    sizes = [estimate_text_tokens(element, tokenizer) for element in elements]
+    joined = estimate_text_tokens('\n'.join(elements), tokenizer)
+    if joined <= max_tokens:
+        return None
+    total = sum(sizes)
+    dropped_tool_results = 0
+    for index, (kind, _) in enumerate(entries):
+        if joined <= max_tokens:
+            break
+        if kind not in _TOOL_OUTPUT_KINDS:
+            continue
+        reduced = _without_body(elements[index])
+        reduced_size = estimate_text_tokens(reduced, tokenizer)
+        # An entry already shorter than the marker gains nothing from being replaced by it.
+        if reduced_size < sizes[index]:
+            gain = sizes[index] - reduced_size
+            total -= gain
+            joined -= gain
+            elements[index] = reduced
+            sizes[index] = reduced_size
+            dropped_tool_results += 1
+    text, dropped_entries = _keep_newest(elements, sizes, total, max_tokens, tokenizer)
+    return _TrimmedTranscript(text, dropped_tool_results, dropped_entries)
+
 
 _TRANSCRIPT_TAG_OPENER = re.compile(
     r'<(?=\s*(?:/\s*)?(?:messages?|previous-summary|harness_data)(?:[\s/>]|$))', re.IGNORECASE
@@ -1091,6 +1303,104 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         )
 
 
+def _summary_prompt(
+    summarizer: SummarizingCompaction[AgentDepsT],
+    transcript: str,
+    *,
+    harness_data: bool,
+    previous_summary: str | None,
+) -> str:
+    """The summarizer's user turn, built around *transcript*.
+
+    Split out of `write_summary` so a transcript that has to be trimmed is rendered again with the
+    same instructions, rather than edited inside a string that also carries them: a previous summary
+    can legally contain the whole transcript, so a replace would hit more than the transcript.
+    """
+    prompt = summarizer.summary_prompt.format(messages=transcript)
+    if harness_data:
+        prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
+    if previous_summary is not None:
+        prompt = (
+            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
+            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
+        )
+    return prompt
+
+
+def _summary_input_budget(model: AbstractModel | str) -> int | None:
+    """Tokens the summarizer request may spend, or `None` when the summarizer's window is unknown.
+
+    A summarizer is often a smaller model than the one the run uses, which is the case this exists
+    for: the request is built from the whole transcript, so it can overflow a window the history it
+    came from never reached. An unknown window is left untrimmed rather than assumed to be
+    `DEFAULT_CONTEXT_WINDOW`: a summary cut short loses information, and only a model with no window
+    at all -- a local endpoint, one the registry doesn't know -- reaches here. An endpoint whose
+    window is wrong sets it on the summarizer's profile, which `resolve_context_window` reads, so
+    this needs no field of its own.
+    """
+    window = resolve_context_window(model)
+    if window is None:
+        return None
+    return max(1, window - min(window // 4, _SUMMARY_OUTPUT_RESERVE_TOKENS))
+
+
+def _transcript_copies(summary_prompt: str) -> int:
+    """How many copies of the transcript *summary_prompt* renders.
+
+    More than one is unusual but allowed, and every copy is sent, so what one copy may take is the
+    transcript's share divided by this. `_summary_prompt` has already rendered the template, which
+    fails wherever parsing would, so parsing here needs no guard.
+    """
+    return sum(1 for _, name, _, _ in Formatter().parse(summary_prompt) if name is not None) or 1
+
+
+def _fit_summary_input(
+    summarizer: SummarizingCompaction[AgentDepsT],
+    model: AbstractModel | str,
+    overhead_prompt: str,
+    entries: Sequence[tuple[_TranscriptEntryKind, str]],
+) -> str | None:
+    """The transcript trimmed to the summarizer's share of *model*'s window, or `None` when it fits.
+
+    The budget is the whole request's, so what the request carries besides the transcript is measured
+    and taken off the transcript's share: the template around it, the harness-data instruction, the
+    previous summary, and the summarizer agent's own static instructions. That fixed part is measured
+    by rendering the template with an empty transcript, not by subtracting one copy of the rendered
+    transcript: a template may show `{messages}` more than once, and a previous summary may quote the
+    transcript back, and subtracting one copy would bill the extra copies as fixed text.
+
+    That the summarizer saw less than the whole history is recorded on the enclosing
+    `compact_messages` span, because a summary of part of the history is a different thing, and a
+    difference nobody can see is what makes compaction hard to trust.
+
+    A fixed part that leaves no room for a transcript at all leaves the request whole rather than
+    trimmed around it: a trim would keep the omission marker and send the oversized instructions
+    anyway, so the history would be replaced by a summary of nothing and the request would still go
+    over budget. The provider then decides, as it did before the transcript was fitted at all, and
+    its `ModelAPIError` is what a `FallbackCompaction` chain's `fallback_on` already catches.
+    """
+    budget = _summary_input_budget(model)
+    if budget is None:
+        return None
+    tokenizer = summarizer.tokenizer
+    overhead = estimate_text_tokens(overhead_prompt, tokenizer)
+    overhead += estimate_text_tokens(summarizer.instructions, tokenizer)
+    room = (budget - overhead) // _transcript_copies(summarizer.summary_prompt)
+    if room < 1:
+        return None
+    trimmed = _fit_transcript(entries, room, tokenizer)
+    if trimmed is None:
+        return None
+    record_span_attributes(
+        {
+            'compaction.summary_request_trimmed': True,
+            'compaction.summary_request_tool_results_dropped': trimmed.dropped_tool_results,
+            'compaction.summary_request_entries_dropped': trimmed.dropped_entries,
+        }
+    )
+    return trimmed.text
+
+
 async def write_summary(
     summarizer: SummarizingCompaction[AgentDepsT],
     messages: list[ModelMessage],
@@ -1105,24 +1415,22 @@ async def write_summary(
     """
     from pydantic_ai import Agent
 
-    formatted = format_transcript(
+    entries = _transcript_entries(
         messages,
         skip_previous_summary=previous_summary is not None,
         tool_return_max_chars=summarizer.tool_return_max_chars,
     )
-    prompt = summarizer.summary_prompt.format(messages=formatted)
-    if any(
-        is_harness_data(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-    ):
-        prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
-
-    if previous_summary is not None:
-        prompt = (
-            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
-            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
-        )
+    harness_data = any(is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts)
+    formatted = '\n'.join(element for _, element in entries)
+    prompt = _summary_prompt(summarizer, formatted, harness_data=harness_data, previous_summary=previous_summary)
 
     model = summarizer.model if summarizer.model is not None else ctx.model
+    # Rendering the template with an empty transcript measures what the request carries besides it.
+    overhead_prompt = _summary_prompt(summarizer, '', harness_data=harness_data, previous_summary=previous_summary)
+    fitted = _fit_summary_input(summarizer, model, overhead_prompt, entries)
+    if fitted is not None:
+        prompt = _summary_prompt(summarizer, fitted, harness_data=harness_data, previous_summary=previous_summary)
+
     # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
     # realtime run reaches here only when no summarizer `model=` was configured, so ask for
     # one explicitly rather than handing `Agent` a model it cannot run with.

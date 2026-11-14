@@ -143,7 +143,10 @@ one LLM call per compaction. `model=None` inherits the run's model; a non-text m
 example a decision model) needs `model=` set or the first compaction raises `UserError`.
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
-re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
+re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500` (the only size option:
+the summary request itself is fitted to the summarizer model's context window, dropping the
+oldest tool output and then whole entries, so there is no request-size knob),
+`summary_prompt` (must
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
 and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
 inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
