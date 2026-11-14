@@ -41,3 +41,72 @@ to integrate another engine without importing Pydantic AI internals.
 
 Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also run inside a durable agent; the
 [workspace guide](../workspace.md#durable-execution) shows how, and what works on each engine.
+
+## Running a tool outside the durable unit
+
+An engine runs each function tool call in a durable unit (an activity, step or task) so a restarted run reuses its recorded result. To run a tool in the workflow code itself instead, set [`durable=False`][pydantic_ai.tools.ToolDefinition.durable] on it, as you would `sequential` or `timeout`: on `@agent.tool`, `Tool(...)`, `@toolset.tool` or a `FunctionToolset` for all its tools. The tool then runs again on every replay, so keep it deterministic: no I/O, clock or randomness of its own. What it does through a [workspace](../workspace.md#durable-execution) call or a durable agent's run is still recorded, unit by unit. Use it for a tool that has to see live run state, or that starts work which should be recorded step by step rather than as one unit:
+
+```python {title="durable_opt_out.py" test="skip"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+toolset = FunctionToolset(id='files')
+
+
+@toolset.tool(durable=False)  # (1)!
+async def copy_file(ctx: RunContext, source: str, destination: str) -> str:
+    content = await ctx.workspace.read_bytes(source)  # (2)!
+    await ctx.workspace.write_bytes(destination, content)
+    return f'Copied {source} to {destination}.'
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='files',
+    toolsets=[toolset],
+    capabilities=[LocalWorkspace('.'), TemporalDurability()],  # (3)!
+)
+```
+
+1. The same setting keeps the tool out of its durable unit on every engine.
+2. Each workspace call is recorded as a unit of its own, so a run that restarts after the read reuses its result and only writes.
+3. Swap in any other engine's durability capability; the tool stays the same.
+
+To set it on tools you don't define yourself, such as a capability's or an MCP server's, change the tool definition in a `prepare` function or with [`PrepareTools`](../capabilities/prepare-tools.md). `durable=True` undoes an earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's `tool_activity_config`:
+
+```python {title="durable_prepare_tools.py" test="skip"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.tools import ToolDefinition
+
+
+async def keep_in_workflow(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    return [replace(td, durable=False) if td.name == 'plan_next_step' else td for td in tool_defs]
+
+
+agent = Agent('{{ openai:medium }}', name='planner', capabilities=[PrepareTools(keep_in_workflow), TemporalDurability()])
+```
+
+Changing a tool's placement on an agent that's already deployed adds or removes a durable unit on every engine except DBOS, which doesn't wrap function tools, so runs already in flight fail or diverge when they replay. Let them finish first, or deploy the change as a new version of the workflow. For the same reason, a `prepare` function that sets `durable` must be deterministic, like the tool itself: it has to make the same choice when the run replays.
+
+Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool that the engine runs in a durable unit, `durable=False` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool is called, because those run in a thread or perform I/O. DBOS runs function tools in workflow code without wrapping them, so it doesn't check them: keep an agent you may move to another engine to async tools.
+
+An engine's own metadata key wins when a tool sets it, so a tool with `durable=False` and `metadata={'temporal': ActivityConfig(...)}` still runs in a Temporal activity. Engine keys also carry the engine's own configuration for the unit, which `durable` can't express, and follow the engine's own rules on which tools may opt out. `durable=False` in turn wins over per-tool config set in code, such as Azure Durable Task's and Render Workflows' `resolve_tool_options`:
+
+| Engine | Where `durable=False` runs the tool | Engine's own metadata key |
+|---|---|---|
+| [Temporal](./temporal.md#per-tool-activity-config) | workflow code | `'temporal'` |
+| [DBOS](./dbos.md) | workflow code, where DBOS already runs function tools, so it doesn't check the field on them | none; `{'dbos': {'child_workflow': ...}}` selects a [child workflow](./dbos.md#child-workflows) |
+| [Prefect](./prefect.md) | flow code | `'prefect'` |
+| [AWS Lambda](../harness/aws-lambda.md) | handler code, outside any step | `'aws_lambda'` |
+| [Azure Durable Task](../harness/azure-durable-task.md) | orchestrator code | `'azure_durable_task'` |
+| [Absurd](../harness/absurd.md) | task handler code, outside any step | none |
+| [pgtask](../harness/pgtask.md) | task code, outside any step | none |
+| [Render Workflows](../harness/render-workflows.md) | the parent task run | `'render_workflows'`, whose `False` only lets a per-run toolset through; per tool, `resolve_tool_options` can return `False` |
+
+Restate and Apache Airflow ship their own integrations; see their pages for how they wrap tools.

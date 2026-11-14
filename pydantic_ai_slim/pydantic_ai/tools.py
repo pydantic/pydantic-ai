@@ -371,6 +371,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     tool_kind: ToolPartKind | None
     timeout: float | None
+    durable: bool | None
     defer_loading: bool
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
@@ -399,6 +400,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
@@ -470,6 +472,9 @@ class Tool(Generic[ToolAgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -502,6 +507,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.metadata = metadata
         self.tool_kind = _tool_kind_id(tool_kind)
         self.timeout = timeout
+        self.durable = durable
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
@@ -574,6 +580,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             tool_kind=self.tool_kind,
             timeout=self.timeout,
+            durable=self.durable,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
@@ -769,6 +776,20 @@ class ToolDefinition:
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+
+    durable: bool | None = None
+    """Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool.
+
+    `False` runs it outside its durable unit (activity, step or task), in workflow code, on every engine built on
+    the durable execution backend. Only async function tools can do that; an engine raises a
+    [`UserError`][pydantic_ai.exceptions.UserError] for any other tool it wraps.
+    `None` (the default) and `True` keep the engine's default placement; `True` lets a `prepare` function undo an
+    earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's
+    `tool_activity_config`. An engine's own metadata key, such as `metadata={'temporal': ...}`, wins when it's set
+    on the tool.
+
+    Not sent to the model.
     """
 
     defer_loading: bool = False

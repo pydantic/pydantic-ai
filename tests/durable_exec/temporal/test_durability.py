@@ -6260,7 +6260,7 @@ async def test_durability_runtime_function_toolset_opt_out(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset 'runtime' cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset 'runtime' cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -6294,7 +6294,7 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -6332,9 +6332,12 @@ async def test_durability_rejects_overridden_executing_toolsets_in_workflow(clie
             'Temporal, because toolsets that execute their own tools or resolve dynamically must be registered '
             'for durable execution when the agent is constructed. Pass them to the agent constructor instead -- '
             'not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction '
-            '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async '
-            "tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be "
-            'allowed at runtime.'
+            '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+        ) + (
+            " Async tools that don't need durable wrapping can opt out with durable=False (or "
+            "metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
+            if kind == 'function'
+            else ''
         )
         with workflow_raises(UserError, message):
             await client.execute_workflow(
@@ -6429,8 +6432,7 @@ async def test_durability_rejects_decorator_toolset_in_workflow(client: Client):
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or '
             '`override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing '
-            "toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable "
-            "wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+            'toolsets like `ExternalToolset` can be passed at runtime.'
         )
         with workflow_raises(UserError, message):
             await client.execute_workflow(
@@ -8306,6 +8308,76 @@ async def test_population_change_delta_is_recorded_once_and_replays(client: Clie
 
     assert deltas == [['later']]
     replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None
+
+
+def _placement_model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(' '.join(sorted(str(part.content) for part in returns)))])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('in_workflow', {}, tool_call_id='call-workflow'),
+            ToolCallPart('in_activity', {}, tool_call_id='call-activity'),
+        ]
+    )
+
+
+async def _where_it_ran() -> str:
+    return 'workflow' if workflow.in_workflow() else 'activity'
+
+
+async def _keep_in_workflow(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Deterministic, as a `prepare` setting `durable` must be: replay sees the same placement.
+    return [replace(tool_def, durable=False) if tool_def.name == 'in_workflow' else tool_def for tool_def in tool_defs]
+
+
+placement_agent = Agent(
+    FunctionModel(_placement_model_fn),
+    name='durability_prepared_placement',
+    toolsets=[
+        FunctionToolset(
+            tools=[Tool(_where_it_ran, name='in_workflow'), Tool(_where_it_ran, name='in_activity')], id='placement'
+        )
+    ],
+    capabilities=[PrepareTools(_keep_in_workflow), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PreparedPlacementWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await placement_agent.run('go')).output
+
+
+async def test_durable_false_set_by_prepare_tools_runs_the_tool_in_the_workflow(client: Client):
+    """`durable=False` set by `PrepareTools` keeps that tool out of its activity, and the run replays cleanly."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PreparedPlacementWorkflow],
+        plugins=[AgentPlugin(placement_agent)],
+    ):
+        handle = await client.start_workflow(
+            PreparedPlacementWorkflow.run,
+            id=f'{PreparedPlacementWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    # Each tool reports where it ran: only `in_activity` got a `call_tool` activity.
+    assert output == 'activity workflow'
+    assert [
+        e.activity_task_scheduled_event_attributes.activity_type.name.rsplit('__', 1)[-1]
+        for e in history.events
+        if e.HasField('activity_task_scheduled_event_attributes')
+        and e.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool')
+    ] == ['call_tool']
+    replay = await Replayer(workflows=[PreparedPlacementWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(
+        history
+    )
     assert replay.replay_failure is None
 
 

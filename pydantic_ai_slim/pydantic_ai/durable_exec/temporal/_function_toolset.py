@@ -71,7 +71,7 @@ def temporalize_function_toolset(
             assert isinstance(tool, FunctionToolsetTool)
             if not tool.is_async:
                 raise UserError(
-                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), '
                     'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
                 )
         return config

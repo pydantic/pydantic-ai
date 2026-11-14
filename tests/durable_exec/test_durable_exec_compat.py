@@ -830,6 +830,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'durable': None,
                     'defer_loading': False,
                     'unless_native': None,
                     'with_native': None,

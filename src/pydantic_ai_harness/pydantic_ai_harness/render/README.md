@@ -399,6 +399,11 @@ At registration, the resolver receives `tool=None` and `tool_name=''` for the to
 Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run. The
 shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
 
+An async function tool with the engine-neutral [`durable=False`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit) also
+runs inside the calling task run, whatever the resolver returns for it. Registration only sees `durable` set on
+the tool itself, so for a tool opted out by a `prepare` function or `PrepareTools` instead, have the resolver
+return `False` or the toolset's options.
+
 ## Execution limits
 
 - **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and

@@ -27,6 +27,7 @@ from ._compat import (
     dump_operation_params,
     load_operation_params,
     operation_run_context,
+    opts_out_of_durable_unit,
 )
 from ._protocol import (
     OperationRequest,
@@ -264,6 +265,11 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         if toolset is None:
             return
         for tool_name, tool in toolset.tools.items():
+            # A tool with `durable=False` runs in the calling task run, so no task options apply to it.
+            if opts_out_of_durable_unit(
+                tool.durable, tool.metadata, engine_key=self._runtime.engine_spec.tool_config_key
+            ):
+                continue
             resolved = self.config_for_tool(operation, tool=tool, tool_name=tool_name)
             if resolved is not False and resolved != config:
                 raise UserError(

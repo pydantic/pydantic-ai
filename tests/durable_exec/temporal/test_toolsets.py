@@ -889,7 +889,7 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -1560,6 +1560,17 @@ def test_resolve_tool_activity_config_reads_metadata():
     # `False` in metadata also wins.
     tool.tool_def.metadata = {'temporal': False}
     assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
+
+    # The tool's `durable=False` applies when the `'temporal'` key isn't set, which wins when it is.
+    tool.tool_def.metadata = None
+    tool.tool_def.durable = False
+    assert resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')}) is False
+    tool.tool_def.metadata = {'temporal': ActivityConfig(summary='from_metadata')}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) == {'summary': 'from_metadata'}
+    tool.tool_def.metadata = None
+    tool.tool_def.durable = True
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) == {}
+    tool.tool_def.durable = None
 
     # Invalid metadata (e.g. a string from a misuse like `metadata={'temporal': '5s'}`)
     # raises `UserError` instead of silently passing the wrong shape to Temporal.

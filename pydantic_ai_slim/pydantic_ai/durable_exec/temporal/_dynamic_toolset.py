@@ -158,7 +158,8 @@ def temporalize_dynamic_toolset(
         if config is False:
             raise UserError(
                 f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
-                '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
+                '(activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), but '
+                'dynamic-toolset tools cannot run inside the workflow: resolving the '
                 'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
                 '`FunctionToolset` (async tools there may opt out of activities).'
             )

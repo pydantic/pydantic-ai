@@ -639,6 +639,18 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
     return result
 
 
+def opts_out_of_durable_unit(
+    durable: bool | None, metadata: Mapping[str, Any] | None, *, engine_key: str | None
+) -> bool:
+    """Whether a tool's `durable=False` runs it outside the durable unit.
+
+    The engine's own metadata key, when set on the tool, wins over the tool's `durable` field.
+    """
+    if durable is not False:
+        return False
+    return engine_key is None or metadata is None or metadata.get(engine_key) is None
+
+
 def resolve_tool_durable_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
@@ -647,7 +659,10 @@ def resolve_tool_durable_config(
     metadata_key: str,
     config_type_label: str,
 ) -> ToolConfig:
-    """Resolve a tool's durable config: tool metadata under `metadata_key` first, then `fallback_config` by name."""
+    """Resolve a tool's durable config from its metadata, or else from `fallback_config` by name.
+
+    Reads the tool's metadata under `metadata_key` first, then the tool's `durable=False`, then `fallback_config`.
+    """
     if tool is not None and tool.tool_def.metadata is not None:
         metadata_config = tool.tool_def.metadata.get(metadata_key)
         if metadata_config is False:
@@ -659,6 +674,10 @@ def resolve_tool_durable_config(
                     f'(`{config_type_label}`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('DurableConfig', metadata_config)
+    if tool is not None and opts_out_of_durable_unit(
+        tool.tool_def.durable, tool.tool_def.metadata, engine_key=metadata_key
+    ):
+        return False
     return fallback_config.get(tool_name, {})
 
 

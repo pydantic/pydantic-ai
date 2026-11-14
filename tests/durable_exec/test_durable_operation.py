@@ -24,7 +24,7 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -307,6 +307,207 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     resolve = durability._build_resolve_tool_config({'base': 1})  # pyright: ignore[reportPrivateUsage]
 
     assert resolve(tool, 'configured') == {'base': 1}
+
+
+def test_durable_flows_from_each_tool_setter_into_the_tool_definition() -> None:
+    def plain() -> str:
+        return 'never called'  # pragma: no cover
+
+    def with_ctx(ctx: RunContext[None]) -> str:
+        return 'never called'  # pragma: no cover
+
+    toolset = FunctionToolset[None](durable=False)
+    toolset.tool_plain(plain)
+    toolset.tool(durable=True)(with_ctx)
+    toolset.add_tool(Tool(plain, name='as_tool'))
+    toolset.add_tool(Tool(plain, name='kept', durable=True))
+    assert {name: tool.tool_def.durable for name, tool in toolset.tools.items()} == {
+        'plain': False,
+        'with_ctx': True,
+        'as_tool': False,
+        'kept': True,
+    }
+    assert FunctionToolset[None]([plain]).tools['plain'].tool_def.durable is None
+
+    agent = Agent[None, str](TestModel(), deps_type=type(None))
+    agent.tool_plain(durable=False)(plain)
+    agent.tool(durable=False)(with_ctx)
+    capability = Capability[None]()
+    capability.tool_plain(durable=False)(plain)
+    capability.tool(durable=False)(with_ctx)
+    for tools in (agent._function_toolset.tools, capability._function_toolset.tools):  # pyright: ignore[reportPrivateUsage]
+        assert {name: tool.tool_def.durable for name, tool in tools.items()} == {'plain': False, 'with_ctx': False}
+
+
+async def test_durable_false_runs_a_function_tool_outside_the_durable_unit() -> None:
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
+
+    def validate(ctx: RunContext[None], value: int) -> None:
+        pass
+
+    async def inline(value: int) -> str:
+        return 'inline'
+
+    async def journaled(value: int) -> str:
+        return 'journaled'
+
+    async def engine_key_wins(value: int) -> str:
+        return 'engine'
+
+    async def prepared(value: int) -> str:
+        return 'prepared'
+
+    async def reset(value: int) -> str:
+        return 'reset'
+
+    async def set_durable(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        placements = {'prepared': False, 'reset': True}
+        return [replace(td, durable=placements[td.name]) if td.name in placements else td for td in tool_defs]
+
+    toolset = FunctionToolset(
+        tools=[
+            Tool(inline, args_validator=validate, durable=False),
+            Tool(journaled, args_validator=validate),
+            Tool(engine_key_wins, durable=False, metadata={'journal': {}}),
+            Tool(prepared),
+            Tool(reset, durable=False),
+        ],
+        id='functions',
+    )
+    durability = KeyedJournalDurability()
+    agent = Agent[None, str](
+        TestModel(),
+        name='agent',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[PrepareTools(set_durable), durability],
+    )
+
+    await agent.run('Go.')
+
+    assert sorted(name for name, _, _ in durability.calls if name.startswith('agent__function_toolset')) == [
+        'agent__function_toolset__functions.call_tool:engine_key_wins',
+        'agent__function_toolset__functions.call_tool:journaled',
+        'agent__function_toolset__functions.call_tool:reset',
+        'agent__function_toolset__functions.validate_args',
+    ]
+
+
+async def _async_tool() -> str:
+    return 'never called'  # pragma: no cover
+
+
+def _sync_tool() -> str:
+    return 'never called'  # pragma: no cover
+
+
+def _no_validation(ctx: RunContext[None]) -> None:
+    pass  # pragma: no cover
+
+
+def _dynamic(tool: Tool[None]) -> DynamicToolset[None]:
+    return DynamicToolset(lambda _: FunctionToolset(tools=[tool]), id='dynamic')
+
+
+@pytest.mark.parametrize(
+    ('toolset', 'match'),
+    [
+        pytest.param(
+            FunctionToolset(tools=[Tool(_sync_tool, durable=False)], id='functions'),
+            'only async tools can run outside a durable unit',
+            id='sync',
+        ),
+        pytest.param(
+            _dynamic(Tool(_async_tool, durable=False)),
+            'only function tools can run outside a durable unit',
+            id='dynamic',
+        ),
+        pytest.param(
+            _dynamic(Tool(_async_tool, args_validator=_no_validation, durable=False)),
+            'only function tools can run outside a durable unit',
+            id='dynamic-validated',
+        ),
+    ],
+)
+async def test_durable_false_refuses_tools_that_cannot_leave_the_durable_unit(
+    toolset: FunctionToolset[None] | DynamicToolset[None], match: str
+) -> None:
+    agent = Agent[None, str](
+        TestModel(), name='agent', deps_type=type(None), toolsets=[toolset], capabilities=[JournalDurability()]
+    )
+
+    with pytest.raises(UserError, match=match):
+        await agent.run('Go.')
+
+
+async def test_durable_false_refuses_an_mcp_tool_unless_the_engine_key_is_set() -> None:
+    pytest.importorskip('mcp')
+    pytest.importorskip('fastmcp.server')
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
+
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
+
+    mcp_toolset = MCPToolset(FastMCP(name='in_process'), id='mcp')
+    durable = KeyedJournalDurability(name='agent')._build_mcp_toolset_after_discovery(  # pyright: ignore[reportPrivateUsage]
+        mcp_toolset,
+        base_config={},
+        get_tools_operation=AsyncMock(return_value={}),
+        get_instructions_operation=AsyncMock(return_value=None),
+        discovery_registrations=[],
+    )
+
+    def tool(metadata: dict[str, Any] | None = None) -> ToolsetTool[None]:
+        return ToolsetTool(
+            toolset=mcp_toolset,
+            tool_def=ToolDefinition(name='search', durable=False, metadata=metadata),
+            max_retries=0,
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with pytest.raises(UserError, match="Tool 'search' has `durable=False`, but only function tools"):
+        await durable.call_tool('search', {}, ctx, tool())
+    # The engine's own key wins, so the call stays in its durable unit.
+    resolve = durable._resolve_tool_config  # pyright: ignore[reportPrivateUsage]
+    assert resolve(tool({'journal': {}}), 'search') == {}
+
+
+async def test_runtime_function_toolset_opted_out_with_durable_false_is_allowed() -> None:
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(
+            JournalDurability.engine_spec,
+            tool_config_key='journal',
+            unsupported_runtime_toolset_kinds=frozenset({'function'}),
+        )
+
+    async def async_tool() -> str:
+        return 'ran'
+
+    def sync_tool() -> str:
+        return 'ran'
+
+    agent = Agent[None, str](TestModel(), name='agent', deps_type=type(None), capabilities=[KeyedJournalDurability()])
+
+    async def run(
+        durable: bool | None, metadata: dict[str, Any] | None = None, function: Callable[[], Any] = async_tool
+    ) -> None:
+        tool = Tool(function, durable=durable, metadata=metadata)
+        await agent.run('Go.', toolsets=[FunctionToolset(tools=[tool])])
+
+    await run(False)
+    await run(True, {'journal': False})
+    await run(None, {'journal': False}, sync_tool)
+    rejected = r'cannot be added at runtime with Journal.*opt out with durable=False'
+    with pytest.raises(UserError, match=rejected):
+        await run(False, {'journal': {}})
+    with pytest.raises(UserError, match=rejected):
+        await run(True)
+    with pytest.raises(UserError, match=rejected):
+        await run(False, None, sync_tool)
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')

@@ -19,7 +19,7 @@ unknown leaf types.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any, Literal
 
 from ..exceptions import UserError
@@ -73,6 +73,44 @@ def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind |
     return None
 
 
+def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | None) -> bool:
+    """Whether every tool of a `FunctionToolset` opts out of durable wrapping, so it needs no registration.
+
+    A tool opts out with `False` under the engine's own `tool_config_key`, or, when that isn't set, as an async tool
+    with `durable=False`.
+    """
+    from ..toolsets.function import FunctionToolset
+    from ._toolset import opts_out_of_durable_unit
+
+    assert isinstance(toolset, FunctionToolset)
+    return bool(toolset.tools) and all(
+        (tool_config_key is not None and (tool.metadata or {}).get(tool_config_key) is False)
+        or (
+            opts_out_of_durable_unit(tool.durable, tool.metadata, engine_key=tool_config_key)
+            and tool.function_schema.is_async
+        )
+        for tool in toolset.tools.values()
+    )
+
+
+def _opt_out_hint(tool_config_key: str | None, rejected_kinds: Collection[RuntimeToolsetKind]) -> str:
+    """How the tools of a rejected `FunctionToolset` can opt out of durable wrapping to be allowed at runtime.
+
+    Only a `FunctionToolset` can opt out; an MCP or dynamic toolset's tools can't leave their durable unit.
+    """
+    if 'function' not in rejected_kinds:
+        return ''
+    engine_opt_out = (
+        f' (or metadata={{{tool_config_key!r}: False}}, which takes precedence when set)'
+        if tool_config_key is not None
+        else ''
+    )
+    return (
+        " Async tools that don't need durable wrapping can opt out with "
+        f'durable=False{engine_opt_out} to be allowed at runtime.'
+    )
+
+
 def reject_unsupported_runtime_toolsets(
     toolsets: Sequence[AbstractToolset[Any]] | None,
     *,
@@ -87,7 +125,8 @@ def reject_unsupported_runtime_toolsets(
         unsupported_kinds: The leaf kinds this engine cannot handle when added per-run. Engines that run
             function tools inline (DBOS) omit `'function'`.
         engine: Human-readable engine name for the error message (e.g. `'DBOS'`).
-        tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping.
+        tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping. When
+            it isn't set on a tool, the tool's `durable=False` opts it out instead.
     """
     if not toolsets:
         return
@@ -96,38 +135,31 @@ def reject_unsupported_runtime_toolsets(
 
     def collect(leaf: AbstractToolset[Any]) -> None:
         kind = _runtime_toolset_kind(leaf)
-        if kind == 'function' and tool_config_key is not None:
-            from ..toolsets.function import FunctionToolset
-
-            assert isinstance(leaf, FunctionToolset)
-            if leaf.tools and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values()):
-                return
+        if kind == 'function' and _all_tools_opt_out(leaf, tool_config_key):
+            return
         if kind in unsupported_kinds:
             bad_toolsets.setdefault(kind, []).append(leaf)
 
     for toolset in toolsets:
         toolset.apply(collect)
 
-    if bad_toolsets:
-        offenders: list[str] = []
-        for kind in sorted(bad_toolsets):
-            for toolset in bad_toolsets[kind]:
-                label = toolset.label
-                if kind == 'mcp' and not toolset.id and label == repr(toolset):
-                    label = 'MCPToolset'
-                offenders.append(label)
-        offenders_text = ', '.join(offenders)
-        opt_out = (
-            f" Async tools that don't need durable wrapping can opt out with "
-            f'metadata={{{tool_config_key!r}: False}} to be allowed at runtime.'
-            if tool_config_key is not None
-            else ''
-        )
-        raise UserError(
-            f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
-            'that execute their own tools or resolve dynamically must be registered for durable execution '
-            'when the agent is constructed. Pass them to the agent constructor instead -- not to '
-            '`run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. '
-            'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
-            f'{opt_out}'
-        )
+    if not bad_toolsets:
+        return
+
+    offenders: list[str] = []
+    for kind in sorted(bad_toolsets):
+        for toolset in bad_toolsets[kind]:
+            label = toolset.label
+            if kind == 'mcp' and not toolset.id and label == repr(toolset):
+                label = 'MCPToolset'
+            offenders.append(label)
+    offenders_text = ', '.join(offenders)
+    opt_out = _opt_out_hint(tool_config_key, bad_toolsets.keys())
+    raise UserError(
+        f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
+        'that execute their own tools or resolve dynamically must be registered for durable execution '
+        'when the agent is constructed. Pass them to the agent constructor instead -- not to '
+        '`run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. '
+        'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+        f'{opt_out}'
+    )
