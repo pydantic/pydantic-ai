@@ -68,11 +68,10 @@ def groq_model_profile(model_name: str) -> ModelProfile:
     # `tests/models/cassettes/test_groq/test_groq_model_web_search_tool.yaml` already come back with
     # `"model": "groq/compound"`. Accept both, since the old IDs still resolve.
     is_compound = model_name.startswith('compound-') or model_name.startswith('groq/compound')
-    # JSON mode is accepted across Groq's catalog. JSON-schema structured output is only accepted
-    # by the models marked for it in Groq's structured-outputs docs (`meta-models/muse-spark-open`)
-    # plus `qwen/qwen3.8-*` and `qwen/qwen3.6-*`, which accept it live despite qwen3.6 not yet
-    # appearing in those docs; other models keep whatever JSON-schema support their family profile
-    # already carries.
+    # Groq documents JSON mode for every model. Its structured-outputs docs list JSON-schema output for
+    # `openai/gpt-oss-*`, which the OpenAI family profile already flags, `qwen/qwen3.8-*` and
+    # `meta-models/muse-spark-open`; `qwen/qwen3.6-*` isn't listed there but accepts it. This only turns
+    # JSON-schema output on, so other models keep their family profile's value.
     profile = GroqModelProfile(
         groq_always_has_web_search_builtin_tool=is_compound,
         supports_thinking=is_reasoning_model,

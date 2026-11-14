@@ -6184,6 +6184,135 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
     )
 
 
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+CITY_LOCATION_JSON = '{"city": "Mexico City", "country": "Mexico"}'
+
+
+async def test_groq_native_output_with_function_tools(allow_model_requests: None):
+    """`NativeOutput` with a function tool raises before any request, since Groq returns a 400 for the combination.
+
+    A pre-request guard, so there's no response to record. A request that did go out would get the mock's
+    completion, and the run would succeed instead of raising.
+    """
+    c = completion_message(ChatCompletionMessage(content=CITY_LOCATION_JSON, role='assistant'))
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(groq_client=MockGroq.create_mock(c)))
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('What is the largest city in the user country?')
+
+    assert str(exc_info.value) == snapshot(
+        'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+    )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'output_type', 'stream', 'expected'),
+    [
+        pytest.param(
+            'openai/gpt-oss-120b',
+            NativeOutput(CityLocation),
+            True,
+            snapshot(
+                {
+                    'stream': True,
+                    'response_format': {
+                        'type': 'json_schema',
+                        'json_schema': {
+                            'name': 'CityLocation',
+                            'schema': {
+                                'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
+                                'required': ['city', 'country'],
+                                'type': 'object',
+                                'additionalProperties': False,
+                            },
+                            'strict': True,
+                        },
+                    },
+                }
+            ),
+            id='gpt-oss-native-stream',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-27b',
+            NativeOutput(CityLocation),
+            False,
+            snapshot(
+                {
+                    'stream': False,
+                    'response_format': {
+                        'type': 'json_schema',
+                        'json_schema': {
+                            'name': 'CityLocation',
+                            'schema': {
+                                'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
+                                'required': ['city', 'country'],
+                                'title': 'CityLocation',
+                                'type': 'object',
+                            },
+                            'strict': True,
+                        },
+                    },
+                }
+            ),
+            id='qwen3.8-native',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-27b',
+            PromptedOutput(CityLocation),
+            False,
+            snapshot({'stream': False, 'response_format': {'type': 'json_object'}}),
+            id='qwen3.8-prompted',
+        ),
+    ],
+)
+async def test_groq_structured_output_response_format(
+    allow_model_requests: None,
+    model_name: str,
+    output_type: NativeOutput[CityLocation] | PromptedOutput[CityLocation],
+    stream: bool,
+    expected: object,
+):
+    """`NativeOutput` sends a `json_schema` response format, streamed or not, and `PromptedOutput` sends `json_object`.
+
+    The claim is the request body, which cassette matching ignores, so a mock transport serves the responses and the
+    body is read off the wire. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared `request_capture`
+    fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if stream:
+            sse_chunk = text_chunk(CITY_LOCATION_JSON, finish_reason='stop').model_dump_json()
+            content = f'data: {sse_chunk}\n\ndata: [DONE]\n\n'
+            return httpx.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+        c = completion_message(ChatCompletionMessage(content=CITY_LOCATION_JSON, role='assistant'))
+        return httpx.Response(200, json=c.model_dump(mode='json'))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        provider = GroqProvider(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(GroqModel(model_name, provider=provider), output_type=output_type)
+        if stream:
+            async with agent.run_stream('What is the largest city in Mexico?') as result:
+                output = await result.get_output()
+        else:
+            output = (await agent.run('What is the largest city in Mexico?')).output
+
+    assert output == CityLocation(city='Mexico City', country='Mexico')
+    [request] = sent
+    body = json.loads(request.content)
+    assert {'stream': body['stream'], 'response_format': body['response_format']} == expected
+
+
 async def test_stream_cancel(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), chunk([])
     mock_client = MockGroq.create_mock_stream(stream)
