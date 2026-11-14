@@ -89,7 +89,7 @@ class _RecordingBackend(CallableOperationBackend[None]):
                 result = await asyncio.create_task(run(), context=contextvars.Context())
             else:
                 result = await body()
-        except Exception as e:  # pragma: no cover - reached only by an operation that lets an error escape
+        except Exception as e:
             if not self.wraps_errors:
                 raise
             # As a real engine reports an operation that raised: as its own error, losing the original's type.
