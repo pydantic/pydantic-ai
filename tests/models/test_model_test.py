@@ -811,7 +811,8 @@ def test_tool_type_list_args(seed: int, expected: dict[str, object]) -> None:
     """The seed picks one member of a JSON Schema `type` list, as it picks an `anyOf` member.
 
     The picked type keeps the sibling keywords (`minimum`, `minLength`, `items`, `properties`), and type lists
-    nested under `items` and an object property are generated the same way.
+    nested under `items` and an object property are generated the same way. `TestModel` makes no provider
+    request, so there is nothing to record.
     """
     calls: list[dict[str, object]] = []
 
