@@ -10,7 +10,7 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_cloud_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -67,7 +67,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     amazon_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
     cohere_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
     deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+    google_mock = mocker.patch(f'{ns}.google_cloud_model_profile', wraps=google_cloud_model_profile)
     grok_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
     groq_mock = mocker.patch(f'{ns}.groq_model_profile', wraps=groq_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)

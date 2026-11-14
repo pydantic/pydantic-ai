@@ -621,6 +621,7 @@ def test_model_profile_fable_5_1():
     profile = anthropic_model_profile('claude-fable-5-1')
     assert profile == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
@@ -726,6 +727,7 @@ def test_model_profile_opus_5():
     profile = anthropic_model_profile('claude-opus-5')
     assert profile == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,

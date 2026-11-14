@@ -106,9 +106,10 @@ class ModelProfile(TypedDict, total=False):
     supports_image_input: bool
     """Whether the model accepts images. Default: `True`.
 
-    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
-    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
-    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+    The file-input flags (this one, `supports_document_input`, `supports_audio_file_input`,
+    `supports_video_input`, and the `supported_*_media_types` sets that narrow each kind to media types)
+    say which files can be sent to the model. A model adapter turns off what its message mapping cannot
+    send, whatever the profile says.
 
     A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
     it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
@@ -119,6 +120,16 @@ class ModelProfile(TypedDict, total=False):
     Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
     means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
     that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supported_image_media_types: frozenset[str]
+    """The image media types the model accepts, when it accepts images at all. Default: unset, so images are
+    judged by `supports_image_input` alone.
+
+    When set, an image of any other media type, such as `image/heic`, counts as one the model can't read.
+    Profiles set it where a provider was seen to reject other types: Anthropic and OpenAI read JPEG, PNG, GIF
+    and WebP, for example, while Gemini also reads HEIC. See `supports_image_input` for how the file-input
+    flags are used.
     """
 
     supports_document_input: bool
@@ -145,10 +156,26 @@ class ModelProfile(TypedDict, total=False):
     `supports_image_input` for how the file-input flags are used.
     """
 
+    supported_audio_media_types: frozenset[str]
+    """The audio media types the model accepts, when it accepts audio files at all. Default: unset, so audio
+    is judged by `supports_audio_file_input` alone.
+
+    When set, audio of any other media type, such as `audio/flac` on OpenAI Chat Completions, counts as audio
+    the model can't read. See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_video_input: bool
     """Whether the model accepts video. Default: `True`.
 
     See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_video_media_types: frozenset[str]
+    """The video media types the model accepts, when it accepts video at all. Default: unset, so video is
+    judged by `supports_video_input` alone.
+
+    When set, video of any other media type counts as video the model can't read. See `supports_image_input`
+    for how the file-input flags are used.
     """
 
     supports_inline_system_prompts: bool
@@ -589,7 +616,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }
-"""Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
+"""Default `ModelProfile`, with a value for every key except the image, audio and video media-type sets, which are
+unset unless a profile knows them. Used as the base layer when resolving a model's effective profile."""
 
 
 ModelProfileSpec: TypeAlias = ModelProfile | Callable[['ModelProfile'], 'ModelProfile']

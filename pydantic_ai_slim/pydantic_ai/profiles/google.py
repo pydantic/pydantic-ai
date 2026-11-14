@@ -4,10 +4,11 @@ import re
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, KNOWN_IMAGE_MEDIA_TYPES
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from ..native_tools import WebSearchTool
-from . import ModelProfile
+from . import ModelProfile, merge_profile
 
 if TYPE_CHECKING:
     from ..realtime.google import GoogleRealtimeModelProfile
@@ -250,6 +251,23 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
+_GEMINI_IMAGE_MEDIA_TYPES = KNOWN_IMAGE_MEDIA_TYPES | {'image/heic', 'image/heif', 'image/avif', 'image/bmp'}
+"""Images Gemini reads, as checked live on the Gemini API and Vertex AI (2026-11-04).
+
+HEIF is documented at https://ai.google.dev/gemini-api/docs/image-understanding. TIFF is left out because the Gemini
+API rejects it; `_with_google_cloud_media_types` adds it back for Vertex AI, which reads it.
+"""
+
+_OFFICE_DOCUMENT_MEDIA_TYPES = frozenset(
+    {
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/msword',
+        'application/vnd.ms-excel',
+    }
+)
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
@@ -313,7 +331,30 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
     return profile
+
+
+def _with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:
+    """`profile` with the image media types Vertex AI reads beyond the Gemini API: TIFF (checked live, 2026-11-04)."""
+    if (image_media_types := profile.get('supported_image_media_types')) is None:
+        return profile
+    return merge_profile(profile, ModelProfile(supported_image_media_types=image_media_types | {'image/tiff'}))
+
+
+def google_cloud_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Google model served by Vertex AI."""
+    profile = google_model_profile(model_name)
+    return None if profile is None else _with_google_cloud_media_types(profile)
+
+
+def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_gemini_2_5: bool) -> None:
+    if not is_gemma:
+        profile['supported_image_media_types'] = _GEMINI_IMAGE_MEDIA_TYPES
+    if is_gemini_2_5:
+        # Gemini 2.5 answers Word and Excel files with a 500 on the Gemini API and Vertex AI alike, where
+        # Gemini 3 reads them (checked live 2026-11-04).
+        profile['supported_document_media_types'] = KNOWN_DOCUMENT_MEDIA_TYPES - _OFFICE_DOCUMENT_MEDIA_TYPES
 
 
 _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
