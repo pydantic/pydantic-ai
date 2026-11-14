@@ -5,7 +5,7 @@ resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurab
 tasks (`AbsurdDurability`), pgtask durable tasks (`PGTaskDurability`), Render Workflows, harness capabilities under core durable execution, Logfire-managed
 instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
-Agentic Workflow.
+Agentic Workflow or as a step through the Pydantic AI GitHub Action.
 
 ## Choose
 
@@ -23,6 +23,7 @@ Agentic Workflow.
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+| Run `Coder` or your own agent as one step in an existing GitHub Actions workflow, on trusted input | [`pydantic/pydantic-ai-action`](#pydantic-ai-github-action) |
 
 ## AzureDurableTaskDurability
 
@@ -615,6 +616,16 @@ The provider key is a repository secret, never `engine.env`. Threat detection on
 either, set `safe-outputs.threat-detection.engine` to `codex`, `claude`, or `false`. A spec agent
 **cannot** use harness capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
+## Pydantic AI GitHub Action
+
+`uses: pydantic/pydantic-ai-action@v1` runs one agent against one prompt as a step in a workflow the user
+already has, with `coder_agent` as the default `agent:`. Choose it when the prompt, the checkout and the
+agent are all trusted, for example on `push`, `workflow_dispatch` or pull requests from branches in the
+same repository. Choose gh-aw above whenever an issue, a comment or a fork's pull request can shape
+the prompt or the checkout: the action runs on the runner with the provider key in its environment,
+and has no sandbox or safe outputs. The answer is the step's `result` output; treat it as untrusted.
+An agent of your own that uses harness capabilities installs `pydantic-ai-harness` through `pip-install:`.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/step-persistence/
@@ -626,5 +637,6 @@ either, set `safe-outputs.threat-detection.engine` to `codex`, `claude`, or `fal
 - https://pydantic.dev/docs/ai/harness/capability-creation/
 - https://pydantic.dev/docs/ai/harness/acp/
 - https://pydantic.dev/docs/ai/harness/gh-aw/
+- https://pydantic.dev/docs/ai/integrations/github-actions/
 - https://pydantic.dev/docs/ai/agent-spec/
 - https://pydantic.dev/docs/ai/durable_execution/overview/

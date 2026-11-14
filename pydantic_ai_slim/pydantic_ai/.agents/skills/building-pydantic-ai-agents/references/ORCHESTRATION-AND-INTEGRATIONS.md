@@ -1,6 +1,6 @@
 # Orchestration and Integrations
 
-Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, evals, or third-party integrations.
+Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, running an agent in GitHub Actions, evals, or third-party integrations.
 
 ## Coordinate Multiple Agents
 
@@ -181,6 +181,15 @@ Pass reference images through `images=[...]` to edit or transform them. A provid
 When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
 
 The image such a run generates is in its message history, not in `result.output`: a local fallback returns it from the `generate_image` tool call (`ToolReturnPart.files`), and the native tool puts it in that response's `ModelResponse.images`. `output_type=BinaryImage` requires the agent's model itself to support image output, and the output is then that model's own image, even beside `native=False`, not the fallback's.
+
+## Run an Agent in GitHub Actions
+
+Pick the shape by who can start the run:
+
+- **`pydantic/pydantic-ai-action`**: one step in a workflow the user already has, when they trust the prompt, the checkout and the agent. `agent:` takes a `module:variable` target or a `.yml`, `.yaml` or `.json` spec (default: the Harness's `coder_agent`); install the project that defines it with `pip-install:`. `model:` overrides the agent's model. The provider key goes in the step's `env:`, never in an input. The answer comes back as the step's `result` output: pass it to later steps through `env:`, never inline in `run:`, and treat it as untrusted. To diff a pull request, check out with `fetch-depth: 2` and point the prompt at `git diff HEAD^1 HEAD`.
+- **GitHub Agentic Workflows** (the Harness's gh-aw `pydantic-ai` engine): whenever an issue, a comment or a pull request from a fork can shape the prompt or the checkout. The agent runs sandboxed and writes back through safe outputs; see the `pydantic-ai-harness` skill.
+
+Docs: https://pydantic.dev/docs/ai/integrations/github-actions/
 
 ## Use LangChain Tools
 
