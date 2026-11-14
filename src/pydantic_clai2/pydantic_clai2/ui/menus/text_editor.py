@@ -74,7 +74,7 @@ def external_editor() -> list[str] | None:
 
 
 def build_text_area(*, title: str, text: str) -> EditorApp:
-    """A full-screen editor for `text`. Ctrl-S returns the edited text; Esc and Ctrl-C return `None`."""
+    """A full-screen editor for `text`. Ctrl+S returns the edited text; Esc and Ctrl+C return `None`."""
     area = TextArea(text=text, multiline=True, scrollbar=True)
     bindings = KeyBindings()
 

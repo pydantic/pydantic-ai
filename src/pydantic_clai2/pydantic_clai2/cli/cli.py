@@ -296,7 +296,7 @@ def _report_kept_worktree(worktree: 'Worktree | None') -> None:
 
 
 def _interrupt_fails(args: argparse.Namespace) -> bool:
-    """Whether Ctrl-C ends this launch with status 130: with `--prompt`, `--web`, or `--update`, not in the shell."""
+    """Whether Ctrl+C ends this launch with status 130: with `--prompt`, `--web`, or `--update`, not in the shell."""
     return args.prompt is not None or args.web or args.update
 
 

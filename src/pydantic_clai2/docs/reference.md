@@ -591,14 +591,14 @@ pressed Enter. A queued message that cannot steer stays queued and is not
 skipped over. While running with a draft or a queued message, the input box
 shows both shortcuts. If Option+Enter queues like Enter, see
 [Option keys on macOS](#option-keys-on-macos).
-Shift-Enter inserts a newline when the terminal reports it separately from Enter.
-Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
-GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
-Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
+Shift+Enter inserts a newline when the terminal reports it separately from Enter.
+Ctrl+J inserts a newline in the editor; plain Enter submits. Some terminals, including
+GNOME Terminal/VTE on Ubuntu, send the same input for Shift+Enter and Enter.
+Use Ctrl+J there, or a terminal that supports modified-key reporting, such as
 Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
 editor is active and releases it for menus and on exit.
-Ctrl-R searches history; Enter accepts a search
-result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at
+Ctrl+R searches history; Enter accepts a search
+result without submitting it. Ctrl+D exits when the draft is empty. Ctrl+C at
 input clears the line; during a run it cancels the turn and returns to input. No cancelled run is automatically retried.
 
 ## Models and accounts
@@ -680,7 +680,7 @@ from the model's next request, even in a running turn. Space cycles fields with
 multiple declared choices in order and wraps to the first; an unset or unlisted
 value starts at the first choice. Action and submenu rows, free-text fields, and
 single-choice fields do not cycle. `r` resets a field. This field list is not
-searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+searchable. Esc, Ctrl+C, or **Save & close** goes back. Enter opens a picker for
 fixed choices; numeric fields accept typed values, and empty input resets.
 
 CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
@@ -953,7 +953,7 @@ until it is released.
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open that link on this or another device and approve only the code shown by your
 own CLAI session. CLAI does not launch a browser, so a text browser cannot block
-login or take over your SSH terminal. Ctrl-C stops polling; GitHub controls the
+login or take over your SSH terminal. Ctrl+C stops polling; GitHub controls the
 code's expiry. No localhost callback or pasted token is needed.
 
 GitHub authorization alone does not establish Copilot access. Login and the model
@@ -1090,7 +1090,7 @@ A `vllm` model retries each failed request up to 5 times, with exponential backo
 
 ### openrouter connection
 
-Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl+C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -1102,7 +1102,7 @@ Open `/keys` to browse and manage saved API keys in a full-screen menu.
 Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
 confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
 clears the search. Values are masked and are not shown in previews. Changes save
-immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+immediately; Esc or Ctrl+C closes the menu. Errors appear inside the menu.
 In the web UI, `/keys` opens the Settings window's **Keys & accounts** section,
 which lists the names, says what uses each, and asks the same steps as dialogs; a
 value goes from the page to CLAI, never back.
@@ -1110,7 +1110,7 @@ value goes from the page to CLAI, never back.
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
 numbers, and underscores, starting with a letter or underscore. Saving an existing
-name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
+name asks before replacing it. Ctrl+C or Ctrl+D cancels without saving. Do not put
 the secret on the command line.
 
 Consumers store a key's name, not its value, and look it up each time they
@@ -1236,8 +1236,8 @@ Small terminals omit the border to leave room for output.
 
 ### Pasting images
 
-Copy a screenshot or image, then press **Ctrl-V** in CLAI to attach it. If your
-terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
+Copy a screenshot or image, then press **Ctrl+V** in CLAI to attach it. If your
+terminal intercepts Ctrl+V, use **Alt+V** (or press Esc, then V). On macOS, Cmd+V
 is the terminal's text paste, not CLAI's clipboard-image shortcut.
 
 You can also paste or drag local image file paths into the prompt. This requires
@@ -1278,7 +1278,7 @@ if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
 In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `clai2 --web`,
-paste an image into the composer with your browser's usual paste (Cmd-V or Ctrl-V), or drop image
+paste an image into the composer with your browser's usual paste (Cmd+V or Ctrl+V), or drop image
 files on it. Each shows as a thumbnail above your text; hover one and click its **×** to remove it.
 Text copied together with a picture of itself, as from a spreadsheet, pastes as text. The page
 scales an image larger than 1568 pixels on its longest side down to that, about as far as models
@@ -1307,7 +1307,7 @@ banner. Model responses and tool results are not saved to this file.
 
 ### Word deletion
 
-Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl+W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
@@ -1350,8 +1350,8 @@ still queues the message like Enter, the terminal is sending a plain Enter:
 - tmux: tmux forwards Alt+Enter, but does not pass CLAI's request on to the
   outer terminal. Set that terminal to send Option as Alt, for example iTerm2's
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
-- For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
-  `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+- For Shift+Enter (newline) inside tmux, add `set -g extended-keys on` to
+  `~/.tmux.conf`. Without it, tmux sends Shift+Enter as Enter.
 
 ### Windows Terminal
 
@@ -1361,7 +1361,7 @@ CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
 is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
 wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
 Ctrl+Enter needs a terminal that reports modified keys, such as Windows
-Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
+Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl+J, which inserts
 a newline.
 SSH does not forward `WT_SESSION`, so a remote session started from Windows
 Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
@@ -1369,15 +1369,15 @@ example with `export WT_SESSION=1` in the shell you start CLAI from.
 
 ### Interrupting a turn
 
-Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
+Press Esc or Ctrl+C to cancel the active agent turn without discarding your draft.
 Tool cleanup finishes before the next queued message starts. Esc does not request
-exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
+exit, even when pressed repeatedly. Arrow keys and Alt+key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
 than passing it to the agent turn; its behavior depends on that interface.
-After cancelling with Ctrl-C, press Ctrl-C again within two seconds to exit,
+After cancelling with Ctrl+C, press Ctrl+C again within two seconds to exit,
 including across the transition back to input. Esc does not arm this exit shortcut.
 At the prompt,
-the first press clears input and the second exits. Ctrl-D on an empty input and
+the first press clears input and the second exits. Ctrl+D on an empty input and
 `/exit` also quit after earlier queued messages finish.
 The interrupted prompt and captured partial responses and tool results stay in
 conversation history, so you can follow up with a clarification. No interrupted
@@ -1390,7 +1390,7 @@ tool side effects cannot be undone.
 
 Between turns, press Esc twice within half a second to open **Rewind conversation**.
 Use Up/Down to choose an earlier prompt, then Enter to rewind. The newest prompt
-is selected first. Esc or Ctrl-C closes the menu without changing your draft or
+is selected first. Esc or Ctrl+C closes the menu without changing your draft or
 conversation. An empty conversation shows a disabled placeholder.
 
 Rewinding removes the selected prompt and all later messages from the saved
@@ -1441,15 +1441,15 @@ from the transcript. Elsewhere, such as on Windows or with input piped into CLAI
 the command's stdout and stderr are pipes and it reads the terminal's input
 directly.
 
-Ctrl-C interrupts the
+Ctrl+C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
-so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
+so CLAI forwards the Ctrl+C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
-background jobs and programs that ignore Ctrl-C. Only a process that detaches
+background jobs and programs that ignore Ctrl+C. Only a process that detaches
 on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
 should redirect stdout and stderr: CLAI stops collecting their output shortly
 after the shell exits. On Windows the console
-delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
+delivers the Ctrl+C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl+C within two seconds exits
 CLAI. The command, stdout, stderr, and completion status are saved in the
 conversation for the model's next turn, including partial output from interrupted
 commands. Each stream retains up to 100,000 characters, with a truncation notice
@@ -1474,7 +1474,7 @@ Done (12.4s)
 CLAI needs no list of programs for this. Full-screen programs switch the
 terminal to its alternate screen when they start, and on the pseudo-terminal
 above CLAI sees that happen. At that moment CLAI takes its own display off the
-screen and passes the program's output and your keys, Ctrl-C included, straight
+screen and passes the program's output and your keys, Ctrl+C included, straight
 through. Window size changes reach the program too. When it exits, CLAI redraws
 its screen. Output printed before the switch appears in the transcript; nothing
 is saved for the next prompt but the command and its exit status.
@@ -1493,7 +1493,7 @@ Done (42.0s)
 
 CLAI leaves its screen, restores the terminal's normal input mode, and runs the
 command with its own input, output, and error streams, in CLAI's process group.
-The command gets Ctrl-C and window size changes itself; CLAI ignores Ctrl-C
+The command gets Ctrl+C and window size changes itself; CLAI ignores Ctrl+C
 until it exits. When it exits, CLAI restores the terminal's modes and redraws
 its screen. Anything the command printed outside a full screen stays on the
 terminal's main screen, which CLAI covers again. Only the command and its exit
@@ -1577,7 +1577,7 @@ link colour and are clickable too; URLs inside code spans are left as code.
 URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
-modifier (often Cmd-click or Ctrl-click).
+modifier (often Cmd+click or Ctrl+click).
 
 ### Code highlighting
 
@@ -1732,7 +1732,7 @@ Theme selection and cancellation are silent.
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and
 background. Browsing does not apply a palette or save a setting. Press `/` to
-search the names. Enter confirms; Esc or Ctrl-C keeps your current choice (while
+search the names. Enter confirms; Esc or Ctrl+C keeps your current choice (while
 searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
@@ -1965,7 +1965,7 @@ compact numbered picker. The question stays pinned above its choices, so output 
 streams meanwhile, from a delegated task for instance, scrolls past above it instead
 of pushing it away. A delegated task's question names the task in its title. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
-`Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
+`Done` to submit. At least one choice is required. Esc or Ctrl+C declines the
 whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
@@ -1976,7 +1976,7 @@ to the clipboard without choosing an answer. Transcript text remains selectable 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -2511,7 +2511,7 @@ The browser follows Code Puppy's project/session design:
   recent, message-count, and token-count sorting. `m` loads another 200 summaries.
 - `r` sets a manual title, which the namer will not overwrite. `d` asks for
   confirmation before deletion. The active session cannot be deleted.
-- Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
+- Esc goes back; Ctrl+C closes. Narrow screens show one focused pane at a time.
 - Selecting a session from another directory resumes immediately, without
   confirmation. It does not change directories or move the saved conversation out
   of its original project group. Direct cross-directory resume asks you to use the browser.
@@ -2700,7 +2700,7 @@ switches the foreground to that fork's conversation. Output waits while a turn o
 command is running, then prints before the next prompt. Commands run between
 turns, so a `/fork` typed during a turn is queued like any other command.
 
-Cancelling a turn with Esc or Ctrl-C also cancels running forks. `/exit` and
+Cancelling a turn with Esc or Ctrl+C also cancels running forks. `/exit` and
 `/reload` cancel them too.
 
 A fork is a turn for plugins: `turn_start` runs before it starts and can rewrite
@@ -2761,7 +2761,7 @@ Otherwise, if the worktree changed, CLAI asks **Remove this worktree?** with an 
 The path and removal details appear dimmed below the question. The complete
 details are also available in the transcript before you choose; use PageUp and
 PageDown to inspect long commands. Enter on **No**,
-Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
+Esc, Ctrl+C, or EOF keeps it; select **Yes** to confirm removal. The third choice
 keeps it and saves the preference in your settings database for this checkout,
 which also keeps it once its commits are pushed.
 There is no command to undo this choice for the same checkout.
@@ -2813,7 +2813,7 @@ Neither the function nor the cleanup program above ships with CLAI.
 
 CLAI warns that the command may delete the branch and uncommitted files before
 asking for confirmation. The command inherits stdin, stdout, stderr, and the
-terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
+terminal, has no timeout, and can be interrupted with Ctrl+C. A command failure
 does not fall back to Git. If the saved configuration cannot be read or validated
 on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, CLAI keeps the checkout
@@ -2920,7 +2920,7 @@ many sessions run at once.
   fails with an error saying to enter it in a terminal, and names the page's
   equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
   and a plugin's `read_line` prompt (see `PLUGINS.md`) ask in the page instead.
-- **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
+- **Quitting.** Ctrl+C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
 ## Plugins and integrations
@@ -3354,7 +3354,7 @@ clai2 -p "Continue the task" --resume SESSION-ID
 `-p` / `--prompt` requires prompt text as an argument, never reads stdin,
 and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
-Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
+Errors go to stderr with a nonzero exit status; Ctrl+C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
 session ID; the browser cannot open. `--continue`, `--session-id`, and `--fork-session` work as
 interactively. Prompt text is literal, not a slash command.

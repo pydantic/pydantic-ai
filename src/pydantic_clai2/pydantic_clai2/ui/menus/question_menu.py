@@ -45,7 +45,7 @@ class QuestionMenu:
     def hint(self) -> str:
         """Show the available actions without a separate Space-key convention."""
         if self.editing_custom:
-            return 'Enter submits - Esc back - Ctrl-C decline'
+            return 'Enter submits - Esc back - Ctrl+C decline'
         move = 'Up/Down or Tab/Shift+Tab move'
         if self.cursor == self.other:
             return f'{move} - type your answer - Esc decline'

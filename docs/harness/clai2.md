@@ -11,8 +11,8 @@ keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. S
 
 ## Pasting images
 
-Copy a screenshot or image, then press **Ctrl-V** in CLAI to attach it. If your
-terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
+Copy a screenshot or image, then press **Ctrl+V** in CLAI to attach it. If your
+terminal intercepts Ctrl+V, use **Alt+V** (or press Esc, then V). On macOS, Cmd+V
 is the terminal's text paste, not CLAI's clipboard-image shortcut. You can also
 paste or drag an existing image file path into the prompt using your terminal's
 bracketed-paste support.
@@ -25,7 +25,7 @@ for Linux clipboard setup, remote bridges, error guidance, and attachment limits
 
 ## Word deletion
 
-Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl+W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
@@ -60,10 +60,10 @@ terminals keep Cmd shortcuts for their own menus:
 
 ## Interrupting a turn
 
-Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup
-and terminal restoration finish before the next prompt. Press Ctrl-C again within
+Press Ctrl+C once to cancel the active agent turn and return to input. Tool cleanup
+and terminal restoration finish before the next prompt. Press Ctrl+C again within
 two seconds to exit, including across the transition back to input. At the prompt,
-the first press clears input and the second exits. Ctrl-D and `/exit` also quit.
+the first press clears input and the second exits. Ctrl+D and `/exit` also quit.
 External application cancellation still propagates; cancelled turns are not added
 to conversation history, but completed tool side effects cannot be undone.
 
@@ -242,7 +242,7 @@ Pydantic AI device-flow implementation until its release.
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
 CLAI does not launch a browser, so a text browser cannot block login or take over
-an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
+an SSH terminal. Ctrl+C stops polling; GitHub controls expiry. There is no localhost callback.
 
 GitHub authorization does not establish Copilot access. Login and the model menu
 query your account's catalog and keep only picker-enabled `/chat/completions` models.
@@ -407,7 +407,7 @@ Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
-(see [Input history](#input-history)). Ctrl-D exits. For Ctrl-C, see
+(see [Input history](#input-history)). Ctrl+D exits. For Ctrl+C, see
 [Interrupting a turn](#interrupting-a-turn). No cancelled run is automatically retried.
 
 ## Reload CLAI during development
@@ -508,7 +508,7 @@ outputs are supported and displayed after completion.
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and
 background. Browsing does not apply a palette or save a setting. Enter confirms;
-Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
+Esc or Ctrl+C keeps your current choice. Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 and status. Its diffs use green additions and red deletions. Starting and exiting with this choice leaves your

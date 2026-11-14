@@ -212,7 +212,7 @@ def create_shell(
     `workspace` is the directory the session works in, by default the current one. `process` holds
     what the session shares with the others in this CLAI, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
-    `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    `signals` lets Ctrl+C cancel this session's turns; only the session the terminal shows takes it.
     `settings_for` gives the settings CLAI starts with beside a project file, which `/project` applies from.
     """
     settings = (
@@ -1124,7 +1124,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 self.terminal.ended(self, reason)
 
     def shown_in(self, terminal: 'Terminal[DepsT, OutputT] | None') -> None:
-        """Read the input of `terminal`, which shows this session now, and take its Ctrl-C; `None` stops that.
+        """Read the input of `terminal`, which shows this session now, and take its Ctrl+C; `None` stops that.
 
         The terminal hands its console output over itself.
         """
@@ -1348,11 +1348,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return None
 
     def _input_interrupted(self) -> SessionEndReason | None:
-        """Ctrl-C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
+        """Ctrl+C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
         if self.interrupts.press():
             return 'exit'
         self.console.print(
-            'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+            'Input cleared. Press Ctrl+C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
         )
         return None
 

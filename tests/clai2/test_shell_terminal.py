@@ -167,7 +167,7 @@ async def test_full_screen_program_gets_the_terminal(user: int) -> None:
         )
         await _screen_shows(user, b'\x1b[?1049hFULLREADY', screen)
         assert events == ['hold leave_screen=True']
-        os.write(user, b'typed\x03\n')  # Ctrl-C is the program's own key now.
+        os.write(user, b'typed\x03\n')  # Ctrl+C is the program's own key now.
         await _screen_shows(user, b'\x1b[?1049l', screen)
         context = await task
     assert events == ['hold leave_screen=True', 'release']
