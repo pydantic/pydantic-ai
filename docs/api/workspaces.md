@@ -16,6 +16,7 @@
             - SupportsFilesystem
             - SupportsRealpath
             - SupportsPlatform
+            - SupportsRunInDirectory
             - WorkspacePlatform
             - WorkspacePaths
             - WorkspaceCommand

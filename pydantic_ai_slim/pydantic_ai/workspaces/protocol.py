@@ -4,7 +4,8 @@ A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBacken
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
 [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
-[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform]. Every backend must:
+[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform] and
+[`SupportsRunInDirectory`][pydantic_ai.workspaces.SupportsRunInDirectory]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -52,6 +53,7 @@ __all__ = (
     'SupportsFilesystem',
     'SupportsPlatform',
     'SupportsRealpath',
+    'SupportsRunInDirectory',
     'WorkspacePlatform',
 )
 
@@ -232,32 +234,40 @@ class SupportsRealpath(Protocol):
 
 @runtime_checkable
 class SupportsPlatform(Protocol):
-    """Optional: a backend that says which shell and path syntax it has, and starts commands in a directory itself.
+    """Optional: a backend that says which shell and path syntax it has; without it, a backend is `'posix'`.
 
-    Without it, a backend is `'posix'`, and [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] starts a
-    command in a directory through `sh`. A `'windows'` backend has no `sh` to do that with, so a backend that
-    implements this protocol takes `cwd` in `run` itself, whatever its platform. A `'windows'` backend's paths
-    are absolute Windows paths wherever the rest of this module says POSIX.
+    A `'windows'` backend's paths are absolute Windows paths wherever the rest of this module says POSIX.
+    It also implements [`SupportsRunInDirectory`][pydantic_ai.workspaces.SupportsRunInDirectory], since there
+    is no `sh` to change directory with.
     """
 
     @property
-    def platform(self) -> WorkspacePlatform:
+    def workspace_platform(self) -> WorkspacePlatform:
         """The workspace's shell and path syntax."""
         ...
 
-    async def run(
+
+@runtime_checkable
+class SupportsRunInDirectory(Protocol):
+    """Optional: a backend that starts a command in a directory itself.
+
+    Without it, [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] starts a command in a directory
+    through `sh`, which a `'windows'` backend has no use for.
+    """
+
+    async def run_in_directory(
         self,
         command: WorkspaceCommand,
         *,
+        cwd: str,
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        cwd: str | None = None,
     ) -> CommandResult:
         """[`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run], started in `cwd`.
 
-        `cwd` is an absolute directory that [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] has resolved and
-        checked; `None` starts the command in the working directory.
+        `cwd` is an absolute directory that [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] has
+        resolved and checked.
         """
         ...
 

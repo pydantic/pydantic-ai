@@ -24,6 +24,7 @@ from .protocol import (
     SupportsFilesystem,
     SupportsPlatform,
     SupportsRealpath,
+    SupportsRunInDirectory,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -533,7 +534,9 @@ class Workspace(WorkspaceBackend):
     def platform(self) -> WorkspacePlatform:
         """The backend's [shell and path syntax][pydantic_ai.workspaces.WorkspacePlatform]; `'posix'` unless it says otherwise."""
         backend = self._backend
-        return backend.platform if isinstance(backend, SupportsPlatform) else 'posix'
+        if isinstance(backend, Workspace):
+            return backend.platform
+        return backend.workspace_platform if isinstance(backend, SupportsPlatform) else 'posix'
 
     @property
     def path(self) -> WorkspacePaths:
@@ -588,9 +591,9 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, Workspace):
             # Passed on, so wrappers (durable execution, sandboxes) see it.
             return await backend.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
-        if isinstance(in_directory := self._backend, SupportsPlatform):
+        if isinstance(backend, SupportsRunInDirectory):
             directory = await self._start_dir(cwd, command, shell=shell)
-            return await in_directory.run(command, shell=shell, env=env, timeout=timeout, cwd=directory)
+            return await backend.run_in_directory(command, cwd=directory, shell=shell, env=env, timeout=timeout)
         return await backend.run(
             await self._command_in(cwd, command, shell=shell), shell=shell, env=env, timeout=timeout
         )

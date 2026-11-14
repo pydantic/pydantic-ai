@@ -11,6 +11,7 @@ import shlex
 import uuid
 import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,14 @@ _OUTPUT_BYTES_PER_CHAR = 4
 
 
 _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
+
+_POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process with `kill` and the\nreturned PID.'
+"""How the `shell` description says to read a job's log and stop it; on a `'windows'` workspace it is replaced."""
+
+_WINDOWS_JOB_HINT = (
+    '(e.g.\n`Get-Content -Tail` in a later shell call) and stop the process tree with the\n'
+    '`taskkill` command the result names. Commands run in PowerShell, not `sh`.'
+)
 """A background command's ID: the name of its job directory."""
 
 
@@ -177,7 +186,14 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             require_workspace(ctx.workspace, 'ShellToolset', ctx.messages)
         if not supports_commands(ctx.workspace):
             return {}
-        return await super().get_tools(ctx)
+        tools = await super().get_tools(ctx)
+        if ctx.workspace.platform == 'windows':
+            # `run_command` and `persist_cwd` wrap a command in `sh` (`cd ... || exit`, `pwd`).
+            tools.pop('run_command', None)
+            if (shell := tools.get('shell')) is not None and shell.tool_def.description is not None:
+                description = shell.tool_def.description.replace(_POSIX_JOB_HINT, _WINDOWS_JOB_HINT)
+                tools['shell'] = replace(shell, tool_def=replace(shell.tool_def, description=description))
+        return tools
 
     async def call_tool(
         self,

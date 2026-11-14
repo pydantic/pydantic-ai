@@ -23,7 +23,7 @@ import anyio.abc
 from pydantic_ai._utils import run_in_executor
 
 from ._host import HostWorkspaceBackend
-from .protocol import CommandResult, WorkspaceCommand, WorkspacePlatform
+from .protocol import CommandResult, SupportsPlatform, SupportsRunInDirectory, WorkspaceCommand, WorkspacePlatform
 
 __all__ = ('WindowsWorkspaceBackend',)
 
@@ -184,7 +184,7 @@ def _job_objects() -> _JobObjects:
     return _JobObjects()
 
 
-class WindowsWorkspaceBackend(HostWorkspaceBackend):
+class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRunInDirectory):
     r"""Run commands as subprocesses on this Windows machine, in PowerShell, and use its filesystem.
 
     The Windows counterpart of [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend], and
@@ -218,7 +218,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend):
         self._jobs: dict[int, int] = {}
 
     @property
-    def platform(self) -> WorkspacePlatform:
+    def workspace_platform(self) -> WorkspacePlatform:
         """Always `'windows'`: commands run in PowerShell, and paths are Windows paths."""
         return 'windows'
 
@@ -227,16 +227,16 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend):
             self._powershell = _which('pwsh', env) or 'powershell.exe'
         return self._powershell
 
-    async def run(
+    async def run_in_directory(
         self,
         command: WorkspaceCommand,
         *,
+        cwd: str,
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        cwd: str | None = None,
     ) -> CommandResult:
-        """Run `command`, a PowerShell script with `shell=True` or an argv, starting in `cwd` or the working directory."""
+        """Run `command`, a PowerShell script with `shell=True` or an argv, starting in `cwd`."""
         return await self._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
 
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
