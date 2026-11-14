@@ -68,7 +68,7 @@ def _waits_for_pipes() -> bool:
     return _ANYIO_WAITS_FOR_PIPES
 
 
-async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
+async def _shielded(awaitable: Awaitable[object], deadline: float) -> None:
     """Finish or cancel bounded work even when the caller is cancelled."""
     timed_out = False
 
@@ -120,7 +120,7 @@ def _raise_command_timeout(
     if denial is not None:
         raise WorkspaceTimeoutError(
             f'command timed out after {timeout:g}s; killing its process group was '
-            'denied, so only the direct child was killed and grandchildren may survive',
+            'denied, so at most the direct child was killed',
             stdout=stdout,
             stderr=stderr,
         ) from denial
@@ -514,8 +514,17 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             pass
         except PermissionError as error:
             denial = error
-            with suppress(ProcessLookupError):
-                process.kill()
+            try:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            except PermissionError:
+                # The direct child is unkillable too, but it may exit on its own: wait bounded and
+                # shielded for that instead of tearing down, since close-time transport cleanup on
+                # a live process can re-raise this denied kill itself.
+                try:
+                    await _shielded(process.wait(), anyio.current_time() + _REAP_GRACE)
+                except TimeoutError:
+                    return denial
         # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
         with suppress(TimeoutError):
             await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
