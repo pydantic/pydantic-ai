@@ -6205,9 +6205,14 @@ class CityInCountry(BaseModel):
 CITY_IN_COUNTRY_JSON = '{"city": "Mexico City", "country": {"name": "Mexico"}, "neighbours": [{"name": "Guatemala"}]}'
 
 
-def get_user_country() -> str:
+class CityWithNickname(BaseModel):
+    city: str
+    nickname: str = 'CDMX'
+
+
+def lookup_country(location: CityLocation) -> str:
     # Unreachable: the guard raises before the model is called, and the request-body mocks never call a tool.
-    return 'Mexico'  # pragma: no cover
+    return location.country  # pragma: no cover
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -6225,11 +6230,11 @@ async def test_groq_native_output_with_function_tools(
     provider = GroqProvider(groq_client=MockGroq.create_mock(c))
     if native_from == 'marker':
         model = GroqModel('openai/gpt-oss-120b', provider=provider)
-        agent = Agent(model, output_type=NativeOutput(CityLocation), tools=[get_user_country])
+        agent = Agent(model, output_type=NativeOutput(CityLocation), tools=[lookup_country])
     else:
         profile = GroqModelProfile(default_structured_output_mode='native')
         model = GroqModel('openai/gpt-oss-120b', provider=provider, profile=profile)
-        agent = Agent(model, output_type=CityLocation, tools=[get_user_country])
+        agent = Agent(model, output_type=CityLocation, tools=[lookup_country])
 
     prompt = 'What is the largest city in the user country?'
     with pytest.raises(UserError) as exc_info:
@@ -6245,7 +6250,11 @@ async def test_groq_native_output_with_function_tools(
 
 
 GroqRequestBodyOutput = (
-    NativeOutput[CityLocation] | NativeOutput[CityInCountry] | PromptedOutput[CityLocation] | type[str]
+    NativeOutput[CityLocation]
+    | NativeOutput[CityInCountry]
+    | NativeOutput[CityWithNickname]
+    | PromptedOutput[CityLocation]
+    | type[str]
 )
 
 
@@ -6254,7 +6263,7 @@ class GroqRequestBodyCase:
     id: str
     model_name: str
     expected: object
-    """Snapshot of the request body's `stream`, `response_format`, `reasoning_format` and `reasoning_effort`."""
+    """Snapshot of the request body's `stream`, `response_format`, `reasoning_format`, `reasoning_effort` and `tools`."""
     output_type: GroqRequestBodyOutput = str
     response: str = CITY_LOCATION_JSON
     stream: bool = False
@@ -6331,6 +6340,34 @@ GROQ_REQUEST_BODY_CASES = [
         ),
     ),
     GroqRequestBodyCase(
+        # Groq's strict mode requires every field to be required, so a defaulted field sends `strict: false`.
+        id='qwen3.8-native-defaulted-field',
+        model_name='qwen/qwen3.8-27b',
+        output_type=NativeOutput(CityWithNickname),
+        response='{"city": "Mexico City"}',
+        expected=snapshot(
+            {
+                'stream': False,
+                'response_format': {
+                    'type': 'json_schema',
+                    'json_schema': {
+                        'name': CityWithNickname.__qualname__,
+                        'schema': {
+                            'properties': {
+                                'city': {'type': 'string'},
+                                'nickname': {'default': 'CDMX', 'type': 'string'},
+                            },
+                            'required': ['city'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        },
+                        'strict': False,
+                    },
+                },
+            }
+        ),
+    ),
+    GroqRequestBodyCase(
         # Groq doesn't list qwen3.6 for strict mode; qwen's family transformer still reports the schema strict.
         id='qwen3.6-native',
         model_name='qwen/qwen3.6-27b',
@@ -6391,12 +6428,33 @@ GROQ_REQUEST_BODY_CASES = [
         expected=snapshot({'stream': True, 'response_format': {'type': 'json_object'}}),
     ),
     GroqRequestBodyCase(
-        # JSON mode can't be combined with function tools, so the request carries no `response_format`.
+        # JSON mode can't be combined with function tools, so the request carries no `response_format`. Groq never
+        # receives `strict` on a tool, so the tool schema keeps qwen's family transformer: it keeps its `title` and gets
+        # no `additionalProperties`.
         id='qwen3.8-prompted-with-function-tool',
         model_name='qwen/qwen3.8-27b',
         output_type=PromptedOutput(CityLocation),
         function_tool=True,
-        expected=snapshot({'stream': False}),
+        expected=snapshot(
+            {
+                'stream': False,
+                'tools': [
+                    {
+                        'type': 'function',
+                        'function': {
+                            'name': lookup_country.__qualname__,
+                            'description': '',
+                            'parameters': {
+                                'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
+                                'required': ['city', 'country'],
+                                'title': CityLocation.__qualname__,
+                                'type': 'object',
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
     ),
     GroqRequestBodyCase(
         id='qwen3.8-prompted-json-mode-off',
@@ -6463,7 +6521,7 @@ async def test_groq_request_body(allow_model_requests: None, case: GroqRequestBo
         agent = Agent(
             GroqModel(case.model_name, provider=provider, profile=case.profile),
             output_type=case.output_type,
-            tools=[get_user_country] if case.function_tool else [],
+            tools=[lookup_country] if case.function_tool else [],
             model_settings=settings,
         )
         prompt = 'What is the largest city in Mexico?'
@@ -6475,7 +6533,7 @@ async def test_groq_request_body(allow_model_requests: None, case: GroqRequestBo
 
     [request] = sent
     body = json.loads(request.content)
-    keys = ('stream', 'response_format', 'reasoning_format', 'reasoning_effort')
+    keys = ('stream', 'response_format', 'reasoning_format', 'reasoning_effort', 'tools')
     assert {key: body[key] for key in keys if key in body} == case.expected
 
 
