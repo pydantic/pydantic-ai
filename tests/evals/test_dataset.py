@@ -1263,6 +1263,19 @@ async def test_from_text_failure():
     )
 
 
+async def test_from_text_rejects_unknown_span_query_key():
+    """A misspelled `SpanQuery` key, here nested, would otherwise be ignored and match every span."""
+    dataset_dict = {
+        'cases': [{'inputs': {'query': 'q'}}],
+        'evaluators': [{'HasMatchingSpan': {'query': {'some_child_has': {'name_eq': 'tool call'}}}}],
+    }
+    with pytest.raises(ExceptionGroup) as exc_info:
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    [error] = exc_info.value.exceptions
+    assert "Failed to instantiate evaluator 'HasMatchingSpan' for dataset" in str(error)
+    assert 'some_child_has.name_eq\n  Extra inputs are not permitted' in str(error)
+
+
 async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     @dataclass
     class FirstEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):

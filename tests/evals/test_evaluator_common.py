@@ -496,6 +496,12 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     )
 
 
+def test_has_matching_span_keeps_validated_query():
+    """A value loaded as a string is converted when the evaluator is built, not left to fail during evaluation."""
+    evaluator = HasMatchingSpan(query={'min_child_count': '2'})  # pyright: ignore[reportArgumentType]
+    assert evaluator.query == {'min_child_count': 2}
+
+
 @needs_logfire
 async def test_span_query_evaluator(capfire: CaptureLogfire):
     """Test HasMatchingSpan evaluator."""

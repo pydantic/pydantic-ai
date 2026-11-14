@@ -9,7 +9,7 @@ from functools import cache
 from textwrap import indent
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter, with_config
 from typing_extensions import TypeAliasType, TypedDict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -35,6 +35,8 @@ SpanStatus = Literal['unset', 'ok', 'error']
 __all__ = 'SpanNode', 'SpanQuery', 'SpanStatus', 'SpanTree'
 
 
+# `extra='forbid'`: an unknown key, such as a misspelled condition, would otherwise be ignored.
+@with_config(ConfigDict(extra='forbid'))
 class SpanQuery(TypedDict, total=False):
     """A serializable query for filtering SpanNodes based on various conditions.
 

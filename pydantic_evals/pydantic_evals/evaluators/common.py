@@ -361,12 +361,20 @@ class GEval(Evaluator[object, object, object]):
         return _serialize_model_as_string(super().build_serialization_arguments())
 
 
+_SPAN_QUERY_ADAPTER = TypeAdapter(SpanQuery)
+
+
 @dataclass(repr=False)
 class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
     query: SpanQuery
     evaluation_name: str | None = field(default=None)
+
+    def __post_init__(self):
+        # The query is not validated otherwise, and a query loaded from a file with a misspelled key matches every span.
+        # Keep the validated query, so a value loaded as a string (`min_child_count: '2'`) is used as its real type.
+        self.query = _SPAN_QUERY_ADAPTER.validate_python(self.query)
 
     def evaluate(
         self,
