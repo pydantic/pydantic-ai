@@ -852,7 +852,7 @@ class GraphAgentState:
     ) -> None:
         """Record one unit of output-retry budget consumption.
 
-        Raises `UnexpectedModelBehavior` when `output_retries_used` would exceed
+        Raises `OutputRetriesExceeded` when `output_retries_used` would exceed
         `max_output_retries`. Called for `ModelRetry`s from output validators (text path)
         and for `ToolRetryError`s from output-tool dispatch / empty-or-non-actionable
         responses; per-tool retry limits are still enforced separately by
@@ -865,7 +865,10 @@ class GraphAgentState:
         if self.output_retries_used > max_output_retries:
             self.check_incomplete_tool_call()
             message = f'Exceeded maximum output retries ({max_output_retries})'
-            raise exceptions.UnexpectedModelBehavior(message) from error
+            assert isinstance(feedback, _messages.RetryFeedbackPart)
+            raise exceptions.OutputRetriesExceeded(
+                message, tool_name=None, max_retries=max_output_retries, last_cause=feedback.retry.cause
+            ) from error
         if isinstance(feedback, _messages.RetryFeedbackPart):  # pragma: no branch
             feedback.retry = dataclasses.replace(
                 feedback.retry, attempt=self.output_retries_used, max_retries=max_output_retries

@@ -45,6 +45,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputRetriesExceeded,
     OutputTokenLimitExceeded,
     PrefixedToolset,
     RequestUsage,
@@ -57,6 +58,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolRetriesExceeded,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -86,7 +88,7 @@ from pydantic_ai.capabilities import (
     WrapRunHandler,
 )
 from pydantic_ai.durable_exec._base import construction_toolsets
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import ContentFilterError, ToolRetryError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -98,7 +100,7 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
+from pydantic_ai.output import OutputContext, OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
@@ -4982,6 +4984,119 @@ def test_unknown_tool_per_tool_retries_exceeded():
         agent.run_sync('Hello')
 
 
+@pytest.mark.parametrize(
+    ('call', 'max_retries', 'last_cause'),
+    [
+        pytest.param(ToolCallPart('flaky', {'x': 1}), 2, 'model_retry', id='model_retry'),
+        pytest.param(ToolCallPart('flaky', {'x': 'one'}), 2, 'validation_error', id='validation_error'),
+        pytest.param(ToolCallPart('made_up', {}), 1, 'unknown_tool', id='unknown_tool'),
+    ],
+)
+def test_tool_retries_exceeded(call: ToolCallPart, max_retries: int, last_cause: str):
+    """A tool that runs out of retries raises `ToolRetriesExceeded`, naming the tool, the limit and the last cause."""
+
+    def call_tool(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[call])
+
+    agent = Agent(FunctionModel(call_tool))
+
+    @agent.tool_plain(retries=2)
+    def flaky(x: int) -> str:
+        raise ModelRetry('try again')
+
+    with pytest.raises(ToolRetriesExceeded) as exc_info:
+        agent.run_sync('Hello')
+
+    error = exc_info.value
+    assert isinstance(error, UnexpectedModelBehavior)
+    assert error.message == (
+        f'Tool {call.tool_name!r} exceeded max retries count of {max_retries}. Consider raising the retry limit, '
+        'or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
+    )
+    assert (error.tool_name, error.max_retries, error.last_cause) == (call.tool_name, max_retries, last_cause)
+
+
+def _reject_output(value: str) -> str:
+    raise ModelRetry('try again')
+
+
+@pytest.mark.parametrize(
+    ('output_type', 'part', 'tool_name', 'last_cause'),
+    [
+        pytest.param(
+            Foo,
+            ToolCallPart('final_result', {'a': 'x'}),
+            'final_result',
+            'validation_error',
+            id='tool-validation_error',
+        ),
+        pytest.param(
+            _reject_output,
+            ToolCallPart('final_result', {'value': 'x'}),
+            'final_result',
+            'model_retry',
+            id='tool-model_retry',
+        ),
+        pytest.param(NativeOutput(Foo), TextPart('not json'), None, 'validation_error', id='text-validation_error'),
+        pytest.param(TextOutput(_reject_output), TextPart('x'), None, 'model_retry', id='text-model_retry'),
+        pytest.param(Foo, ThinkingPart('hmm'), None, 'no_output', id='no_output'),
+    ],
+)
+def test_output_retries_exceeded(output_type: Any, part: ModelResponsePart, tool_name: str | None, last_cause: str):
+    """Output that runs out of retries raises `OutputRetriesExceeded`, for an output tool call and for text alike."""
+
+    def respond(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[part])
+
+    agent = Agent(FunctionModel(respond), output_type=output_type)
+
+    with pytest.raises(OutputRetriesExceeded) as exc_info:
+        agent.run_sync('Hello')
+
+    error = exc_info.value
+    assert isinstance(error, UnexpectedModelBehavior)
+    assert not isinstance(error, ToolRetriesExceeded)
+    assert error.message == 'Exceeded maximum output retries (1)'
+    assert (error.tool_name, error.max_retries, error.last_cause) == (tool_name, 1, last_cause)
+
+
+def _output_tool_agent_raising_from_hook(error: Exception) -> Agent[None, Foo]:
+    def respond(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'a': 1, 'b': 'x'})])
+
+    class RaisingCapability(AbstractCapability[Any]):
+        async def before_output_process(
+            self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+        ) -> Any:
+            raise error
+
+    return Agent(FunctionModel(respond), output_type=Foo, capabilities=[RaisingCapability()])
+
+
+def test_output_retries_exceeded_cause_from_hook_retry():
+    """A retry an output hook raises ready-made has no underlying error, so its own part says why it was needed."""
+    retry = ToolReturnPart(
+        tool_name='final_result', content='no', outcome='retried', retry=RetryInfo(cause='validation_error')
+    )
+    agent = _output_tool_agent_raising_from_hook(ToolRetryError(retry))
+
+    with pytest.raises(OutputRetriesExceeded) as exc_info:
+        agent.run_sync('Hello')
+
+    error = exc_info.value
+    assert (error.tool_name, error.max_retries, error.last_cause) == ('final_result', 1, 'validation_error')
+
+
+def test_output_hook_unexpected_model_behavior_is_not_retries_exceeded():
+    """An `UnexpectedModelBehavior` an output hook raises isn't a retry limit, so it doesn't become `OutputRetriesExceeded`."""
+    agent = _output_tool_agent_raising_from_hook(UnexpectedModelBehavior('boom'))
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)') as exc_info:
+        agent.run_sync('Hello')
+
+    assert type(exc_info.value) is UnexpectedModelBehavior
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
@@ -4996,6 +5111,7 @@ def test_tool_exceeds_token_limit_error():
     ) as exc_info:
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
     assert isinstance(exc_info.value, OutputTokenLimitExceeded)
+    assert not isinstance(exc_info.value, (ToolRetriesExceeded, OutputRetriesExceeded))
 
     with pytest.raises(
         IncompleteToolCall,
