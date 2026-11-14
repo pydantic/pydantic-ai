@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`PrefectDurability.engine_spec.toolset_lifecycles['dynamic']` changes from `'enter-never'` to `'enter-in-durable-unit'`. The value now decides whether a `per_run_step=False` dynamic toolset is resolved once per run and held for the tasks (`DurableDynamicToolset.for_run`, its only reader). Before, every engine held it regardless of this value; declaring `'enter-in-durable-unit'` keeps that for Prefect, whose tasks run in the process that holds it. No existing code needs to change.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13326"
+}
