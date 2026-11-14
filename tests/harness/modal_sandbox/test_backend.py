@@ -338,6 +338,19 @@ class TestRun:
         with anyio.fail_after(30), pytest.raises(WorkspaceTimeoutError):
             await backend.run(['spawn-daemon'], timeout=60)
 
+    async def test_output_drain_without_a_timeout_returns_after_a_grace(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The command exits, and a descendant keeps stdout open with no command deadline to end the drain.
+        # What was read is returned, a character cut off by the grace replaced rather than dropped.
+        monkeypatch.setattr(_backend, '_OUTPUT_DRAIN_GRACE', 0.01)
+        fake_modal.responder = lambda argv, timeout: (b'started \xe2\x82', b'', 0)
+        fake_modal.stdout_held_open = True
+        backend = await started()
+        with anyio.fail_after(30):
+            result = await backend.run(['spawn-daemon'])
+        assert (result.exit_code, result.stdout, result.stderr) == (0, 'started \ufffd', '')
+
     @pytest.mark.parametrize('stage', ['exec_error', 'wait_error'])
     async def test_an_sdk_timeout_error_is_not_a_command_timeout(self, fake_modal: FakeModal, stage: str) -> None:
         setattr(fake_modal, stage, TimeoutError('transport'))

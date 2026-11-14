@@ -109,6 +109,8 @@ If only your own tools use the sandbox, pass `ModalSandbox(warn_if_no_tools=Fals
 
 File reads raise `OSError` for FIFOs, devices, and anything else that is not a regular file, as the local backend does.
 
+Without a `timeout`, `run()` returns when the command exits, after at most a 2-second output grace even if a background child it started keeps stdout or stderr open; output that child writes after the grace is not returned. With a `timeout`, such a child keeps `run()` reading until the deadline, which raises `WorkspaceTimeoutError`. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
+
 ### What a timeout stops
 
 `run(timeout=...)` starts its clock after sandbox acquisition and includes command start, execution, and output collection. On its deadline or cancellation, the backend attempts to stop the command's foreground process group, not the shared sandbox or detached background jobs. Partial stdout and stderr are available on `WorkspaceTimeoutError`; if the stop RPC fails, the command may still run, so retain the sandbox ref for explicit cleanup. `timeout=None` has no command deadline; the sandbox's own lifetime and idle settings still apply. On a custom or attached image without util-linux's `setsid`, a deadline or cancellation stops only the wrapper process, not the command's children; install util-linux in the image to stop them too.
