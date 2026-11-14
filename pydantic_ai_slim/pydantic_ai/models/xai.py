@@ -1,5 +1,6 @@
 """xAI model implementation using [xAI SDK](https://github.com/xai-org/xai-sdk-python)."""
 
+import hashlib
 import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
@@ -56,6 +57,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _document_format,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -421,6 +423,10 @@ class XaiModel(Model[AsyncClient]):
 
         super().__init__(settings=settings, profile=profile)
 
+        # Uploaded document file IDs, keyed by a SHA-256 hash of the uploaded bytes,
+        # so the same document is uploaded only once per model instance.
+        self._uploaded_document_ids: dict[str, str] = {}
+
     @property
     def client(self) -> 'AsyncClient':
         return self._provider.client
@@ -757,6 +763,9 @@ class XaiModel(Model[AsyncClient]):
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
 
+        Bytes this model instance already uploaded reuse the earlier file ID instead of uploading again,
+        so the file keeps the name it was first uploaded with.
+
         Args:
             data: The file content as bytes
             filename: The filename to use for the upload
@@ -764,8 +773,12 @@ class XaiModel(Model[AsyncClient]):
         Returns:
             The file ID from xAI
         """
+        cache_key = hashlib.sha256(data).hexdigest()
+        if (file_id := self._uploaded_document_ids.get(cache_key)) is not None:
+            return file_id
         with _map_api_errors(self.model_name):
             uploaded_file = await self._provider.client.files.upload(data, filename=filename)
+        self._uploaded_document_ids[cache_key] = uploaded_file.id
         return uploaded_file.id
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:
@@ -843,12 +856,14 @@ class XaiModel(Model[AsyncClient]):
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
     async def _map_document_url(self, item: DocumentUrl) -> chat_types.Content:
-        # Download and upload to xAI files API
+        # Download on every request, so each one is checked against its own `force_download` permission,
+        # then upload to xAI files API (skipped when these bytes were uploaded before)
         downloaded = await download_item(item, data_format='bytes')
         filename = item.identifier or 'document'
-        # Add extension if data_type is available from download
-        if 'data_type' in downloaded and downloaded['data_type']:
-            filename = f'{filename}.{downloaded["data_type"]}'
+        # Add the document extension for the downloaded media type, when one is known
+        extension = _document_format(downloaded['data_type'])
+        if extension:
+            filename = f'{filename}.{extension}'
 
         file_id = await self._upload_file_to_xai(downloaded['data'], filename)
         return file(file_id)
