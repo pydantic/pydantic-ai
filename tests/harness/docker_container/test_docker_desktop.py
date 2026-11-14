@@ -246,7 +246,8 @@ async def test_an_images_own_display_gets_no_panel(docker: FakeDocker, container
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
-    (docker.bin_dir / 'scrot').unlink()
+    # Missing as the shell reports it, not unlinked: a host's own `scrot` further along PATH would answer.
+    (docker.bin_dir / 'scrot').write_text('#!/bin/sh\necho "scrot: not found" >&2\nexit 127\n')
     workspace = _screen(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):

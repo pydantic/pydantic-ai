@@ -321,11 +321,13 @@ class TestLiveDaytonaDesktop:
         display = backend.display
         assert display is not None
         await display.display_size()  # starts the desktop, so the terminal opens on it
+        # Its own process, so a terminal already running in the session doesn't take the window and its directory.
         await backend.run(
-            'setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" >/dev/null 2>&1 &',
+            'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > typed.txt" '
+            '>/dev/null 2>&1 &',
             shell=True,
         )
-        await backend.run('until [ -e ready ]; do sleep 0.1; done; sleep 1', shell=True, timeout=30)
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], timeout=30)
 
         await display.act(Click(x=300, y=180))
         await display.act(TypeText(text='hello, desktop'))
