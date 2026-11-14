@@ -59,7 +59,14 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    # Another thread touching `random` during a draw trips Hypothesis's check, as `tests/test_history_properties.py`
+    # explains, and `filterwarnings = error` makes it a flaky error. No strategy here uses `random`.
+    pytest.mark.filterwarnings(
+        'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+    ),
+]
 
 
 def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]] | None = None) -> resp.Response:
@@ -200,12 +207,18 @@ async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_it
     assert output['acknowledged_safety_checks'] == [CHECK]
 
 
-# A response-scoped ID is stored qualified with its response and restored before the request.
 @pytest.mark.parametrize(
-    'response_scoped,stored_id', [(False, 'call_1'), (True, 'resp_1:call_1')], ids=['unique-ids', 'response-scoped-ids']
+    'response_scoped,stored_id,settings',
+    [
+        pytest.param(False, 'call_1', None, id='unique-ids'),
+        # Stored qualified with its response and restored before the request.
+        pytest.param(True, 'resp_1:call_1', None, id='response-scoped-ids'),
+        # The server holds the call, so only its output is sent.
+        pytest.param(False, 'call_1', {'openai_previous_response_id': 'auto'}, id='held-by-the-server'),
+    ],
 )
 async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safety_checks(
-    allow_model_requests: None, response_scoped: bool, stored_id: str
+    allow_model_requests: None, response_scoped: bool, stored_id: str, settings: OpenAIResponsesModelSettings | None
 ) -> None:
     profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'), profile=profile)
@@ -252,8 +265,8 @@ async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safet
     await model.compact_messages(
         ModelRequestContext(
             model=model,
-            messages=history,
-            model_settings=None,
+            messages=with_history_digests(history),
+            model_settings=settings,
             model_request_parameters=ModelRequestParameters(
                 function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True
             ),
@@ -1063,7 +1076,19 @@ async def test_a_call_whose_stored_item_is_not_a_computer_call_goes_back_plain(
     ]
 
 
-async def test_a_reused_wire_id_answers_each_call_as_its_own_kind(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'settings,sent',
+    [
+        pytest.param(
+            {}, ['computer_call', 'computer_call_output', 'function_call', 'function_call_output'], id='full-history'
+        ),
+        # Only the last result is sent: the server holds both calls, and the later one is a function call.
+        pytest.param({'openai_previous_response_id': 'auto'}, ['function_call_output'], id='previous-response'),
+    ],
+)
+async def test_a_reused_wire_id_answers_each_call_as_its_own_kind(
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings, sent: list[str]
+) -> None:
     """Bedrock Mantle reuses call IDs across responses: a later function call with a computer call's ID stays one."""
     client = MockOpenAIResponses.create_mock(_done())
     profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
@@ -1090,18 +1115,93 @@ async def test_a_reused_wire_id_answers_each_call_as_its_own_kind(allow_model_re
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
     await model.request(
-        history,
-        None,
+        with_history_digests(history),
+        settings,
         ModelRequestParameters(function_tools=[computer, note], native_tools=[COMPUTER_TOOL], allow_text_output=True),
     )
 
     (request,) = get_mock_responses_kwargs(client)
-    assert [item.get('type') for item in request['input'] if item.get('call_id') == 'call_1'] == [
-        'computer_call',
+    assert [item.get('type') for item in request['input'] if item.get('call_id') == 'call_1'] == sent
+
+
+async def test_a_held_computer_result_stays_one_when_a_later_call_reuses_its_id(allow_model_requests: None) -> None:
+    """The server holds the computer call; a later call from another model with the same ID doesn't change its kind."""
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'screenshot'}]},
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={'computer_call': _COMPUTER_ITEM},
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(parts=[call], provider_name='openai', provider_response_id='resp_1'),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer', ['Ran 1 action.', _SCREEN], tool_call_id='call_1', tool_kind=COMPUTER_KIND.id
+                )
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart('note', {}, tool_call_id='call_1')], provider_name='anthropic'),
+        ModelRequest(parts=[ToolReturnPart('note', 'Noted.', tool_call_id='call_1')]),
+    ]
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
+    await model.request(
+        with_history_digests(history),
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        ModelRequestParameters(function_tools=[computer, note], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    assert request['previous_response_id'] == 'resp_1'
+    assert [item.get('type') for item in request['input'] if 'type' in item] == [
         'computer_call_output',
         'function_call',
         'function_call_output',
     ]
+
+
+async def test_a_reused_wire_id_acknowledges_the_checks_of_its_own_call(allow_model_requests: None) -> None:
+    """Two computer calls with one Bedrock Mantle ID: only the first was flagged, so only its output acknowledges."""
+    client = MockOpenAIResponses.create_mock(_done())
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client), profile=profile)
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+    for response_id, checks in [('resp_1', [CHECK]), ('resp_2', [])]:
+        call = ToolCallPart(
+            'computer',
+            {'actions': [{'type': 'screenshot'}]},
+            tool_call_id=f'{response_id}:call_1',
+            tool_kind=COMPUTER_KIND.id,
+            provider_name='openai',
+            provider_details={'safety_checks': checks, 'computer_call': _COMPUTER_ITEM},
+        )
+        result = ToolReturnPart(
+            'computer',
+            ['Ran 1 action.', _SCREEN],
+            tool_call_id=f'{response_id}:call_1',
+            metadata={'performed': 1},
+            tool_kind=COMPUTER_KIND.id,
+        )
+        history += [
+            ModelResponse(parts=[call], provider_name='openai', provider_response_id=response_id),
+            ModelRequest(parts=[result]),
+        ]
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    outputs = [item for item in request['input'] if item.get('type') == 'computer_call_output']
+    assert [output.get('acknowledged_safety_checks') for output in outputs] == [[CHECK], None]
 
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
@@ -1296,7 +1396,7 @@ def _accepted(tool_action: dict[str, Any]) -> bool:
     return True
 
 
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, derandomize=True, database=None, deadline=None)
 @given(_NEAR_ACTION | _JSON)
 def test_any_action_maps_without_raising_and_a_refusal_is_rejected(raw: Any) -> None:
     """The tool checks every action before running any, so one it rejects means none of the call runs."""
@@ -1304,7 +1404,7 @@ def test_any_action_maps_without_raising_and_a_refusal_is_rejected(raw: Any) -> 
         assert 'unsupported_fields' not in tool_action or not _accepted(tool_action)
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=300, derandomize=True, database=None, deadline=None)
 @given(_VALID_ACTION)
 def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, Any]) -> None:
     mapped = _map_computer_action(raw)
@@ -1313,7 +1413,11 @@ def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, 
 
 
 @settings(
-    max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture]
+    max_examples=200,
+    derandomize=True,
+    database=None,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 @given(
     stored_item=st.fixed_dictionaries({}, optional={'actions': _JSON, 'pending_safety_checks': _JSON, 'extra': _JSON}),

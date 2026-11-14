@@ -93,9 +93,10 @@ exec)
         export FAKE_TMP="$tmp"
         for arg; do
             shift
-            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */proc/*)
+            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-* | */proc/*)
                 arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g" \
-                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/proc/#$tmp/proc/#g") ;;
+                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/tmp/pydantic-ai-#$tmp/pydantic-ai-#g" \
+                    -e "s#/proc/#$tmp/proc/#g") ;;
             esac
             set -- "$@" "$arg"
         done
@@ -175,8 +176,8 @@ bin=$(dirname "$0")
 echo "$*" >> "$bin/xvfb-starts"
 if [ -e "$bin/xvfb-fails" ]; then echo 'Fatal server error: no screens found' >&2; exit 1; fi
 if [ -e "$FAKE_TMP/.X1-lock" ]; then echo 'Fatal server error: Server is already active for display 1' >&2; exit 1; fi
+echo "${4%x*}" > "$bin/screen-size"  # `-screen 0 WIDTHxHEIGHTx24`, for `xwininfo`, written before the display is up
 rm -f "$bin/no-display"
-echo "${4%x*}" > "$bin/screen-size"  # `-screen 0 WIDTHxHEIGHTx24`, for `xwininfo`
 exec sleep 2
 """
 """Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` or a

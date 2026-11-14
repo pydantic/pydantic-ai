@@ -270,19 +270,21 @@ def _map_actions(dumped: dict[str, Any], *, sent: set[str]) -> list[tuple[dict[s
     return [tool_action for action in actions for tool_action in _map_computer_action(action)]
 
 
-def computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
-    """Each `computer_call` this API made, by tool call ID, so its output can read it.
+def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCallPart]:
+    """The `computer_call`s this API made, by tool call ID, so their outputs can read them.
 
-    Found by the item it came as, not by valid arguments: a call whose actions didn't map was still a `computer_call`,
-    and its output must be a `computer_call_output`.
+    A provider can reuse an ID in a later response, so only the latest call with each ID counts. A call is found by
+    the item it came as, not by valid arguments: a call whose actions didn't map was still a `computer_call`, and its
+    output must be a `computer_call_output`.
     """
-    return {
+    latest = {
         part.tool_call_id: part
         for message in messages
         if isinstance(message, ModelResponse)
         for part in message.parts
-        if isinstance(part, ToolCallPart) and 'computer_call' in (part.provider_details or {})
+        if isinstance(part, ToolCallPart)
     }
+    return {call_id: part for call_id, part in latest.items() if 'computer_call' in (part.provider_details or {})}
 
 
 def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
