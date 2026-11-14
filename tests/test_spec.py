@@ -438,7 +438,10 @@ class TestBuildSchemaTypes:
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize('capability', [CallableParam, TypeVarGenericParam])
     def test_required_unrepresentable_param_capability_schema(self, capability: type[AbstractCapability[None]]):
-        """A required parameter with no JSON form leaves the capability out of the schema, since no spec entry can load it."""
+        """A required parameter with no JSON form leaves the capability out of the schema, since no spec entry can load it.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
         name = capability.__name__
         schema = AgentSpec.model_json_schema_with_capabilities([capability])
         assert [key for key in schema['$defs'] if key.endswith(f'_{name}')] == []
@@ -452,7 +455,10 @@ class TestBuildSchemaTypes:
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_unannotated_required_param_capability_schema(self):
-        """An unannotated required parameter accepts any value, so the schema rejects the name alone."""
+        """An unannotated required parameter accepts any value, so the schema rejects the name alone.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
 
         @dataclass
         class UnannotatedParam(AbstractCapability[None]):
@@ -479,7 +485,10 @@ class TestBuildSchemaTypes:
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_unannotated_optional_param_capability_schema(self):
-        """An unannotated optional parameter leaves the schema of a sole object-typed parameter rejecting objects."""
+        """An unannotated optional parameter leaves the schema of a sole object-typed parameter rejecting objects.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
 
         @dataclass
         class WeightsWithFlag(AbstractCapability[None]):
