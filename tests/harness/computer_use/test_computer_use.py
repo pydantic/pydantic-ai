@@ -539,11 +539,8 @@ Each call runs a list of actions in order and returns a screenshot of the result
         [pytest.param([], id='no-workspace'), pytest.param([WorkspaceCapability()], id='no-display')],
     )
     async def test_a_run_without_a_display_fails_at_its_start(self, workspace: list[AbstractCapability[Any]]) -> None:
-        requests: list[list[ModelMessage]] = []
-
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            requests.append(messages)
-            return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})])
+            raise AssertionError('The run sent a model request.')  # pragma: no cover
 
         # Without the native tool, whose size read before the first request would report it too.
         agent = Agent(FunctionModel(respond), capabilities=[*workspace, ComputerUse(native=False)])
@@ -553,7 +550,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
             "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with one, such as "
             '`DockerContainer(desktop=True)`.'
         )
-        assert requests == []
 
     @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
     async def test_a_durable_run_without_a_display_fails_at_its_first_display_read(self, native: bool) -> None:
