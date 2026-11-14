@@ -1973,7 +1973,7 @@ class BedrockConverseModel(Model[BaseClient]):
             content.append({'reasoningContent': reasoning_content})
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and part.content:
                 content.append({'text': thinking_text})
             elif part.content:
                 # A redacted block arrives with its reasoning stripped (`content=''`), and

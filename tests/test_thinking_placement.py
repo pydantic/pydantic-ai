@@ -233,6 +233,18 @@ _BACK_TO_BACK_RESPONSE_HISTORY: list[ModelMessage] = [
     ModelResponse(parts=[TextPart(content=_ANSWER)]),
     ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
 ]
+# An empty foreign `ThinkingPart` on a model that keeps replayed reasoning in the assistant turn would render
+# as a bare tag pair, so the turn carries only its text (https://github.com/pydantic/pydantic-ai/issues/13387).
+_EMPTY_FOREIGN_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(parts=[ThinkingPart(content='', provider_name='anthropic'), TextPart(content=_ANSWER)]),
+]
+# As a response's only part, it leaves that response with nothing to send, so no assistant turn goes out.
+_EMPTY_FOREIGN_ONLY_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(parts=[ThinkingPart(content='', provider_name='anthropic')]),
+    ModelRequest(parts=[UserPromptPart(content=_FOLLOW_UP)]),
+]
 
 
 @dataclass
@@ -659,6 +671,83 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
         profile=_OPTED_OUT_PROFILE,
         marks=_OPENAI_MARKS,
     ),
+    # OpenAI's own profile, and a compatible provider's, both reach the shared assistant-turn branch.
+    *(
+        Case(
+            f'openai-chat-{route}-empty-foreign',
+            _openai_chat_outbound,
+            _EMPTY_FOREIGN_HISTORY,
+            carrying_roles=set(),
+            expected=snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            model_name=model_name,
+            env=env,
+            marks=_OPENAI_MARKS,
+        )
+        for route, model_name, env in [
+            ('openai', 'openai-chat:gpt-4o', {'OPENAI_API_KEY': 'x'}),
+            ('crusoe', 'crusoe:meta-llama/Llama-3.3-70B-Instruct', {'CRUSOE_API_KEY': 'x'}),
+        ]
+    ),
+    Case(
+        'openai-chat-empty-foreign-only-response',
+        _openai_chat_outbound,
+        _EMPTY_FOREIGN_ONLY_HISTORY,
+        carrying_roles=set(),
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                },
+                {'role': 'user', 'content': 'And a 30-year?'},
+            ]
+        ),
+        model_name='openai-chat:gpt-4o',
+        env={'OPENAI_API_KEY': 'x'},
+        marks=_OPENAI_MARKS,
+    ),
+    Case(
+        'openai-responses-empty-foreign',
+        _openai_responses_outbound,
+        _EMPTY_FOREIGN_HISTORY,
+        carrying_roles=set(),
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                },
+                {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+            ]
+        ),
+        model_name='openai/gpt-5',
+        marks=_OPENAI_MARKS,
+    ),
+    Case(
+        'openai-responses-empty-foreign-only-response',
+        _openai_responses_outbound,
+        _EMPTY_FOREIGN_ONLY_HISTORY,
+        carrying_roles=set(),
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                },
+                {'role': 'user', 'content': 'And a 30-year?'},
+            ]
+        ),
+        model_name='openai/gpt-5',
+        marks=_OPENAI_MARKS,
+    ),
 ]
 
 
@@ -966,6 +1055,45 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {'role': 'assistant', 'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}]},
             ]
         ),
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
+    ),
+    Case(
+        'bedrock-nova-empty-foreign',
+        _bedrock_outbound,
+        _EMPTY_FOREIGN_HISTORY,
+        carrying_roles=set(),
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'}
+                    ],
+                },
+                {'role': 'assistant', 'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}]},
+            ]
+        ),
+        model_name='us.amazon.nova-pro-v1:0',
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
+    ),
+    # Converse merges consecutive user turns, so the two around the dropped response go out as one.
+    Case(
+        'bedrock-nova-empty-foreign-only-response',
+        _bedrock_outbound,
+        _EMPTY_FOREIGN_ONLY_HISTORY,
+        carrying_roles=set(),
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'},
+                        {'text': 'And a 30-year?'},
+                    ],
+                }
+            ]
+        ),
+        model_name='us.amazon.nova-pro-v1:0',
         marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
     # Grok showed no imitation when reasoning was replayed in its assistant turn, so its profile doesn't
