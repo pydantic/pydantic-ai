@@ -24,6 +24,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TaskProgress
+from pydantic_clai2.runtime import tasks as runtime_tasks
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session import resolve_model_name
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
@@ -212,7 +213,19 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     assert woken == ['b'] and record.id in router.progress
 
 
-async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path) -> None:
+async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    trims: list[int] = []
+
+    class Glibc:
+        def malloc_trim(self, pad: int) -> int:
+            trims.append(pad)
+            return 1
+
+    def load(name: str | None) -> Glibc:
+        return Glibc()
+
+    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', load)
+    monkeypatch.setattr(runtime_tasks.sys, 'platform', 'linux')
     router = TaskRouter(directory=tmp_path / 'tasks')
     first, second = (
         Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: name, router=router)
@@ -229,6 +242,28 @@ async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path) -> Non
     assert (tmp_path / 'tasks' / f'{record.id}.json').exists()
     async with router.opened(view=first) as reopened:
         assert reopened.records[record.id].outcome == 'cancelled'
+    # Each open of the owner returned the memory its load freed; the second user joined the open owner.
+    assert trims == [0, 0]
+
+
+@pytest.mark.parametrize('platform,library,loads', [('linux', object(), [None]), ('darwin', None, [])])
+async def test_the_owner_opens_where_memory_cannot_be_trimmed(
+    platform: str, library: object, loads: list[None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A C library without `malloc_trim` (musl), and a platform that isn't glibc's, open the owner as usual."""
+    loaded: list[str | None] = []
+
+    def load(name: str | None) -> object:
+        loaded.append(name)
+        return library
+
+    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', load)
+    monkeypatch.setattr(runtime_tasks.sys, 'platform', platform)
+    router = TaskRouter(directory=None)
+    view = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', router=router)
+    async with router.opened(view=view) as owner:
+        assert owner is router.owner
+    assert loaded == loads
 
 
 async def test_a_task_that_ignores_cancellation_does_not_crash_closing(
