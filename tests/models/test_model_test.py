@@ -21,6 +21,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    NativeOutput,
+    PromptedOutput,
     RetryInfo,
     RunContext,
     StructuredDict,
@@ -409,6 +411,55 @@ def test_tool_retry():
             ),
         ]
     )
+
+
+class StructuredOutput(BaseModel):
+    string: str
+    number: int
+
+
+@pytest.mark.parametrize('output_type', [NativeOutput, PromptedOutput])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_structured_output(
+    output_type: type[NativeOutput[StructuredOutput] | PromptedOutput[StructuredOutput]], stream: bool
+):
+    agent = Agent(TestModel(), output_type=output_type(StructuredOutput))
+    if stream:
+        async with agent.run_stream('x') as result:
+            output = await result.get_output()
+    else:
+        output = (await agent.run('x')).output
+    assert output == StructuredOutput(string='a', number=0)
+
+
+async def test_structured_output_custom_output_text():
+    model = TestModel(custom_output_text='{"string": "Paris", "number": 1}')
+    result = await Agent(model, output_type=NativeOutput(StructuredOutput)).run('x')
+    assert result.output == StructuredOutput(string='Paris', number=1)
+
+
+async def test_structured_output_custom_output_args():
+    model = TestModel(custom_output_args={'string': 'Paris', 'number': 1})
+    with pytest.raises(UserError, match='`custom_output_args` is for tool output'):
+        await Agent(model, output_type=NativeOutput(StructuredOutput)).run('x')
+
+
+async def test_structured_output_non_object_type():
+    result = await Agent(TestModel(), output_type=NativeOutput(tuple[str, int])).run('x')
+    assert result.output == ('a', 0)
+
+
+async def test_structured_output_custom_profile():
+    model = TestModel(profile=ModelProfile())
+    with pytest.raises(UserError, match='Native structured output is not supported by this model'):
+        await Agent(model, output_type=NativeOutput(StructuredOutput)).run('x')
+
+
+async def test_custom_profile_keeps_tool_output():
+    profile = ModelProfile(thinking_enabled_by_default=True, forced_tool_choice_disables_thinking=True)
+    model = TestModel(profile=profile, custom_output_args={'string': 'Paris', 'number': 1})
+    result = await Agent(model, output_type=StructuredOutput).run('x')
+    assert isinstance(result.response.parts[0], ToolCallPart)
 
 
 def test_output_tool_retry_error_handled():
