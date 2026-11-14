@@ -391,7 +391,7 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     }
 
 
-class _RunCodeArguments(RunCodeArgs):
+class _RunCodeArgs(RunCodeArgs):
     # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
     pass
 
@@ -448,7 +448,7 @@ def _split_by_placement(
     return sandboxed, native
 
 
-_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
+_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArgs)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 # Used to serialize tool return values before sending into Monty (dump_python)
