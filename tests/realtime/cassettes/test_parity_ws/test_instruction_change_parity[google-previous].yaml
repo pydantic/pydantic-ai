@@ -14,13 +14,13 @@ interactions:
         - text: 'You are a voice assistant. Answer in one short sentence.
 
 
-            <context id="agent:code_word">
+            <pyai:context id="agent:code_word">
 
             The code word is BLUE. Tell the user when they ask for it.
 
-            </context>
+            </pyai:context>
 
-            A later <context> element with the same id replaces the earlier one and
+            A later <pyai:context> element with the same id replaces the earlier one and
             stays in effect until replaced again.'
         role: user
       inputAudioTranscription: {}
@@ -256,11 +256,11 @@ interactions:
     client_content:
       turns:
       - parts:
-        - text: '<system><context id="agent:code_word">
+        - text: '<system><pyai:context id="agent:code_word">
 
             The code word is ORANGE. Tell the user when they ask for it.
 
-            </context></system>'
+            </pyai:context></system>'
         role: user
       turnComplete: false
 - kind: message

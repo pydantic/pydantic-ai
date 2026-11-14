@@ -26,13 +26,13 @@ interactions:
       instructions: 'You are a voice assistant. Answer in one short sentence.
 
 
-        <context id="agent:code_word">
+        <pyai:context id="agent:code_word">
 
         The code word is BLUE. Tell the user when they ask for it.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       turn_detection:
         type: server_vad
@@ -75,13 +75,13 @@ interactions:
       instructions: 'You are a voice assistant. Answer in one short sentence.
 
 
-        <context id="agent:code_word">
+        <pyai:context id="agent:code_word">
 
         The code word is BLUE. Tell the user when they ask for it.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       enable_noise_suppression: false
       turn_detection:
@@ -406,11 +406,11 @@ interactions:
       role: user
       content:
       - type: input_text
-        text: '<system><context id="agent:code_word">
+        text: '<system><pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context></system>'
+          </pyai:context></system>'
 - kind: message
   direction: sent
   at: 1.158
@@ -447,11 +447,11 @@ interactions:
       role: user
       content:
       - type: input_text
-        text: '<system><context id="agent:code_word">
+        text: '<system><pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context></system>'
+          </pyai:context></system>'
       replayed: false
     previous_item_id: 96e017f4-d7d5-493e-8984-908af5c0f9e8
 - kind: message

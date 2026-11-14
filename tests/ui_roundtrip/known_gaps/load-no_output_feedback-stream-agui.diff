@@ -20,7 +20,7 @@
 -   [
 -    {
 -     "kind": "user-prompt",
--     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
+-     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<pyai:retry_feedback>\nPlease return text.\n</pyai:retry_feedback>"
 @@ -82,20 +61,0 @@
 -     "content": ""
 -    }
@@ -32,7 +32,7 @@
 -   [
 -    {
 -     "kind": "user-prompt",
--     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
+-     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<pyai:retry_feedback>\nPlease return text.\n</pyai:retry_feedback>"
 -    }
 -   ]
 -  ],

@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -19,17 +24,23 @@ from inline_snapshot import snapshot
 
 import pydantic_ai
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
+from pydantic_ai.models.test import TestModel
 
+from .batch_utils import FAST_BATCH_SETTINGS
 from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    import httpx
     import httpx2
     from anthropic import AsyncAnthropicBedrock
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.ui import UIAdapter
+    from pydantic_ai.ui.vercel_ai import VercelAIEventStream
 
     from . import refactor_capture
     from .refactor_capture import (
@@ -39,16 +50,18 @@ with try_import() as imports_successful:
         RefactorCapture,
         bedrock_canary_model,
         compare,
+        main,
         normalized,
     )
 
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    # The plugin imports `httpx`, `groq`, `anthropic` and `boto3`; the `REQUESTS` sessions import `openai` too.
+    # The plugin imports `httpx`, `groq`, `anthropic`, `boto3` and `starlette`; the `REQUESTS` sessions import `openai`
+    # too, and the `UI` sessions `ag_ui`.
     pytest.mark.skipif(
-        not imports_successful() or importlib.util.find_spec('openai') is None,
-        reason='`httpx`, `groq`, `anthropic`, `boto3` or `openai` not installed',
+        not imports_successful() or any(importlib.util.find_spec(name) is None for name in ('openai', 'ag_ui')),
+        reason='`httpx`, `groq`, `anthropic`, `boto3`, `starlette`, `openai` or `ag_ui` not installed',
     ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
@@ -211,18 +224,154 @@ def test_test_model():
     agent.run_sync('hi')
 """
 
+UI = """
+import asyncio
+
+import pytest
+from ag_ui.core import RunAgentInput, UserMessage
+from starlette.testclient import TestClient
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ImageUrl, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.ui import UIAdapter
+from pydantic_ai.ui._web import create_web_app
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+from pydantic_ai.ui.vercel_ai.request_types import FileUIPart, SubmitMessage, TextUIPart, UIMessage
+from pydantic_ai.ui.vercel_ai.response_types import StartChunk
+
+AGENT = Agent(TestModel(custom_output_text={text!r}))
+HISTORY = [
+    ModelRequest(parts=[UserPromptPart([{text!r}, ImageUrl('https://example.com/a.png', media_type='image/png')])]),
+    ModelResponse(parts=[TextPart('hi')]),
+]
+
+
+def vercel_ai_input():
+    return SubmitMessage(
+        id='request', messages=[UIMessage(id='message', role='user', parts=[TextUIPart(text={text!r})])]
+    )
+
+
+async def drain(adapter):
+    async for _ in adapter.run_stream():
+        pass
+
+
+def test_vercel_ai_messages():
+    VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='message',
+                role='user',
+                parts=[TextUIPart(text={text!r}), FileUIPart(url='https://example.com/a.png', media_type='image/png')],
+            )
+        ]
+    )
+    VercelAIAdapter.dump_messages(HISTORY)
+
+
+def test_ag_ui_messages():
+    AGUIAdapter.load_messages([UserMessage(id='message', content={text!r})])
+    AGUIAdapter.dump_messages(HISTORY)
+
+
+def test_vercel_ai_events():
+    asyncio.run(drain(VercelAIAdapter(agent=AGENT, run_input=vercel_ai_input())))
+
+
+def test_ag_ui_events():
+    run_input = RunAgentInput(
+        thread_id='thread',
+        run_id='run',
+        messages=[UserMessage(id='message', content={text!r})],
+        state={{}},
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+    asyncio.run(drain(AGUIAdapter(agent=AGENT, run_input=run_input)))
+
+
+class ClosingEventStream(VercelAIEventStream[None, str]):
+    closed = False
+
+    async def transform_stream(self, stream, on_complete=None, on_cancel=None):
+        try:
+            async for event in super().transform_stream(stream, on_complete, on_cancel):
+                yield event
+        finally:
+            ClosingEventStream.closed = True
+
+
+async def close_after_the_first_event():
+    events = ClosingEventStream(vercel_ai_input()).transform_stream(AGENT.run_stream_events({text!r}))
+    await anext(events)
+    await events.aclose()
+    assert ClosingEventStream.closed
+
+
+def test_subclass_defined_after_the_capture_started():
+    asyncio.run(close_after_the_first_event())
+
+
+class FailingEventStream(VercelAIEventStream[None, str]):
+    async def transform_stream(self, stream, on_complete=None, on_cancel=None):
+        yield StartChunk()
+        raise RuntimeError('client went away')
+
+
+async def no_events():
+    return
+    yield
+
+
+async def drain_failing():
+    async for _ in FailingEventStream(vercel_ai_input()).transform_stream(no_events()):
+        pass
+
+
+def test_errors():
+    with pytest.raises(RuntimeError, match='client went away'):
+        asyncio.run(drain_failing())
+    with pytest.raises(NotImplementedError):
+        UIAdapter.dump_messages([])
+
+
+def test_web_api():
+    with TestClient(create_web_app(AGENT), base_url='http://127.0.0.1:7932') as client:
+        client.get('/api/health')
+        client.post('/api/chat', json=vercel_ai_input().model_dump(by_alias=True))
+
+
+class MediaTypeAdapter(VercelAIAdapter):
+    @classmethod
+    def load_messages(cls, messages):
+        # Set to the media type the URL's extension implies, or left to be implied: equal, and serialized alike.
+        media_type = 'image/png' if {text!r} == 'hello' else None
+        return [ModelRequest(parts=[UserPromptPart([ImageUrl('https://example.com/a.png', media_type=media_type)])])]
+
+
+def test_media_type_set_or_implied():
+    MediaTypeAdapter.load_messages([])
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, carrying `text`, into `capture_dir`.
+    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, or `UI`, carrying `text`, into `capture_dir`.
 
     It runs as `main` runs each side.
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
 
-    def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
-        pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
+    def run(capture_dir: Path, *args: str, text: str = 'hello', ui: bool = False) -> pytest.RunResult:
+        if ui:
+            pytester.makepyfile(test_ui=UI.format(text=text))
+        else:
+            pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
             '-p', 'no:cacheprovider', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={capture_dir}', *args
         )
@@ -412,6 +561,248 @@ def test_capture_records_each_in_process_model_call(run: RunCapture, tmp_path: P
     )
 
 
+def test_capture_records_what_ui_adapters_produce(run: RunCapture, tmp_path: Path):
+    """`transform_stream`'s events, what `load_messages` and `dump_messages` return, and the web API's responses.
+
+    A request to the app `create_web_app` mounts the API app in is recorded once, for the API app.
+    `test_subclass_defined_after_the_capture_started` checks that closing the recording closes the stream it records.
+    """
+    run(tmp_path, '-k', 'not media_type', ui=True).assert_outcomes(passed=7, deselected=1)
+
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    records = [record for line in lines if (record := json.loads(line))['kind'] == 'ui']
+    assert [
+        (
+            record['node'],
+            record['target'],
+            [event['type'] for event in record.get('events', [])],
+            record.get('error'),
+            record.get('status'),
+        )
+        for record in records
+    ] == snapshot(
+        [
+            (
+                'test_ui.py::test_vercel_ai_messages',
+                'pydantic_ai.ui.vercel_ai._adapter.VercelAIAdapter.load_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_vercel_ai_messages',
+                'pydantic_ai.ui.vercel_ai._adapter.VercelAIAdapter.dump_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_ag_ui_messages',
+                'pydantic_ai.ui.ag_ui._adapter.AGUIAdapter.load_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_ag_ui_messages',
+                'pydantic_ai.ui.ag_ui._adapter.AGUIAdapter.dump_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_vercel_ai_events',
+                'pydantic_ai.ui.vercel_ai._adapter.VercelAIAdapter.load_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_vercel_ai_events',
+                'pydantic_ai.ui.vercel_ai._event_stream.VercelAIEventStream.transform_stream',
+                [
+                    'start',
+                    'start-step',
+                    'text-start',
+                    'text-delta',
+                    'text-delta',
+                    'text-end',
+                    'message-metadata',
+                    'finish-step',
+                    'finish',
+                    'done',
+                ],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_ag_ui_events',
+                'pydantic_ai.ui.ag_ui._adapter.AGUIAdapter.load_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_ag_ui_events',
+                'pydantic_ai.ui.ag_ui._event_stream.AGUIEventStream.transform_stream',
+                [
+                    'RUN_STARTED',
+                    'TEXT_MESSAGE_START',
+                    'TEXT_MESSAGE_CONTENT',
+                    'TEXT_MESSAGE_CONTENT',
+                    'TEXT_MESSAGE_END',
+                    'RUN_FINISHED',
+                ],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_subclass_defined_after_the_capture_started',
+                'test_ui.ClosingEventStream.transform_stream',
+                ['start'],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_subclass_defined_after_the_capture_started',
+                'test_ui.ClosingEventStream.transform_stream',
+                ['start'],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_errors',
+                'test_ui.FailingEventStream.transform_stream',
+                ['start'],
+                'RuntimeError: client went away',
+                None,
+            ),
+            (
+                'test_ui.py::test_errors',
+                'pydantic_ai.ui._adapter.UIAdapter.dump_messages',
+                [],
+                'NotImplementedError: ',
+                None,
+            ),
+            ('test_ui.py::test_web_api', 'GET /api/health', [], None, 200),
+            ('test_ui.py::test_web_api', 'POST /api/chat', [], None, 200),
+            (
+                'test_ui.py::test_web_api',
+                'pydantic_ai.ui.vercel_ai._adapter.VercelAIAdapter.load_messages',
+                [],
+                None,
+                None,
+            ),
+            (
+                'test_ui.py::test_web_api',
+                'pydantic_ai.ui.vercel_ai._event_stream.VercelAIEventStream.transform_stream',
+                [
+                    'start',
+                    'start-step',
+                    'text-start',
+                    'text-delta',
+                    'text-delta',
+                    'text-end',
+                    'message-metadata',
+                    'finish-step',
+                    'finish',
+                    'done',
+                ],
+                None,
+                None,
+            ),
+        ]
+    )
+    loaded = next(record for record in records if record['target'].endswith('VercelAIAdapter.load_messages'))
+    assert loaded['result'] == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': [
+                            'hello',
+                            {
+                                'url': 'https://example.com/a.png',
+                                'force_download': False,
+                                'vendor_metadata': None,
+                                'kind': 'image-url',
+                                'media_type': 'image/png',
+                                'identifier': 'b86daf',
+                            },
+                        ],
+                        'timestamp': 'NOW',
+                        'part_kind': 'user-prompt',
+                    }
+                ],
+                'timestamp': None,
+                'instructions': None,
+                'kind': 'request',
+                'run_id': None,
+                'conversation_id': None,
+                'metadata': {'__pydantic_ai__': {'ui_message_id': 'message'}},
+                'state': 'complete',
+            }
+        ]
+    )
+    assert loaded['uncompared_fields'] == snapshot(
+        [{'type': 'ImageUrl', 'fields': {'_media_type': 'image/png', '_identifier': None}}]
+    )
+    assert [(record['headers'], record['body']) for record in records if 'status' in record] == snapshot(
+        [
+            ({'content-length': '11', 'content-type': 'application/json'}, {'ok': True}),
+            (
+                {'x-vercel-ai-ui-message-stream': 'v1', 'content-type': 'text/event-stream; charset=utf-8'},
+                """\
+data: {"type":"start"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"UUID"}
+
+data: {"type":"text-delta","delta":"he","id":"UUID"}
+
+data: {"type":"text-delta","delta":"llo","id":"UUID"}
+
+data: {"type":"text-end","id":"UUID"}
+
+data: {"type":"message-metadata","messageMetadata":{"pydantic_ai":{"timestamp":"NOW"}}}
+
+data: {"type":"finish-step"}
+
+data: {"type":"finish"}
+
+data: [DONE]
+
+""",
+            ),
+        ]
+    )
+
+
+async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
+    """A subclass defined once the capture started keeps its type parameters, and its abstract methods."""
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+
+        class Concrete(VercelAIEventStream[None, str]):
+            pass
+
+        class Partial(UIAdapter[None, None, None, None, None]):
+            pass
+
+    finally:
+        capture.pytest_unconfigure()
+
+    class Uncaptured(UIAdapter[None, None, None, None, None]):
+        pass
+
+    # `Generic.__init_subclass__` sets them, from the bases the class was defined with.
+    assert vars(Concrete)['__parameters__'] == ()
+    assert Partial.__abstractmethods__ == Uncaptured.__abstractmethods__
+    assert sorted(Partial.__abstractmethods__) == snapshot(['build_event_stream', 'build_run_input', 'load_messages'])
+
+
 def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
     """Each half of `-p tests.refactor_capture --refactor-capture=DIR` without the other stops the run."""
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
@@ -509,6 +900,74 @@ async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
     assert 'canary-session-token' not in json.dumps(capture.records)
 
 
+@pytest.mark.skipif(importlib.util.find_spec('prefect') is None, reason='`prefect` not installed')
+async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_sends_itself(tmp_path: Path):
+    """Prefect's client retries a request by sending it again, which the capture records once.
+
+    The log batches, server version checks and CSRF token fetches it sends of its own accord aren't recorded at all. When
+    its test server is busy, the client retries, and its background worker sends logs, checks the version and fetches a
+    token in whichever test is running.
+    """
+    from prefect.client.orchestration import PrefectClient
+
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        if request.url.path == '/api/csrf-token':
+            # What a server without CSRF tokens answers, so the client stops asking for one.
+            return httpx.Response(404)
+        if sent.count(request.url.path) == 1:
+            return httpx.Response(503, headers={'Retry-After': '0'})
+        return httpx.Response(200, json={})
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with PrefectClient(
+            'http://127.0.0.1:4200/api', httpx_settings={'transport': httpx.MockTransport(answer)}
+        ) as client:
+            assert await client.api_healthcheck() is None
+            await client.api_version()
+            await client.create_logs([])
+    finally:
+        capture.pytest_unconfigure()
+
+    assert sent == snapshot(
+        [
+            '/api/health',
+            '/api/health',
+            '/api/admin/version',
+            '/api/admin/version',
+            '/api/csrf-token',
+            '/api/logs/',
+            '/api/logs/',
+        ]
+    )
+    assert [record['target'] for record in capture.records] == snapshot(['GET http://127.0.0.1:PORT/api/health'])
+
+
+async def test_capture_normalizes_the_custom_id_of_an_in_memory_batch_request(tmp_path: Path):
+    """`TestModel`'s batches encode each request as a random token, which the `custom_id` it's sent with hashes."""
+    agent = Agent(TestModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def pick() -> str:
+        return 'a'
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        await agent.run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    # The second request carries the first response, which the batch answered.
+    assert re.findall(r'"(?:custom_id|provider_response_id)": "[^"]*"', json.dumps(capture.records)) == snapshot(
+        ['"custom_id": "CUSTOM_ID"', '"provider_response_id": "batch:batch_UUID:CUSTOM_ID"']
+    )
+
+
 def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
     """A canary call on an in-process model the capture doesn't see fails the run instead of recording nothing.
 
@@ -587,6 +1046,7 @@ nodes: base 10, head 10
 records: base 14, head 14
 stream events: head 11
 requests: head 10
+ui records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
@@ -597,6 +1057,7 @@ nodes per request target, head:
   pydantic_ai.models.function.FunctionModel.request_stream: 3
   pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
+nodes per ui target, head:
 nodes that recorded no request, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
@@ -605,6 +1066,7 @@ nodes: base 10, head 9
 records: base 14, head 12
 stream events: head 9
 requests: head 9
+ui records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
@@ -615,6 +1077,7 @@ nodes per request target, head:
   pydantic_ai.models.function.FunctionModel.request_stream: 2
   pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
+nodes per ui target, head:
 nodes that recorded no request, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
@@ -667,6 +1130,94 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     )
 
 
+def test_compare_flags_a_file_field_equality_skips(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    """A file whose media type is set on one side and implied on the other differs, though equal and serialized alike."""
+    base, head = tmp_path / 'base', tmp_path / 'head'
+    run(base, '-k', 'media_type', ui=True).assert_outcomes(passed=1, deselected=7)
+    run(head, '-k', 'media_type', ui=True, text='goodbye').assert_outcomes(passed=1, deselected=7)
+    (base_record,), (head_record,) = (
+        [json.loads(line) for line in (capture_dir / 'main.jsonl').read_text().splitlines()]
+        for capture_dir in (base, head)
+    )
+    assert base_record['result'] == head_record['result']
+    assert [record['uncompared_fields'] for record in (base_record, head_record)] == snapshot(
+        [
+            [{'type': 'ImageUrl', 'fields': {'_media_type': 'image/png', '_identifier': None}}],
+            [{'type': 'ImageUrl', 'fields': {'_media_type': None, '_identifier': None}}],
+        ]
+    )
+    (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
+    capsys.readouterr()
+
+    assert compare(base, head) == 1
+    assert capsys.readouterr().out == snapshot("""\
+nodes: base 1, head 1
+records: base 1, head 1
+stream events: head 0
+requests: head 0
+ui records: head 1
+nodes per stream module, head:
+nodes per request target, head:
+nodes per ui target, head:
+  test_ui.MediaTypeAdapter.load_messages: 1
+nodes that recorded no request, head: 1
+  test_ui.py::test_media_type_set_or_implied
+only in base: 0, only in head: 0, differing: 1
+  differing: test_ui.py::test_media_type_set_or_implied
+""")
+
+
+def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Each pytest session is handed paths that go through no symlink, though the temporary directory is reached by one.
+
+    DBOS resolves a workflow function's file with `os.path.realpath`, which reads a symlink on the way with
+    `os.readlink`, and blockbuster raises on that in the event loop. On macOS the temporary directory is reached through
+    `/var`, a symlink, so DBOS tests failed on the base side alone.
+    """
+    (tmp_path / 'real').mkdir()
+    (tmp_path / 'link').symlink_to(tmp_path / 'real')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'link'))
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    # `main` extracts each workspace package on `sys.path`; only `pydantic_graph`, the smallest, is left there.
+    repo, venv = Path(refactor_capture.__file__).resolve().parent.parent, Path(sys.prefix).resolve()
+    kept = [
+        entry
+        for entry in sys.path
+        if not (path := Path(entry).resolve()).is_relative_to(repo) or path == repo or path.is_relative_to(venv)
+    ]
+    monkeypatch.setattr(sys, 'path', [*kept, str(repo / 'pydantic_graph')])
+    run_git = subprocess.run
+    sessions: list[tuple[list[str], str]] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        check: bool = False,
+        capture_output: bool = False,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if env is None:
+            return run_git(command, cwd=cwd, check=check, capture_output=capture_output)
+        sessions.append((command, env['PYTHONPATH']))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+    # Neither pytest session ran, so there's no capture to compare.
+    assert main(['HEAD', 'tests/test_nothing.py']) == 2
+
+    (out,) = (tmp_path / 'real').iterdir()
+    sources = out / 'base-src' / 'pydantic_graph'
+    assert (sources / 'pydantic_graph' / '__init__.py').is_file()
+    pytest_command = [sys.executable, '-m', 'pytest', '-p', 'tests.refactor_capture']
+    assert sessions == [
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "base"}', 'tests/test_nothing.py'], str(sources)),
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
+    ]
+    assert os.path.realpath(out) == str(out)
+
+
 def test_normalized_replaces_values_that_change_between_runs():
     now = datetime.now(UTC)
     assert normalized(
@@ -695,11 +1246,43 @@ def test_normalized_replaces_values_that_change_between_runs():
             'echoed_step_id': {'task_id': '0a1b2c3d'},
             'amz_date': now.strftime('%Y%m%dT%H%M%SZ'),
             'recorded_amz_date': '20240101T000000Z',
+            'ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': int(now.timestamp() * 1000)},
+            'recorded_ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 1704067200000},
+            # An AG-UI message's `encryptedValue`, and a web API response's event stream, hold JSON as text.
+            'json_in_text': json.dumps({'timestamp': now.isoformat()}),
+            'recorded_json_in_text': 'data: {"timestamp":"2024-01-01T00:00:00Z"}',
             'botocore_error': (
                 "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
                 "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
                 "'keep-alive'}, 'RetryAttempts': 0}}"
             ),
+            # The trace ID has the shape of a version 4 UUID without dashes.
+            'mcp_meta': {'traceparent': '00-12345678123441238123123456789abc-0123456789abcdef-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-01a1cb2f55a38937d7e2c3ba122f0f00-367bccfae831323d-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
+            'in_memory_ticket': {
+                'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
+                'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
+            },
+            'in_memory_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_12345678123441238123123456789abc',
+                        'custom_id': '12345678123441238123123456789abc',
+                    }
+                },
+                'provider_response_id': 'batch:batch_12345678123441238123123456789abc:52a31e60e1afe0ff4a1058d5fcf539a6',
+            },
+            # A provider's batch ID isn't a UUID, so the `custom_id` it was sent, which hashes the request, stays.
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     ) == snapshot(
         {
@@ -727,10 +1310,31 @@ def test_normalized_replaces_values_that_change_between_runs():
             'echoed_step_id': {'task_id': '0a1b2c3d'},
             'amz_date': 'NOW',
             'recorded_amz_date': '20240101T000000Z',
+            'ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 'NOW'},
+            'recorded_ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 1704067200000},
+            'json_in_text': '{"timestamp": "NOW"}',
+            'recorded_json_in_text': 'data: {"timestamp":"2024-01-01T00:00:00Z"}',
             'botocore_error': (
                 "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
                 "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
                 "GMT'}, 'RetryAttempts': 0}}"
             ),
+            'mcp_meta': {'traceparent': '00-TRACE_ID-SPAN_ID-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
+            'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
+            'in_memory_response': {
+                'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
+                'provider_response_id': 'batch:batch_UUID:CUSTOM_ID',
+            },
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     )
