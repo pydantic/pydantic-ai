@@ -2159,8 +2159,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             else:
                 messages = _announce_tool_availability_delta_messages(messages, deferred_tool_names)
 
-        from .._tool_search import synthesize_local_tool_search_messages
+        from .._tool_search import repair_dangling_translated_calls, synthesize_local_tool_search_messages
 
+        untranslated = messages
         messages = synthesize_local_tool_search_messages(
             messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
         )
@@ -2186,6 +2187,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _order_tool_results_by_call(messages)
+        # After the reorder above, so the returns land where an agent run's repair after this method puts them.
+        messages = repair_dangling_translated_calls(messages, untranslated)
 
         if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)

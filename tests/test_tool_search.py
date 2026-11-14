@@ -20,7 +20,7 @@ import pytest
 import yaml
 from cassetter import Cassette
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -168,6 +169,7 @@ with try_import() as openai_available:
     from openai.types.responses.namespace_tool import NamespaceTool, ToolFunction
 
     from pydantic_ai.models.openai import (
+        OpenAIChatModel,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
@@ -6310,6 +6312,436 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     last = message(cleaned, ModelRequest, index=-1)
     assert isinstance(last.parts[0], ToolSearchReturnPart)
     assert isinstance(last.parts[1], UserPromptPart)
+
+
+_DISCOVERED_METRICS: ToolSearchReturnContent = {'discovered_tools': [{'name': 'get_metrics'}]}
+# How OpenAI records a server-executed tool search, which carries no `call_id` of its own.
+_OPENAI_SERVER_SEARCH: dict[str, str | None] = {'call_id': None, 'execution': 'server', 'status': 'completed'}
+
+
+def _openai_search_call(call_id: str) -> NativeToolSearchCallPart:
+    return NativeToolSearchCallPart(
+        provider_name='openai',
+        args={'queries': [call_id]},
+        tool_call_id=call_id,
+        id=call_id,
+        provider_details=_OPENAI_SERVER_SEARCH,
+    )
+
+
+def _openai_search_output(tool_call_id: str) -> NativeToolSearchReturnPart:
+    return NativeToolSearchReturnPart(
+        provider_name='openai',
+        content=_DISCOVERED_METRICS,
+        tool_call_id=tool_call_id,
+        provider_details={**_OPENAI_SERVER_SEARCH, 'id': tool_call_id.replace('tsc_', 'tso_')},
+    )
+
+
+def _anthropic_search_call(call_id: str) -> NativeToolSearchCallPart:
+    return NativeToolSearchCallPart(provider_name='anthropic', args={'queries': ['metrics']}, tool_call_id=call_id)
+
+
+def _anthropic_search_return(call_id: str) -> NativeToolSearchReturnPart:
+    return NativeToolSearchReturnPart(provider_name='anthropic', content=_DISCOVERED_METRICS, tool_call_id=call_id)
+
+
+def _tool_exchange(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
+    """The tool calls and returns in `messages`, in order, as a kind and a call ID.
+
+    Flat, so it reads the same whether or not an agent run merged the requests.
+    """
+    exchange: list[tuple[str, str]] = []
+    for part in (part for msg in messages for part in msg.parts):
+        if isinstance(part, ToolCallPart):
+            exchange.append(('call', part.tool_call_id))
+        elif isinstance(part, ToolReturnPart):
+            exchange.append((part.outcome, part.tool_call_id))
+    return exchange
+
+
+@dataclass(frozen=True)
+class PairingCase:
+    id: str
+    parts: list[ModelResponsePart]
+    expected: list[tuple[str, str]]
+
+
+PAIRING_CASES = [
+    PairingCase(
+        id='output-ids-interleaved',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tso_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+    PairingCase(
+        id='output-ids-after-their-calls',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tso_1'),
+            _openai_search_output('tso_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_1'), ('success', 'tsc_2')]),
+    ),
+    PairingCase(
+        id='more-calls-than-outputs',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2')]),
+    ),
+    PairingCase(
+        id='output-id-with-no-call-to-take',
+        parts=[_openai_search_call('tsc_1'), _openai_search_output('tsc_1'), _openai_search_output('tso_2')],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('success', 'tso_2')]),
+    ),
+    PairingCase(
+        id='paired',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tsc_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tsc_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in PAIRING_CASES])
+def test_synthesize_messages_pairs_returns_that_name_no_call(case: PairingCase) -> None:
+    """A translated return naming no earlier call takes the ID of the oldest call in its response still unanswered.
+
+    History that OpenAI wrote before https://github.com/pydantic/pydantic-ai/pull/8313 gives each anonymous
+    server search output the output item's ID (`tso_…`), which Anthropic rejects as naming no `tool_use`
+    (https://github.com/pydantic/pydantic-ai/issues/13404). Only that ID-level translation is pinned here; the
+    agent-level tests below show it reaching a request.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+        ModelResponse(parts=case.parts, provider_name='openai'),
+    ]
+    assert _tool_exchange(synthesize_local_tool_search_messages(history)) == case.expected
+
+
+def test_synthesize_messages_keeps_a_late_result_on_its_call() -> None:
+    """A return naming a call from an earlier response keeps its ID, even when its own response has an unanswered call.
+
+    Anthropic can deliver a search result in the response after its call. Re-pairing the result with the
+    unanswered call next to it would answer the wrong call and leave the first one without a result.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+        ModelResponse(
+            parts=[
+                _anthropic_search_call('srvtoolu_1'),
+                ToolCallPart('send_status', {'message': 'searching'}, tool_call_id='toolu_1'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart('send_status', 'sent', tool_call_id='toolu_1')]),
+        ModelResponse(
+            parts=[_anthropic_search_call('srvtoolu_2'), _anthropic_search_return('srvtoolu_1')],
+            provider_name='anthropic',
+        ),
+    ]
+    assert _tool_exchange(synthesize_local_tool_search_messages(history)) == snapshot(
+        [
+            ('call', 'srvtoolu_1'),
+            ('call', 'toolu_1'),
+            ('success', 'toolu_1'),
+            ('call', 'srvtoolu_2'),
+            ('success', 'srvtoolu_1'),
+        ]
+    )
+
+
+def _send_status(message: str) -> str:
+    """Send a status update to the user."""
+    return 'sent'
+
+
+def _get_metrics() -> str:  # pragma: no cover
+    """Get this quarter's revenue metrics."""
+    return 'Revenue: 1.2M'
+
+
+_METRICS_TOOLSET = FunctionToolset(
+    [Tool(_send_status, name='send_status'), Tool(_get_metrics, name='get_metrics', defer_loading=True)]
+)
+
+# Two OpenAI server searches as history recorded before https://github.com/pydantic/pydantic-ai/pull/8313:
+# each return carries its output item's ID rather than its call's.
+_OPENAI_OUTPUT_ID_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+    ModelResponse(
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tso_2'),
+            TextPart('Here are the metrics.'),
+        ],
+        provider_name='openai',
+    ),
+]
+
+# An Anthropic search run alongside a client tool call, whose result Anthropic would deliver in its next response.
+_ANTHROPIC_UNANSWERED_SEARCH_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+    ModelResponse(
+        parts=[
+            _anthropic_search_call('srvtoolu_1'),
+            ToolCallPart('send_status', {'message': 'searching'}, tool_call_id='toolu_1'),
+        ],
+        provider_name='anthropic',
+    ),
+    ModelRequest(parts=[ToolReturnPart('send_status', 'sent', tool_call_id='toolu_1')]),
+    ModelResponse(parts=[TextPart('Here are the metrics.')], provider_name='anthropic'),
+]
+
+
+@dataclass(frozen=True)
+class TranslatedHistoryCase:
+    id: str
+    history: list[ModelMessage]
+    expected: list[tuple[str, str]]
+    prompt: str | None = 'and for Q3?'
+
+
+TRANSLATED_HISTORY_CASES = [
+    TranslatedHistoryCase(
+        id='openai-output-ids',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+    TranslatedHistoryCase(
+        id='anthropic-unanswered-search',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
+        ),
+    ),
+    TranslatedHistoryCase(
+        id='anthropic-search-in-flight',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY[:2],
+        prompt=None,
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
+        ),
+    ),
+    TranslatedHistoryCase(
+        id='openai-paired',
+        history=[
+            ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+            ModelResponse(
+                parts=[
+                    _openai_search_call('tsc_1'),
+                    _openai_search_output('tsc_1'),
+                    _openai_search_call('tsc_2'),
+                    _openai_search_output('tsc_2'),
+                    TextPart('Here are the metrics.'),
+                ],
+                provider_name='openai',
+            ),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+    TranslatedHistoryCase(
+        id='anthropic-late-result',
+        history=[
+            *_ANTHROPIC_UNANSWERED_SEARCH_HISTORY[:3],
+            ModelResponse(
+                parts=[_anthropic_search_return('srvtoolu_1'), TextPart('Here are the metrics.')],
+                provider_name='anthropic',
+            ),
+        ],
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('success', 'srvtoolu_1')]
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('fallback', [False, True], ids=['agent', 'fallback'])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in TRANSLATED_HISTORY_CASES])
+async def test_translated_tool_search_history_pairs_every_call(case: TranslatedHistoryCase, fallback: bool) -> None:
+    """Another provider's tool-search history reaches the model with every call answered, through any agent.
+
+    `FallbackModel` sends each model the messages that model prepared, without the repair an agent run
+    makes after preparing them, so an unpaired translated call or return reached the provider there and
+    failed the request (https://github.com/pydantic/pydantic-ai/issues/13404). Each case has the same
+    expectation with and without `FallbackModel`. A call whose result never arrived gets an interrupted
+    return after the request's other returns, where an agent run's repair already put it, so the request
+    an agent run sends is unchanged; already-paired histories are unchanged on both paths. `FunctionModel`
+    receives the prepared messages directly, which a recorded request wouldn't show.
+    """
+    received: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received[:] = messages
+        return ModelResponse(parts=[TextPart('done')])
+
+    function_model = FunctionModel(respond)
+    agent = Agent(FallbackModel(function_model) if fallback else function_model, toolsets=[_METRICS_TOOLSET])
+
+    await agent.run(case.prompt, message_history=case.history)
+
+    assert _tool_exchange(received) == case.expected
+
+
+def test_prepare_messages_answers_only_translated_calls_before_the_frontier() -> None:
+    """Only translated calls get an interrupted return, and a trailing response is left for a resumed run to continue.
+
+    An agent run repairs every other unanswered call before `prepare_messages`, and resumes a suspended
+    response without repairing it, so neither shape reaches the model through a run started here.
+    """
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[]))
+    local_call = ToolSearchCallPart(args={'queries': ['metrics']}, tool_call_id='local_1')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+        ModelResponse(parts=[_anthropic_search_call('srvtoolu_1'), local_call], provider_name='anthropic'),
+        ModelRequest(parts=[UserPromptPart(content='and for Q3?')]),
+        ModelResponse(parts=[_anthropic_search_call('srvtoolu_2')], provider_name='anthropic'),
+    ]
+    assert _tool_exchange(model.prepare_messages(history)) == snapshot(
+        [('call', 'srvtoolu_1'), ('call', 'local_1'), ('interrupted', 'srvtoolu_1'), ('call', 'srvtoolu_2')]
+    )
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_fallback_sends_openai_output_ids_to_anthropic_paired(allow_model_requests: None) -> None:
+    """Old OpenAI search history reaches Anthropic under `FallbackModel` with each result on its call, reveal kept.
+
+    Anthropic rejected the translated `tool_result` blocks, which named the output items `tso_1` and
+    `tso_2` rather than a `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). Rendered
+    through a mock client: there is no Anthropic recording of this history, and
+    `test_live_tool_search_handoff_openai_to_anthropic` already records Anthropic accepting this pair shape.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(FallbackModel(model), toolsets=[_METRICS_TOOLSET])
+
+    await agent.run('and for Q3?', message_history=_OPENAI_OUTPUT_ID_HISTORY)
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [
+        block
+        for message in messages
+        if isinstance(message['content'], list)
+        for block in message['content']
+        if block['type'] in ('tool_use', 'tool_result')
+    ] == snapshot(
+        [
+            {'id': 'tsc_1', 'type': 'tool_use', 'name': 'search_tools', 'input': {'queries': ['tsc_1']}},
+            {
+                'tool_use_id': 'tsc_1',
+                'type': 'tool_result',
+                'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
+                'is_error': False,
+            },
+            {'id': 'tsc_2', 'type': 'tool_use', 'name': 'search_tools', 'input': {'queries': ['tsc_2']}},
+            {
+                'tool_use_id': 'tsc_2',
+                'type': 'tool_result',
+                'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
+                'is_error': False,
+            },
+        ]
+    )
+
+
+def _wire_tool_exchange(body: dict[str, JsonValue]) -> list[tuple[str, str]]:
+    """The tool calls and results an OpenAI Responses or Chat Completions request carries, as wire type and call ID."""
+    items = body.get('input', body.get('messages'))
+    assert isinstance(items, list)
+    exchange: list[tuple[str, str]] = []
+    for item in items:
+        assert isinstance(item, dict)
+        if isinstance(call_id := item.get('call_id'), str):
+            exchange.append((str(item['type']), call_id))
+        elif isinstance(tool_call_id := item.get('tool_call_id'), str):
+            exchange.append(('tool', tool_call_id))
+        elif isinstance(tool_calls := item.get('tool_calls'), list):
+            for tool_call in tool_calls:
+                assert isinstance(tool_call, dict)
+                exchange.append(('tool_call', str(tool_call['id'])))
+    return exchange
+
+
+@dataclass(frozen=True)
+class LiveFallbackCase:
+    id: str
+    api: Literal['responses', 'chat']
+    history: list[ModelMessage]
+    expected: list[tuple[str, str]]
+
+
+LIVE_FALLBACK_CASES = [
+    LiveFallbackCase(
+        id='responses-anthropic-unanswered-search',
+        api='responses',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        expected=snapshot(
+            [
+                ('tool_search_call', 'srvtoolu_1'),
+                ('function_call', 'toolu_1'),
+                ('function_call_output', 'toolu_1'),
+                ('function_call_output', 'srvtoolu_1'),
+            ]
+        ),
+    ),
+    LiveFallbackCase(
+        id='chat-anthropic-unanswered-search',
+        api='chat',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        expected=snapshot(
+            [('tool_call', 'srvtoolu_1'), ('tool_call', 'toolu_1'), ('tool', 'toolu_1'), ('tool', 'srvtoolu_1')]
+        ),
+    ),
+    LiveFallbackCase(
+        id='chat-openai-output-ids',
+        api='chat',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        expected=snapshot([('tool_call', 'tsc_1'), ('tool', 'tsc_1'), ('tool_call', 'tsc_2'), ('tool', 'tsc_2')]),
+    ),
+]
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in LIVE_FALLBACK_CASES])
+async def test_live_fallback_sends_unpaired_tool_search_history_to_openai(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, case: LiveFallbackCase
+) -> None:
+    """OpenAI accepts another provider's unpaired tool-search history under `FallbackModel`.
+
+    Each case failed with a 400 before: Responses with `No tool output found for tool search call`, Chat
+    Completions because a tool call had no tool message or a tool message named no call
+    (https://github.com/pydantic/pydantic-ai/issues/13404). The cassette matches a request without its
+    body, so the request each case sends is pinned from the wire.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = (
+        OpenAIResponsesModel('gpt-5.4', provider=provider)
+        if case.api == 'responses'
+        else OpenAIChatModel('gpt-5.4', provider=provider)
+    )
+    agent = Agent(FallbackModel(model), toolsets=[_METRICS_TOOLSET])
+
+    result = await agent.run('Reply with just OK.', message_history=case.history)
+
+    assert result.output == snapshot('OK')
+    assert _wire_tool_exchange(request_capture.body()) == case.expected
 
 
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
