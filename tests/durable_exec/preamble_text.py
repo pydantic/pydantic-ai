@@ -1,8 +1,7 @@
 """Agents with a structured output type whose model streams text before a tool call, for each durability engine.
 
 A durable run replays the unit's stream against the parameters the unit's model prepared, in which `'auto'` has
-resolved to tool output, so the text isn't the final result, as in a plain run. The model answers in memory, so the
-tests need no cassette.
+resolved to tool output, so the text isn't the final result, as in a plain run.
 """
 
 from __future__ import annotations
@@ -55,6 +54,13 @@ def preamble_text_agents(
     """One agent per stream shape: text before a function tool, and text before the output tool.
 
     Without `durability`, the agents run as a plain `Agent` does, which a durable run must match.
+
+    The tests built on these agents aren't VCR tests. What they check is how the workflow side classifies the
+    `ModelResponse` the durable unit returned. The unit has already parsed the provider's answer by then, so the wire
+    format a recording would pin never reaches that code. A recording of this response shape also can't be made on
+    request: no setting makes a model write text before it calls a tool, and under tool output Pydantic AI asks the
+    provider to force the tool call (`tool_choice='required'`) wherever the model's profile allows it. A scripted
+    model streams the exact shape on every engine.
     """
     return [
         Agent(
