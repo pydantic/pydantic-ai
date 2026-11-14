@@ -144,22 +144,33 @@ def _which(name: str, env: Mapping[str, str]) -> str | None:
     Unlike `shutil.which`, never in the current directory: from there, a checkout's `rg.exe` would run in
     place of the real one.
     """
-    extensions = [''] if ntpath.splitext(name)[1] else env.get('PATHEXT', '.COM;.EXE;.BAT;.CMD').split(';')
+    extensions = [''] if ntpath.splitext(name)[1] else env.get('PATHEXT', '.COM;.EXE').split(';')
     for directory in env.get('PATH', '').split(';'):
         if ntpath.splitdrive(directory)[0] and ntpath.isabs(directory):
             for extension in extensions:
-                if os.path.isfile(candidate := ntpath.join(directory, name + extension)):
+                candidate = ntpath.join(directory, name + extension)
+                if not _is_batch(candidate) and os.path.isfile(candidate):
                     return candidate
     return None
+
+
+def _is_batch(program: str) -> bool:
+    return ntpath.splitext(program)[1].lower() in ('.bat', '.cmd')
 
 
 def _resolve_program(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
     """`argv` with a bare program name replaced by its path on `PATH`.
 
     `CreateProcess` looks for a bare name in this process's current directory before `PATH`, which
-    `execvp` on POSIX does not. Raises `FileNotFoundError` when it is not on `PATH`.
+    `execvp` on POSIX does not. Raises `FileNotFoundError` when it is not on `PATH`, and
+    `PermissionError` for a batch file: Windows runs one through `cmd.exe`, which parses its arguments
+    as a command line, so a model-written argument such as a search pattern could run commands.
     """
     program, *args = argv
+    if _is_batch(program):
+        raise PermissionError(
+            errno.EACCES, 'batch files run through `cmd.exe` and are refused as argv programs', program
+        )
     if ntpath.basename(program) != program or ntpath.splitdrive(program)[0]:
         return [program, *args]
     if (path := _which(program, env)) is None:
@@ -273,6 +284,14 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend):
             # Closing the handle leaves the processes running: a background job outlives a command that returned.
             if (job := self._jobs.pop(process.pid, None)) is not None:
                 _job_objects().close(job)
+
+    @staticmethod
+    def _path(path: str) -> Path:
+        # `file::$DATA` and `file:stream` name a file's data streams, so `.env::$DATA` would write `.env`
+        # past a policy that matched the spelling.
+        if ':' in ntpath.splitdrive(path)[1]:
+            raise ValueError(f'NTFS stream names are not supported, got {path!r}')
+        return HostWorkspaceBackend._path(path)
 
     def _open_for_read(self, target: Path) -> int:
         if target.is_dir():

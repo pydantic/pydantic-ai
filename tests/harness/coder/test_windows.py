@@ -258,6 +258,28 @@ class TestShellOnWindows:
         )
         assert 'needs a POSIX workspace' in result
 
+    async def test_a_job_directory_is_owner_only(self, project: Path) -> None:
+        shell = Shell[None](tools=['start_command'])
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'start_command', {'command': 'Write-Output hi'})
+        assert 'ID: ' in started, started
+        directory = project / '.pydantic-ai-harness' / 'shell' / started.rsplit('ID: ', 1)[1].strip()
+        script = (
+            f"$acl = Get-Acl -LiteralPath '{directory}'; "
+            '[Console]::Out.Write("$($acl.AreAccessRulesProtected) $(@($acl.Access).Count)")'
+        )
+        result = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
+        assert 'True 1' in result
+
+    async def test_a_stream_name_does_not_reach_a_protected_file(self, project: Path) -> None:
+        result = await call_tool(
+            [FileSystem[None](tools=['write_file']), WindowsWorkspace[None](project)],
+            'write_file',
+            {'path': '.env::$DATA', 'content': 'SECRET=1'},
+        )
+        assert 'NTFS stream names are not supported' in result
+        assert not (project / '.env').exists()
+
     async def test_a_log_past_max_log_bytes_is_cleared(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command'], max_log_bytes=1000)
         workspace = WindowsWorkspace[None](project)

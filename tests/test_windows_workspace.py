@@ -183,6 +183,25 @@ class TestWindowsCommands:
         result = await WindowsWorkspaceBackend(tmp_path).run(['hijack', '/?'])
         assert (result.exit_code, result.stderr) == (127, 'hijack: command not found\n')
 
+    async def test_batch_files_are_refused_as_argv_programs(self, tmp_path: Path) -> None:
+        """`cmd.exe` would parse their arguments as a command line, so `x&whoami` could run `whoami`."""
+        (tmp_path / 'tool.cmd').write_text('@echo %*\n')
+        backend = WindowsWorkspaceBackend(tmp_path, env={'PATH': str(tmp_path)})
+        explicit = await backend.run([str(tmp_path / 'tool.cmd'), 'x&whoami'])
+        assert (explicit.exit_code, explicit.stdout) == (126, '')
+        # On `PATH`, a batch file is passed over, as if it weren't there.
+        assert (await backend.run(['tool', 'x&whoami'])).exit_code == 127
+
+    async def test_stream_names_are_refused(self, tmp_path: Path) -> None:
+        """`.env::$DATA` names `.env`'s data, so it would get past a policy that matched the spelling."""
+        workspace = Workspace(WindowsWorkspaceBackend(tmp_path))
+        for path in ('.env::$DATA', 'notes.txt:hidden'):
+            with pytest.raises(ValueError, match='NTFS stream names are not supported'):
+                await workspace.write_text(path, 'secret')
+            with pytest.raises(ValueError, match='NTFS stream names are not supported'):
+                await workspace.realpath(path)
+        assert not (tmp_path / '.env').exists()
+
     async def test_a_script_too_long_for_a_command_line(self, tmp_path: Path) -> None:
         with pytest.raises(OSError, match='too long'):
             await WindowsWorkspaceBackend(tmp_path).run('#' * 20_000, shell=True)

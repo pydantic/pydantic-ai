@@ -117,6 +117,15 @@ _LAUNCHER = """try {
   # Without `-Force`, so of two launches that claim the same directory, only one creates it.
   New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
 } catch { if ($exclusive -and (Test-Path -LiteralPath $dir)) { exit 126 }; exit 125 }
+# Owner-only, before any job file is written, as `umask 077` makes the `sh` side's: the command and its output
+# may hold secrets, and a checkout's own ACL can let other local users read it.
+try {
+  $acl = [Security.AccessControl.DirectorySecurity]::new()
+  $acl.SetAccessRuleProtection($true, $false)
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.WindowsIdentity]::GetCurrent().User, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow'))
+  Set-Acl -LiteralPath $dir -AclObject $acl -ErrorAction Stop
+} catch { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Ignore; exit 125 }
 foreach ($log in $logs) { [IO.File]::WriteAllBytes((Join-Path $dir $log), [byte[]]@()) }
 [IO.File]::WriteAllText((Join-Path $dir 'command.ps1'), $script, [Text.UTF8Encoding]::new($true))
 [IO.File]::WriteAllText((Join-Path $dir 'launcher'), "$PID")
