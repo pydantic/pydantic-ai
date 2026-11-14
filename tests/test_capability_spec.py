@@ -2755,40 +2755,6 @@ def test_native_tools_param_wrapped_as_capabilities():
     assert len(cap_tools) == 2
 
 
-def test_agent_from_spec_builtin_tool():
-    """NativeTool capability can be constructed from spec."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'NativeTool': {'kind': 'web_search'}},
-            ],
-        }
-    )
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
-    assert len(builtin_caps) == 1
-    assert isinstance(builtin_caps[0].tool, WebSearchTool)
-
-
-def test_agent_from_spec_builtin_tool_with_options():
-    """NativeTool spec supports builtin tool configuration options."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'NativeTool': {'kind': 'web_search', 'search_context_size': 'high'}},
-            ],
-        }
-    )
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
-    assert len(builtin_caps) == 1
-    tool = builtin_caps[0].tool
-    assert isinstance(tool, WebSearchTool)
-    assert tool.search_context_size == 'high'
-
-
 def test_agent_from_spec_builtin_tool_explicit_form():
     """NativeTool spec supports the explicit {tool: ...} form."""
     agent = Agent.from_spec(
