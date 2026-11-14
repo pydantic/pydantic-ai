@@ -192,8 +192,12 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         return self._initial_factory
 
     def reduce(self, ctx: ReducerContext[StateT, DepsT], current: OutputT, inputs: InputT) -> OutputT:
-        n_parameters = len(inspect.signature(self.reducer).parameters)
-        if n_parameters == 2:
+        n_positional_parameters = sum(
+            1
+            for parameter in inspect.signature(self.reducer).parameters.values()
+            if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        )
+        if n_positional_parameters == 2:
             return cast(PlainReducerFunction[InputT, OutputT], self.reducer)(current, inputs)
         else:
             return cast(ContextReducerFunction[StateT, DepsT, InputT, OutputT], self.reducer)(ctx, current, inputs)

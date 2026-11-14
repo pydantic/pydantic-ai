@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from dataclasses import dataclass, field
+
+import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import (
@@ -434,3 +437,51 @@ async def test_reduce_first_value_keeps_side_effect_of_cancelled_sibling():
     # side-effect line and never recorded. The winner writes only after the event is set, so it
     # always trails the surviving side effect.
     assert state.completed == ['effect-then-suspend', 'winner']
+
+
+def _sum_plain(current: int, value: int) -> int:
+    return current + value
+
+
+def _sum_configured(current: int, value: int, *, weight: int = 1) -> int:
+    return current + weight * value
+
+
+def _sum_configured_with_context(ctx: ReducerContext[None, None], current: int, value: int, *, weight: int = 1) -> int:
+    assert isinstance(ctx, ReducerContext)
+    return current + weight * value
+
+
+@pytest.mark.parametrize(
+    ('reducer', 'expected'),
+    [
+        pytest.param(_sum_plain, 3, id='plain'),
+        pytest.param(_sum_configured, 3, id='keyword-only-option'),
+        pytest.param(functools.partial(_sum_configured, weight=2), 6, id='partial-keyword-only-option'),
+        pytest.param(_sum_configured_with_context, 3, id='context-reducer-with-keyword-only-option'),
+    ],
+)
+async def test_join_reducer_with_keyword_only_argument(reducer, expected):
+    """A plain reducer with an optional keyword-only argument must not receive `ReducerContext`.
+
+    `Join.reduce` decides from the reducer's arity whether to pass context; keyword-only
+    parameters must not count, or a plain reducer is called with three positional arguments.
+    """
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def first(ctx: StepContext[None, None, None]) -> int:
+        return 1
+
+    @g.step
+    async def second(ctx: StepContext[None, None, None]) -> int:
+        return 2
+
+    join = g.join(reducer, initial=0)
+    g.add(
+        g.edge_from(g.start_node).to(first, second),
+        g.edge_from(first, second).to(join),
+        g.edge_from(join).to(g.end_node),
+    )
+
+    assert await g.build().run() == expected
