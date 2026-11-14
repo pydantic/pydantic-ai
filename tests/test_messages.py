@@ -643,6 +643,14 @@ def test_from_data_uri_base64():
     assert bc.media_type == 'image/png'
 
 
+def test_binary_content_format_with_media_type_parameters():
+    """`format` resolves a media type that carries RFC 2045 parameters, which `from_data_uri` stores verbatim."""
+    assert BinaryContent(data=b'x', media_type='image/png;charset=utf-8').format == 'png'
+    assert BinaryContent(data=b'x', media_type='audio/mpeg; codec=mp3').format == 'mp3'
+    assert BinaryContent(data=b'x', media_type='application/pdf;charset=binary').format == 'pdf'
+    assert BinaryContent(data=b'x', media_type='text/plain;charset=utf-8').format == 'txt'
+
+
 def test_from_data_uri_parameterized_media_type_round_trip():
     bc = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
     # The media type is stored verbatim, parameters included.
