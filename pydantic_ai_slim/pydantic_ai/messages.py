@@ -3292,6 +3292,8 @@ def _deserialize_instruction_id(value: str | InstructionId | None) -> Instructio
         return InstructionId(AgentInstructionSource())
     if value.startswith('agent:'):
         return InstructionId(AgentInstructionSource(), name=value.removeprefix('agent:'))
+    if value == 'run':
+        return InstructionId(RunInstructionSource())
     if value.startswith('run:'):
         return InstructionId(RunInstructionSource(), name=value.removeprefix('run:'))
     for namespace, source_type in (
