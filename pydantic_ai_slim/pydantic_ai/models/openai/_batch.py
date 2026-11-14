@@ -190,11 +190,11 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
         batch = await client.batches.create(
             input_file_id=file.id, endpoint=_ENDPOINT, completion_window='24h', extra_headers=headers
         )
-    except APIStatusError as error:
-        if error.status_code < 500:
+    except (APIStatusError, httpx2.HTTPStatusError) as error:
+        # `openai` lets a status a retrying transport gave up on through unwrapped.
+        if error.response.status_code < 500:
             # OpenAI refused to create the batch, so nothing reads the file, which it would otherwise keep for 30 days.
             # After a server error or no response, the batch may have been created, so the file is left for it.
-            # `openai` lets a status a retrying transport gave up on through unwrapped.
             with suppress(APIError, httpx2.HTTPStatusError):
                 await client.files.delete(file.id)
         raise
