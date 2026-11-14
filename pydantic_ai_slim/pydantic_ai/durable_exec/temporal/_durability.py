@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
+from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
@@ -262,7 +265,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]),
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
                 [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. A list you pass replaces
-                the default, and `()` lets the retry policy retry every model error.
+                the default, and `()` lets the retry policy retry every model error. When the agent is built
+                with [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors], every model error is
+                non-retryable, so that capability is the one that retries them, and the retry policy still
+                covers worker crashes and activity timeouts. A `non_retryable_model_errors` other than the default
+                is then ignored, with a `UserWarning`. A `RetryOnModelErrors` that only a
+                `DynamicCapability` returns for the run raises a `UserError` inside a workflow instead.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -338,6 +346,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
         self._child_workflow_metadata_capability = False
+        self._retry_on_model_errors = False
+        """Whether the agent was built with `RetryOnModelErrors`, so the model activity doesn't retry model errors."""
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -358,6 +368,21 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         assert self._deps_type is not None
         self._child_workflow_metadata_capability = False
         agent.root_capability.apply(self._detect_child_workflow_metadata)
+        non_retryable_model_errors = self._non_retryable_model_errors
+        self._retry_on_model_errors = _has_retry_on_model_errors(agent.root_capability)
+        if self._retry_on_model_errors:
+            # `RetryOnModelErrors` retries model errors in the workflow, waiting on a durable timer, so the activity
+            # doesn't retry them too: its retry policy is left to crashes and timeouts, which never reach a hook.
+            if non_retryable_model_errors != _DEFAULT_NON_RETRYABLE_MODEL_ERRORS:
+                warnings.warn(
+                    '`non_retryable_model_errors` is ignored because the agent has `RetryOnModelErrors`: that '
+                    'capability does the retrying of model errors, so the model request activity treats every model '
+                    'error as non-retryable. Configure which errors are retried with `RetryOnModelErrors(retry_on=...)` '
+                    'instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            non_retryable_model_errors = (ModelAPIError,)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,
             deps_type=self._deps_type,
@@ -365,7 +390,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
-            non_retryable_model_errors=self._non_retryable_model_errors,
+            non_retryable_model_errors=non_retryable_model_errors,
             runtime=self,
             parameter_transports=TemporalParameterTransports(self),
         )
@@ -577,6 +602,16 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
         if not self.in_durable_context:
             return await handler()
+        if (
+            not self._retry_on_model_errors
+            and ctx.root_capability is not None
+            and _has_retry_on_model_errors(ctx.root_capability)
+        ):
+            # The model activity's retry policy is set when the agent is bound, so it would retry model errors too.
+            raise UserError(
+                'Under Temporal, `RetryOnModelErrors` must be one of the capabilities the agent is built with, so the '
+                'model request activity leaves retrying model errors to it. Add it to the agent instead of the run.'
+            )
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
             return await super().wrap_run(ctx, handler=handler)
@@ -773,3 +808,21 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
             workflows.append(registration)
             registered_child_workflow_names.add(workflow_name)
     return activities, workflows
+
+
+def _has_retry_on_model_errors(capability: AbstractCapability[Any]) -> bool:
+    """Whether the agent's capabilities include `RetryOnModelErrors`, including one a wrapper capability wraps.
+
+    `apply` doesn't visit what a wrapper wraps, like the capability a `DynamicCapability` returned for the run, whose
+    hooks still run, so wrappers are unwrapped here.
+    """
+    found = False
+
+    def visit(cap: AbstractCapability[Any]) -> None:
+        nonlocal found
+        if isinstance(cap, WrapperCapability):
+            found = found or _has_retry_on_model_errors(cap.wrapped)
+        found = found or isinstance(cap, RetryOnModelErrors)
+
+    capability.apply(visit)
+    return found
