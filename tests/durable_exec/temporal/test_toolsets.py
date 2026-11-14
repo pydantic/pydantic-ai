@@ -84,6 +84,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
@@ -2288,3 +2289,143 @@ async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client
             ],
         )
     )
+
+
+# --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
+
+
+def _call_both_tools_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[ToolCallPart('first', {}, tool_call_id='1'), ToolCallPart('second', {}, tool_call_id='2')]
+    )
+
+
+def first() -> str:
+    return 'first'
+
+
+def second() -> str:
+    return 'second'
+
+
+def _tool_instances_agent(name: str, toolset: FunctionToolset[None]) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_call_both_tools_once),
+        name=name,
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, sequential=True)
+
+
+_shared_first = Tool(first)
+# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
+_sequential_toolset = FunctionToolset([_shared_first], sequential=True)
+
+_tool_instances_agents = {
+    'sequential': _tool_instances_agent(
+        'sequential_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', sequential=True)
+    ),
+    'defer_loading': _tool_instances_agent(
+        'deferred_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', defer_loading=True)
+    ),
+    'shared_sequential': _tool_instances_agent(
+        'shared_sequential_tool_instance', FunctionToolset([_shared_first, Tool(second)], id='tools')
+    ),
+    'prepare_sequential': _tool_instances_agent(
+        'prepare_sequential_tool_instances',
+        FunctionToolset(
+            [Tool(first, prepare=_force_sequential), Tool(second, prepare=_force_sequential)],
+            id='tools',
+            sequential=True,
+        ),
+    ),
+}
+
+
+@workflow.defn
+class ToolInstancesWorkflow:
+    @workflow.run
+    async def run(self, flag: str) -> str:
+        return (await _tool_instances_agents[flag].run('Call both tools.')).output
+
+
+def _tool_activity_events(history: WorkflowHistory) -> list[str]:
+    """When each `call_tool` activity was scheduled and completed, in history order."""
+    scheduled: set[int] = set()
+    events: list[str] = []
+    for event in history.events:
+        if event.HasField('activity_task_scheduled_event_attributes'):
+            if event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool'):
+                scheduled.add(event.event_id)
+                events.append('scheduled')
+        elif event.HasField('activity_task_completed_event_attributes'):
+            if event.activity_task_completed_event_attributes.scheduled_event_id in scheduled:
+                events.append('completed')
+    return events
+
+
+_at_once = ['scheduled', 'scheduled', 'completed', 'completed']
+_one_at_a_time = ['scheduled', 'completed', 'scheduled', 'completed']
+
+
+@pytest.mark.parametrize(
+    ('flag', 'unpatched_events', 'patched_events'),
+    [
+        ('sequential', _at_once, _one_at_a_time),
+        ('defer_loading', _at_once, []),
+        ('shared_sequential', _at_once, _one_at_a_time),
+        ('prepare_sequential', _one_at_a_time, _one_at_a_time),
+    ],
+)
+async def test_function_toolset_defaults_on_tool_instances_replay(
+    client: Client, monkeypatch: pytest.MonkeyPatch, flag: str, unpatched_events: list[str], patched_events: list[str]
+):
+    """A history recorded before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances replays.
+
+    Without the patch marker, the workflow lists the tools the way it did before: both calls are dispatched at once
+    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose own
+    `prepare` makes it sequential stays sequential. A new run gets the toolset's value. Unsandboxed, so
+    `workflow.patched` can be faked for the original run.
+    """
+    agent = _tool_instances_agents[flag]
+
+    async def run_workflow() -> WorkflowHistory:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[ToolInstancesWorkflow],
+            plugins=[AgentPlugin(agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await client.start_workflow(
+                ToolInstancesWorkflow.run,
+                args=[flag],
+                id=f'tool-instances-{flag}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+            await handle.result()
+        return await handle.fetch_history()
+
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    unpatched_history = await run_workflow()
+    monkeypatch.undo()
+    patched_history = await run_workflow()
+
+    assert _tool_activity_events(unpatched_history) == unpatched_events
+    assert _tool_activity_events(patched_history) == patched_events
+
+    replayer = Replayer(
+        workflows=[ToolInstancesWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    for history in (unpatched_history, patched_history):
+        assert (await replayer.replay_workflow(history)).replay_failure is None

@@ -52,6 +52,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
 from .._workspace import RejectWorkspaceInContainer
+from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
 from ._utils import StepConfig, using_durable_sleep
 
@@ -194,7 +195,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     )
             return toolset
 
-        dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]
+        dbos_toolsets = [
+            toolset.visit_and_replace(dbosify_toolset).visit_and_replace(gate_tool_instance_defaults)
+            for toolset in wrapped.toolsets
+        ]
         self._toolsets = dbos_toolsets
         DBOSConfiguredInstance.__init__(self, self._name)
 
