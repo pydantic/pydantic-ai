@@ -594,10 +594,14 @@ def test_json_schema_test_data_narrow_exclusive_bounds():
     )
 
 
-def test_gen_unknown_type():
-    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly."""
-    with pytest.raises(NotImplementedError, match='Unknown type: foo'):
-        _JsonSchemaTestData({'type': 'foo'}).generate()
+@pytest.mark.parametrize('type_', ['foo', []])
+def test_gen_unknown_type(type_: str | list[str]):
+    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly.
+
+    An empty `type` list names no type to generate from.
+    """
+    with pytest.raises(NotImplementedError, match=re.escape(f'Unknown type: {type_}')):
+        _JsonSchemaTestData({'type': type_}).generate()
 
 
 def test_json_schema_number_uses_strictest_bounds():
@@ -796,54 +800,44 @@ def test_boolean_schema_tool_args() -> None:
     assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
 
 
-def test_tool_type_list_args() -> None:
-    """One of a JSON Schema `type` list is generated, mirroring the `anyOf` handling."""
+@pytest.mark.parametrize(
+    'seed,expected',
+    [
+        (0, snapshot({'nullable': 'a', 'null_first': None, 'multi': 3, 'list': [0], 'obj': {'x': False}})),
+        (1, snapshot({'nullable': None, 'null_first': 'b', 'multi': 'bb', 'list': None, 'obj': None})),
+    ],
+)
+def test_tool_type_list_args(seed: int, expected: dict[str, Any]) -> None:
+    """The seed picks one member of a JSON Schema `type` list, as it picks an `anyOf` member.
+
+    The picked type keeps the sibling keywords (`minimum`, `minLength`, `items`, `properties`), and type lists
+    nested under `items` and an object property are generated the same way.
+    """
     calls: list[dict[str, Any]] = []
 
-    def flexible_tool(**kwargs: Any) -> str:
+    def lookup(**kwargs: Any) -> str:
         calls.append(kwargs)
         return 'ok'
 
     schema = {
         'type': 'object',
-        'properties': {'value': {'type': ['string', 'null']}},
-        'required': ['value'],
+        'properties': {
+            'nullable': {'type': ['string', 'null']},
+            'null_first': {'type': ['null', 'string']},
+            'multi': {'type': ['integer', 'string'], 'minimum': 3, 'minLength': 2},
+            'list': {'type': ['array', 'null'], 'minItems': 1, 'items': {'type': ['integer', 'null']}},
+            'obj': {
+                'type': ['object', 'null'],
+                'properties': {'x': {'type': ['boolean', 'null']}},
+                'required': ['x'],
+            },
+        },
+        'required': ['nullable', 'null_first', 'multi', 'list', 'obj'],
     }
-    tool = Tool.from_schema(flexible_tool, name='flexible_tool', description='Flexible value.', json_schema=schema)
-    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    tool = Tool.from_schema(lookup, name='lookup', description='Look something up.', json_schema=schema)
+    Agent(TestModel(seed=seed), tools=[tool]).run_sync('hello')
 
-    assert calls == snapshot([{'value': 'a'}])
-
-
-def test_tool_type_list_multi_member() -> None:
-    """Different seeds select different members of the `type` list, like a multi-member `anyOf`."""
-    calls: list[dict[str, Any]] = []
-
-    def multi_tool(**kwargs: Any) -> str:
-        calls.append(kwargs)
-        return 'ok'
-
-    schema = {
-        'type': 'object',
-        'properties': {'value': {'type': ['string', 'null']}, 'count': {'type': ['null', 'integer']}},
-        'required': ['value', 'count'],
-    }
-    tool = Tool.from_schema(multi_tool, name='multi_tool', description='Multi-member value.', json_schema=schema)
-    Agent(TestModel(seed=1), tools=[tool]).run_sync('hello')
-
-    assert calls == snapshot([{'value': None, 'count': 1}])
-
-
-def test_tool_type_list_empty_raises() -> None:
-    """An empty `type` list still reaches the unknown-type error, preserving the pre-existing behavior."""
-    schema: dict[str, Any] = {
-        'type': 'object',
-        'properties': {'value': {'type': []}},
-        'required': ['value'],
-    }
-
-    with pytest.raises(NotImplementedError, match='Unknown type'):
-        _JsonSchemaTestData(schema).generate()
+    assert calls == [expected]
 
 
 @pytest.mark.parametrize(
