@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, Signature, signature
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, Self, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, Self, Union, cast, get_args, get_origin
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic._internal import _decorators, _generate_schema
@@ -21,6 +21,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
+from typing_inspection.introspection import is_union_origin
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -220,7 +221,7 @@ def function_schema(
 
     # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
     return_annotation = type_hints.get('return')
-    return_schema_type = extract_return_schema_type(return_annotation, function)
+    return_schema_type = _tool_return_schema_type(return_annotation, function)
     try:
         return_schema: ObjectJsonSchema = TypeAdapter(return_schema_type).json_schema(
             schema_generator=schema_generator, mode='serialization'
@@ -490,6 +491,20 @@ def extract_return_schema_type(return_annotation: Any, function: Callable[..., A
         inner_type = type_args[0] if type_args else Any
         return inner_type
     return return_annotation
+
+
+def _tool_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
+    """The type to generate a tool's return schema for: `extract_return_schema_type`, applied to each union member too.
+
+    A tool can return a `ToolReturn` or something else, as in `ToolReturn[T] | None`, and the model only ever sees
+    a `ToolReturn`'s `return_value`, so that's `T | None`. `extract_return_schema_type` itself is left as is, as
+    durable operations also use it to type the results they record.
+    """
+    if is_union_origin(get_origin(return_annotation)):
+        members = get_args(return_annotation)
+        if any(member is ToolReturn or get_origin(member) is ToolReturn for member in members):
+            return Union[tuple(extract_return_schema_type(member, function) for member in members)]  # noqa: UP007
+    return extract_return_schema_type(return_annotation, function)
 
 
 def is_call_ctx(annotation: Any) -> bool:

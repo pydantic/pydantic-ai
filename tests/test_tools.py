@@ -5275,6 +5275,36 @@ def test_return_schema_tool_return_generic():
     assert 'value' in td.return_schema['properties']
 
 
+def test_return_schema_tool_return_in_union():
+    """A `ToolReturn[T]` union member generates the return schema from `T`, like a bare `ToolReturn[T]`."""
+    from pydantic import BaseModel
+
+    from pydantic_ai.messages import ToolReturn
+
+    class Result(BaseModel):
+        value: int
+
+    def my_tool(x: int) -> ToolReturn[Result] | None:
+        return None  # pragma: no cover
+
+    def plain_tool(x: int) -> Result | None:
+        return None  # pragma: no cover
+
+    expected = {
+        '$defs': {
+            'Result': {
+                'properties': {'value': {'type': 'integer'}},
+                'required': ['value'],
+                'title': 'Result',
+                'type': 'object',
+            }
+        },
+        'anyOf': [{'$ref': '#/$defs/Result'}, {'type': 'null'}],
+    }
+    assert Tool(my_tool).tool_def.return_schema == expected
+    assert Tool(plain_tool).tool_def.return_schema == expected
+
+
 def test_return_schema_self_bound_method():
     """Self return type on a bound method resolves to the owning class."""
     from typing import Self
