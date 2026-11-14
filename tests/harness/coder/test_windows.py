@@ -250,10 +250,12 @@ class TestShellOnWindows:
         assert results[2] == 'app.py:1:def main():'
         assert results[3].startswith('[app.py | 2 lines]')
 
-    async def test_log_limits_need_posix(self, project: Path) -> None:
-        shell = Shell[None](tools=['shell'], max_log_bytes=1000)
-        result = await call_tool([shell, WindowsWorkspace[None](project)], 'shell', {'command': 'Write-Output hi'})
-        assert 'need a POSIX workspace' in result
+    async def test_file_limits_need_posix(self, project: Path) -> None:
+        shell = Shell[None](tools=['start_command'], max_file_bytes=1000)
+        result = await call_tool(
+            [shell, WindowsWorkspace[None](project)], 'start_command', {'command': 'Write-Output hi'}
+        )
+        assert 'needs a POSIX workspace' in result
 
     async def test_stopping_a_background_command_ends_its_tree(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])

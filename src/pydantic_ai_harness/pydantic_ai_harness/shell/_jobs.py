@@ -294,10 +294,13 @@ class Job:
         file_limit: int | None,
         log_limit: int | None,
     ) -> Callable[[str], WorkspaceCommand]:
-        """The launcher invocation for a command: `sh` running `_LAUNCHER`, or on Windows, `_powershell.launch_script`."""
+        """The launcher invocation for a command: `sh` running `_LAUNCHER`, or on Windows, `_powershell.launch_script`.
+
+        A Windows job's logs are not cut at `log_limit`, which is on by default.
+        """
         if workspace.platform == 'windows':
-            if file_limit is not None or log_limit is not None:
-                raise WorkspaceError('`max_file_bytes` and `max_log_bytes` need a POSIX workspace.')
+            if file_limit is not None:
+                raise WorkspaceError('`max_file_bytes` needs a POSIX workspace.')
             return lambda cmd: _powershell.launch_script(directory, cwd, cmd, exclusive=exclusive, combined=combined)
         script = cls._launch_script(
             directory, cwd, exclusive=exclusive, combined=combined, file_limit=file_limit, log_limit=log_limit
