@@ -6962,6 +6962,35 @@ async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
     assert (await recorded_steps(patched_id))[1:] == patched_steps
 
 
+_per_run_toolset_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_call_both_tools_then_crash), name='dbos_agent_per_run_tool_instances')
+)
+
+
+async def test_dbos_agent_per_run_toolset_recovers_with_recorded_tools(dbos: DBOS) -> None:
+    """`DBOSAgent` recovers a per-run `FunctionToolset` from the workflow's recorded inputs, so it needs no patch gate.
+
+    A workflow started before the upgrade recovers with the `Tool` values it started with. Turning on
+    `sequential` on the caller's `Tool` instances after the crash stands in for the new `FunctionToolset`
+    applying it: recovery still runs both calls at once, as recorded.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+    tools = [Tool(first), Tool(second)]
+    workflow_id = f'tool-instances-per-run-{uuid.uuid4()}'
+    tool_instances_crash_armed.set()
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await _per_run_toolset_dbos_agent.run('Call both tools.', toolsets=[FunctionToolset(tools)])
+    for tool in tools:
+        tool.sequential = True
+
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert (await handle.get_result()).output == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps] == _in_parallel
+
+
 async def test_dbos_tool_instance_defaults_patch_interrupted(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
     """A run whose patch probe another run's step interrupts lists the tools as before the patch, and recovers that way.
 
