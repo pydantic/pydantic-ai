@@ -376,6 +376,30 @@ async def test_audio_in_server_vad_transcribes(
 
 
 @pytest.mark.vcr
+async def test_webrtc_hang_up_ends_the_call(
+    azure_ws_sideband_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """`hang_up()` on an Azure sideband ends the browser's call, as on OpenAI; `close()` alone only detaches.
+
+    Hanging up again finds no call to end, which is not an error. The offer and both hangups are an HTTP VCR
+    cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = azure_ws_sideband_cassette
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+    realtime = Agent(instructions='Answer in two words.').realtime(
+        model, model_settings=OpenAIRealtimeModelSettings(input_transcription_model=None)
+    )
+
+    answer = await realtime.answer_webrtc_offer(REAL_SDP_OFFER)
+    async with realtime.session(provider_session=answer.session) as session:
+        await session.hang_up()
+    assert session.closed
+
+    # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
+    await realtime.hang_up(answer.session)
+
+
+@pytest.mark.vcr
 async def test_webrtc_sideband_text_turn(
     azure_ws_sideband_cassette: tuple[AzureProvider, RealtimeCassette],
 ) -> None:

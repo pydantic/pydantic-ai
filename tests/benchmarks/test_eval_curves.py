@@ -22,7 +22,12 @@ def blockbuster_enabled() -> bool:
     return False
 
 
-@pytest.fixture(params=[(256, 32), (4096, 2048)], ids=['256-cases-32-buckets', '4096-cases-2048-buckets'])
+@pytest.fixture(
+    params=[
+        pytest.param((256, 32), id='256-cases-32-buckets'),
+        pytest.param((4096, 2048), id='4096-cases-2048-buckets', marks=pytest.mark.codspeed_only),
+    ]
+)
 def curve_context(request: pytest.FixtureRequest) -> tuple[ReportEvaluatorContext[None, bool, None], int]:
     n_cases, buckets = request.param
     cases = [

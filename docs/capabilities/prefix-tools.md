@@ -11,7 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, PrefixTools
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[
         PrefixTools(MCP(url='https://api1.example.com', native=True), prefix='api1'),
         PrefixTools(MCP(url='https://api2.example.com', native=True), prefix='api2'),

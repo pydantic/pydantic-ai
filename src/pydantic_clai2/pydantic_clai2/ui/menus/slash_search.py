@@ -19,9 +19,16 @@ def _typed(key: str) -> bool:
 class _SlashSearch:
     """Translates raw keys for termflow's search, which otherwise filters on every typed key."""
 
-    def __init__(self, *, key_source: Callable[[], str], hotkeys: Mapping[str, KeyHandler]) -> None:
+    def __init__(
+        self,
+        *,
+        key_source: Callable[[], str],
+        hotkeys: Mapping[str, KeyHandler],
+        on_query_change: Callable[[], None] | None,
+    ) -> None:
         self.key_source = key_source
         self.hotkeys = hotkeys
+        self.on_query_change = on_query_change
         self.mode: Literal['browse', 'search', 'filtered'] = 'browse'
         self.query = ''
         """Mirrors termflow's query, which its public API does not expose."""
@@ -54,7 +61,10 @@ class _SlashSearch:
             self.query += key
         elif key == Key.BACKSPACE:
             self.query = self.query[:-1]
-        self.edited = self.edited or self.query != before
+        changed = self.query != before
+        self.edited = self.edited or changed
+        if changed and self.on_query_change is not None:
+            self.on_query_change()
         return key
 
     def browsing(self, key: str) -> str:
@@ -69,6 +79,8 @@ class _SlashSearch:
         return '' if _typed(key) or key == Key.BACKSPACE else key
 
     def clear(self) -> str:
+        if self.query and self.on_query_change is not None:
+            self.on_query_change()
         self.menu.clear_search()
         moved = self.edited
         self.mode, self.query, self.edited = 'browse', '', False
@@ -81,6 +93,7 @@ def slash_search(
     footer: str,
     key_source: Callable[[], str],
     hotkeys: Mapping[str, KeyHandler] | None = None,
+    on_query_change: Callable[[], None] | None = None,
 ) -> Menu:
     """Build a menu where plain keys are hotkeys and `/` starts a search.
 
@@ -88,7 +101,8 @@ def slash_search(
     the arrows move. Esc leaves the search and clears the query. Enter picks the highlighted row,
     except in a menu with hotkeys: there it ends the search and keeps the matches, so the hotkeys
     act on them, and the next Esc clears the filter. Otherwise Esc closes.
-    The footer starts with `/ search`, followed by `footer`.
+    The footer starts with `/ search`, followed by `footer`. `on_query_change` runs when the
+    query text changes or a nonempty query is cleared.
     """
-    search = _SlashSearch(key_source=key_source, hotkeys=dict(hotkeys or {}))
-    return search.build(builder.footer_hint(f'/ search · {footer}'))
+    search = _SlashSearch(key_source=key_source, hotkeys=dict(hotkeys or {}), on_query_change=on_query_change)
+    return search.build(builder.footer_hint(f'/ search - {footer}'))

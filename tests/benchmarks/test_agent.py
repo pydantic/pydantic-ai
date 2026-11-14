@@ -38,7 +38,12 @@ async def test_agent_run_without_capabilities(agent: Agent[None, str]) -> None:
     assert result.usage.requests == 1
 
 
-@pytest.fixture(params=[1000, 5000], ids=['1000-fragments', '5000-fragments'])
+@pytest.fixture(
+    params=[
+        pytest.param(1000, id='1000-fragments'),
+        pytest.param(5000, id='5000-fragments', marks=pytest.mark.codspeed_only),
+    ]
+)
 async def synthetic_history(agent: Agent[None, str], request: pytest.FixtureRequest) -> list[ModelMessage]:
     history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Earlier question')])]
     history.extend(ModelResponse(parts=[TextPart('A response fragment')]) for _ in range(request.param))
@@ -52,7 +57,9 @@ async def test_agent_run_with_synthetic_history(agent: Agent[None, str], synthet
     assert len(result.all_messages()[1].parts) == len(synthetic_history) - 1
 
 
-@pytest.fixture(params=[1000, 5000], ids=['1000-chunks', '5000-chunks'])
+@pytest.fixture(
+    params=[pytest.param(1000, id='1000-chunks'), pytest.param(5000, id='5000-chunks', marks=pytest.mark.codspeed_only)]
+)
 async def captured_text_stream(request: pytest.FixtureRequest) -> tuple[ModelResponse, list[ModelResponseStreamEvent]]:
     async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         for _ in range(request.param):

@@ -10,6 +10,8 @@ import pytest
 
 from pydantic_clai2 import warm_imports
 
+pytestmark = pytest.mark.subprocess(reason='asserts what a fresh `pydantic_clai2` process imports at startup')
+
 
 @pytest.mark.parametrize(
     ('args', 'exit_code'),
@@ -23,7 +25,7 @@ try:
     main()
 finally:
     assert 'pydantic_ai' not in sys.modules
-    assert 'pydantic_clai2._app' not in sys.modules
+    assert 'pydantic_clai2.app' not in sys.modules
     assert 'pydantic_clai2.cli.headless' not in sys.modules
 """
     result = subprocess.run(
@@ -36,6 +38,18 @@ finally:
     )
     assert result.returncode == exit_code, result.stderr
     assert 'AssertionError' not in result.stderr
+
+
+def test_splash_paints_before_settings_load_pydantic() -> None:
+    # Building the first Pydantic model loads every installed Pydantic plugin, Logfire's among them.
+    script = """
+import sys
+import pydantic_clai2.ui.rendering.splash
+for name in ('pydantic', 'pydantic_clai2.config'):
+    assert name not in sys.modules, name
+"""
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=15, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def test_prompt_ready_without_provider_or_model_menu_imports(tmp_path: Path) -> None:
@@ -60,8 +74,17 @@ async def read(self, *args, **kwargs):
     warmed = ('openai', 'anthropic', *warm_imports.FIRST_USE_MODULES)
     for name in (*warmed, 'pydantic_clai2.cli.headless'):
         assert name not in sys.modules, name
+    # The MCP client stack takes most of a second; the `mcp` and `observability` plugins load without it.
+    assert 'pydantic_clai2.mcp' in sys.modules and 'pydantic_clai2.builtin_plugins.logfire' in sys.modules
+    for name in ('fastmcp', 'mcp', 'pydantic_ai.mcp'):
+        assert name not in sys.modules, name
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')
+    # Modules that only name provider settings types must not load the SDKs: test modules import them,
+    # and loading the Anthropic SDK used to add about half a second to every collecting worker.
+    import pydantic_clai2.models.model_options
+    import pydantic_clai2.runtime.speculative_mode
+    assert 'openai' not in sys.modules and 'anthropic' not in sys.modules
     start().join()
     for name in warmed:
         assert name in sys.modules, name

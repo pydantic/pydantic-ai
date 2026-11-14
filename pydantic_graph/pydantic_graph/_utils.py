@@ -32,12 +32,12 @@ try:
     # Logic taken from logfire.experimental.annotations
     def get_traceparent(span: AbstractSpan) -> str | None:
         """Get a string representing the span context to use for annotating spans."""
-        real_span: Span
         if isinstance(span, Span):
             real_span = span  # pragma: lax no cover
         else:
-            real_span = span._span
-            assert real_span
+            real_span = getattr(span, '_span', None)
+            if not isinstance(real_span, Span):
+                return ''
         context = set_span_in_context(real_span)
         carrier: dict[str, Any] = {}
         TRACEPARENT_PROPAGATOR.inject(carrier, context)
@@ -64,7 +64,12 @@ def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            # With no current loop in the main thread, Python 3.12 and 3.13 create one and warn that this will
+            # change; 3.14 raises `RuntimeError` instead, handled below. Either way, the loop handling here stays
+            # the same.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
@@ -261,7 +266,7 @@ def infer_obj_name(obj: Any, *, depth: int) -> str | None:
     """
     target_frame = inspect.currentframe()
     if target_frame is None:
-        return None  # pragma: no cover
+        return None
     for _ in range(depth):
         target_frame = target_frame.f_back
         if target_frame is None:

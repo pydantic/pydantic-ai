@@ -7,7 +7,8 @@ recorded in the `_toolset` module docstring.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import AgentRunResult, RunContext
@@ -15,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.playwright._toolset import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_MAX_CONTENT_TOKENS,
@@ -100,15 +102,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     playwright install chromium
     ```
 
-    Egress: `allowed_domains=None` (the default) places no domain restriction on
-    the URLs the agent can reach; pass `allowed_domains=[...]` to bound navigation
-    and the request kinds that move data (`fetch`, XHR, EventSource, WebSocket,
-    `sendBeacon`) in any frame, leaving passive subresources and sub-frame
-    documents unbounded so a permitted page keeps its assets and its
-    identity-provider frames. Independently, `block_private_addresses=True` (the
-    default) refuses private, loopback, link-local and other reserved addresses
-    for every request kind in every frame, even under open egress, resolving a
-    hostname first so a name pointing at one of those addresses is refused too.
+    Egress: by default the agent can reach any public host; `allowed_domains`
+    bounds that, and `block_private_addresses` (on by default) refuses private,
+    loopback, link-local and other reserved addresses even under open egress.
     Neither is a general security boundary: an unanswered DNS lookup is refused
     but Chromium resolves the name again before it connects, so rebinding is not
     closed, and a proxy-based enforcement mode is tracked in
@@ -121,7 +117,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     `playwright install chromium` hint instead of ending the run, so an agent that
     can run a shell can install it and carry on, and the process gets a
     `BrowserUnavailableWarning` for the developer who is not reading tool results.
-    Set `auto_install_chromium=True` to fetch the binary automatically instead. Set `cdp_url` to attach to a Chromium that is already running
+    Set `auto_install_chromium=True` to fetch the binary automatically instead.
+    Set `cdp_url` to attach to a Chromium that is already running
     (managed-browser providers, benchmark harnesses) rather than launching one.
 
     Every browser operation runs inside an OpenTelemetry span, and what the page
@@ -243,9 +240,21 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     those as secrets.
     """
 
-    _session: PlaywrightBrowserSession = field(init=False, repr=False)
-    _toolset: PlaywrightBrowserToolset[AgentDepsT] = field(init=False, repr=False)
-    _policy: EgressPolicy = field(init=False, repr=False)
+    _: KW_ONLY
+    id: str | None = 'playwright_browser'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one set of browser tools, so two `PlaywrightBrowser` sharing this `id` are one browser
+    stated twice when they agree, and an error when they differ, since a merge could widen the egress one
+    of them was given. To keep two, give each its own `id` and wrap them in `PrefixTools`, since their
+    tool names are the same.
+    """
+
+    # Built from the fields above in `__post_init__`, so they're left out of equality: two browsers configured
+    # the same way compare equal, which is what lets `combine` treat them as one.
+    _session: PlaywrightBrowserSession = field(init=False, repr=False, compare=False)
+    _toolset: PlaywrightBrowserToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
+    _policy: EgressPolicy = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.policy is not None and (self.allowed_domains is not None or not self.block_private_addresses):
@@ -272,6 +281,11 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             action_timeout_ms=self.action_timeout_ms,
             navigation_timeout_ms=self.navigation_timeout_ms,
         )
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one browser stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, object]) -> AbstractCapability[AgentDepsT]:
         """Refuse to bind to a durable-execution agent.
@@ -343,6 +357,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
+        id: str | None = 'playwright_browser',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> PlaywrightBrowser[AgentDepsT]:
         """Construct the capability from serializable spec options (all fields are plain scalars/lists).
 
@@ -362,4 +379,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             auto_install_chromium=auto_install_chromium,
             chromium_sandbox=chromium_sandbox,
             cdp_url=cdp_url,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

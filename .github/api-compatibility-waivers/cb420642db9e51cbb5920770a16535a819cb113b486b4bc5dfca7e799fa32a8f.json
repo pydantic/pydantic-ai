@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "Intentional default change: the `CodeMode.__init__` `dynamic_catalog` parameter now defaults to `True`. Every call stays valid, and `dynamic_catalog=False` restores the previous behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11358"
+}

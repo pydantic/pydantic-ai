@@ -1,8 +1,10 @@
 """Keyboard decoding only, with no prompt-toolkit application or renderer."""
 
 import asyncio
+import os
 import re
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 
 from prompt_toolkit.input import Input
@@ -13,7 +15,8 @@ from prompt_toolkit.keys import Keys
 _MODIFIED_KEY = re.compile(r'\x1b\[(?:(\d+)(?::\d*)?(?::(\d+))?(?:;(\d+))?u|27;(\d+);(\d+)~)')
 _CSI_KEY = re.compile(r'\x1b\[(\d+);(\d+)([A-Z~])')
 _LOCK_MODIFIERS = 64 | 128  # Caps Lock, Num Lock.
-_SUPPORTED_MODIFIERS = 1 | 2 | 4  # Shift, Alt, Ctrl.
+_SUPER = 8  # Cmd on macOS; terminals report it only through CSI-u or modifyOtherKeys.
+_SUPPORTED_MODIFIERS = 1 | 2 | 4 | _SUPER  # Shift, Alt, Ctrl, Super.
 _KEY_ALIASES = {
     's-tab': 'backtab',
     'shift-tab': 'backtab',
@@ -23,7 +26,6 @@ _KEY_ALIASES = {
     'ctrl-i': 'tab',
     'ctrl-m': 'enter',
     'ctrl-[': 'escape',
-    'ctrl-enter': 'enter',
     'ctrl-shift-enter': 'enter',
     '<bracketed-paste>': 'paste',
     '<vt100-mouse-event>': 'mouse',
@@ -50,6 +52,11 @@ _NAMED_KEYS = {
 }
 
 
+def ctrl_enter_steers(*, platform: str = sys.platform, environ: Mapping[str, str] = os.environ) -> bool:
+    """Whether Ctrl+Enter steers: Windows and Windows Terminal (`WT_SESSION`, also in WSL) take Alt+Enter."""
+    return platform == 'win32' or 'WT_SESSION' in environ
+
+
 def _key_name(key: Keys | str) -> str:
     name = key.value if isinstance(key, Keys) else key
     if name.startswith('c-'):
@@ -67,36 +74,47 @@ def _modified_key(sequence: str) -> str | None:
     """Normalize the CSI-u and xterm reports requested by the editor."""
     # Known Alt reports become two decoder tokens; leave both on the legacy path.
     if (match := _CSI_KEY.fullmatch(sequence)) and sequence not in ANSI_SEQUENCES:
-        code, modifier, suffix = match.groups()
-        modifiers = _modifiers(modifier)
-        if modifiers is None:
-            return None
-        params = f'{code};{modifiers + 1}' if modifiers else code
-        if params == '1' and suffix != '~':
-            params = ''
-        key = ANSI_SEQUENCES.get(f'\x1b[{params}{suffix}')
-        if isinstance(key, tuple):
-            return 'alt-' + _key_name(key[-1])
-        return _key_name(key) if key is not None else None
+        return _function_key(match)
     match = _MODIFIED_KEY.fullmatch(sequence)
-    if match is None:
+    return None if match is None else _codepoint_key(match)
+
+
+def _function_key(match: re.Match[str]) -> str | None:
+    """A modified cursor or function key, `CSI code ; modifier final`, as prompt-toolkit names it without lock keys."""
+    code, modifier, suffix = match.groups()
+    modifiers = _modifiers(modifier)
+    if modifiers is None or modifiers & _SUPER:
         return None
+    params = f'{code};{modifiers + 1}' if modifiers else code
+    if params == '1' and suffix != '~':
+        params = ''
+    key = ANSI_SEQUENCES.get(f'\x1b[{params}{suffix}')
+    if isinstance(key, tuple):
+        return 'alt-' + _key_name(key[-1])
+    return _key_name(key) if key is not None else None
+
+
+def _codepoint_key(match: re.Match[str]) -> str | None:
+    """A key reported as a codepoint and its modifiers, by CSI-u or xterm's `modifyOtherKeys`."""
     code, base_code, modifier, xterm_modifier, xterm_code = match.groups()
     codepoint = int(code or xterm_code)
     modifiers = _modifiers(modifier or xterm_modifier or '1')
     if modifiers is None:
         return None
-    if modifiers & 4 and codepoint > 127 and base_code:
-        # Kitty supplies the layout-independent identity for non-Latin Ctrl keys.
+    if modifiers & (4 | _SUPER) and codepoint > 127 and base_code:
+        # Kitty supplies the layout-independent identity for non-Latin Ctrl and Cmd keys.
         codepoint = int(base_code)
     name = _NAMED_KEYS.get(codepoint)
     if name is None:
         if not 32 <= codepoint <= 126 or not modifiers:
             return None
-        name = chr(codepoint)
+        # Some terminals report a shifted letter in upper case; the modifier already says Shift.
+        name = chr(codepoint).lower()
     if name == ' ' and modifiers == 1:
         return name
-    prefix = ''.join(label for bit, label in ((4, 'ctrl-'), (2, 'alt-'), (1, 'shift-')) if modifiers & bit)
+    prefix = ''.join(
+        label for bit, label in ((_SUPER, 'super-'), (4, 'ctrl-'), (2, 'alt-'), (1, 'shift-')) if modifiers & bit
+    )
     name = prefix + name
     return _KEY_ALIASES.get(name, name)
 
@@ -179,13 +197,7 @@ class PromptKeys:
             self.feed(name, key.data)
             return
         if self._csi:
-            # The installed decoder splits unrecognized modified keys into individual
-            # keys. Reassemble it here, without modifying its global key table.
-            self._csi += key.data
-            if len(self._csi) > 32 or len(key.data) != 1 or '@' <= key.data <= '~':
-                sequence, self._csi = self._csi, ''
-                if (name := _modified_key(sequence)) is not None:
-                    self.feed(name, sequence)
+            self._extend_csi(key)
             return
         if key.key == Keys.Escape:
             if self._escape:
@@ -201,3 +213,13 @@ class PromptKeys:
             name = 'alt-' + name
             self._escape = False
         self.feed(name, key.data)
+
+    def _extend_csi(self, key: KeyPress) -> None:
+        """Add a token to the pending CSI sequence, and feed the key it names once it ends."""
+        # The installed decoder splits unrecognized modified keys into individual
+        # keys. Reassemble it here, without modifying its global key table.
+        self._csi += key.data
+        if len(self._csi) > 32 or len(key.data) != 1 or '@' <= key.data <= '~':
+            sequence, self._csi = self._csi, ''
+            if (name := _modified_key(sequence)) is not None:
+                self.feed(name, sequence)

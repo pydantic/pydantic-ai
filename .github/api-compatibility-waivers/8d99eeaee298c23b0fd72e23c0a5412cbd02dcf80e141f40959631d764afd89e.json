@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+}

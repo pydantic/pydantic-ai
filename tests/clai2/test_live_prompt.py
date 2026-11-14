@@ -4,7 +4,7 @@ import asyncio
 import io
 import signal
 import sys
-from collections.abc import AsyncGenerator, Callable, Iterator
+from collections.abc import AsyncGenerator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Event as ThreadEvent
@@ -28,28 +28,45 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+from pydantic_clai2.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
+from tests.conftest import no_leaked_tasks
 
 
 @asynccontextmanager
-async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+async def editor(
+    *,
+    output: io.StringIO | None = None,
+    toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
+    clock: Callable[[], float] = lambda: 0,
+    panel: Callable[[str], Sequence[str]] = lambda _: (),
+    key_wait_limit: float = 5,
+) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+    """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
+    """
     output = output if output is not None else io.StringIO()
     console = Console(file=output, force_terminal=True, width=80, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(key_wait_limit),
+    ):
         live = LivePrompt(
             console=console,
             commands=commands,
             history=InMemoryHistory(),
             images=ImageInput(),
             interrupts=Interrupts(),
-            toolbar=lambda: [('', 'ready')],
-            clock=lambda: 0,
+            toolbar=toolbar,
+            clock=clock,
+            panel=panel,
         )
         async with live.opened():
             yield live, pipe, output
@@ -167,18 +184,17 @@ async def test_menu_suspension_preserves_draft_and_output() -> None:
 
 @pytest.mark.parametrize('menu', [False, True])
 async def test_outer_cancellation_releases_terminal_and_tasks(menu: bool) -> None:
-    before = asyncio.all_tasks()
-    with anyio.CancelScope() as scope:
-        async with editor() as (live, _, _):
-            if menu:
-                async with live.suspended():
+    with no_leaked_tasks():
+        with anyio.CancelScope() as scope:
+            async with editor() as (live, _, _):
+                if menu:
+                    async with live.suspended():
+                        scope.cancel()
+                        await anyio.sleep_forever()
+                else:
                     scope.cancel()
                     await anyio.sleep_forever()
-            else:
-                scope.cancel()
-                await anyio.sleep_forever()
-    assert scope.cancelled_caught
-    assert asyncio.all_tasks() <= before
+        assert scope.cancelled_caught
 
 
 @pytest.mark.parametrize('key', ['\x03', '\x1b'])
@@ -274,6 +290,61 @@ async def test_image_paste_and_failure_notice(monkeypatch: pytest.MonkeyPatch) -
         assert 'clipboard unavailable' in live.images.notice
         live.feed('paste', 'plain\r\ntext')
         assert live.buffer.text.endswith('plain\ntext')
+
+
+@pytest.mark.parametrize('replacement', ['none', 'error', 'success', 'unrelated'])
+async def test_paste_error_expires_without_input_or_state_loss(
+    monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    clock = FrameClock()
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, clock=clock) as (live, _, _):
+        image = BinaryContent(data=b'png', media_type='image/png')
+        marker = live.images.attach([image])
+        live.submit(marker + 'queued caption')
+        live.buffer.replace(marker + 'draft caption')
+        original = live.buffer.display()
+
+        def fail() -> list[BinaryContent]:
+            raise ValueError('No image in the clipboard')
+
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', fail)
+        live.feed('ctrl-v')
+        assert 'No image in the clipboard' in terminal.lines()[-1]
+        assert 'Linux' not in live.images.notice
+        clock.now = 29.999
+        live.tick()
+        assert 'Image paste failed' in terminal.lines()[-1]
+        assert live.tick() == pytest.approx(0.001), 'the next wake cannot pass the deadline'
+        if replacement == 'error':
+            live.feed('ctrl-v')
+        elif replacement == 'success':
+            monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', lambda: [image])
+            live.feed('alt-v')
+        elif replacement == 'unrelated':
+            live.images.notice = 'An unrelated image notice'
+        clock.now = 30
+        live.tick()
+        if replacement == 'none':
+            assert live.images.notice == ''
+            assert terminal.lines()[-1].strip() == 'ready | queued: 1'
+        elif replacement == 'error':
+            assert 'Image paste failed' in live.images.notice
+            clock.now = 59.999
+            live.tick()
+            assert live.images.notice == ''
+        elif replacement == 'success':
+            assert live.images.notice.startswith('Image attached')
+        else:
+            assert live.images.notice == 'An unrelated image notice'
+        if replacement != 'success':
+            assert live.buffer.display() == original
+        assert live.queued_messages == (marker + 'queued caption',)
+        assert live.images.resolve(marker) == ('', [image])
+        live.notice = 'A separate editor notice'
+        clock.now = 100
+        live.tick()
+        assert live.notice == 'A separate editor notice'
 
 
 async def test_queue_labels_and_small_terminal() -> None:
@@ -733,12 +804,14 @@ async def test_page_keys_and_wheel_scroll_the_transcript_without_touching_the_dr
         newest = terminal.lines()[0]
         live.feed('pageup')
         assert live.output.view.anchor is not None
+        await anyio.sleep(0)  # Scrolling paints once the input callback returns.
         assert terminal.lines()[0] != newest
         assert live.buffer.text == 'draft' and live.notice == 'kept notice'
         paged = terminal.lines()[0]
         live.feed('mouse', '\x1b[<0;10;5M')  # A click scrolls nothing.
         assert terminal.lines()[0] == paged
         live.feed('mouse', '\x1b[<68;10;5M')  # Shift+wheel up.
+        await anyio.sleep(0)
         assert terminal.lines()[0] == f'line {int(paged.split()[1]) - WHEEL_ROWS}'
         live.feed('mouse', 'not a mouse report')
         live.feed('pagedown')
@@ -783,7 +856,8 @@ async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -
         assert live.notice == '', 'the next key clears the notice'
 
 
-async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
+@pytest.mark.parametrize('key', ['alt-enter', 'ctrl-enter'])
+async def test_steering_returns_the_transcript_to_the_newest_output(key: str) -> None:
     steered: list[str] = []
 
     def steer(text: str) -> bool:
@@ -792,6 +866,7 @@ async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
 
     async with editor() as (live, _, _):
         live.steer = steer
+        live.ctrl_enter_steers = True
         for index in range(60):
             live.output.write(f'line {index}\n')
         live.paint()
@@ -799,19 +874,160 @@ async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
         live.feed('pageup')
         assert live.output.view.anchor is not None
         live.buffer.replace('steer the draft')
-        live.feed('alt-enter')
+        live.feed(key)
         assert live.output.view.anchor is None
         # A queued prompt steers.
         live.buffer.replace('steer the queue')
         live.feed('enter')
         live.feed('pageup')
-        live.feed('alt-enter')
+        live.feed(key)
         assert live.output.view.anchor is None
         # A command never steers, so the view stays where the user scrolled.
         live.buffer.replace('/help')
         live.feed('enter')
         live.feed('pageup')
-        live.feed('alt-enter')
+        live.feed(key)
         assert live.output.view.anchor is not None
         assert await live.read() == '/help'
     assert steered == ['steer the draft', 'steer the queue']
+
+
+async def test_ctrl_enter_enters_outside_windows() -> None:
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        live.ctrl_enter_steers = False
+        live.buffer.replace('queued')
+        live.feed('ctrl-enter')
+        live.buffer.replace('steered')
+        live.feed('alt-enter')
+        assert await live.read() == 'queued'
+    assert steered == ['steered']
+
+
+class FrameClock:
+    """A settable clock that records the times at which the editor built a frame."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.built: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def watch(self, live: LivePrompt, monkeypatch: pytest.MonkeyPatch) -> None:
+        frame = live.frame
+
+        def recorded() -> tuple[str, ...]:
+            self.built.append(self.now)
+            return frame()
+
+        monkeypatch.setattr(live, 'frame', recorded)
+
+    def run(self, live: LivePrompt, *, until: float, step: float = 0.25) -> list[float]:
+        """Tick the editor every `step` seconds of simulated time and return the frames it built meanwhile."""
+        self.built.clear()
+        while self.now < until:
+            self.now += step
+            live.tick()
+        return self.built
+
+
+async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FrameClock()
+    async with editor(clock=clock) as (live, _, _):
+        clock.watch(live, monkeypatch)
+        assert IDLE_REPAINT == 1
+        assert clock.run(live, until=3) == [1.0, 2.0, 3.0]
+        live.feed('x')
+        assert clock.built[-1] == 3.0, 'a key paints at once'
+        assert clock.run(live, until=5) == [4.0, 5.0], 'and the idle count restarts from it'
+        live.console.size = (60, 20)
+        assert clock.run(live, until=5.25) == [5.25], 'a resize without SIGWINCH paints on the next tick'
+        async with live.suspended():
+            assert clock.run(live, until=7) == [], 'a menu owns the screen'
+
+
+async def test_an_idle_editor_sleeps_until_its_next_repaint_is_due() -> None:
+    clock = FrameClock()
+    forks: list[str] = []
+    async with editor(clock=clock, panel=lambda _: forks) as (live, _, _):
+        clock.now = 5
+        assert live.tick() == IDLE_REPAINT, 'it just repainted'
+        clock.now += 0.25
+        assert live.tick() == 0.75
+        live.feed('x')
+        assert live.tick() == IDLE_REPAINT, 'a key paints, which restarts the wait'
+        async with live.suspended():
+            clock.now += 3
+            assert live.tick() == IDLE_REPAINT, 'a menu owns the screen'
+        forks.append('FORK #1 running')
+        clock.now += IDLE_REPAINT
+        assert live.tick() == 0.1, 'forks animate'
+
+
+async def test_a_read_wakes_the_timed_repaint_to_animate_the_work_it_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FrameClock()
+    async with editor(clock=clock) as (live, _, _):
+        await anyio.wait_all_tasks_blocked()
+        delays: list[float] = []
+        tick = live.tick
+
+        def recorded() -> float:
+            delays.append(tick())
+            return delays[-1]
+
+        monkeypatch.setattr(live, 'tick', recorded)
+        live.submit('hi')
+        assert await live.read() == 'hi'
+        await anyio.wait_all_tasks_blocked()
+        assert delays == [0.1], 'the turn it starts shows its spinner at once'
+
+
+async def test_running_forks_animate_every_tick_until_a_second_after_they_settle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FrameClock()
+    forks = ['FORK #1 running']
+    async with editor(clock=clock, panel=lambda _: forks) as (live, _, _):
+        clock.watch(live, monkeypatch)
+        assert clock.run(live, until=1) == [0.25, 0.5, 0.75, 1.0]
+        forks.clear()
+        assert clock.run(live, until=3) == [1.25, 1.5, 1.75, 2.0, 3.0]
+
+
+async def test_a_panel_too_small_to_show_stops_animating(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FrameClock()
+    async with editor(clock=clock, panel=lambda _: ['FORK #1 running']) as (live, _, _):
+        clock.watch(live, monkeypatch)
+        live.console.size = (5, 5)
+        assert clock.run(live, until=3) == [0.25, 0.5, 0.75, 1.0, 2.0, 3.0]
+
+
+async def test_idle_output_too_soon_after_a_frame_paints_on_the_next_tick() -> None:
+    clock = FrameClock()
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, clock=clock) as (live, _, _):
+        live.output.clock = clock
+        live.feed('x')
+        live.console.print('Input cleared.')
+        assert 'Input cleared.' not in terminal.lines(), 'within a frame of the key'
+        clock.now += 0.1
+        live.tick()
+        assert 'Input cleared.' in terminal.lines()
+
+
+async def test_reading_shows_the_status_the_shell_set_before_it() -> None:
+    model = ['old-model']
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, toolbar=lambda: [('', model[0])]) as (live, _, _):
+        model[0] = 'new-model'
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert terminal.lines()[-1].strip() == 'new-model'

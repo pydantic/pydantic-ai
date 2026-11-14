@@ -15,7 +15,7 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import color_system, render_markdown, thinking_heading
+from pydantic_clai2.ui.rendering.rendering import color_system, render_markdown, thinking_heading
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -165,7 +165,7 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_clai2.ui.rendering._rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_clai2.ui.rendering.rendering.SmoothWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds

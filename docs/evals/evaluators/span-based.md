@@ -120,6 +120,9 @@ Match spans with specific attributes:
 {'has_attribute_keys': ['user_id', 'request_id']}
 ```
 
+`has_attributes` compares [values](#spannode-properties) with `==`. A dictionary or list query also matches an
+attribute containing its JSON serialization, as emitted by instrumentation such as Logfire.
+
 ### Status Conditions
 
 Match spans by their [status][pydantic_evals.otel.SpanStatus]:
@@ -336,13 +339,15 @@ evaluators = [
         evaluation_name='had_retries',
     ),
 
-    # Fallback was used
+    # A model request attempt failed, so another one was made
     HasMatchingSpan(
-        query={'name_contains': 'fallback_model'},
-        evaluation_name='used_fallback',
+        query={'name_contains': 'model request attempt'},
+        evaluation_name='had_failed_attempts',
     ),
 ]
 ```
+
+Each attempt at a model request that failed or was rejected gets a `model request attempt <model name>` span, whether [`ModelFallback`](../../capabilities/model-fallback.md#failed-attempts-and-telemetry), a [`FallbackModel`](../../models/overview.md#failed-attempts-and-usage) or another capability that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] moved on from it, so it shows that the request was attempted again, not that it fell back to another model. The span's `gen_ai.request.model` attribute names the model it tried.
 
 ### Complex Behavioral Checks
 
@@ -426,6 +431,10 @@ def example_api(span_tree: SpanTree) -> None:
 ```
 
 ### SpanNode Properties
+
+Attributes support strings, booleans, numbers, nested dictionaries, mixed lists, and `None`. JSON-compatible values
+retain their structure across a span-tree JSON round trip. Byte-string attributes serialize as UTF-8 text;
+serializing a span tree containing invalid UTF-8 raises an error.
 
 Each [`SpanNode`][pydantic_evals.otel.SpanNode] has:
 

@@ -22,7 +22,7 @@ from pydantic_ai import (
     ThinkingPart,
 )
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
-from pydantic_ai_harness.filesystem import FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import set_completions
@@ -209,7 +209,7 @@ async def test_shell_and_arguments_are_ignored_but_edits_and_writes_print_as_in_
             pid=1,
             output_path='/o',
             status_path='/s',
-            total_lines=1,
+            line_count=1,
             truncated=False,
         ),
     ):
@@ -350,7 +350,9 @@ def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monke
     monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     result = menu.build_choices(row).run()
     assert result.item is not None and result.item.value == 'grouped'
-    plain = Text.from_ansi(output.getvalue()).plain
+    # The menu paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+    # https://github.com/Textualize/rich/issues/4090
+    plain = Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain
     assert '● shell git status' in plain
     assert '● shell 3, read_file 2, shell 1' in plain
     # The typed-value row has no sample to preview.

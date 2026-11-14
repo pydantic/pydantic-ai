@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.prompt_injection_defender import PromptInjectionDefender
+from tests.harness._recording_durability import RecordingDurability
 
 requires_onnx = pytest.mark.skipif(importlib.util.find_spec('onnxruntime') is None, reason='requires ONNX Runtime')
 
@@ -69,13 +71,24 @@ def test_defense_with_semantic_detection_raises() -> None:
         PromptInjectionDefender(_observe(), semantic_detection=True)
 
 
-def test_semantic_detection_without_onnx_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ('version_info', 'remedy'),
+    [
+        ((3, 14), 'uv add "pydantic-ai-harness[prompt-injection-defender-ml]"'),
+        ((3, 15), 'needs Python 3.14 or earlier'),
+    ],
+)
+def test_semantic_detection_without_onnx_raises(
+    monkeypatch: pytest.MonkeyPatch, version_info: tuple[int, int], remedy: str
+) -> None:
     def no_spec(name: str) -> None:
         return None
 
     monkeypatch.setattr(importlib.util, 'find_spec', no_spec)
-    with pytest.raises(UserError, match='ONNX Runtime'):
+    monkeypatch.setattr(sys, 'version_info', version_info)
+    with pytest.raises(UserError, match='ONNX Runtime') as exc_info:
         PromptInjectionDefender(semantic_detection=True)
+    assert remedy in str(exc_info.value)
 
 
 @requires_onnx
@@ -284,3 +297,48 @@ async def test_agent_passes_clean_result_through() -> None:
     result = await agent.run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'body': 'quarterly numbers'}
+
+
+# --- Durable execution ------------------------------------------------------
+
+
+def _durable_agent(defender: PromptInjectionDefender[object]) -> Agent[object, str]:
+    agent: Agent[object, str] = Agent(
+        TestModel(call_tools=['fetch']), name='defended', capabilities=[defender, RecordingDurability()]
+    )
+
+    @agent.tool_plain
+    def fetch() -> dict[str, str]:
+        return {'body': INJECTION}
+
+    return agent
+
+
+def test_a_defender_without_an_id_cannot_bind_to_a_durable_agent() -> None:
+    with pytest.raises(UserError, match='needs an explicit `id`'):
+        _durable_agent(PromptInjectionDefender(block_high_risk=True))
+
+
+@pytest.mark.parametrize(
+    ('defender', 'operations'),
+    [
+        pytest.param(
+            PromptInjectionDefender(PromptDefense(enable_tier2=False, block_high_risk=True), id='defender'),
+            ['classify'],
+            id='supplied-defense',
+        ),
+        pytest.param(PromptInjectionDefender(block_high_risk=True, id='defender'), [], id='pattern-only'),
+    ],
+)
+async def test_classification_routing_on_a_json_codec_engine(
+    defender: PromptInjectionDefender[object], operations: list[str]
+) -> None:
+    """A supplied defense's verdicts survive a JSON-codec engine's round trip; pattern-only stays inline."""
+    agent = _durable_agent(defender)
+    result = await agent.run('go')
+    returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert isinstance(returns[0].content, str)
+    assert 'withheld' in returns[0].content
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    assert [name.rsplit('.', 1)[1] for name, _ in bound.calls if '__capability__defender.' in name] == operations

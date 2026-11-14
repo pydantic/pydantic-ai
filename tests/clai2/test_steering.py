@@ -1,6 +1,5 @@
 """Messages queue first; explicit steering uses core delivery."""
 
-import asyncio
 from collections.abc import AsyncIterable, Sequence
 from io import StringIO
 from pathlib import Path
@@ -15,14 +14,15 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from tests.clai2.test_live_prompt import editor
+from tests.conftest import no_leaked_tasks
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -241,12 +241,14 @@ async def test_steering_reaches_running_agent_and_is_cleared() -> None:
         return 'done'
 
     session = Session(agent, deps=None)
+    image = BinaryContent(data=b'alone', media_type='image/png')
     assert not session.steer('idle')
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(session.prompt, 'start')
         await started.wait()
         assert session.steer('change direction')
         assert session.steer('image direction', images=[BinaryContent(data=b'image', media_type='image/png')])
+        assert session.steer('', images=[image])
         release.set()
     prompts = [
         part.content
@@ -256,6 +258,7 @@ async def test_steering_reaches_running_agent_and_is_cleared() -> None:
         if isinstance(part, UserPromptPart)
     ]
     assert 'change direction' in prompts
+    assert [image] in prompts, 'no empty text block beside an image alone'
     assert not session.steer('finished')
 
 
@@ -561,29 +564,28 @@ async def test_shell_echoes_steering_while_run_blocked(
     image = BinaryContent(data=b'image', media_type='image/png')
     marker = shell.images.attach([image]) if attachments else ''
     direction = f'change direction {marker}'.strip()
-    before = asyncio.all_tasks()
-    async with editor() as (live, _, _):
-        live.steer = shell.steer
-        async with anyio.create_task_group() as tasks:
-            tasks.start_soon(shell.run_turn, TurnStart(text='start'))
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await started.wait()
-            live.buffer.replace(direction)
-            if route == 'queued':
-                live.feed('enter')
-            live.feed('alt-enter')
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await echoed.wait()
-            assert not release.is_set()
-            assert transcript.getvalue().count(f'> {direction}') == 1
-            assert shell.images.notice == ''
-            assert live.buffer.text == ''
-            assert live.queued_messages == ()
-            if cancel:
-                tasks.cancel_scope.cancel()
-            else:
-                release.set()
-    assert asyncio.all_tasks() - before == set()
+    with no_leaked_tasks():
+        async with editor() as (live, _, _):
+            live.steer = shell.steer
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(shell.run_turn, TurnStart(text='start'))
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await started.wait()
+                live.buffer.replace(direction)
+                if route == 'queued':
+                    live.feed('enter')
+                live.feed('alt-enter')
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await echoed.wait()
+                assert not release.is_set()
+                assert transcript.getvalue().count(f'> {direction}') == 1
+                assert shell.images.notice == ''
+                assert live.buffer.text == ''
+                assert live.queued_messages == ()
+                if cancel:
+                    tasks.cancel_scope.cancel()
+                else:
+                    release.set()
     assert not shell.steer('after turn')
     prompts = [
         part.content
@@ -646,21 +648,20 @@ async def test_turn_drains_accepted_steering_before_finishing(
         assert result.outcome == ('failed' if fail else 'completed'), transcript.getvalue()
         completed.set()
 
-    before = asyncio.all_tasks()
-    async with anyio.create_task_group() as tasks:
-        tasks.start_soon(run)
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            await tool_started.wait()
-        assert shell.steer('first')
-        assert shell.steer('second')
-        model_release.set()
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            await model_done.wait()
-            await echo_started.wait()
-        assert not completed.is_set()
-        release.set()
-    assert completed.is_set()
-    assert asyncio.all_tasks() == before
+    with no_leaked_tasks():
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await tool_started.wait()
+            assert shell.steer('first')
+            assert shell.steer('second')
+            model_release.set()
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await model_done.wait()
+                await echo_started.wait()
+            assert not completed.is_set()
+            release.set()
+        assert completed.is_set()
     output = transcript.getvalue()
     assert output.count('> first') == output.count('> second') == 1
     assert output.index('> first') < output.index('> second')

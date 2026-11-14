@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_clai2.plugins import _git
-from pydantic_clai2.plugins._git import git_executable
+from pydantic_clai2.plugins import git
+from pydantic_clai2.plugins.git import git_executable
 
 from .test_plugin_loader import Harness
 
@@ -57,7 +57,7 @@ async def test_missing_windows_git_never_falls_back_to_workspace(
     (workspace / 'git.exe').write_text('untrusted')
     monkeypatch.chdir(workspace)
     monkeypatch.setenv('PATH', os.pathsep.join(('', '.', str(workspace))))
-    monkeypatch.setattr(_git, 'git_executable', lambda: git_executable(windows=True))
+    monkeypatch.setattr(git, 'git_executable', lambda: git_executable(windows=True))
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match='Git is required'):
         await harness.loader.command(['add', 'https://example.invalid/plugin.git'])
@@ -90,7 +90,7 @@ async def test_clone_uses_the_resolved_windows_executable(tmp_path: Path, monkey
         executable.chmod(0o755)
     monkeypatch.chdir(workspace)
     monkeypatch.setenv('PATH', os.pathsep.join((str(workspace), str(trusted))))
-    monkeypatch.setattr(_git, 'git_executable', lambda: git_executable(windows=True))
+    monkeypatch.setattr(git, 'git_executable', lambda: git_executable(windows=True))
     destination = tmp_path / 'checkout'
     destination.mkdir()
-    assert await _git.clone_repository('https://example.invalid/plugin.git', destination) == (0, b'trusted')
+    assert await git.clone_repository('https://example.invalid/plugin.git', destination) == (0, b'trusted')

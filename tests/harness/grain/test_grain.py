@@ -21,6 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -30,7 +31,7 @@ DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -62,10 +63,42 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
     return ctx.deps
 
 
+def fake_grain() -> FastMCP:
+    """A stand-in for Grain's server with one read-only tool and one that changes data."""
+    server = FastMCP('grain-fake')
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    def search_meetings() -> str:
+        return 'found'  # pragma: no cover
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+    def tag_meeting() -> str:
+        return 'tagged'  # pragma: no cover
+
+    return server
+
+
+async def tool_names_for(capability: Grain[str | None], deps: str | None) -> list[str]:
+    """The tools a run with `deps` would get, with each hosted Grain connection swapped for `fake_grain()`."""
+    ctx = RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage())
+    toolset = await capability.get_toolset().for_run(ctx)
+
+    def to_fake(leaf: AbstractToolset[str | None]) -> AbstractToolset[str | None]:
+        assert isinstance(leaf, MCPToolset)
+        return MCPToolset(fake_grain())
+
+    toolset = toolset.visit_and_replace(to_fake)
+    async with toolset:
+        return sorted(await toolset.get_tools(ctx))
+
+
 class TestGrain:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
-        [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
+        [
+            (False, '{"grain_read":"read","grain_write":"written","grain_unmarked":"unmarked"}'),
+            (True, '{"grain_read":"read"}'),
+        ],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
         server = FastMCP('grain-fake')
@@ -84,6 +117,13 @@ class TestGrain:
 
         agent = Agent(TestModel(), capabilities=[Grain(client=server, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
+
+    @pytest.mark.parametrize('auth', ['grain-token', per_user_token], ids=['token', 'function'])
+    async def test_read_only_applies_to_the_hosted_connection(
+        self, auth: str | Callable[[RunContext[str | None]], str | None]
+    ) -> None:
+        capability = Grain[str | None](auth=auth, read_only=True)
+        assert await tool_names_for(capability, 'alice-token') == ['grain_search_meetings']
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
@@ -105,8 +145,7 @@ class TestGrain:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: Grain[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,6 +164,11 @@ class TestGrain:
     def test_credential_is_not_in_repr(self) -> None:
         assert 'secret-token' not in repr(Grain(auth='secret-token'))
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        toolset = Grain[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert _http_transport(toolset).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize('auth', ['grain-token', per_user_token], ids=['token', 'function'])
     def test_client_cannot_be_combined_with_auth(
         self, auth: str | Callable[[RunContext[str | None]], str | None]
@@ -142,7 +186,16 @@ class TestGrain:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: Grain[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-grain'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-grain'
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_unset_id_means_the_default(self, id: str | None) -> None:
+        capability = Grain[None](id=id, auth='grain-token')
+        assert (capability.id, only_leaf(capability.get_toolset()).id) == ('grain', 'grain')
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(UserError, match="Capability id 'grain' is used by multiple Grain capabilities"):
+            Agent(TestModel(), capabilities=[Grain(id=None, auth='a'), Grain(id=None, auth='b')])
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[Grain(auth='grain-token', defer_loading=True)])

@@ -1,5 +1,7 @@
 """Decoder attachment and terminal-input handoff, without a renderer."""
 
+import os
+import sys
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 
@@ -8,7 +10,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
-from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
 
 
 async def test_decoding_meta_paste_arrows_and_lone_escape() -> None:
@@ -88,6 +90,22 @@ def test_csi_partial_unknown_and_oversized_sequences_do_not_become_draft_text() 
 
 
 @pytest.mark.parametrize(
+    ('platform', 'environ', 'expected'),
+    [
+        ('win32', {}, True),
+        ('linux', {'WT_SESSION': '0b5c4e1a'}, True),
+        ('linux', {}, False),
+        ('darwin', {}, False),
+    ],
+)
+def test_ctrl_enter_steers_on_windows_and_in_windows_terminal(
+    platform: str, environ: dict[str, str], expected: bool
+) -> None:
+    """Windows Terminal, also around WSL, takes Alt+Enter for full screen (#13399)."""
+    assert ctrl_enter_steers(platform=platform, environ=environ) is expected
+
+
+@pytest.mark.parametrize(
     'sequence',
     ['\x1b\x7f', '\x1b\x08', '\x1b[27;3;127~', '\x1b[27;3;8~', '\x1b[127;3u', '\x1b[8;3u'],
 )
@@ -123,7 +141,7 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (13, 1, 'enter'),
         (13, 2, 'shift-enter'),
         (13, 3, 'alt-enter'),
-        (13, 5, 'enter'),
+        (13, 5, 'ctrl-enter'),
         (13, 6, 'enter'),
         (13, 66, 'shift-enter'),
         (13, 130, 'shift-enter'),
@@ -146,6 +164,14 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (120, 5, 'ctrl-x'),
         (115, 5, 'ctrl-s'),
         (118, 3, 'alt-v'),
+        (122, 5, 'ctrl-z'),
+        (122, 6, 'ctrl-shift-z'),
+        (90, 6, 'ctrl-shift-z'),
+        (121, 5, 'ctrl-y'),
+        (122, 9, 'super-z'),
+        (122, 73, 'super-z'),
+        (122, 10, 'super-shift-z'),
+        (90, 10, 'super-shift-z'),
         (98, 3, 'alt-b'),
         (102, 3, 'alt-f'),
         (57414, 1, 'enter'),
@@ -228,6 +254,8 @@ async def test_navigation_reports_with_lock_modifiers(
         ('\x1b[1074::100;5u', 'ctrl-d'),
         ('\x1b[106::106;5u', 'ctrl-j'),
         ('\x1b[99:67;6u', 'ctrl-shift-c'),
+        ('\x1b[1103::122;9u', 'super-z'),
+        ('\x1b[122:90;10u', 'super-shift-z'),
     ],
 )
 async def test_alternate_key_reports_preserve_control_shortcuts(sequence: str, expected: str, split: bool) -> None:
@@ -245,7 +273,7 @@ async def test_alternate_key_reports_preserve_control_shortcuts(sequence: str, e
 
 @pytest.mark.parametrize(
     'sequence',
-    ['\x1b[13;0u', '\x1b[99;9u', '\x1b[999u', '\x1b[97u', '\x1b[99;5:3u', '\x1b[1;73D', '\x1b[999;65Z'],
+    ['\x1b[13;0u', '\x1b[99;17u', '\x1b[999u', '\x1b[97u', '\x1b[99;5:3u', '\x1b[1;73D', '\x1b[999;65Z'],
 )
 async def test_unrequested_or_invalid_reports_are_not_editor_keys(sequence: str) -> None:
     events: list[str] = []
@@ -294,3 +322,37 @@ def test_sgr_mouse_reports_are_one_key() -> None:
         keys = PromptKeys(source=pipe, feed=lambda key, data: events.append((key, data)), eof=lambda: None)
         keys.dispatch(KeyPress(Keys.Vt100MouseEvent, '\x1b[<64;10;5M'))
     assert events == [('mouse', '\x1b[<64;10;5M')]
+
+
+@pytest.mark.parametrize(('byte', 'expected'), [('\x1a', 'ctrl-z'), ('\x19', 'ctrl-y')])
+def test_legacy_undo_and_redo_bytes_are_editor_keys(byte: str, expected: str) -> None:
+    events: list[str] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append(key), eof=lambda: None)
+        pipe.send_text(byte)
+        for key in pipe.read_keys():
+            keys.dispatch(key)
+    assert events == [expected]
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='job-control signals and termios are POSIX-only')
+async def test_ctrl_z_is_a_key_in_raw_mode_not_a_suspend_signal() -> None:
+    """The editor's raw mode turns off ISIG, so the terminal delivers Ctrl+Z as a byte instead of SIGTSTP."""
+    import termios
+
+    from prompt_toolkit.input.vt100 import Vt100Input
+
+    events: list[str] = []
+    leader, follower = os.openpty()
+    with os.fdopen(follower, 'r') as stdin:
+        keys = PromptKeys(source=Vt100Input(stdin), feed=lambda key, data: events.append(key), eof=lambda: None)
+        try:
+            keys.start()
+            assert not termios.tcgetattr(follower)[3] & termios.ISIG
+            os.write(leader, b'\x1a')
+            keys.read()
+        finally:
+            keys.stop()
+        assert termios.tcgetattr(follower)[3] & termios.ISIG
+    os.close(leader)
+    assert events == ['ctrl-z']

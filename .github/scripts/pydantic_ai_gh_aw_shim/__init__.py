@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeAlias
 
 from pydantic_ai import RunContext
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -52,8 +53,8 @@ from .write import write_file
 # `(command, timeout?)`, `MultiEdit` takes `(file_path, edits)`, etc.), so the
 # precise per-tool shape is enforced at the tool's own definition site — at the
 # registry layer the meaningful contract is "callable that returns (or awaits)
-# a string the model can read".
-ClaudeCodeToolFn: TypeAlias = Callable[..., str | Awaitable[str]]
+# a string the model can read", or for `Read`, an image or PDF it can view.
+ClaudeCodeToolFn: TypeAlias = Callable[..., str | Awaitable[str | list[str | BinaryContent]]]
 
 # `Task` is async like the harness-backed file/shell tools, but unlike them its
 # signature is fully pinned here (it takes a `RunContext`) so that consumers of

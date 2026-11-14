@@ -293,7 +293,7 @@ LLMJudge(
 **Parameters:**
 
 - `rubric` (str): The evaluation criteria (required)
-- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `model` (Model | KnownModelName | str | None): Model to use (default: `'openai:gpt-5.2'`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
 - `include_expected_output` (bool): Include expected output in the prompt (default: `False`)
 - `model_settings` (ModelSettings | None): Custom model settings
@@ -342,7 +342,7 @@ dataset = Dataset(
         # Quality score with different model
         LLMJudge(
             rubric='Overall response quality',
-            model='anthropic:claude-sonnet-4-6',
+            model='{{ anthropic:medium }}',
             score={'evaluation_name': 'quality', 'include_reason': False},
             assertion=False,
         ),
@@ -384,7 +384,7 @@ GEval(
 - `evaluation_steps` (list[str]): Explicit chain-of-thought steps the judge should follow (required)
 - `score_range` (tuple[int, int]): Inclusive integer score range (default: `(1, 5)`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
-- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `model` (Model | KnownModelName | str | None): Model to use (default: `'openai:gpt-5.2'`)
 - `model_settings` (ModelSettings | None): Custom model settings
 - `evaluation_name` (str | None): Custom name for the result (default: `'GEval'`)
 

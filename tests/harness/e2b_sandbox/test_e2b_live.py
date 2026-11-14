@@ -85,13 +85,21 @@ async def sandbox() -> AsyncIterator[E2BSandboxBackend]:
         yield live
 
 
-async def test_destroy_by_ref_without_connecting() -> None:
+async def test_destroy_by_ref_without_connecting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validates that E2B kills a sandbox by id alone: connecting would resume a paused one and bill it."""
+
+    async def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError('destroy connected to the sandbox')
+
     async with _owned() as backend:
         assert backend.ref is not None
+        native = await backend.get_sandbox()
         from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-        await E2BSandbox().destroy(backend.ref)
-        assert not await (await backend.get_sandbox()).is_running()
+        with monkeypatch.context() as patch:
+            patch.setattr(e2b.AsyncSandbox, 'connect', refuse)
+            await E2BSandbox().destroy(backend.ref)
+        assert not await native.is_running()
 
 
 class TestRealExecution:
@@ -157,8 +165,10 @@ class TestRealExecution:
             release.set()
             monkeypatch.setattr(native.commands, 'run', original)
             late = await original(launches[0], background=True, timeout=0)
-            with pytest.raises(e2b.CommandExitException):
+            with pytest.raises(e2b.CommandExitException) as exited:
                 await late.wait()
+            # 143 is the fence's own exit, so a launcher that failed for another reason doesn't pass.
+            assert exited.value.exit_code == 143
             assert not await sandbox.exists(marker)
         finally:
             release.set()

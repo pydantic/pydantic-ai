@@ -181,7 +181,8 @@ async def _execute(client: Client, name: str, arg: str | None = None) -> tuple[A
         return output, await handle.fetch_history()
 
 
-@pytest.mark.parametrize('check', [case for case in cases() if case.id != 'uncaught'])
+# `prepare_reads` checks an in-process engine; each Temporal activity rebuilds the backend from the ref.
+@pytest.mark.parametrize('check', [case for case in cases() if case.id not in ('uncaught', 'prepare_reads')])
 async def test_workspace_scenario(client: Client, check: Check) -> None:
     provider.reset()
 
@@ -251,6 +252,20 @@ async def test_workspace_calls_from_workflow_code_are_activities_and_replay_disp
     replay = await Replayer(workflows=[ScenarioWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
     assert provider.log == log
+
+
+async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(client: Client) -> None:
+    """Workspace agents drew a default `run_id` before every durable run did, so they draw without the patch.
+
+    Their histories from before therefore replay unchanged, and new ones carry no patch marker.
+    """
+    provider.reset()
+    (generated, _, engine_id), history = await _execute(client, 'run_id')
+    assert generated.startswith(f'{engine_id.split(":")[1]}:')
+    assert not any(event.HasField('marker_recorded_event_attributes') for event in history.events)
+
+    replay = await Replayer(workflows=[ScenarioWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 # --- The activity side on its own ---------------------------------------------------------------

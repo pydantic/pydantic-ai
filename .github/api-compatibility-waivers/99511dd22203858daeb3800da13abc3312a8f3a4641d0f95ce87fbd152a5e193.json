@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "False positive: `pydantic_clai2.plugins.UpdateProgress` was renamed to `InstallProgress` and still imports, from a module `__getattr__` that returns `InstallProgress` with a deprecation warning, which Griffe cannot see.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+}

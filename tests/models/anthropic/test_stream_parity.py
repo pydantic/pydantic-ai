@@ -8,17 +8,17 @@ complete `BetaMessage`. This replays each recorded stream through both.
 from __future__ import annotations as _annotations
 
 import dataclasses
-from pathlib import Path
+import itertools
 from typing import Any
 
 import httpx2
 import pytest
-import yaml
 
 from pydantic_ai import _utils
 from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart
 from pydantic_ai.models import ModelRequestParameters
 
+from ...cassette_utils import recorded_interactions
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -31,19 +31,16 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
-_TESTS_DIR = Path(__file__).parents[2]
 
-
-def _recorded_streams() -> dict[str, dict[str, Any]]:
+@pytest.fixture(scope='module')
+def recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        text = path.read_text()
-        if 'event: message_start' not in text:
-            continue
-        for index, interaction in enumerate(yaml.safe_load(text)['interactions']):
-            content = interaction['response']['body'].get('content')
-            if isinstance(content, str) and 'event: message_start' in content:
-                streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
+    for name, interaction in recorded_interactions('event: message_start'):
+        content = interaction['response']['body'].get('content')
+        if isinstance(content, str) and 'event: message_start' in content:
+            streams[name] = interaction
+    # Guards against a cassette format change silently leaving nothing to compare.
+    assert len(streams) > 200
     return streams
 
 
@@ -101,13 +98,18 @@ async def _streamed_and_complete(
     return _comparable(streamed.get()), _comparable(complete)
 
 
-async def test_recorded_streams_match_the_complete_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    streams = _recorded_streams()
-    # Guards against a cassette format change silently leaving nothing to compare.
-    assert len(streams) > 200
+# Splits the replays across tests so that no single test carries all of them against the per-test budget.
+_STRIDE = 8
 
+
+# One worker runs every offset, so the cassettes are scanned once.
+@pytest.mark.xdist_group(name='anthropic_stream_parity')
+@pytest.mark.parametrize('offset', range(_STRIDE))
+async def test_recorded_streams_match_the_complete_message(
+    offset: int, recorded_streams: dict[str, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     streamed: dict[str, dict[str, Any]] = {}
     complete: dict[str, dict[str, Any]] = {}
-    for name, interaction in streams.items():
+    for name, interaction in itertools.islice(recorded_streams.items(), offset, None, _STRIDE):
         streamed[name], complete[name] = await _streamed_and_complete(interaction, monkeypatch)
     assert streamed == complete

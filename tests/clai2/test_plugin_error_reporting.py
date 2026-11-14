@@ -55,6 +55,7 @@ async def test_startup_import_errors_reach_configured_logfire(
                 'token': {'name': 'CLAI2_LOGFIRE_TOKEN'},
                 'service_name': 'plugin-errors-test',
                 'ui_events': ui_events,
+                'include_content': True,
             },
         )
     )
@@ -135,7 +136,9 @@ async def test_startup_only_reports_import_errors_inside_available_plugins(
         tmp_path,
         builtin=(
             PluginSettings(id='mcp', factory='clai2_startup_test_plugin'),
-            PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
+            PluginSettings(
+                id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'include_content': True}
+            ),
         ),
     )
     try:
@@ -171,7 +174,7 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
             PluginSettings(
                 id='observability',
                 factory='pydantic_clai2.builtin_plugins.logfire',
-                settings={'send_to_logfire': False},
+                settings={'send_to_logfire': False, 'include_content': True},
             ),
         ),
     )
@@ -181,7 +184,68 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
         assert "Plugin 'observer': RuntimeError: observer failed" in harness.text
         assert recorder.options[0]['send_to_logfire'] is False
         errors = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
-        assert len(errors) == 1
-        assert (errors[0].attributes or {})['plugin'] == 'broken'
+        observer_failed, broken = errors
+        assert (broken.attributes or {})['plugin'] == 'broken'
+        # The observer's own failure, shown in the terminal and carried on from, is recorded too.
+        assert (observer_failed.attributes or {})['logfire.msg'] == "Plugin 'observer' failed handling PluginLoadFailed"
+        assert observer_failed.status.status_code is trace.StatusCode.ERROR
+        [exception] = observer_failed.events
+        assert (exception.attributes or {})['exception.message'] == 'observer failed'
+        assert 'observer.py' in str((exception.attributes or {})['exception.stacktrace'])
+    finally:
+        await harness.loader.close('exit')
+    root = next(span for span in recorder.spans() if span.name == 'CLAI session')
+    assert observer_failed.parent == root.context
+
+
+async def test_handled_errors_keep_plugin_and_event_names_without_ui_events(tmp_path: Path, recorder: Recorder) -> None:
+    """`SessionEnd` and plugin names like `session_namer` would trip Logfire's `session` scrubbing pattern."""
+    namer = tmp_path / 'session_namer.py'
+    namer.write_text(
+        'from pydantic_clai2.plugins import Plugin, SessionEnd\n'
+        'class Namer(Plugin):\n'
+        '    async def on_session_end(self, event: SessionEnd) -> None:\n'
+        '        raise RuntimeError("could not save")\n'
+    )
+    harness = Harness(
+        tmp_path,
+        builtin=(
+            PluginSettings(
+                id='observability',
+                factory='pydantic_clai2.builtin_plugins.logfire',
+                settings={'send_to_logfire': False},
+            ),
+            PluginSettings(id='session_namer', factory='session_namer', path=str(namer)),
+        ),
+    )
+    (harness.store.plugins_dir / 'session_loader.py').write_text('raise ImportError("missing dependency")\n')
+    await harness.loader.load_all()
+    await harness.loader.close('exit')
+    failed = [
+        span.attributes or {} for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17
+    ]
+    assert [(attributes['logfire.msg'], attributes['plugin']) for attributes in failed] == [
+        ("Plugin 'session_loader' failed to load", 'session_loader'),
+        ("Plugin 'session_namer' failed handling SessionEnd", 'session_namer'),
+    ]
+    assert failed[1]['event'] == 'SessionEnd'
+
+
+async def test_startup_errors_keep_only_their_type_by_default(tmp_path: Path, recorder: Recorder) -> None:
+    harness = Harness(
+        tmp_path,
+        builtin=(PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),),
+    )
+    (harness.store.plugins_dir / 'broken.py').write_text('raise ImportError("missing pasted-token dependency")\n')
+    try:
+        await harness.loader.load_all()
+        assert "Plugin 'broken': ImportError: missing pasted-token dependency" in harness.text
+        [error] = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
+        assert (error.attributes or {})['plugin'] == 'broken'
+        assert error.status.status_code is trace.StatusCode.ERROR
+        # The message can quote saved settings, so like agent spans without content the event keeps only the type.
+        assert [dict(event.attributes or {}) for event in error.events] == [
+            {'exception.type': 'ImportError', 'exception.escaped': 'False'}
+        ]
     finally:
         await harness.loader.close('exit')

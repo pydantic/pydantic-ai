@@ -1,15 +1,11 @@
-"""Compaction receipts: a deterministic, honest note left in the surviving history.
+"""Compaction receipts: a deterministic note left in the surviving history.
 
 After a strategy that crosses a compaction *boundary* (older history summarized or dropped)
 rewrites the conversation, it can append a standard receipt so the model knows its memory of
 everything before that point is secondhand and can re-verify rather than confabulate. The
 receipt carries no timestamp -- it is a pure function of its inputs, so its bytes are
 deterministic and testable -- and, when a handle provider is attached and discoverable, an
-identifier for persisted run history.
-
-Wording note: the exact receipt text is content, so it is shipped minimal/neutral and flagged
-pending the benchmark eval-rig pass. The mechanism (presence, determinism, handle discovery,
-OTel span event) is structural and lands now, gated behind each strategy's `receipts` flag.
+identifier for persisted run history. Each strategy gates it behind its `receipts` flag.
 """
 
 from __future__ import annotations
@@ -18,7 +14,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai.messages import TextContent, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 _RECEIPT_MARKER = '[History before this point'
@@ -110,6 +106,11 @@ def is_receipt_part(part: object) -> bool:
         and not isinstance(part.content, str)
         and any(isinstance(item, TextContent) and item.metadata == _RECEIPT_METADATA for item in part.content)
     )
+
+
+def is_receipt_message(message: ModelMessage) -> bool:
+    """Return True if *message* is a request made up entirely of receipt parts."""
+    return isinstance(message, ModelRequest) and bool(message.parts) and all(is_receipt_part(p) for p in message.parts)
 
 
 # ---------------------------------------------------------------------------

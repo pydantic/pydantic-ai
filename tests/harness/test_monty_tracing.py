@@ -122,11 +122,15 @@ async def test_code_mode_call_contexts(
 
     spans = exporter.get_finished_spans()
     tool_spans = [s for s in spans if s.attributes and s.attributes.get('gen_ai.tool.name')]
-    if outcome == 'success':
-        assert {s.attributes['gen_ai.tool.name'] for s in tool_spans if s.attributes} == {'first', 'second'}
+    tool_names: set[str] = set()
     for span in tool_spans:
         assert span.attributes is not None
-        _assert_call_parent(span, spans, str(span.attributes['gen_ai.tool.name']))
+        tool_name = span.attributes['gen_ai.tool.name']
+        assert isinstance(tool_name, str)
+        tool_names.add(tool_name)
+        _assert_call_parent(span, spans, tool_name)
+    if outcome == 'success':
+        assert tool_names == {'first', 'second'}
 
 
 @pytest.mark.parametrize('mode', ['parallel', 'inline', 'global'])

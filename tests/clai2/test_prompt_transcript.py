@@ -21,7 +21,7 @@ from pydantic_clai2.ui.prompt.prompt_transcript import (
     style_prefix,
 )
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._branding import print_banner
+from pydantic_clai2.ui.rendering.branding import print_banner
 from pydantic_clai2.ui.rendering.recolor import recolor
 
 
@@ -276,7 +276,8 @@ def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None
     block.write('answer\n')
     buffer.clear()
     buffer.write('after clear\n')
-    assert Text.from_ansi(buffer.printed(width=40)).plain == 'after clear'
+    # Rich 15.0.0's `from_ansi` keeps a trailing newline (https://github.com/Textualize/rich/pull/4076).
+    assert [Text.from_ansi(line).plain for line in buffer.printed(width=40).splitlines()] == ['after clear']
     assert buffer.printed(width=40) == ''
     block.freeze()
     assert plain(buffer) == ['after clear', '']
@@ -345,7 +346,9 @@ def test_pre_live_transcript_migrates_in_place_preserving_styles_and_partial_ans
     transcript.write('m green\x1b[0m\n')
     assert plain(transcript) == ['old output', 'pending green', '']
     assert '\x1b[32m' in transcript.frame(width=80, height=24).rows[1]
-    assert Text.from_ansi(transcript.printed(width=80)).plain == 'pending green', 'old output was already emitted'
+    # Rich 15.0.0's `from_ansi` keeps a trailing newline (https://github.com/Textualize/rich/pull/4076).
+    printed = [Text.from_ansi(line).plain for line in transcript.printed(width=80).splitlines()]
+    assert printed == ['pending green'], 'old output was already emitted'
     output = io.StringIO()
     console = Console(file=output)
     with transcript.capture(console):
@@ -418,6 +421,10 @@ def _colours(rows: Iterable[str]) -> list[tuple[str | None, str | None]]:
     ]
 
 
+TOKYO_MUTED = '#84889d'
+"""tokyo_night's muted slot 8, `#414868`, raised to 4.5:1 on its background."""
+
+
 def test_styled_lines_repaint_in_a_newly_selected_theme_and_back() -> None:
     styles = [
         Style(color=theme.color(theme.MUTED)),
@@ -428,10 +435,9 @@ def test_styled_lines_repaint_in_a_newly_selected_theme_and_back() -> None:
     ]
     buffer = _painted(_printed(styles))
     original = _colours(buffer.frame(width=80, height=24).rows)
-    tokyo = PALETTES['tokyo_night']
     with theme.use(lambda: 'tokyo_night'):
         expected = [
-            (tokyo.ansi[8], None),
+            (TOKYO_MUTED, None),
             (None, theme.diff_theme().addition.lower()),
             ('color(2)', None),
             ('#123456', '#abcdef'),
@@ -455,7 +461,7 @@ def test_palette_output_repaints_in_another_palette_or_the_default_theme() -> No
         buffer = _painted(_printed(styles))
     with theme.use(lambda: 'tokyo_night'):
         assert _colours(buffer.frame(width=80, height=24).rows) == [
-            (tokyo.ansi[8], None),
+            (TOKYO_MUTED, None),
             (tokyo.ansi[2], tokyo.bg),
             (tokyo.ansi[1], None),
         ]
@@ -471,7 +477,7 @@ def test_recolor_accepts_spans_styled_by_name() -> None:
     themed = recolor(text, source='default', target='tokyo_night')
     style = themed.spans[0].style
     assert isinstance(style, Style)
-    assert style.bold and style.color is not None and style.color.name == PALETTES['tokyo_night'].ansi[8]
+    assert style.bold and style.color is not None and style.color.name == TOKYO_MUTED
     assert text.spans[0].style == f'bold {theme.GREY}', 'the retained line is unchanged'
 
 
@@ -496,29 +502,27 @@ def test_rebind_assumes_the_current_theme_for_lines_retained_without_one() -> No
 
 
 def test_an_unfinished_line_keeps_the_theme_it_started_in() -> None:
-    tokyo = PALETTES['tokyo_night']
     selected = ['default']
     with theme.use(lambda: selected[0]):
         buffer = _painted(_printed([Style(color=theme.color(theme.MUTED))]).removesuffix('\n'))
         selected[0] = 'tokyo_night'
-        assert _colours(buffer.frame(width=80, height=24).rows) == [(tokyo.ansi[8], None)]
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(TOKYO_MUTED, None)]
         buffer.write(' done\n' + _printed([Style(color=theme.color(theme.MUTED))]))
-        assert _colours(buffer.frame(width=80, height=24).rows) == [(tokyo.ansi[8], None)] * 2
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(TOKYO_MUTED, None)] * 2
         selected[0] = 'default'
         assert _colours(buffer.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 2
     assert plain(buffer) == ['line 0 done', 'line 0', '']
 
 
 def test_an_unfinished_markdown_line_keeps_the_theme_it_started_in() -> None:
-    tokyo = PALETTES['tokyo_night']
     buffer = TranscriptBuffer()
     block = _block(buffer)
     block.write(_printed([Style(color=theme.color(theme.MUTED))]).removesuffix('\n'))
     block.freeze()
     with theme.use(lambda: 'tokyo_night'):
-        assert _colours(buffer.rows(0, width=80)) == [(tokyo.ansi[8], None)]
+        assert _colours(buffer.rows(0, width=80)) == [(TOKYO_MUTED, None)]
         block.write(' more\nnext')
-        assert _colours(buffer.rows(0, width=80)) == [(tokyo.ansi[8], None), (None, None)]
+        assert _colours(buffer.rows(0, width=80)) == [(TOKYO_MUTED, None), (None, None)]
 
 
 def test_branding_keeps_its_colours_when_the_theme_changes() -> None:

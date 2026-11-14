@@ -1,43 +1,27 @@
 """Local image attachments for the prompt editor, not a plugin extension point."""
 
+import os
+import platform
 import re
 import shlex
+import shutil
+import sys
+import time
 from collections.abc import Callable, Sequence
-from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
-from PIL import Image, ImageGrab, ImageOps
+import anyio
+from PIL import Image, ImageGrab
+from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
-from typing_extensions import Buffer
 
 from pydantic_ai.messages import BinaryContent
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import FORMATS, encode_image
 
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_PENDING_BYTES = 32 * 1024 * 1024
-MAX_PIXELS = 25_000_000
 MARKER = re.compile(r'\[image:[0-9a-f]{8}\]')
-
-
-class ImageBuffer(BytesIO):
-    """Reject oversized encoded output before it grows the attachment buffer."""
-
-    def write(self, data: Buffer, /) -> int:
-        """Enforce the byte limit for each encoder write, including partial output."""
-        if self.tell() + memoryview(data).nbytes > MAX_IMAGE_BYTES:
-            raise ValueError('Image exceeds the 10 MiB attachment limit.')
-        return super().write(data)
-
-
-def encode_image(image: Image.Image) -> BinaryContent:
-    """Normalize to PNG, bounding decoded dimensions and encoded payload size."""
-    if image.width * image.height > MAX_PIXELS:
-        raise ValueError('Image exceeds the 25 megapixel limit.')
-    mode = 'RGBA' if 'A' in image.getbands() or 'transparency' in image.info else 'RGB'
-    with ImageBuffer() as output, ImageOps.exif_transpose(image) as oriented, oriented.convert(mode) as normalized:
-        normalized.info.clear()
-        normalized.save(output, format='PNG')
-        return BinaryContent(data=output.getvalue(), media_type='image/png')
+ATTACHED = 'Image attached. Enter sends it; delete its marker to remove it.'
 
 
 def local_image_path(text: str) -> Path:
@@ -53,9 +37,9 @@ def local_image_path(text: str) -> Path:
 def read_image(path: Path) -> BinaryContent:
     """Read a local file, checking its contents rather than trusting its suffix."""
     path = local_image_path(str(path))
-    if path.stat().st_size > MAX_IMAGE_BYTES:
+    if path.stat().st_size > image_codec.MAX_IMAGE_BYTES:
         raise ValueError('Image file exceeds the 10 MiB attachment limit.')
-    with Image.open(path, formats=['PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF']) as image:
+    with Image.open(path, formats=FORMATS) as image:
         return encode_image(image)
 
 
@@ -66,7 +50,7 @@ def read_images(paths: Sequence[Path]) -> list[BinaryContent]:
     for path in paths:
         image = read_image(path)
         size += len(image.data)
-        if size > MAX_PENDING_BYTES:
+        if size > image_codec.MAX_PENDING_BYTES:
             raise ValueError('Pasted images exceed the 32 MiB pending attachment limit.')
         images.append(image)
     return images
@@ -93,13 +77,50 @@ def pasted_paths(text: str) -> list[Path]:
 
 def clipboard_images() -> list[BinaryContent]:
     """Use Pillow's native macOS/Windows and wl-paste/xclip Linux backends."""
-    content = ImageGrab.grabclipboard()
+    try:
+        content = ImageGrab.grabclipboard()
+    except (NotImplementedError, ChildProcessError) as exc:
+        if sys.platform != 'linux':
+            raise
+        guidance = clipboard_guidance(exc)
+        raise type(exc)(f'{exc}. {guidance}') from exc
     if isinstance(content, Image.Image):
         with content:
             return [encode_image(content)]
     if isinstance(content, list) and content:
         return read_images([Path(path) for path in content])
     raise ValueError('No image in the clipboard. Copy an image or paste an image file path.')
+
+
+def clipboard_guidance(exc: NotImplementedError | ChildProcessError) -> str:
+    """Explain a failed Linux backend without probing or replacing its transport."""
+    remote = (
+        'Run in an accessible graphical session, check your remote clipboard bridge if using SSH, '
+        'or paste an image file path accessible on this machine.'
+    )
+    if isinstance(exc, ChildProcessError):
+        return remote
+    if os.environ.get('WAYLAND_DISPLAY'):
+        package = 'wl-clipboard'
+    elif os.environ.get('DISPLAY'):
+        package = 'xclip'
+    else:
+        return remote
+    try:
+        release = platform.freedesktop_os_release()
+    except OSError:
+        release = {}
+    distributions = {release.get('ID', ''), *release.get('ID_LIKE', '').split()}
+    installers = (
+        ({'debian', 'ubuntu'}, 'apt-get', 'sudo apt-get install'),
+        ({'fedora', 'rhel', 'centos'}, 'dnf', 'sudo dnf install'),
+        ({'arch'}, 'pacman', 'sudo pacman -S'),
+        ({'alpine'}, 'apk', 'sudo apk add'),
+    )
+    for family, manager, command in installers:
+        if distributions & family and shutil.which(manager):
+            return f'Install `{package}` with `{command} {package}`. {remote}'
+    return f"Install `{package}` using your distribution's package manager. {remote}"
 
 
 class ImageInput:
@@ -109,12 +130,53 @@ class ImageInput:
         """Start with no clipboard access and no attachments."""
         self.pending: dict[str, BinaryContent] = {}
         self.notice = ''
+        self._error: tuple[str, float] | None = None
+        self._error_clock: Callable[[], float] = time.monotonic
         self.retry_text = ''
+
+    def paste_failed(self, exc: Exception, *, clock: Callable[[], float] = time.monotonic) -> None:
+        """Give each paste error its own thirty-second lifetime."""
+        self.notice = f'Image paste failed: {exc}'
+        self._error_clock = clock
+        self._error = (self.notice, clock() + 30)
+
+    def expire_notice(self) -> bool:
+        """Return whether an expired paste error was cleared, so a live editor can repaint."""
+        if self._error is None:
+            return False
+        message, deadline = self._error
+        if self.notice != message:
+            self._error = None
+        elif self._error_clock() >= deadline:
+            self.notice = ''
+            self._error = None
+            return True
+        return False
+
+    def notice_remaining(self) -> float:
+        """Bound the existing repaint wait by the paste error's deadline."""
+        if self._error is None or self.notice != self._error[0]:
+            return float('inf')
+        return max(0, self._error[1] - self._error_clock())
+
+    def resume_notice(self, app: Application[str]) -> None:
+        """Schedule remaining paste-error expiry on `app`, on failure and each line-prompt reset."""
+        self.expire_notice()
+        if self._error is None:
+            return
+        remaining = self.notice_remaining()
+
+        async def expire_feedback() -> None:
+            await anyio.sleep(remaining)
+            self.expire_notice()
+            app.invalidate()
+
+        app.create_background_task(expire_feedback())
 
     def attach(self, images: Sequence[BinaryContent]) -> str:
         """Stage all images atomically; the editor inserts these removable markers."""
         size = sum(len(image.data) for image in (*self.pending.values(), *images))
-        if size > MAX_PENDING_BYTES:
+        if size > image_codec.MAX_PENDING_BYTES:
             raise ValueError('Pending images exceed 32 MiB. Submit or clear the existing attachments first.')
         markers: list[str] = []
         for image in images:
@@ -123,7 +185,6 @@ class ImageInput:
                 marker = f'[image:{uuid4().hex[:8]}]'
             self.pending[marker] = image
             markers.append(marker)
-        self.notice = 'Image attached. Enter sends it; delete its marker to remove it.'
         return ' '.join(markers) + ' '
 
     def resolve(self, text: str) -> tuple[str, list[BinaryContent]]:
@@ -166,8 +227,10 @@ class ImageInput:
                         return
                     images = read_images(paths)
                 buffer.insert_text(self.attach(images))
+                self.notice = ATTACHED
             except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
-                self.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
+                self.paste_failed(exc)
+                self.resume_notice(event.app)
             finally:
                 event.app.invalidate()
 

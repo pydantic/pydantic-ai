@@ -1,8 +1,8 @@
 """Map a provider response body the SDK could not decode to `ModelAPIError`.
 
 Some gateways answer 200 with a body that isn't JSON (e.g. keep-alive whitespace before an upstream failure). Most
-provider SDKs then raise their JSON decoder's error, which isn't a `ModelAPIError`, so `FallbackModel` wouldn't
-fall back.
+provider SDKs then raise their JSON decoder's error, or return the body as text when its content type isn't JSON.
+Neither is a `ModelAPIError`, so `FallbackModel` wouldn't fall back.
 """
 
 from __future__ import annotations as _annotations
@@ -31,6 +31,20 @@ def map_decode_errors(model_name: str, *error_types: type[Exception]) -> Generat
         yield
     except (*_DECODE_ERRORS, *error_types) as e:
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as JSON: {e}') from e
+
+
+_ResponseT = TypeVar('_ResponseT')
+
+
+def check_json_response(model_name: str, response: _ResponseT) -> _ResponseT:
+    """Raise `ModelAPIError` if the SDK returned the response body as text because its content type isn't JSON.
+
+    The OpenAI, Anthropic and Groq SDKs return the text of a response with e.g. a `text/plain` content type instead of
+    raising, though their methods are typed as returning a parsed response.
+    """
+    if isinstance(response, str):
+        raise ModelAPIError(model_name=model_name, message=f'Expected a JSON response, got: {response!r}')
+    return response
 
 
 _ChunkT = TypeVar('_ChunkT')

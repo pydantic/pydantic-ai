@@ -20,7 +20,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
-from tests.conftest import detach_dbos_logging
+from tests.conftest import detach_dbos_logging, without_admin_server
 
 
 @pytest.fixture
@@ -33,9 +33,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_tool_call_judge',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance
@@ -127,7 +126,8 @@ async def test_dbos_replays_the_recorded_verdict(dbos: DBOS) -> None:
     # Re-execute the workflow function from its last step, the way recovery does. Calling it again
     # under the same ID is no replay: from `dbos` 2.28 it returns the stored result without running it.
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    assert await handle.get_result() == 'done'
+    # The default 1s result poll would add up to a second on top of the internal queue's own poll.
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
 
     assert _judge_calls == 1, 'the replay asked the judging model again'
     assert [v.verdict for v in _verdicts] == ['allow', 'allow'], '`on_verdict` fires on every replay'

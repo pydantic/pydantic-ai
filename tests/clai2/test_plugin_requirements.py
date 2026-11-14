@@ -1,6 +1,7 @@
 """Feature tags on saved plugin settings: other builds' settings are ignored, never misapplied."""
 
 import io
+import logging
 import sqlite3
 import sys
 from collections.abc import Sequence
@@ -17,9 +18,8 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import SubAgents
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
-from pydantic_clai2.commands import Commands, plugins_command
+from pydantic_ai_harness.sub_agents import SubAgents
+from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, features
 from pydantic_clai2.config.features import check_feature_name
 from pydantic_clai2.config.plugin_requirements import (
@@ -35,11 +35,10 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.loader import PluginLoader
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu
-
-CODER = 'pydantic_ai_harness.coder:Coder'
 
 FANCY = """
 from pydantic import BaseModel
@@ -262,12 +261,18 @@ def test_unreadable_and_stale_rows(tmp_path: Path) -> None:
     assert tags(store, 'q') == {'a': ['x']}
 
 
-async def test_unsupported_setting_is_dropped_with_one_notice(tmp_path: Path) -> None:
+async def test_unsupported_setting_is_dropped_quietly(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    caplog.set_level(logging.DEBUG, logger='pydantic_clai2.plugins.loader')
     harness = Harness(tmp_path)
     harness.fancy('{"mode": "fancy", "color": "red"}', '{"mode": ["fancy-mode"]}')
     await harness.loader.load_all()
     assert 'mode=plain color=red' in harness.text
-    assert harness.text.count('fancy: ignored saved mode (needs fancy-mode); using defaults.') == 1
+    # Another build's settings are expected in the shared database, so startup does not announce them.
+    assert 'ignored' not in harness.text
+    assert capsys.readouterr() == ('', '')
+    assert caplog.messages == ['fancy: ignored saved mode (needs fancy-mode); using defaults.']
     assert '(needs fancy-mode)' in await harness.loader.command(['reload', 'fancy'])
     menu = PluginMenu(harness.loader, apply=lambda action: None)
     assert 'fancy: ignored saved mode' in menu.details(MenuItem('fancy', value='fancy'))
@@ -290,7 +295,28 @@ async def test_unknown_or_unreadable_feature_drops_the_setting(tmp_path: Path) -
     harness.fancy('{"mode": "fancy", "color": "red"}', '{"mode": ["feature-from-the-future"], "color": 7}')
     await harness.loader.load_all()
     assert 'mode=plain color=blue' in harness.text
-    assert f'ignored saved color, mode (needs {UNREADABLE}, feature-from-the-future)' in harness.text
+    reloaded = await harness.loader.command(['reload', 'fancy'])
+    assert f'ignored saved color, mode (needs {UNREADABLE}, feature-from-the-future)' in reloaded
+
+
+async def test_settings_left_by_another_build_stay_saved_and_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The incident: an experimental build saved keys this build has never heard of, tagged with its feature."""
+    harness = Harness(tmp_path)
+    harness.fancy(
+        '{"mode": "fancy", "color": "red", "api_key": "secret", "team": "core"}',
+        '{"api_key": ["fleet-control"], "team": ["fleet-control"]}',
+    )
+    snapshot = harness.store.path.read_bytes()
+    await harness.loader.load_all()
+    assert 'mode=fancy color=red' in harness.text
+    assert 'ignored' not in harness.text
+    assert capsys.readouterr() == ('', '')
+    # Reading never rewrites: the other build still finds its settings and tags.
+    assert harness.store.path.read_bytes() == snapshot
+    menu = PluginMenu(harness.loader, apply=lambda action: None)
+    assert 'fancy: ignored saved api_key, team' in menu.details(MenuItem('fancy', value='fancy'))
 
 
 async def test_untagged_settings_and_staged_adds_load_as_saved(tmp_path: Path) -> None:
@@ -353,13 +379,6 @@ def test_host_rejects_bad_requirement_declarations() -> None:
     with pytest.raises(ValueError, match='lowercase words'):
         host.settings(Model, requires={'mode': ['Fancy']})
     assert host.requirements == {'Mode': frozenset({'fancy-mode'})}
-
-
-def test_offline_add_uses_the_capability_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(features.CAPABILITY_REQUIREMENTS, CODER, {'sub_agents': frozenset({'stock-bound-delegation'})})
-    store = SettingsStore(tmp_path / 'config.db')
-    plugins_command(store, ['add', 'mine', CODER, '{"sub_agents": true}'])
-    assert tags(store, 'mine') == {'sub_agents': ['stock-bound-delegation']}
 
 
 GATE = """
@@ -432,7 +451,7 @@ async def test_settings_built_capability_with_nested_hooks_stays_unguarded(tmp_p
     await run_unguarded(tmp_path, guarded)
 
 
-def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | None) -> _Shell[None, str]:
+def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | None) -> SessionRuntime[None, str]:
     store = SettingsStore(tmp_path / 'settings.db')
     store.plugins_dir.mkdir(exist_ok=True)
     path = store.plugins_dir / 'bare_coder.py'
@@ -466,9 +485,9 @@ def delegates(capabilities: Sequence[AgentCapability[None]]) -> bool:
     return any(isinstance(leaf, SubAgents) for leaf in leaves)
 
 
-def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
+async def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
     shell = coder_shell(tmp_path, io.StringIO(), sub_agents_tags=None)
-    assert shell.fork_session(None, []).on_setup_error == shell.capability_failed
+    assert (await shell.fork_session(None, [])).on_setup_error == shell.capability_failed
 
 
 async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path) -> None:
@@ -477,7 +496,9 @@ async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path
     shell = coder_shell(tmp_path, output, sub_agents_tags='{"sub_agents": ["stock-bound-delegation"]}')
     await shell.loader.load_all()
     try:
-        assert 'coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.' in output.getvalue()
+        assert 'ignored' not in output.getvalue()
+        coder = next(entry for entry in shell.loader.entries() if entry.name == 'coder')
+        assert coder.ignored == 'coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.'
         assert not delegates(shell.loader.capabilities())
         ended = await shell.run_turn(TurnStart(text='hello'), headless=True)
         assert ended.outcome == 'completed', ended.error

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
@@ -12,10 +11,7 @@ from rich.text import Text
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
-
-if TYPE_CHECKING:
-    from pydantic_clai2.ui.rendering._rendering import ColorSystemName
+from pydantic_clai2.ui.rendering.tool_output import ColorSystemName, terminal_text
 
 _Streak = tuple[str, int]
 """A tool name and how many consecutive calls it received."""

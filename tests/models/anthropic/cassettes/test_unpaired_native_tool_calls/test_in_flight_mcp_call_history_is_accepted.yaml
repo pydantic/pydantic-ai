@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "978"
+      - "979"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -48,7 +48,7 @@ interactions:
             - text: "4"
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         mcp_servers:
         - type: url
           name: deepwiki
@@ -81,10 +81,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=29676
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b8e01dd143be85e2097864f5821c8208-8eda4bad288a03a7-01
+      - 00-0ff1c353e4d90e966e7d38a830d6dbe7-1d8e994063305c1d-01
       transfer-encoding:
       - chunked
       vary:
@@ -93,264 +95,195 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY5zbf8HkCQjuLzCRa6W","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2151,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEtuevVXSDCCsxKFBvj","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2487,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_01SAss3KEwASziHZoMR6HcZU","is_error":false,"content":[{"type":"text","text":"Pydantic AI is a Python framework for building production-grade Generative AI applications, emphasizing type safety, structured outputs, and model-agnostic design   . It provides a unified interface for interacting with various Large Language Models (LLMs) from different providers and managing complex agent workflows  . The framework is built by the team behind Pydantic Validation and aims to bring a similar ergonomic design to GenAI development .\n\n## Core Purpose and Features\nPydantic AI's primary purpose is to simplify the development of robust and reliable Generative AI applications  . It achieves this by offering a structured, type-safe, and extensible framework that abstracts away the complexities of interacting with different LLM providers  .\n\nKey features include:\n*   **Type-Safe Agents**: Agents are defined with generic types for compile-time validation, leveraging Pydantic for output validation and dependency injection  .\n*   **Model-Agnostic Design**: It supports over 20 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers   .\n*   **Structured Outputs**: It provides automatic Pydantic validation and reflection/self-correction to ensure structured and reliable outputs from LLMs   .\n*   **Comprehensive Observability**: Integration with OpenTelemetry and Pydantic Logfire provides real-time debugging, performance monitoring, and cost tracking  .\n*   **Production-Ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .\n*   **Graph Execution**: The `pydantic_graph.Graph` module provides a graph-based state machine for orchestrating agent execution, using nodes like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode`  .\n\n## Framework Architecture\nPydantic AI is organized as a `uv` workspace monorepo, containing several distinct Python packages  .\n\n### Core Packages\n*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools  .\n*   `pydantic-ai`: A meta-package that bundles all features and common providers  .\n\n### Supporting Packages\n*   `pydantic-graph`: A typed graph and state machine library used for agent loops and workflows  .\n*   `pydantic-evals`: A framework for systematic testing and evaluation of LLM performance  .\n*   `clai`: A command-line interface for interacting with agents and models  .\n*   `pydantic-ai-examples`: A collection of examples demonstrating Pydantic AI capabilities .\n\n## Agent Execution Flow\nThe `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types :\n*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .\n*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .\n*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .\n\nThe `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .\n\n## Notes\nThe `pydantic-ai` repository also includes specialized *migration skills* as agents to assist in migrating codebases from other frameworks like Mastra, Google ADK, and Claude Agent SDK to Pydantic AI . These skills guide users through tracing source application paths, mapping concepts, and substituting constructs with Pydantic AI primitives .\n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n- [Project Philosophy and Contribution Guidelines (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1.3)\n- [Framework Comparisons and Migration (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#11.7)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai_a3924ae7-8439-4063-9485-11b01101fda2\n"}]}            }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_01SAss3KEwASziHZoMR6HcZU","is_error":false,"content":[{"type":"text","text":"Pydantic AI is a Python SDK and agent framework for building production-grade Generative AI applications and workflows.  It is designed to be provider-agnostic, supporting various LLM providers like OpenAI, Anthropic, and Google through a unified interface.  The framework emphasizes type safety, observability, and extensibility, leveraging Pydantic V2 for robust validation. \n\n## Core Features and Design Principles\n\nPydantic AI is built with several key design principles:\n*   **Model-Agnostic**: It supports a wide range of models and providers through a unified interface, allowing for easy swapping of models. \n*   **Type Safety**: The framework is designed for maximum IDE context and static type checking, aiming to catch errors at write-time rather than runtime. \n*   **Seamless Observability**: It integrates with Pydantic Logfire and OpenTelemetry for real-time debugging, tracing, and cost tracking of agent runs. \n*   **Structured Output**: Pydantic AI provides powerful streaming of structured data with immediate Pydantic validation. \n*   **Durable Execution**: It supports preserving agent progress across restarts and handling long-running workflows using technologies like Temporal. \n*   **Composable Capabilities**: Agents can be built from reusable units that bundle tools, hooks, instructions, and model settings. \n\n## Package Structure\n\nPydantic AI is organized as a `uv` workspace monorepo with several distinct Python packages:\n*   `pydantic-ai`: This is a meta-package that bundles common provider extras and dependencies. \n*   `pydantic-ai-slim`: This package contains the minimal core framework, including the agent logic and models. \n*   `pydantic-graph`: A typed graph and state machine library used for workflows. \n*   `pydantic-evals`: An evaluation framework for running tests and benchmarks. \n*   `pydantic-ai-harness`: A capability and harness library offering composable tools and sandboxes for advanced agent behaviors. \n*   `clai`: A Command Line Artificial Intelligence terminal utility. \n*   `pydantic-ai-examples`: A suite of demonstration examples. \n\n## Installation\n\nYou can install Pydantic AI using `pip` or `uv`. \n*   **Standard Installation**: `pip install pydantic-ai` includes core packages and libraries for major providers like OpenAI, Anthropic, and Google, along with integrations for Logfire and the CLI. \n*   **Slim Installation**: `pip install pydantic-ai-slim` provides a minimal footprint, allowing you to add specific providers or features via extras (e.g., `[openai]`, `[temporal]`). \n\n## Example Usage\n\nA basic Pydantic AI agent can be created and run with a few lines of code. For instance, to create an agent that uses Anthropic's Claude model and responds concisely:\n```python\nfrom pydantic_ai import Agent\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-0',\n    instructions='Be concise, reply with one sentence.',\n)\nresult = agent.run_sync('Where does \"hello world\" come from?')\nprint(result.output)\n```\nThis example configures an `Agent` with a specific model and instructions, then runs it synchronously with a prompt.  The `result.output` will contain the LLM's response. \n\n## Notes\n\nThe `pydantic-ai` project aims to provide a robust and type-safe framework for AI agent development, similar to how FastAPI provides an ergonomic design for web development.  The `AGENTS.md` file provides guidelines for contributors, emphasizing the importance of high-quality, type-safe, and well-documented code. \n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n- [Package Structure and Organization (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1.1)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai_c53c7a8b-7b20-4641-90a6-8c7752b7d064\n"}]}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":"","signature":""}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":""}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" apolog"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ize,"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" but I need to clar"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ify:"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I don"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t have"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" access to financial"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" data tools"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" look"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" up the"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 10-year Treasury duration. The"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tools I"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have available"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are for GitHub"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" repository"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" documentation"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" basic"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" arithmetic"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nHowever"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", I can provide the addition"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" requested:"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"2"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + 2 = 4"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n\nIf"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you need information"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" about the 10-year Treasury duration"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", I'd"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" recommend"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" checking"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" financial"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" data sources"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" like"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n- Bloomberg"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Treasury"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"gov\n- Financial"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" news"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" websites"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ("}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"WS"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"J, Reuters, etc.)\n-"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Your"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" b"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"rokerage platform"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nFor"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" reference"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", the duration"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of a"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 10-year Treasury bond is typically"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" close"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to,"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" but slightly"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" less"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" than, 10 years ("}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"often"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" around"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 8"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-9"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" years depending"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" on the cou"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"pon rate and"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" current"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" yields"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"),"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" as"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" duration"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" measures"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the weighted average time"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to receive"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cash"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" flows.\n\nIs"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there anything"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" else I"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" can help you with?"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":"CAQS/QUKEAgTGAI4AUIIdGhpbmtpbmcSDGYwt1PIcdZGyV+x8RoMAJrISIQnlGHgrpp1IjAQfqdctAuo303k1Uodg683rxdEK+YtVkB/OIEPzJMUQ0MkTCJO73x39auUV+J2F+8qmgVmYFnnRraO4pgkkbwWhg/HU9ROZN/yhJK+qTGLRqAzgOOK2vOsbTPIEXJQlYi0dtPV0ae5MR0MGzHoZemaKCAy2zqZ7hXuEex7MBlIt/eMqA1GmlckMS3ANyd3B/ag2HY/0VSShU8xhOFltZPAqXCbGxTUJE7BgmbTI6fY+2cNGm9whpuEo4cc8sv3AtCM7hL3h20M4a8mPFNsR/SaL4We1KcvCsIzDLEeXORPNslaIqAf7I8wq59bwKab/wAHtKWJvRwt9J7PMLRZ28FRfXUlDzgSrr5QtdGFTaWMK/TQPUQdKGbr+kPO3rW9MDqGXNzAXnxVhq8ZYnRRB77I+9VpGZ2eZr98Sv0PlNwqGPl+th970dNe1xVndwPU8SN8h7oHbqZbxcPYsOlOip+pDEZN0d9zC0NucdZ0EywYV3oRIJ6HgamN5wVZX6bn0e9do3VxyoYFKqiE1ExfyARPlQtbfag3rtuZYP2n39l0Vpo2ra0tN84fiWRvlNwoZvmNf7tzjZsrdds+SchSzfeKSuQfNj/3cWyo7FL7qV7wYPceFjc3iy+pykB4wo3kv7ygpS9LmQ3LQNNSCnpcZ0th9y3bD/iFUohZJromDoHFVtazaxk7rbBMlqTWXcyqbs3nFXk+FwF4EZrcVzOqx36biyklS+WO8Zp3az9xsbKvJZ6OhDfA1juyfshpItde09dGGYcRmsexOPxGB/KJ5CxgUb4ivCnwCmZJTPZIm2hiL3BX6SEs4QXUA9XgYIwCPK+fLgCEN03ga5g/T0GSENj99qazIenRsP9KcOCY0c/bglux00QzS04Umdd85j2jI580Hw3rB8NDOqVhKsEDUuYvXug8VaeTxKVSh7W6+akTLVB4iodtLNLzP+5TO1IYAQ=="}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1    }
+        data: {"type":"content_block_stop","index":1        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"2 + 2 ="}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 4.\n\nI couldn"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"'t look up the 10-year"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Treasury duration. My"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" only l"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ookup tool is Deep"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Wiki, which answ"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ers questions about GitHub"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" repositories,"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" and it has"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" no market data. I should"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" have said"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" so before cal"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ling it."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Instead I"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" ran a query"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" about an"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" unrelated repo (p"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ydantic-ai), and"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" that result has nothing to do"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" with your question,"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" so please"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ignore it.\n\nFrom general"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" knowledge, a"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 10-year Treasury"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" note has a modified du"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ration of about 8"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" to 9 years. That"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"'s"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" a rough fig"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ure. The"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" exact number"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" depends on the coupon and"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" current yield."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" For a par"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" b"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ond y"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ielding about 4"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"%, Macaulay du"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ration is roughly 8."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"2 years. For current"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" fig"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ures, check a source"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" like B"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"loomberg or"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the i"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Shares f"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"act"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" sheet for the I"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"EF "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ETF."}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2 }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2151,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":191,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}          }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2487,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":308,"output_tokens_details":{"thinking_tokens":60},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}     }
 
         event: message_stop
-        data: {"type":"message_stop"        }
+        data: {"type":"message_stop"     }
 
-  recorded_at: 2026-09-29T16:59:45.576189+00:00
+  recorded_at: 2026-10-25T16:05:42.539774+00:00

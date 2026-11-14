@@ -158,6 +158,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -185,6 +186,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -212,6 +214,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -274,6 +277,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',
@@ -295,14 +299,18 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
@@ -332,6 +340,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             cancellation_token=cancellation_token,
+            timeout=timeout,
             usage=usage,
             metadata=metadata,
             retries=retries,

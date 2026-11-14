@@ -9,12 +9,10 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Sequence
-from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
-import yaml
 
 from pydantic_ai.messages import (
     BaseToolCallPart,
@@ -29,24 +27,25 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 
+from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import responses
 
     from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.toolsets._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
-
-_TESTS_DIR = Path(__file__).parents[1]
 
 
 def _response_body(interaction: dict[str, Any]) -> str | None:
@@ -57,15 +56,11 @@ def _response_body(interaction: dict[str, Any]) -> str | None:
 
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        text = path.read_text()
-        if '"type":"response.' not in text:
-            continue
-        for index, interaction in enumerate(yaml.safe_load(text)['interactions']):
-            content = _response_body(interaction)
-            # Some providers send each event's `data:` line before its `event:` line.
-            if content is not None and content.startswith(('event:', 'data:')) and '"type":"response.' in content:
-                streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
+    for name, interaction in recorded_interactions('"type":"response.'):
+        content = _response_body(interaction)
+        # Some providers send each event's `data:` line before its `event:` line.
+        if content is not None and content.startswith(('event:', 'data:')) and '"type":"response.' in content:
+            streams[name] = interaction
     return streams
 
 
@@ -76,13 +71,19 @@ def _request_body(interaction: dict[str, Any]) -> dict[str, Any]:
 def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesModel:
     # A resumed background stream is a `GET` without a body; its model comes from the stream itself.
     model_name: str = _request_body(interaction).get('model', 'gpt-5')
-    host = httpx2.URL(interaction['request']['uri']).host
+    url = httpx2.URL(interaction['request']['uri'])
+    host = url.host
     if host == 'chatgpt.com':
         return OpenAICodexModel(model_name, provider=OpenAICodexProvider(openai_client=client))
     if host.startswith('bedrock-mantle.'):
         return BedrockMantleResponsesModel(model_name, provider=BedrockMantleProvider(openai_client=client))
     if host == 'api.deepseek.com':
         return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
+    if host == 'api.meta.ai':
+        return OpenAIResponsesModel(model_name, provider=MetaProvider(openai_client=client))
+    if host.endswith('.openai.azure.com') or (host == 'gateway.pydantic.info' and url.path.startswith('/proxy/azure/')):
+        # The replay client is a plain `AsyncOpenAI`; `AzureProvider` only reads its base URL and API key from it.
+        return OpenAIResponsesModel(model_name, provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, client)))
     assert host == 'api.openai.com', host
     return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 

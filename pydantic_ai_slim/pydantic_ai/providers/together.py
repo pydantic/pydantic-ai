@@ -6,12 +6,10 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles._family import vendor_family_model_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
-from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -23,11 +21,16 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class TogetherProvider(_OpenAICompatibleProvider):
+def _gpt_oss_only_profile(model_name: str) -> ModelProfile | None:
+    """Together's only OpenAI chat models are gpt-oss; other `openai/*` ids keep Together's defaults."""
+    return harmony_model_profile(model_name) if model_name.startswith('gpt-oss') else None
+
+
+class TogetherProvider(_OpenAISDKProvider):
     """Provider for Together AI API."""
 
     @property
@@ -36,7 +39,7 @@ class TogetherProvider(_OpenAICompatibleProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.together.xyz/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -44,40 +47,29 @@ class TogetherProvider(_OpenAICompatibleProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
-            'deepseek-ai': deepseek_model_profile,
-            'google': google_model_profile,
-            'qwen': qwen_model_profile,
-            'meta-llama': meta_model_profile,
-            'mistralai': mistral_model_profile,
-        }
-
-        profile = None
-
-        model_name = model_name.lower()
-        if '/' in model_name:
-            provider, model_name = model_name.split('/', 1)
-            if provider in provider_to_profile:
-                profile = provider_to_profile[provider](model_name)
-
-            if provider == 'deepseek-ai' and model_name.startswith('deepseek-v4-'):
-                # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
-                # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
-                # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
-                profile = merge_profile(profile, OpenAIModelProfile(supports_forced_tool_choice=False))
+        profile = vendor_family_model_profile(model_name, overrides={'openai': _gpt_oss_only_profile})
+        if model_name.lower().startswith('deepseek-ai/deepseek-v4-'):
+            # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
+            # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
+            # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
+            profile = merge_profile(profile, OpenAIModelProfile(supports_forced_tool_choice=False))
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            special_token_route_profile('together', model_name),
+        )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -86,6 +78,7 @@ class TogetherProvider(_OpenAICompatibleProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -96,6 +89,8 @@ class TogetherProvider(_OpenAICompatibleProvider):
                 ' to use the Together AI provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.together.xyz/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

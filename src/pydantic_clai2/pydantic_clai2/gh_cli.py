@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from anyio import to_thread
+
 from pydantic_ai.exceptions import UserError
 
 INSTALL = 'Install the GitHub CLI from https://cli.github.com, or use a token saved in /keys.'
@@ -50,7 +52,8 @@ def gh_host(url: str) -> str:
     return host.removeprefix('copilot-api.')
 
 
-def _environment() -> dict[str, str]:
+def gh_environment() -> dict[str, str]:
+    """The environment to run `gh` in: without token variables, so it uses its own login."""
     # Token variables would make `gh` report them instead of its login, and refuse `auth login`.
     return {name: value for name, value in os.environ.items() if name not in _TOKEN_VARIABLES}
 
@@ -62,7 +65,8 @@ def gh_token(hostname: str) -> str | None:
             [*_gh(), 'auth', 'token', '--hostname', hostname],
             capture_output=True,
             text=True,
-            env=_environment(),
+            encoding='utf-8',
+            env=gh_environment(),
             stdin=subprocess.DEVNULL,
             check=False,
             timeout=TOKEN_TIMEOUT,
@@ -80,9 +84,9 @@ class GhToken:
     hostname: str
     setup: str
 
-    def __call__(self, ctx: object, /) -> str:
-        """The current token; fails the run when `gh` has none."""
-        token = gh_token(self.hostname)
+    async def __call__(self, ctx: object, /) -> str:
+        """The current token, asked of `gh` in a worker thread; fails the run when `gh` has none."""
+        token = await to_thread.run_sync(gh_token, self.hostname)
         if token is None:
             raise UserError(f'The GitHub CLI has no login for {self.hostname}. {self.setup}')
         return token
@@ -123,7 +127,8 @@ def start_login(hostname: str, *, stopping: Callable[[], bool] = lambda: False) 
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        env=_environment(),
+        encoding='utf-8',
+        env=gh_environment(),
     )
     output: queue.Queue[str | None] = queue.Queue()
     # A thread reads the pipe, so a `gh` that never prints cannot block cancellation or the deadline.
