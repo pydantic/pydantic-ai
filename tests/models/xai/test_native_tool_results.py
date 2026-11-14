@@ -513,3 +513,28 @@ async def test_xai_other_provider_tool_results_are_not_replayed(allow_model_requ
             {'content': [{'text': 'And now?'}], 'role': 'ROLE_USER'},
         ]
     )
+
+
+async def test_xai_web_search_function_name_fallback(allow_model_requests: None):
+    """A web search call stored without `provider_details` is replayed as `web_search`.
+
+    Not a recorded test: calls stored before `XaiModel` kept the function name xAI ran in
+    `provider_details['function_name']` have no `provider_details`, which no current response produces.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search', args={'query': 'pydantic'}, tool_call_id='call_1', provider_name='xai'
+                ),
+                TextPart(content='First answer.'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+            provider_name='xai',
+        ),
+    ]
+
+    assert _tool_turns(await _sent_messages(history)) == snapshot(
+        [{'role': 'ROLE_ASSISTANT', 'calls': ['web_search'], 'encrypted_content': False}]
+    )

@@ -18,7 +18,6 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     UserPromptPart,
-    WebSearchTool,
     XSearchTool,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -1226,36 +1225,3 @@ async def test_xai_file_search_usage_mapping(allow_model_requests: None):
             cost=Decimal('0.000025'),
         )
     )
-
-
-async def test_xai_web_search_function_name_fallback(allow_model_requests: None):
-    """A web search call stored without `provider_details` is replayed as `web_search`.
-
-    `XaiModel` stores the function name xAI ran in `provider_details['function_name']`, which the replay sends
-    back. Calls stored before that field existed have no `provider_details`. No current xAI response produces
-    such a call, so the history is hand-built and the client mocked rather than recorded.
-    """
-    response = create_response(content='The latest release is Python 3.14.0.')
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Search the web for the latest Python release.')]),
-        ModelResponse(
-            parts=[
-                NativeToolCallPart(
-                    tool_name=WebSearchTool.kind,
-                    args={'query': 'latest python release'},
-                    tool_call_id='web_search_002',
-                    provider_name='xai',
-                ),
-            ]
-        ),
-    ]
-
-    await agent.run('What did you find?', message_history=message_history)
-
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    tool_calls = [call for message in kwargs[0]['messages'] for call in message.get('tool_calls', [])]
-    assert [call['function']['name'] for call in tool_calls] == ['web_search']
