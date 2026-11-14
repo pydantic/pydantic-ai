@@ -78,6 +78,7 @@ with try_import() as google_imports:
 with try_import() as groq_imports:
     from pydantic_ai.providers.groq import (
         GroqProvider,
+        _GroqQwenBestEffortOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _GroqQwenStrictOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -2460,11 +2461,11 @@ def test_groq_qwen3_8():
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_qwen3_6():
-    """Groq serves JSON-schema output on qwen3.6, which its structured-outputs docs do not list."""
+    """Groq serves best-effort JSON-schema output on qwen3.6, which its structured-outputs docs don't list for strict mode."""
     profile = GroqProvider.model_profile('qwen/qwen3.6-27b')
     assert _normalize(profile) == snapshot(
         {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'json_schema_transformer': _GroqQwenBestEffortOutputJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'supports_thinking': True,
             'groq_supports_reasoning_disable': True,

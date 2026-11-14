@@ -6368,7 +6368,7 @@ GROQ_REQUEST_BODY_CASES = [
         ),
     ),
     GroqRequestBodyCase(
-        # Groq doesn't list qwen3.6 for strict mode; qwen's family transformer still reports the schema strict.
+        # Groq doesn't list qwen3.6 for strict mode, so its output schema goes out best-effort.
         id='qwen3.6-native',
         model_name='qwen/qwen3.6-27b',
         output_type=NativeOutput(CityLocation),
@@ -6385,7 +6385,7 @@ GROQ_REQUEST_BODY_CASES = [
                             'title': CityLocation.__qualname__,
                             'type': 'object',
                         },
-                        'strict': True,
+                        'strict': False,
                     },
                 },
             }

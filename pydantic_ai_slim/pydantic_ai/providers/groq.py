@@ -5,7 +5,7 @@ from typing import overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient
-from pydantic_ai._json_schema import JsonSchemaTransformerWithOutputOverride
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformerWithOutputOverride
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
@@ -109,6 +109,9 @@ class GroqProvider(Provider[AsyncGroq]):
             ModelProfile(json_schema_transformer=_GroqQwenStrictOutputJsonSchemaTransformer)
             if model_name.startswith('qwen/qwen3.8-')
             else None,
+            ModelProfile(json_schema_transformer=_GroqQwenBestEffortOutputJsonSchemaTransformer)
+            if model_name.startswith('qwen/qwen3.6-')
+            else None,
             special_token_route_profile('groq', model_name),
         )
 
@@ -179,3 +182,27 @@ class _GroqQwenStrictOutputJsonSchemaTransformer(
     """
 
     output_object_transformer = _GptOssJsonSchemaTransformer
+
+
+class _GroqBestEffortJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
+    """Qwen's family transformer, reporting a schema strict only when the caller asks for strict mode."""
+
+    def walk(self) -> JsonSchema:
+        schema = super().walk()
+        # The caller coalesces an unset `strict` to this value, so the schema goes out best-effort unless the caller
+        # passed `strict=True`.
+        self.is_strict_compatible = self.strict is True
+        return schema
+
+
+class _GroqQwenBestEffortOutputJsonSchemaTransformer(
+    InlineDefsJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride
+):
+    """Qwen's family transformer for tool schemas, and best-effort mode for the output object.
+
+    Groq doesn't list qwen3.6 for `strict: true` (https://console.groq.com/docs/structured-outputs), and qwen's family
+    transformer doesn't produce the `additionalProperties: false` on every object that strict mode requires, so its
+    output object goes out with `strict: false` unless the caller passes `NativeOutput(..., strict=True)`.
+    """
+
+    output_object_transformer = _GroqBestEffortJsonSchemaTransformer
