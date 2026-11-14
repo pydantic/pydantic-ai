@@ -65,6 +65,7 @@ with try_import() as bedrock_imports:
         BedrockProvider,
         # Name the concrete transformer in profile snapshots.
         _BedrockAnthropicJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+        _BedrockGlm53JsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -1502,7 +1503,7 @@ def test_bedrock_zai_glm():
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_zai_glm_5_3():
-    """Z.AI GLM-5.3 via Bedrock: always reasons, and Bedrock accepts every effort level from `low` to `max`."""
+    """Z.AI GLM-5.3 via Bedrock: always reasons, Bedrock accepts every effort level from `low` to `max`, and `$defs` are inlined."""
     profile = BedrockProvider.model_profile('us.zai.glm-5.3')
     assert _normalize(profile) == snapshot(
         {
@@ -1511,7 +1512,7 @@ def test_bedrock_zai_glm_5_3():
             'zai_supports_reasoning_effort': True,
             'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
             'supported_native_tools': frozenset(),
-            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'json_schema_transformer': _BedrockGlm53JsonSchemaTransformer,
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_leading_assistant_message': True,
             'supports_json_schema_output': True,

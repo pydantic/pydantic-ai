@@ -14,7 +14,7 @@ import anyio
 
 from pydantic_ai_harness.ask_user import Answerer, AskUserAnswer, AskUserRequest, AskUserResponse, check_response
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.protocol import (
     ApprovalInfo,
     Diff,
