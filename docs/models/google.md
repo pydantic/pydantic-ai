@@ -181,7 +181,7 @@ The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI
 !!! note
     For most use cases, the model-agnostic [transport retries](../retries.md#transport-retries) approach is preferable, as it works the same way across all providers. The `retry_options` argument below is a Google-specific alternative that delegates retrying to the `google-genai` SDK's own HTTP layer. See [The layers](../retries.md#the-layers) in the retries guide for where these SDK-level retries sit, and [Retry multiplication](../retries.md#retry-multiplication) for how they compound with the agent's own retry budgets.
 
-By default, the `google-genai` SDK does not retry requests that fail with a transient HTTP error. You can enable retries by passing a [`HttpRetryOptions`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpRetryOptions) instance to the `retry_options` argument of `GoogleProvider` or `GoogleCloudProvider`:
+The `google-genai` SDK may retry a failed continuation request internally when streaming a long decode. This behavior is specific to that request path, and its retry count is not specified here. You can configure the SDK's HTTP retry options by passing a [`HttpRetryOptions`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpRetryOptions) instance to the `retry_options` argument of `GoogleProvider` or `GoogleCloudProvider`:
 
 ```python
 from google.genai.types import HttpRetryOptions
@@ -204,7 +204,7 @@ agent = Agent(model)
 ...
 ```
 
-This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
+This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). For retries governed by these options, [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. The SDK may also retry a failed continuation request internally when streaming a long decode; this guide does not specify a fixed retry count or how those internal attempts interact with `max_retries`. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
 When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
 

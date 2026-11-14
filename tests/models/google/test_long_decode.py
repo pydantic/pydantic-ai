@@ -20,7 +20,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Literal
@@ -99,20 +99,16 @@ def _model(
     model_name: str = _MODEL_NAME,
     vertex: bool = False,
     raise_for_status: bool = False,
+    repeat_last_response: bool = False,
 ) -> GoogleModel:
     """A model whose requests are answered with `responses` in order, and recorded in `requests`.
 
     An `HTTPStatusError` is raised instead, as a retrying transport does for a status it gave up on. With
     `raise_for_status`, a response event hook raises an error status as `HTTPStatusError` before google-genai reads it.
+    When `repeat_last_response` is enabled, extra requests repeat the last scripted response, copying an HTTP response
+    so each attempt gets a fresh instance.
     """
-    pending = list(responses)
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        requests.append(json.loads(request.content))
-        response = pending.pop(0)
-        if isinstance(response, httpx2.HTTPStatusError):
-            raise response
-        return response
+    handler = _scripted_response_handler(responses, requests, repeat_last_response=repeat_last_response)
 
     async def check_status(response: httpx2.Response) -> None:
         response.raise_for_status()
@@ -122,6 +118,75 @@ def _model(
     if vertex:
         return GoogleModel(model_name, provider=GoogleCloudProvider(api_key='test', http_client=client))
     return GoogleModel(model_name, provider=GoogleProvider(api_key='test', http_client=client))
+
+
+def _scripted_response_handler(
+    responses: Sequence[httpx2.Response | httpx2.HTTPStatusError],
+    requests: list[dict[str, object]],
+    *,
+    repeat_last_response: bool,
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    pending = list(responses)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(json.loads(request.content))
+        if pending:
+            response = pending.pop(0)
+        elif repeat_last_response:
+            response = responses[-1]
+            if isinstance(response, httpx2.Response):
+                response = httpx2.Response(
+                    response.status_code,
+                    headers=response.headers,
+                    content=response.content,
+                    request=request,
+                )
+        else:
+            raise AssertionError('Received more requests than scripted responses')
+        if isinstance(response, httpx2.HTTPStatusError):
+            raise response
+        return response
+
+    return handler
+
+
+def test_scripted_response_handler_repeats_last_response() -> None:
+    requests: list[dict[str, object]] = []
+    response = httpx2.Response(503, content=b'failure')
+    handler = _scripted_response_handler([response], requests, repeat_last_response=True)
+    request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+    retry_request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+
+    assert handler(request) is response
+    repeated_response = handler(retry_request)
+
+    assert repeated_response is not response
+    assert repeated_response.status_code == response.status_code
+    assert repeated_response.content == response.content
+    assert repeated_response.request is retry_request
+    assert requests == [{}, {}]
+
+
+def test_scripted_response_handler_repeats_last_error() -> None:
+    requests: list[dict[str, object]] = []
+    request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+    response = httpx2.Response(503, request=request)
+    error = httpx2.HTTPStatusError('503', request=request, response=response)
+    handler = _scripted_response_handler([error], requests, repeat_last_response=True)
+
+    for _ in range(2):
+        with pytest.raises(httpx2.HTTPStatusError, match='503'):
+            handler(request)
+
+
+def test_scripted_response_handler_rejects_unexpected_request() -> None:
+    requests: list[dict[str, object]] = []
+    handler = _scripted_response_handler([httpx2.Response(200, content=b'{}')], requests, repeat_last_response=False)
+    request = httpx2.Request('POST', 'https://example.com', content=b'{}')
+
+    handler(request)
+    with pytest.raises(AssertionError, match='Received more requests than scripted responses'):
+        handler(request)
 
 
 async def _run(
@@ -524,12 +589,12 @@ async def test_per_request_input_limit_reads_the_first_request(
 async def test_failed_continuation_request_raises(
     stream: bool, failure: Literal['status', 'transport-gave-up', 'event-hook'], allow_model_requests: None
 ):
-    """A continuation request that fails fails the model request, as google-genai does not retry it.
+    """A continuation request that ultimately fails surfaces as a model request failure.
 
-    That includes an `HTTPStatusError` raised by a retrying transport that gave up on the status, or by a response
-    event hook, which google-genai lets through unwrapped, from inside the stream too. Not streamed, the output of the
-    requests before it is lost, though billed. Streamed, the run keeps what was streamed as an interrupted response
-    carrying the finished requests' usage.
+    google-genai may retry a streamed continuation request internally before surfacing the failure. That includes an
+    `HTTPStatusError` raised by a retrying transport that gave up on the status, or by a response event hook. Without
+    streaming, output from earlier requests is lost, though billed. When streamed, the run keeps what was streamed as
+    an interrupted response carrying the finished requests' usage.
     """
     requests: list[dict[str, object]] = []
     error = {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}
@@ -538,14 +603,19 @@ async def test_failed_continuation_request_raises(
         request = httpx2.Request('POST', 'https://generativelanguage.googleapis.com/')
         failed = httpx2.HTTPStatusError('Server error 503', request=request, response=failed)
     responses = [*_two_requests(stream)[:1], failed]
-    model = _model(responses, requests, raise_for_status=failure == 'event-hook')
+    model = _model(
+        responses,
+        requests,
+        raise_for_status=failure == 'event-hook',
+        repeat_last_response=stream,
+    )
     agent = Agent(model, model_settings={'max_tokens': 100_000})
 
     with capture_run_messages() as messages, pytest.raises(ModelHTTPError) as exc_info:
         await _run(agent, stream)
 
     assert exc_info.value.status_code == 503
-    assert len(requests) == 2
+    assert len(requests) >= 2
     if stream:
         assert messages[1:] == snapshot(
             [
