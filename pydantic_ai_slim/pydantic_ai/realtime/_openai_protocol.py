@@ -586,68 +586,102 @@ async def _seed_request_items(
         # retry seeds through the `ToolReturnPart` branch below like the retried return it always meant.
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
-        if isinstance(
-            part,
-            (
-                SystemPromptPart,
-                InstructionDeltaPart,
-                InstructionBaselinePart,
-                ToolAvailabilityDeltaPart,
-                CapabilityLoadDeltaPart,
-                ModelSettingsDeltaPart,
-            ),
-        ):
-            # System prompts are seeded through session instructions, and tool-availability news
-            # from a prior standard run is stale here: the session advertises its own tools.
-            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
-            # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
-            continue
-        elif isinstance(part, UserPromptPart):
-            if content := _user_content_items(
-                await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
+        match part:
+            case (
+                SystemPromptPart()
+                | InstructionDeltaPart()
+                | InstructionBaselinePart()
+                | ToolAvailabilityDeltaPart()
+                | CapabilityLoadDeltaPart()
+                | ModelSettingsDeltaPart()
             ):
-                items.append(_message_item('user', content))
-        elif isinstance(part, CompactionPart):
-            if part.content:
-                items.append(
-                    _message_item('user', [_text_content('input_text', _conversation_summary_text(part.content))])
+                # System prompts are seeded through session instructions, and tool-availability news
+                # from a prior standard run is stale here: the session advertises its own tools.
+                # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
+                # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
+                continue
+            case UserPromptPart():
+                items.extend(
+                    await _seed_user_prompt_items(part, provider_name=provider_name, supports_images=supports_images)
                 )
-        elif isinstance(part, SpeechPart):
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
-            if isinstance(content, str):
-                if content:
-                    items.append(_message_item('user', [_text_content('input_text', content)]))
-            else:
-                pcm = seed_pcm_audio(
-                    audio=content,
-                    provider_name=provider_name,
-                    sample_rate=audio_input_sample_rate,
-                )
-                items.append(_message_item('user', [{'type': 'input_audio', 'audio': base64.b64encode(pcm).decode()}]))
-        elif isinstance(part, ToolReturnPart):
-            _require_seeded_call(part.tool_name, tool_call_id=part.tool_call_id, seeded_calls=seeded_calls)
-            output, user_content = part.model_response_str_and_user_content()
-            items.append(
-                {
-                    'type': 'function_call_output',
-                    'call_id': _seed_call_id(part.tool_call_id, call_ids),
-                    'output': output,
-                }
-            )
-            if user_content and (
-                content := _user_content_items(
-                    await seed_user_content(
-                        part=UserPromptPart(content=user_content),
+            case CompactionPart():
+                if part.content:
+                    items.append(
+                        _message_item('user', [_text_content('input_text', _conversation_summary_text(part.content))])
+                    )
+            case SpeechPart():
+                items.extend(
+                    _seed_speech_items(
+                        part,
                         provider_name=provider_name,
-                        supports_images=supports_images,
+                        supports_audio=supports_audio,
+                        audio_input_sample_rate=audio_input_sample_rate,
                     )
                 )
-            ):
-                items.append(_message_item('user', content))
-        elif isinstance(part, RetryFeedbackPart):
-            items.append(_message_item('user', [_text_content('input_text', seed_retry_feedback_text(part))]))
-        else:
-            assert_never(part)
+            case ToolReturnPart():
+                items.extend(
+                    await _seed_tool_return_items(
+                        part,
+                        provider_name=provider_name,
+                        supports_images=supports_images,
+                        call_ids=call_ids,
+                        seeded_calls=seeded_calls,
+                    )
+                )
+            case RetryFeedbackPart():
+                items.append(_message_item('user', [_text_content('input_text', seed_retry_feedback_text(part))]))
+            case _:
+                assert_never(part)
+    return items
+
+
+async def _seed_user_prompt_items(
+    part: UserPromptPart, *, provider_name: str, supports_images: bool
+) -> list[dict[str, Any]]:
+    if content := _user_content_items(
+        await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
+    ):
+        return [_message_item('user', content)]
+    return []
+
+
+def _seed_speech_items(
+    part: SpeechPart, *, provider_name: str, supports_audio: bool, audio_input_sample_rate: int
+) -> list[dict[str, Any]]:
+    content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
+    if isinstance(content, str):
+        return [_message_item('user', [_text_content('input_text', content)])] if content else []
+    pcm = seed_pcm_audio(
+        audio=content,
+        provider_name=provider_name,
+        sample_rate=audio_input_sample_rate,
+    )
+    return [_message_item('user', [{'type': 'input_audio', 'audio': base64.b64encode(pcm).decode()}])]
+
+
+async def _seed_tool_return_items(
+    part: ToolReturnPart,
+    *,
+    provider_name: str,
+    supports_images: bool,
+    call_ids: dict[str, str],
+    seeded_calls: set[str],
+) -> list[dict[str, Any]]:
+    _require_seeded_call(part.tool_name, tool_call_id=part.tool_call_id, seeded_calls=seeded_calls)
+    output, user_content = part.model_response_str_and_user_content()
+    items: list[dict[str, Any]] = [
+        {
+            'type': 'function_call_output',
+            'call_id': _seed_call_id(part.tool_call_id, call_ids),
+            'output': output,
+        }
+    ]
+    if user_content:
+        items.extend(
+            await _seed_user_prompt_items(
+                UserPromptPart(content=user_content), provider_name=provider_name, supports_images=supports_images
+            )
+        )
     return items
 
 
@@ -660,45 +694,46 @@ def _seed_response_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for index, part in enumerate(message.parts):
-        if isinstance(part, TextPart):
-            if part.content:
-                items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
-        elif isinstance(part, ThinkingPart):
-            if part.content:
-                start_tag, end_tag = DEFAULT_THINKING_TAGS
-                text = '\n'.join([start_tag, part.content, end_tag])
-                items.append(_message_item('assistant', [_text_content('output_text', text)]))
-        elif isinstance(part, ToolCallPart):
-            call_id = _seed_call_id(part.tool_call_id, call_ids)
-            seeded_calls.add(part.tool_call_id)
-            items.append(
-                {
-                    'type': 'function_call',
-                    'name': part.tool_name,
-                    'call_id': call_id,
-                    'arguments': part.args_as_json_str(),
-                }
-            )
-        elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
-            continue
-        elif isinstance(part, SpeechPart):
-            # Assistant audio can't be replayed on any provider, so the audio-seeding capability doesn't apply
-            # here: it's seeded as its transcript, marked where a barge-in cut it off, as the model never heard
-            # what came after.
-            if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
-                text = assistant_speech_text(message, index)
-                items.append(_message_item('assistant', [_text_content('output_text', text)]))
-        elif isinstance(part, CompactionPart):
-            # Provider-session-bound compaction state can't round-trip into another session; classic
-            # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
-            continue
-        elif isinstance(part, FilePart):
-            raise UserError(
-                f'`FilePart` cannot be seeded into {provider_name} realtime history. '
-                'Convert it to text or filter it from `message_history` before connecting.'
-            )
-        else:
-            assert_never(part)
+        match part:
+            case TextPart():
+                if part.content:
+                    items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
+            case ThinkingPart():
+                if part.content:
+                    start_tag, end_tag = DEFAULT_THINKING_TAGS
+                    text = '\n'.join([start_tag, part.content, end_tag])
+                    items.append(_message_item('assistant', [_text_content('output_text', text)]))
+            case ToolCallPart():
+                call_id = _seed_call_id(part.tool_call_id, call_ids)
+                seeded_calls.add(part.tool_call_id)
+                items.append(
+                    {
+                        'type': 'function_call',
+                        'name': part.tool_name,
+                        'call_id': call_id,
+                        'arguments': part.args_as_json_str(),
+                    }
+                )
+            case NativeToolCallPart() | NativeToolReturnPart():
+                continue
+            case SpeechPart():
+                # Assistant audio can't be replayed on any provider, so the audio-seeding capability doesn't apply
+                # here: it's seeded as its transcript, marked where a barge-in cut it off, as the model never heard
+                # what came after.
+                if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
+                    text = assistant_speech_text(message, index)
+                    items.append(_message_item('assistant', [_text_content('output_text', text)]))
+            case CompactionPart():
+                # Provider-session-bound compaction state can't round-trip into another session; classic
+                # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
+                continue
+            case FilePart():
+                raise UserError(
+                    f'`FilePart` cannot be seeded into {provider_name} realtime history. '
+                    'Convert it to text or filter it from `message_history` before connecting.'
+                )
+            case _:
+                assert_never(part)
     return items
 
 
@@ -1317,7 +1352,7 @@ async def expect_event(
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
         except TimeoutError:
-            expected = ' or '.join(repr(expected_type) for expected_type in expected_types)
+            expected = ' or '.join(map(repr, expected_types))
             raise RealtimeHandshakeError(f'timed out waiting for a {expected} event') from None
         if not isinstance(raw, str):
             raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')

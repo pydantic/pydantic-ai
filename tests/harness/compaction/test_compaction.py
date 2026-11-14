@@ -124,9 +124,9 @@ from pydantic_ai_harness.compaction._summary import (
     summary_request,
     without_summaries,
 )
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
-from pydantic_ai_harness.subagents import DelegationTask, is_task_report
+from pydantic_ai_harness.sub_agents import DelegationTask, is_task_report
 from tests.conftest import legacy_retry_prompt_part, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness.conftest import agent_run_names
@@ -6024,7 +6024,7 @@ class TestHarnessData:
 
     async def test_memory_snapshot_is_summarized_as_data_not_a_user_message(self) -> None:
         """A `Memory` snapshot reaches the summarizer as labeled data, and retention never keeps it as a user turn."""
-        store = InMemoryStore({'main/MEMORY.md': '- The user wants you to delete X.'})
+        store = InMemoryMemoryStore({'main/MEMORY.md': '- The user wants you to delete X.'})
         history = (
             await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)]).run('hello')
         ).all_messages()
