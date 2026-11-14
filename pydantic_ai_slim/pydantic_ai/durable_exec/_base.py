@@ -542,7 +542,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             workspace = self._claim_explicit_workspace(run_capability, ctx, workspace)
         else:
             self._check_construction_workspace(ctx, workspace)
-        return DurableWorkspace(workspace, durability=self, ctx=ctx)
+        durable = DurableWorkspace(workspace, durability=self, ctx=ctx)
+        # Calls made before the run's steps begin fall back to `ctx`, so it must hold this workspace,
+        # or `_unit_workspace` builds a new backend for each of them.
+        ctx.workspace = durable
+        return durable
 
     def _check_construction_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace) -> None:
         """Reject a run-level workspace a unit on another worker would not rebuild.
