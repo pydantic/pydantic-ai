@@ -224,6 +224,7 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
     # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+    ('gemini-3-pro', frozenset(('LOW', 'HIGH'))),
     # https://ai.google.dev/gemini-api/docs/generate-content/long-decode: "Gemini 4 Argon does not support
     # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
     # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
@@ -250,8 +251,39 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
+def _normalize_model_name(model_name: str) -> str:
+    """Strip resource paths (`models/...`, `publishers/google/models/...`) and Vertex regional prefixes (`au.gemini-...`)."""
+    normalized = model_name.lower().rsplit('/', 1)[-1]
+    return re.sub(r'^[a-z]{2,}\.(?=(?:gemini|gemma)-)', '', normalized)
+
+
+def _resolve_thinking_levels(
+    model_name: str,
+    *,
+    is_pro: bool,
+    is_image_model: bool,
+    supports_thinking_level: bool,
+) -> tuple[frozenset[GoogleThinkingLevel] | None, bool]:
+    """Resolve documented `thinking_level` values and whether `MINIMAL` is supported."""
+    is_non_image_pro = is_pro and not is_image_model
+    if not supports_thinking_level:
+        return None, not is_non_image_pro
+    default_levels = frozenset(('LOW', 'MEDIUM', 'HIGH')) if is_non_image_pro else None
+    levels = next(
+        (
+            candidate
+            for prefix, candidate in _MODEL_THINKING_LEVELS
+            if model_name.startswith(prefix) and not (prefix == 'gemini-3-pro' and is_image_model)
+        ),
+        default_levels,
+    )
+    supports_minimal = not is_non_image_pro and (levels is None or 'MINIMAL' in levels)
+    return levels, supports_minimal
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
+    model_name = _normalize_model_name(model_name)
     is_image_model = 'image' in model_name
 
     # Older models (Gemini 2.5, Gemini 2.0, Gemini 1.x) or non-Gemini models (Gemma)
@@ -286,9 +318,11 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = supports_thinking and is_pro
-    thinking_levels = next(
-        (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
-        None,
+    thinking_levels, supports_minimal_thinking_level = _resolve_thinking_levels(
+        model_name,
+        is_pro=is_pro,
+        is_image_model=is_image_model,
+        supports_thinking_level=google_supports_thinking_level,
     )
     # `default_cache_retention` is intentionally left unset (None): Gemini's implicit caching (the default,
     # applied automatically) documents no retention window — only explicit `CachedContent` has a
@@ -307,7 +341,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_server_side_tool_invocations=is_modern_gemini,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
         google_supports_thinking_level=google_supports_thinking_level,
-        google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
+        google_supports_minimal_thinking_level=supports_minimal_thinking_level,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
     )
@@ -349,7 +383,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # `models/gemini-3.8-live` is as valid an id as the bare spelling — `google-genai` passes a
     # resource name straight through where it would otherwise add the prefix — so the name is
     # normalized once here rather than every check below having to allow for both.
-    model_name = model_name.rsplit('/', 1)[-1]
+    model_name = _normalize_model_name(model_name)
     is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
     # A prefix match like every other id check here, so a dated or `-preview` snapshot of the model
     # gets the same flags: an exact match would send such a snapshot a thinking level it rejects.
