@@ -2824,6 +2824,14 @@ def test_native_tool_flat_form_schema_custom_kind():
     assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WidgetTool(size=3)]
 
 
+@pytest.mark.usefixtures('native_tool_type_without_schema')
+def test_native_tool_flat_form_loads_built_in_tools_beside_a_type_without_a_schema():
+    """A registered native tool type pydantic can't build a schema for leaves the built-in flat forms loading."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'web_search'}}]}
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WebSearchTool()]
+
+
 def test_save_schema(tmp_path: str):
     schema_path = Path(tmp_path) / 'agent_spec.schema.json'
     AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]

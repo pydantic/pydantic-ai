@@ -16,7 +16,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, PydanticUserError, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -762,10 +762,16 @@ def _model_request_parameters_adapter(
     The parameters' native tools serialize through a union of the registered types. A type registers when its class
     is defined, which can be after the first request, and an adapter built before then can't serialize its instances
     through their own schema.
+
+    A registered type pydantic can't build a schema for fails the whole build. The parameters then serialize by
+    inference, as the `serialize_any` fallback does, without retrying the build on every request.
     """
     from pydantic_ai.models import ModelRequestParameters
 
-    return TypeAdapter(ModelRequestParameters)
+    try:
+        return TypeAdapter(ModelRequestParameters)
+    except PydanticUserError:
+        return ANY_ADAPTER
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:

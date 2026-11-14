@@ -12,6 +12,8 @@ from pydantic_ai.tools import AgentDepsT, AgentNativeTool
 
 from .abstract import AbstractCapability
 
+_BUILT_IN_NATIVE_TOOL_ADAPTER = pydantic.TypeAdapter(AbstractNativeTool)
+
 
 @cache
 def _native_tool_adapter(tool_types: tuple[type[AbstractNativeTool], ...]) -> pydantic.TypeAdapter[AbstractNativeTool]:
@@ -20,8 +22,14 @@ def _native_tool_adapter(tool_types: tuple[type[AbstractNativeTool], ...]) -> py
     A native tool type registers when its class is defined, which can be after this module is imported, while the
     `AgentSpec` schema reads the registry each time it's generated: an adapter built at import would reject the flat
     form of a type the schema accepts. Class definitions, not spec loads, add entries, so the cache stays bounded.
+
+    A registered type pydantic can't build a schema for fails the whole union. The built-in tools then load through
+    the adapter built at import.
     """
-    return pydantic.TypeAdapter(AbstractNativeTool)
+    try:
+        return pydantic.TypeAdapter(AbstractNativeTool)
+    except pydantic.PydanticUserError:
+        return _BUILT_IN_NATIVE_TOOL_ADAPTER
 
 
 @dataclass

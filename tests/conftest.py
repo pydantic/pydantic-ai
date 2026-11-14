@@ -61,7 +61,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.native_tools import NATIVE_TOOL_TYPES
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -1036,6 +1036,20 @@ def restore_native_tool_types() -> Iterator[None]:
     yield
     NATIVE_TOOL_TYPES.clear()
     NATIVE_TOOL_TYPES.update(registered)
+
+
+class _NoSchema:
+    """A type pydantic can't build a schema for."""
+
+
+@pytest.fixture
+def native_tool_type_without_schema(restore_native_tool_types: None) -> None:
+    """Register a native tool type with a field pydantic can't build a schema for, which fails the native tool union."""
+
+    @dataclass(kw_only=True)
+    class NoSchemaTool(AbstractNativeTool):
+        kind: str = 'no_schema'
+        value: _NoSchema = field(default_factory=_NoSchema)
 
 
 try:

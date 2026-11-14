@@ -48,6 +48,7 @@ from pydantic_ai._instrumentation import (
     include_content_ctx,
     model_request_parameters_attributes,
     open_request_policy,
+    serialize_any,
     span_include_content,
 )
 from pydantic_ai.capabilities import Capability, Hooks, LocalWorkspace
@@ -245,6 +246,15 @@ def test_request_telemetry_serializes_a_native_tool_type_defined_after_the_first
     serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
     assert isinstance(serialized, str)
     assert json.loads(serialized) == TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
+
+
+@pytest.mark.usefixtures('native_tool_type_without_schema')
+def test_request_telemetry_serializes_by_inference_beside_a_native_tool_type_without_a_schema() -> None:
+    """A registered native tool type pydantic can't build a schema for leaves the parameters serializing by inference."""
+    parameters = ModelRequestParameters(native_tools=[CodeExecutionTool()])
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == serialize_any(parameters)
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:
