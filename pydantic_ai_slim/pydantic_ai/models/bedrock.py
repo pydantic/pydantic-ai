@@ -533,6 +533,7 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     # OpenAI
     'global.openai.gpt-6.1-sol',
+    'global.openai.gpt-6.1-terra',
     'global.openai.gpt-6-luna',
     'global.openai.gpt-6-astra',
     'global.openai.gpt-5.6-sol',
