@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -895,6 +897,65 @@ async def test_async_report_evaluator():
 
     assert isinstance(result, ScalarResult)
     assert result.value == 42
+
+
+async def test_dataset_evaluate_awaits_future_report_evaluator_result():
+    """A report evaluator returning a Future is resolved, not embedded as the analysis."""
+
+    @dataclass
+    class FutureEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> Awaitable[ReportAnalysis]:
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[ReportAnalysis] = loop.create_future()
+            future.set_result(ScalarResult(title='Future Result', value=42))
+            return future
+
+    dataset = Dataset[TaskInput, str, None](
+        name='test',
+        cases=[Case(name='c1', inputs=TaskInput(text='a'))],
+        report_evaluators=[FutureEvaluator()],
+    )
+
+    async def task(inputs: TaskInput) -> str:
+        return 'x'
+
+    report = await dataset.evaluate(task, progress=False)
+
+    assert len(report.analyses) == 1
+    result = report.analyses[0]
+    assert isinstance(result, ScalarResult)
+    assert result.title == 'Future Result'
+    assert result.value == 42
+
+
+async def test_dataset_evaluate_awaits_task_report_evaluator_result():
+    """A report evaluator returning a Task is resolved, not embedded as the analysis."""
+
+    async def task_analysis() -> ReportAnalysis:
+        await asyncio.sleep(0)
+        return ScalarResult(title='Task Result', value=7)
+
+    @dataclass
+    class TaskEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> Awaitable[ReportAnalysis]:
+            return asyncio.ensure_future(task_analysis())
+
+    dataset = Dataset[TaskInput, str, None](
+        name='test',
+        cases=[Case(name='c1', inputs=TaskInput(text='a'))],
+        report_evaluators=[TaskEvaluator()],
+    )
+
+    async def task(inputs: TaskInput) -> str:
+        return 'x'
+
+    report = await dataset.evaluate(task, progress=False)
+
+    assert len(report.analyses) == 1
+    result = report.analyses[0]
+    assert isinstance(result, ScalarResult)
+    assert result.title == 'Task Result'
+    assert result.value == 7
 
 
 def test_report_evaluator_build_serialization_arguments_with_default_factory():

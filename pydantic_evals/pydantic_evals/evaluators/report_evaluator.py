@@ -58,6 +58,6 @@ class ReportEvaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
     ) -> ReportAnalysis | list[ReportAnalysis]:
         """Evaluate, handling both sync and async implementations."""
         output = self.evaluate(ctx)
-        if inspect.iscoroutine(output):
+        if inspect.isawaitable(output):
             return await output
         return cast('ReportAnalysis | list[ReportAnalysis]', output)
