@@ -16,6 +16,7 @@ from .conftest import try_import
 with try_import() as imports_successful:
     from tenacity import (
         RetryCallState,
+        Retrying,
         retry_if_exception_type,
         stop_after_attempt,
         wait_fixed,
@@ -36,6 +37,28 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install tenaci
 # Only the classes that construct the deprecated transports may silence their warning; the `httpx2` classes
 # run under the repo-wide `filterwarnings = ["error"]` so a deprecation escaping into them fails the test.
 ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
+
+
+@pytest.mark.parametrize('retry_after', [None, 'invalid', '-1'])
+@pytest.mark.parametrize('fallback_seconds', [0.5, 10])
+def test_wait_retry_after_caps_fallback(retry_after: str | None, fallback_seconds: float):
+    """Exercise wait calculation directly, without performing requests or sleeping."""
+    headers = {'retry-after': retry_after} if retry_after is not None else {}
+    response = httpx2.Response(429, headers=headers, request=httpx2.Request('GET', 'https://example.com'))
+    state = RetryCallState(Retrying(), None, (), {})
+    state.set_exception(
+        (httpx2.HTTPStatusError, httpx2.HTTPStatusError('limited', request=response.request, response=response), None)
+    )
+
+    wait = wait_retry_after(fallback_strategy=wait_fixed(fallback_seconds), max_wait=2)
+    assert wait(state) == min(fallback_seconds, 2)
+
+
+def test_wait_retry_after_caps_default_fallback():
+    """The default exponential fallback also respects a smaller maximum."""
+    state = RetryCallState(Retrying(), None, (), {})
+    state.attempt_number = 4
+    assert wait_retry_after(max_wait=2)(state) == 2
 
 
 class TestHTTPX2TenacityTransport:
