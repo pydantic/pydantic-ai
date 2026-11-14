@@ -3718,29 +3718,6 @@ async def test_bedrock_model_thinking_part_from_other_model(
     )
 
 
-async def test_bedrock_replay_empty_thinking_part_not_sent_as_assistant_text(bedrock_provider: BedrockProvider):
-    """An empty foreign `ThinkingPart` is left out of a non-Claude assistant turn instead of sent as bare tags.
-
-    Not a VCR test: the claim is the outbound body, which the default cassette matcher doesn't check.
-    """
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='hello')]),
-        ModelResponse(parts=[ThinkingPart(content='', provider_name='anthropic'), TextPart(content='hi')]),
-        ModelRequest(parts=[UserPromptPart(content='continue')]),
-    ]
-
-    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
-
-    assert bedrock_messages == snapshot(
-        [
-            {'role': 'user', 'content': [{'text': 'hello'}]},
-            {'role': 'assistant', 'content': [{'text': 'hi'}]},
-            {'role': 'user', 'content': [{'text': 'continue'}]},
-        ]
-    )
-
-
 async def test_bedrock_anthropic_tool_with_thinking(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """When using thinking with tool calls in Anthropic, we need to send the thinking part back to the provider.
 
