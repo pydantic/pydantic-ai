@@ -18,7 +18,7 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs

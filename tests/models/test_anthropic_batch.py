@@ -267,6 +267,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
                 anthropic_service_tier='standard_only',
                 anthropic_cache=True,
                 anthropic_cache_diagnostics=True,
+                anthropic_inference_geo='us',
                 extra_body={'temperature': 0.5},
             ),
             model_request_parameters=ModelRequestParameters(
@@ -280,6 +281,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
     assert body['metadata'] == {'user_id': 'user'}
     assert body['service_tier'] == 'standard_only'
     assert body['diagnostics'] == {'previous_message_id': None}
+    assert body['inference_geo'] == 'us'
     assert body['temperature'] == 0.5
     assert body['system'][-1]['text'] == 'Answer briefly'
     assert body['tools'][0]['name'] == 'weather'
@@ -430,7 +432,7 @@ def _errored(error_type: str, message: str, *, details: dict[str, str] | None = 
         ('billing_error', 'Billing issue.', ModelQuotaExceededError, 402),
         ('permission_error', 'Not allowed.', ModelAuthenticationError, 403),
         ('not_found_error', 'Not found.', ModelNotFoundError, 404),
-        ('request_too_large', 'Request too large.', ModelHTTPError, 413),
+        ('request_too_large', 'Request too large.', ModelRequestRejectedError, 413),
         ('rate_limit_error', 'Rate limited.', ModelRateLimitError, 429),
         ('api_error', 'Internal server error.', ModelServerError, 500),
         ('timeout_error', 'Timed out.', ModelServerError, 504),
@@ -447,8 +449,6 @@ def test_anthropic_batch_errors_raise_the_category_of_the_same_error_outside_a_b
         model.batch_decode(_errored(error_type, message), _request())
     error = exc_info.value
     assert isinstance(error, ModelHTTPError)
-    if error_class is ModelHTTPError:
-        assert type(error) is ModelHTTPError
     assert (error.status_code, error.provider_error_type) == (status_code, error_type)
     assert error.body == {'type': 'error', 'error': {'type': error_type, 'message': message}, 'request_id': 'req_1'}
 
@@ -523,6 +523,33 @@ async def test_anthropic_batch_results_read_every_result_type(allow_model_reques
     for status in ('canceled', 'expired'):
         with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
             model.batch_decode(results[status], requests[status])
+
+
+async def test_anthropic_batch_result_reports_inference_geo(allow_model_requests: None) -> None:
+    """A batched request that set `anthropic_inference_geo` reports where it ran, as it would outside a batch.
+
+    Anthropic echoes `usage.inference_geo` on every result, so a request without the setting doesn't report it.
+    """
+    message = _message(
+        [{'type': 'text', 'text': 'Hi!'}], usage={'input_tokens': 10, 'output_tokens': 5, 'inference_geo': 'us'}
+    )
+    api = _FakeBatchAPI(
+        results=[{'set': {'type': 'succeeded', 'message': message}, 'unset': {'type': 'succeeded', 'message': message}}]
+    )
+    model = _fake_model(api)
+    requests = {
+        'set': _request('set', AnthropicModelSettings(anthropic_inference_geo='us')),
+        'unset': _request('unset'),
+    }
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests.values()])
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+
+    reported = model.batch_decode(results['set'], requests['set']).provider_details
+    assert reported is not None
+    assert reported['inference_geo'] == 'us'
+    unreported = model.batch_decode(results['unset'], requests['unset']).provider_details
+    assert unreported is not None
+    assert 'inference_geo' not in unreported
 
 
 async def test_anthropic_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
