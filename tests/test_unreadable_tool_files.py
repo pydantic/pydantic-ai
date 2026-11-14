@@ -358,6 +358,10 @@ def _openrouter() -> Model:
     return OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test'))
 
 
+def _openrouter_claude() -> Model:
+    return OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test'))
+
+
 def _groq() -> Model:
     return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test'))
 
@@ -446,6 +450,12 @@ def _google() -> Model:
             ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': True}),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
             id='openrouter',
+        ),
+        pytest.param(
+            _openrouter_claude,
+            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': False}),
+            marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
+            id='openrouter_claude',
         ),
         pytest.param(
             _groq,
