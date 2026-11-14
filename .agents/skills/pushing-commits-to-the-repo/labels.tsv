@@ -32,7 +32,14 @@ ci-review-failed
 ci:fast	Use Depot 4-core runners for bottleneck CI jobs
 ci:slow	Force standard GitHub runners (bypass Depot)
 citations
+clai2
 cli
+cluster:cache	Work stream: prompt cache retention, expiry and prefix stability
+cluster:complexity	Work stream: cognitive complexity refactors under the 15-per-function gate (#10983)
+cluster:concise-docs	Trim harness docs pages and Ruff-format their code and diagram snippets
+cluster:extra-headers	Header-name handling in extra_headers (user-agent, anthropic-beta)
+cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
+codemode	CodeMode: model-written scripts, the tools they call, their limits, and interpreter state.
 cohere
 community contribution
 community snippets
@@ -61,6 +68,7 @@ feature	New feature request, or PR implementing a feature (enhancement)
 feedback wanted
 final-review	Run the CI Review agent on this PR's head
 fix
+flake	A flaky test on main; the issue is the claim on its fix
 gateway
 genai-prices
 gh-aw	GitHub Agentic Workflows integration and engine, including its runner, recorder, and parser.
@@ -75,14 +83,14 @@ has-workaround	A concrete user workaround is documented in the issue
 hooks
 httpx
 huggingface
+image-generation	Generating images: ImageGenerator, image models, ImageGenerationTool, ImageGeneration capability.
 implementation-pending
 integration-request	Request for a new third-party integration
 internal
 invalid	This doesn't seem right
-litellm
 logfire
 loopable	Mechanically fixable bug suitable for automated fix loop; no human design judgment expected.
-media
+media	Media in messages: BinaryContent, FileUrl, UploadedFile, media in tool returns, media stores.
 message-history
 meta	high level, conceptual
 mistral
@@ -93,11 +101,11 @@ moonshot/kimi
 more info	More information required
 native-or-local	a.k.a. `provider adaptive` or `native fallback`
 native-tools
-needs MRE
 needs-confirmation
 needs-durable-exec-review	Touches a core definition a durable engine depends on (scripts/durable_exec_contract.json)
 needs-maintainer-action	The next meaningful action must come from a maintainer
 needs-maintainer-discussion	An unresolved design or scope decision needs maintainer input.
+needs-reproduction
 new models	Support for new model(s)
 new-capability	Requests and PRs adding a first-party capability or a new provider-backed implementation.
 ollama	Ollama provider integration, configuration, and model support.
@@ -120,6 +128,8 @@ pkg:core	pydantic-ai-slim, pydantic-ai and examples (pydantic_ai_slim/, examples
 pkg:evals	pydantic-evals (pydantic_evals/)
 pkg:graph	pydantic-graph (pydantic_graph/)
 pkg:harness	pydantic-ai-harness (src/pydantic_ai_harness)
+pr-review-checks:accepted	Maintainer override: pass PR Review Checks on the current head despite blocking findings
+pr-review-checks:run	Maintainer approval to run PR Review Checks on a PR from an author without write access
 prefect
 probable-spam	Likely spam or package-promotion issue; needs maintainer review before engagement.
 provider-mapping-sweep

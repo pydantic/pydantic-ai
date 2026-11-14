@@ -149,6 +149,10 @@ class _FakeExecCall:
             start_new_session=True,
         )
         machine.processes.append(process)
+        # The command can run before this registers it, so a delete that did not see the process kills it here.
+        if machine.status == 'destroyed':  # pragma: lax no cover
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
         assert process.stdout is not None and process.stderr is not None
         # `None` ends the stream, so no chunk depends on whether it was read before or after exit.
         chunks: asyncio.Queue[Any] = asyncio.Queue()

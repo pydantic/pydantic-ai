@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
 
+import pydantic
 from typing_extensions import TypedDict
 
 from . import messages as _messages
@@ -73,6 +74,7 @@ class ToolSearchMatch(TypedDict):
     """
 
 
+@pydantic.with_config(extra='allow')
 class ToolSearchArgs(TypedDict):
     """Typed arguments for a tool-search call.
 
@@ -95,6 +97,7 @@ class ToolSearchArgs(TypedDict):
     """
 
 
+@pydantic.with_config(extra='allow')
 class ToolSearchReturnContent(TypedDict):
     """Typed return value of the framework-managed tool-search builtin.
 
@@ -421,37 +424,11 @@ def synthesize_local_tool_search_messages(
 
     for msg in messages:
         if isinstance(msg, _messages.ModelResponse):
-            buffer: list[ModelResponsePart] = []
-            split_emitted = False  # Tracks whether we've emitted a response from this msg already.
-            changed = False
-            for part in msg.parts:
-                if isinstance(part, NativeToolSearchCallPart) and (keeps_native is None or not keeps_native(msg, part)):
-                    buffer.append(synthesize_local_from_native_call(part))
-                    changed = True
-                elif isinstance(part, NativeToolSearchReturnPart) and (
-                    keeps_native is None or not keeps_native(msg, part)
-                ):
-                    # Flush the buffered parts as a `ModelResponse` (skip if empty), then
-                    # emit the search return as its own `ModelRequest`. Subsequent parts
-                    # start a fresh buffer that becomes the next `ModelResponse`.
-                    if buffer:
-                        out.append(_split_response(msg, buffer, first=not split_emitted))
-                        split_emitted = True
-                    out.append(
-                        _messages.ModelRequest(
-                            parts=[synthesize_local_from_native_return(part)],
-                        ),
-                    )
-                    buffer = []
-                    changed = True
-                else:
-                    buffer.append(part)
-            if changed:
-                any_changed = True
-                if buffer:
-                    out.append(_split_response(msg, buffer, first=not split_emitted))
-            else:
+            if (split := _synthesize_local_response(msg, keeps_native)) is None:
                 out.append(msg)
+            else:
+                any_changed = True
+                out.extend(split)
         elif isinstance(msg, _messages.ModelRequest):
             # A base `ToolReturnPart` with `tool_kind='tool-search'` was already promoted to
             # `ToolSearchReturnPart` when its `ModelRequest` was built, so requests pass through.
@@ -460,3 +437,38 @@ def synthesize_local_tool_search_messages(
             assert_never(msg)
 
     return out if any_changed else messages
+
+
+def _synthesize_local_response(
+    msg: ModelResponse, keeps_native: _StatelessArtifactPredicate | None
+) -> list[ModelMessage] | None:
+    """The messages `synthesize_local_tool_search_messages` splits `msg` into, or `None` if it translates no part."""
+    out: list[ModelMessage] = []
+    buffer: list[ModelResponsePart] = []
+    split_emitted = False  # Tracks whether we've emitted a response from this msg already.
+    changed = False
+    for part in msg.parts:
+        if isinstance(part, NativeToolSearchCallPart) and (keeps_native is None or not keeps_native(msg, part)):
+            buffer.append(synthesize_local_from_native_call(part))
+            changed = True
+        elif isinstance(part, NativeToolSearchReturnPart) and (keeps_native is None or not keeps_native(msg, part)):
+            # Flush the buffered parts as a `ModelResponse` (skip if empty), then
+            # emit the search return as its own `ModelRequest`. Subsequent parts
+            # start a fresh buffer that becomes the next `ModelResponse`.
+            if buffer:
+                out.append(_split_response(msg, buffer, first=not split_emitted))
+                split_emitted = True
+            out.append(
+                _messages.ModelRequest(
+                    parts=[synthesize_local_from_native_return(part)],
+                ),
+            )
+            buffer = []
+            changed = True
+        else:
+            buffer.append(part)
+    if not changed:
+        return None
+    if buffer:
+        out.append(_split_response(msg, buffer, first=not split_emitted))
+    return out

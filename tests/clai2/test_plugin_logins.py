@@ -8,6 +8,7 @@ from typing import Generic, TypeVar
 import pytest
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
+from prompt_toolkit.utils import Event
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -118,6 +119,8 @@ async def test_shell_runs_and_completes_a_plugin_login(tmp_path: Path, monkeypat
 
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             self.completer = kwargs['completer']
 
         async def prompt_async(self, label: str, **kwargs: object) -> str:
