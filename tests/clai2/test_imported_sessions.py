@@ -42,6 +42,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
+from pydantic_ai_harness.compaction._summary import is_summary_part
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.sub_agents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
@@ -391,7 +392,14 @@ def claude_agent_session(cwd: Path) -> Path:
         Path.home() / '.claude' / 'projects' / '-work' / f'{CLAUDE_ID}.jsonl',
         [
             {**claude_entry('old', None, 'user', 'Before the compaction'), 'cwd': str(cwd)},
-            {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'boundary', 'parentUuid': None},
+            # Older versions name no messages they preserved.
+            {
+                'type': 'system',
+                'subtype': 'compact_boundary',
+                'uuid': 'boundary',
+                'parentUuid': None,
+                'logicalParentUuid': 'old',
+            },
             claude_entry('summary', 'boundary', 'user', 'Summary of the earlier work', isCompactSummary=True),
             claude_entry('u1', 'summary', 'user', 'Check both files'),
             claude_entry(
@@ -497,7 +505,7 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
     messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelRequest', ['UserPromptPart', 'CompactionPart', 'UserPromptPart']),
         ('ModelResponse', ['ToolCallPart', 'ToolCallPart']),
         ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart', 'UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
@@ -508,7 +516,8 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     ]
     opening, calls, results, checked, second, reports, done, closing = messages
     # The model's history starts at the compaction, which Claude Code's summary stands in for.
-    assert context(opening.parts[1]) == ('compact_summary', 'Summary of the earlier work')
+    summary = opening.parts[1]
+    assert is_summary_part(summary) and summary.content == 'Summary of the earlier work'
     assert isinstance(calls, ModelResponse) and calls.provider_response_id == 'm1'
     screenshot, missing, typed, attached, notified = results.parts
     assert isinstance(screenshot, ToolReturnPart)
@@ -542,6 +551,62 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     assert claude_code_sessions.header(path) == Header(
         native_id=CLAUDE_ID, cwd=str(tmp_path), title='My name', named=True
     )
+
+
+@pytest.mark.parametrize(
+    'segment',
+    [
+        {'headUuid': 'p1', 'tailUuid': 'p2', 'anchorUuid': 'summary'},
+        # Without an anchor, the summary is the first one after the boundary.
+        {'headUuid': 'p1', 'tailUuid': 'p2'},
+    ],
+)
+def test_claude_code_import_starts_at_the_compaction_summary(tmp_path: Path, segment: dict[str, str]) -> None:
+    model = 'claude-opus-5'
+    later = {'timestamp': '2026-10-01T12:05:00Z'}
+    path = write_jsonl(
+        Path.home() / '.claude' / 'projects' / '-work' / f'{CLAUDE_ID}.jsonl',
+        [
+            {**claude_entry('u0', None, 'user', 'Start'), 'cwd': str(tmp_path)},
+            claude_entry('a0', 'u0', 'assistant', [{'type': 'text', 'text': 'Started'}], model=model),
+            # The latest messages, which Claude Code sends again after the summary.
+            claude_entry('p1', 'a0', 'user', 'Keep going'),
+            claude_entry('p2', 'p1', 'assistant', [{'type': 'text', 'text': 'Going'}], model=model),
+            {
+                'type': 'system',
+                'subtype': 'compact_boundary',
+                'uuid': 'boundary',
+                'parentUuid': None,
+                # The history compaction replaced, which is not imported.
+                'logicalParentUuid': 'p2',
+                'compactMetadata': {'preservedSegment': segment},
+            },
+            # What Claude Code attached after compacting, which it sent after the summary.
+            {**claude_attachment('f1', 'boundary', {'type': 'file'}, 'Contents of a.py'), **later},
+            claude_entry('summary', 'f1', 'user', 'Summary so far', isCompactSummary=True, **later),
+            claude_entry('u1', 'summary', 'user', 'Next', **later),
+            # An empty summary stands in for nothing, and is left out.
+            claude_entry('empty', 'u1', 'user', '', isCompactSummary=True, **later),
+            claude_entry('a1', 'empty', 'assistant', [{'type': 'text', 'text': 'Done'}], model=model, **later),
+        ],
+    )
+    messages = claude_code_sessions.messages(path)
+    assert parts(messages) == [
+        ('ModelRequest', ['UserPromptPart', 'CompactionPart', 'UserPromptPart']),
+        ('ModelResponse', ['TextPart']),
+        ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
+        ('ModelResponse', ['TextPart']),
+        ('ModelRequest', ['UserPromptPart']),
+    ]
+    summary = messages[0].parts[1]
+    assert is_summary_part(summary) and summary.content == 'Summary so far'
+    requests = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert [part.content for part in requests if is_typed_prompt(part)] == ['Keep going', 'Next']
+    assert [context(part)[0] for part in requests if is_imported_context(part)] == [
+        'import_start',
+        'file',
+        'import_end',
+    ]
 
 
 async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
@@ -821,13 +886,14 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
     assert parts(messages) == [
         ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
+        ('ModelRequest', ['CompactionPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart']),
         ('ModelResponse', ['CompactionPart']),
         ('ModelRequest', ['UserPromptPart'] * 6),
         ('ModelResponse', ['TextPart']),
-        ('ModelRequest', ['UserPromptPart'] * 4),
+        # The summary comes ahead of the messages Codex kept, which every model continues from.
+        ('ModelRequest', ['UserPromptPart', 'CompactionPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['ToolCallPart']),
         ('ModelRequest', ['ToolReturnPart', 'UserPromptPart']),
     ]
@@ -836,7 +902,6 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
     contexts = [context(p) for p in requests if is_imported_context(p)]
     assert [kind for kind, _ in contexts] == [
         'import_start',
-        'compaction_summary',
         'compaction',
         # What Codex carried past the summary, which the history above holds as the user typed it.
         'compaction_retained:user',
@@ -847,11 +912,19 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         'compaction',
         'compaction_retained:context',
         'compaction_retained:user',
-        'compaction_summary',
         'import_end',
     ]
     encrypted, local = [body for kind, body in contexts if kind == 'compaction']
-    assert 'only OpenAI can read' in encrypted and 'its summary among them' in local
+    assert 'only OpenAI can read' in encrypted and 'the summary that follows, and' in local
+    # The readable summaries, of older versions and of compactions Codex ran itself.
+    assert [part.content for part in requests if is_summary_part(part)] == [
+        'Summary so far',
+        'Another language model started to solve this problem. Summary',
+    ]
+    # A summary imported before summaries were `CompactionPart`s is still read as the context it was saved as.
+    metadata = {'origin': 'pydantic-ai-harness.imported-context', 'source': 'codex', 'kind': 'compaction_summary'}
+    saved = UserPromptPart([TextContent('Summary so far', metadata=metadata)])
+    assert imported_kind(saved) == 'compaction_summary' and not is_typed_prompt(saved)
     # Images compaction kept come along.
     for body, image in (('See', 'https://example.com/d.png'), ('out', 'https://example.com/c.png')):
         [kept] = [p for p in requests if is_imported_context(p) and context(p)[1] == body]
@@ -914,8 +987,8 @@ def test_codex_rollback_drops_turns_as_codex_does(tmp_path: Path) -> None:
     lines += [message('user', '<environment_context>b</environment_context>'), message('user', 'second'), rollback(5)]
     every = write_jsonl(tmp_path / 'every.jsonl', lines)
     assert imported(every) == (['import_start', 'developer', 'developer', 'environment_context', 'import_end'], [])
-    # After Codex compacted the history itself, the prompt it kept is the turn rolled back, with its context and
-    # the summary that followed it.
+    # After Codex compacted the history itself, the prompt it kept is the turn rolled back, with its context; the
+    # summary ahead of them stays.
     summary = 'Another language model started to solve this problem. Summary'
     replacement = [
         {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'kept'}]},

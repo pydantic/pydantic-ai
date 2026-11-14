@@ -6,6 +6,9 @@ alternating requests and responses; core's `repair_messages` then pairs every to
 Content the other agent's harness added on the user's channel, rather than its user, is imported as
 `imported_context`: tagged with an `origin` under the harness prefix, so compaction and the transcript
 tell it apart from what the user typed, as they do a harness capability's content.
+
+A summary the other agent wrote when it compacted its conversation is imported as `imported_summary`,
+stored as CLAI's own compaction stores its summaries.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -35,6 +39,7 @@ from pydantic_ai.messages import (
     repair_messages,
 )
 from pydantic_ai.usage import RequestUsage
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY
 from pydantic_ai_harness.sub_agents import is_task_report
 
 JsonObject = dict[str, object]
@@ -144,6 +149,21 @@ def imported_context(
     """
     metadata = {'origin': IMPORTED_CONTEXT_ORIGIN, 'source': source, 'kind': kind}
     return UserPromptPart([TextContent(content, metadata=metadata), *files], timestamp=at)
+
+
+def imported_summary(content: str, *, source: str, at: datetime) -> CompactionPart:
+    """The summary `source` wrote when it compacted its conversation, stored as `SummarizingCompaction` stores its own.
+
+    Marked as a summary, so CLAI's compaction builds on it rather than summarizing it again, and with its
+    `origin` and `source` as `imported_context` has them, so it stays recognizable as the other agent's.
+    """
+    metadata = {
+        SUMMARY_METADATA_KEY: True,
+        SUMMARY_TIME_METADATA_KEY: at.isoformat(),
+        'origin': IMPORTED_CONTEXT_ORIGIN,
+        'source': source,
+    }
+    return CompactionPart(content, metadata=metadata)
 
 
 def framed(history: Sequence[ModelMessage], *, source: str, opening: str, closing: str) -> list[ModelMessage]:
