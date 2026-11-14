@@ -92,6 +92,7 @@ with try_import() as imports_successful:
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.mistral import MistralModelProfile, MistralReasoningEffort
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -4079,7 +4080,7 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
 async def test_large4_requested_efforts_map_to_closest_supported_level(
     allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str
 ) -> None:
-    """Large 4 accepts `'low'`/`'medium'`/`'high'`; each requested level maps to the closest supported one."""
+    """Large 4 accepts `'low'`/`'medium'`/`'high'` and can't turn reasoning off, so `thinking=False` sends `'low'`."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -4090,17 +4091,49 @@ async def test_large4_requested_efforts_map_to_closest_supported_level(
     assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected_reasoning_effort
 
 
-@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
-async def test_large4_thinking_false_sends_reasoning_effort_low(allow_model_requests: None, model_name: str) -> None:
-    """Unlike the Small 4/Medium 3.5 ids, Large 4 cannot turn reasoning off: `thinking=False` sends `'low'`."""
+@pytest.mark.parametrize(
+    'reasoning_efforts, thinking, expected_reasoning_effort',
+    [
+        pytest.param(frozenset({'none', 'high'}), False, 'none', id='false-none-accepted'),
+        pytest.param(frozenset({'none', 'high'}), 'low', 'high', id='lowest-at-or-above'),
+        pytest.param(frozenset({'low', 'medium'}), 'high', 'medium', id='highest-below'),
+    ],
+)
+async def test_reasoning_efforts_profile_override(
+    allow_model_requests: None,
+    reasoning_efforts: frozenset[MistralReasoningEffort],
+    thinking: ThinkingLevel,
+    expected_reasoning_effort: str,
+) -> None:
+    """A user's `profile=` overrides the provider's `mistral_reasoning_efforts`."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(
+        'mistral-large-4',
+        provider=MistralProvider(mistral_client=cast(Mistral, mock_client)),
+        profile=MistralModelProfile(mistral_reasoning_efforts=reasoning_efforts),
+    )
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=False))
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
     assert result.output == 'thought deeply'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'low'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected_reasoning_effort
+
+
+async def test_empty_reasoning_efforts_omits_reasoning_effort(allow_model_requests: None) -> None:
+    """A profile that accepts no `reasoning_effort` value sends none."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(
+        'mistral-large-4',
+        provider=MistralProvider(mistral_client=cast(Mistral, mock_client)),
+        profile=MistralModelProfile(mistral_reasoning_efforts=frozenset()),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=True))
+    assert result.output == 'thought deeply'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
 #####################
