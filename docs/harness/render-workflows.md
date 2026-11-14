@@ -343,7 +343,7 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 ## Memory
 
 `Memory` can read and write through Render task runs when its store is accessible to every worker. Use a shared
-external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker
+external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryMemoryStore` and files on an individual worker
 do not persist across task instances.
 
 ## Task options and tool opt-out

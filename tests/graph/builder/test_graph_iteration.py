@@ -172,6 +172,39 @@ async def test_iter_next_task_property():
         assert next_task is not None
 
 
+async def test_iter_next_task_after_empty_map():
+    """`next_task` is the empty task list after a map over an empty list, not the start task."""
+    g = GraphBuilder(state_type=IterState, output_type=list[int])
+
+    @g.step
+    async def generate(ctx: StepContext[IterState, None, None]) -> list[int]:
+        return []
+
+    @g.step
+    async def square(ctx: StepContext[IterState, None, int]) -> int:  # pragma: no cover
+        return ctx.inputs * ctx.inputs
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map(downstream_join_id=collect.id).to(square),
+        g.edge_from(square).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+
+    next_tasks: list[Any] = []
+    async with graph.iter(state=IterState()) as run:
+        async for event in run:
+            assert run.next_task == event
+            next_tasks.append(event if isinstance(event, EndMarker) else [t.node_id for t in event])
+
+    assert next_tasks == [['generate'], ['map'], [], ['__end__'], EndMarker([])]
+    assert run.output == []
+
+
 async def test_iter_with_map():
     """Test iteration with map operations."""
     g = GraphBuilder(state_type=IterState, output_type=list[int])

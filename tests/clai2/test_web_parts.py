@@ -48,7 +48,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
-from pydantic_ai_harness.filesystem import (
+from pydantic_ai_harness.file_system import (
     EditFileCallPart,
     FileChangeRequestedEvent,
     FileEditedEvent,

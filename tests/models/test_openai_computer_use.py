@@ -200,14 +200,19 @@ async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_it
     assert output['acknowledged_safety_checks'] == [CHECK]
 
 
+# A response-scoped ID is stored qualified with its response and restored before the request.
+@pytest.mark.parametrize(
+    'response_scoped,stored_id', [(False, 'call_1'), (True, 'resp_1:call_1')], ids=['unique-ids', 'response-scoped-ids']
+)
 async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safety_checks(
-    allow_model_requests: None,
+    allow_model_requests: None, response_scoped: bool, stored_id: str
 ) -> None:
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'))
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'), profile=profile)
     call = ToolCallPart(
         'computer',
         {'actions': [{'type': 'click', 'x': 5, 'y': 6}]},
-        tool_call_id='call_1',
+        tool_call_id=stored_id,
         tool_kind=COMPUTER_KIND.id,
         provider_name='openai',
         provider_details={
@@ -217,13 +222,13 @@ async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safet
     )
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Go.'),
-        ModelResponse(parts=[call], provider_name='openai'),
+        ModelResponse(parts=[call], provider_name='openai', provider_response_id='resp_1'),
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     'computer',
                     ['Ran 1 action.', _SCREEN],
-                    tool_call_id='call_1',
+                    tool_call_id=stored_id,
                     metadata={'performed': 1},
                     tool_kind=COMPUTER_KIND.id,
                 )
@@ -256,22 +261,28 @@ async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safet
     )
 
     (output,) = [item for item in sent['input'] if item.get('type') == 'computer_call_output']
+    assert output['call_id'] == 'call_1'
     assert output['acknowledged_safety_checks'] == [CHECK]
 
 
 @pytest.mark.parametrize(
-    'settings',
-    [{'openai_previous_response_id': 'auto'}, {'openai_conversation_id': 'conv_1'}],
-    ids=['previous-response', 'conversation'],
+    'settings,response_scoped',
+    [
+        pytest.param({'openai_previous_response_id': 'auto'}, False, id='previous-response'),
+        pytest.param({'openai_conversation_id': 'conv_1'}, False, id='conversation'),
+        # Stored qualified and restored before the request, as for Bedrock Mantle's IDs.
+        pytest.param({'openai_previous_response_id': 'auto'}, True, id='previous-response-scoped-ids'),
+    ],
 )
 async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_output(
-    allow_model_requests: None, settings: OpenAIResponsesModelSettings
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings, response_scoped: bool
 ) -> None:
     provider = InMemoryProvider()
     first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
     first.conversation = Conversation(id='conv_1')
     client = MockOpenAIResponses.create_mock([first, _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client), profile=profile)
     agent = Agent(model, capabilities=[FakeComputer(), provider.capability()], model_settings=settings)
 
     assert (await agent.run('Go.')).output == 'done'
@@ -1055,7 +1066,7 @@ async def test_a_call_whose_stored_item_is_not_a_computer_call_goes_back_plain(
 async def test_a_reused_wire_id_answers_each_call_as_its_own_kind(allow_model_requests: None) -> None:
     """Bedrock Mantle reuses call IDs across responses: a later function call with a computer call's ID stays one."""
     client = MockOpenAIResponses.create_mock(_done())
-    profile = OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True)
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client), profile=profile)
     computer_call = ToolCallPart(
         'computer',
@@ -1163,6 +1174,43 @@ async def test_a_streamed_computer_call_starts_once_with_its_arguments(allow_mod
     [start, _] = events
     assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart)
     assert start.part.args == {'actions': [{'type': 'screenshot'}]}
+
+
+@pytest.mark.parametrize('streamed', [False, True], ids=['response', 'stream'])
+async def test_a_response_scoped_computer_call_id_is_stored_qualified(
+    allow_model_requests: None, streamed: bool
+) -> None:
+    """A provider reusing call IDs across responses, like Bedrock Mantle, gets them qualified with the response."""
+    item = resp.ResponseComputerToolCall.model_validate(
+        {**_COMPUTER_ITEM, 'actions': [{'type': 'screenshot'}], 'pending_safety_checks': []}
+    )
+    response = response_message([item])
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=0),
+        resp.ResponseOutputItemDoneEvent(
+            item=item, output_index=0, type='response.output_item.done', sequence_number=1
+        ),
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}), type='response.completed', sequence_number=2
+        ),
+    ]
+    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(response)
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client), profile=profile)
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    if streamed:
+        async with model.request_stream(messages, None, params) as stream_response:
+            async for _ in stream_response:
+                pass
+        stored = stream_response.get()
+    else:
+        stored = await model.request(messages, None, params)
+
+    # The ID followed by a hash of the response ID, `123`.
+    (call,) = stored.tool_calls
+    assert call.tool_call_id == 'call_1_f9rpvkyf'
 
 
 # Properties over any value OpenAI could send or a history could hold. The SDK builds response items without
