@@ -34,7 +34,7 @@ network:
     - logfire-eu.pydantic.info
     - logfire-us.pydantic.info
 tools:
-  bash: []
+  # No shell: gh-aw rejects `bash: []` for this engine, so NO_SHELL_WORKFLOWS in pydantic_ai_gh_aw_shim/agent.py withholds it.
   cli-proxy: false
   github: false
 safe-outputs:
@@ -122,14 +122,11 @@ pre-agent-steps:
       repository: ${{ job.workflow_repository }}
       ref: ${{ job.workflow_sha }}
       persist-credentials: false
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  - name: Install repository workflow policy
+    id: workflow-policy
+    run: bash .github/scripts/stage-gh-aw-agent.sh
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   - name: Install the typed-boundary dependency
     run: >-
       python3 -m pip install --quiet 'pydantic==2.13.4'
@@ -146,6 +143,8 @@ pre-agent-steps:
       path: community-candidates.json
       retention-days: 1
       overwrite: true
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
@@ -155,7 +154,6 @@ imports:
   - shared/rigor.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
 ---
 <!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
 

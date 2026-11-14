@@ -59,13 +59,13 @@ interactions:
       instructions: 'You are a voice assistant. Answer in one short sentence.
 
 
-        <context id="agent:code_word">
+        <pyai:context id="agent:code_word">
 
         The code word is BLUE. Tell the user when they ask for it.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       output_modalities:
       - text
@@ -100,13 +100,13 @@ interactions:
       instructions: 'You are a voice assistant. Answer in one short sentence.
 
 
-        <context id="agent:code_word">
+        <pyai:context id="agent:code_word">
 
         The code word is BLUE. Tell the user when they ask for it.
 
-        </context>
+        </pyai:context>
 
-        A later <context> element with the same id replaces the earlier one and stays
+        A later <pyai:context> element with the same id replaces the earlier one and stays
         in effect until replaced again.'
       tools: []
       tool_choice: auto
@@ -444,11 +444,11 @@ interactions:
       role: system
       content:
       - type: input_text
-        text: '<context id="agent:code_word">
+        text: '<pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context>'
+          </pyai:context>'
 - kind: message
   direction: sent
   at: 0.977
@@ -485,11 +485,11 @@ interactions:
       role: system
       content:
       - type: input_text
-        text: '<context id="agent:code_word">
+        text: '<pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context>'
+          </pyai:context>'
 - kind: message
   direction: received
   at: 1.247
@@ -504,11 +504,11 @@ interactions:
       role: system
       content:
       - type: input_text
-        text: '<context id="agent:code_word">
+        text: '<pyai:context id="agent:code_word">
 
           The code word is ORANGE. Tell the user when they ask for it.
 
-          </context>'
+          </pyai:context>'
 - kind: message
   direction: received
   at: 1.252

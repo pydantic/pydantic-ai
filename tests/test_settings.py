@@ -17,7 +17,8 @@ def _discover_model_settings() -> tuple[dict[str, type], list[str]]:
     """Collect every `ModelSettings` subclass defined by a `pydantic_ai.models` submodule.
 
     Derived from the package rather than a hardcoded list so a new provider is covered the moment it
-    lands, and a renamed module can't silently drop a settings class from the prefix check.
+    lands, and a renamed module can't silently drop a settings class from the prefix check. A provider
+    package such as `models.openai` counts the classes its `__init__` re-exports from its submodules.
     """
     settings_classes: dict[str, type] = {}
     unimportable: list[str] = []
@@ -28,7 +29,9 @@ def _discover_model_settings() -> tuple[dict[str, type], list[str]]:
             unimportable.append(f'{module_name} ({e})')
             continue
         for name, obj in vars(module).items():
-            if not isinstance(obj, type) or obj.__module__ != module_name:
+            if not isinstance(obj, type):
+                continue
+            if obj.__module__ != module_name and not obj.__module__.startswith(f'{module_name}.'):
                 continue
             # `TypedDict` subclasses report `dict` as their only `__bases__`; `__orig_bases__` keeps the real chain.
             bases = list(getattr(obj, '__orig_bases__', ()))
@@ -51,7 +54,7 @@ _PREFIX_OVERRIDES = {'mcp_sampling': 'mcp_'}
 
 @pytest.mark.parametrize('settings_cls', _MODEL_SETTINGS_CLASSES.values(), ids=list(_MODEL_SETTINGS_CLASSES))
 def test_specific_prefix_settings(settings_cls: type):
-    module_name = settings_cls.__module__.rsplit('.', maxsplit=1)[-1]
+    module_name = settings_cls.__module__.removeprefix(f'{models.__name__}.').split('.')[0]
     prefix = _PREFIX_OVERRIDES.get(module_name, f'{module_name}_')
     # A `TypedDict`'s annotations include every field it inherits, and a field declared by another settings
     # class it builds on (`TypeSafeModelSettings` on `DecisionModelSettings`) is that class's to prefix.

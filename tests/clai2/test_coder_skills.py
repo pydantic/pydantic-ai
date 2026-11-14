@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
+from prompt_toolkit.utils import Event
 from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
@@ -577,7 +578,8 @@ class TestSkillCatalog:
 def _inputs(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> None:
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
-            pass
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
 
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
