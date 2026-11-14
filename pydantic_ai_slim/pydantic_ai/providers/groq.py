@@ -15,7 +15,10 @@ from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import (
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -102,6 +105,12 @@ class GroqProvider(Provider[AsyncGroq]):
             groq_model_profile(model_name),
             # Groq documents JSON mode for every model it serves.
             ModelProfile(supports_inline_system_prompts=True, supports_json_object_output=True),
+            # Groq's strict mode requires every field to be required and every object to set
+            # `additionalProperties: false` (https://console.groq.com/docs/structured-outputs). Of the models it lists
+            # for strict mode, qwen3.8's family transformer doesn't produce that, so it gets the one gpt-oss gets.
+            ModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
+            if model_name.startswith('qwen/qwen3.8-')
+            else None,
             special_token_route_profile('groq', model_name),
         )
 
