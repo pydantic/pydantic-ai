@@ -796,6 +796,56 @@ def test_boolean_schema_tool_args() -> None:
     assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
 
 
+def test_tool_type_list_args() -> None:
+    """One of a JSON Schema `type` list is generated, mirroring the `anyOf` handling."""
+    calls: list[dict[str, Any]] = []
+
+    def flexible_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {'value': {'type': ['string', 'null']}},
+        'required': ['value'],
+    }
+    tool = Tool.from_schema(flexible_tool, name='flexible_tool', description='Flexible value.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+
+    assert calls == snapshot([{'value': 'a'}])
+
+
+def test_tool_type_list_multi_member() -> None:
+    """Different seeds select different members of the `type` list, like a multi-member `anyOf`."""
+    calls: list[dict[str, Any]] = []
+
+    def multi_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {'value': {'type': ['string', 'null']}, 'count': {'type': ['null', 'integer']}},
+        'required': ['value', 'count'],
+    }
+    tool = Tool.from_schema(multi_tool, name='multi_tool', description='Multi-member value.', json_schema=schema)
+    Agent(TestModel(seed=1), tools=[tool]).run_sync('hello')
+
+    assert calls == snapshot([{'value': None, 'count': 1}])
+
+
+def test_tool_type_list_empty_raises() -> None:
+    """An empty `type` list still reaches the unknown-type error, preserving the pre-existing behavior."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': {'type': []}},
+        'required': ['value'],
+    }
+
+    with pytest.raises(NotImplementedError, match='Unknown type'):
+        _JsonSchemaTestData(schema).generate()
+
+
 @pytest.mark.parametrize(
     'content',
     [
