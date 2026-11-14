@@ -57,10 +57,8 @@ def preamble_text_agents(
 
     The tests built on these agents aren't VCR tests. What they check is how the workflow side classifies the
     `ModelResponse` the durable unit returned. The unit has already parsed the provider's answer by then, so the wire
-    format a recording would pin never reaches that code. A recording of this response shape also can't be made on
-    request: no setting makes a model write text before it calls a tool, and under tool output Pydantic AI asks the
-    provider to force the tool call (`tool_choice='required'`) wherever the model's profile allows it. A scripted
-    model streams the exact shape on every engine.
+    format a recording would pin never reaches that code. A scripted model streams the exact shape on every engine,
+    where a real model writes text before a tool call only when it chooses to.
     """
     return [
         Agent(
