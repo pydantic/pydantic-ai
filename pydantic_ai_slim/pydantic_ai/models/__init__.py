@@ -931,6 +931,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Set by adapters whose tool result channel carries text only, so `prepare_messages` knows such a request has a
     frame in it.
     """
+    _rejects_unpaired_tool_calls: ClassVar[bool] = False
+    """Whether the API rejects a tool call with no result, or a result that names no call.
+
+    Set by adapters whose API pairs them by ID and fails the request otherwise, so `prepare_messages` pairs the
+    tool-search calls and returns it translates from another provider's history. Elsewhere they go out as translated.
+    """
     _lookalike_notes_precede_tool_results: ClassVar[bool] = False
     """Whether the API takes a lookalike note ahead of a request's tool results.
 
@@ -2159,11 +2165,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             else:
                 messages = _announce_tool_availability_delta_messages(messages, deferred_tool_names)
 
-        from .._tool_search import repair_dangling_translated_calls, synthesize_local_tool_search_messages
+        from .._tool_search import synthesize_local_tool_search_messages
 
         untranslated = messages
         messages = synthesize_local_tool_search_messages(
-            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+            messages,
+            keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
+            pair_returns=self._rejects_unpaired_tool_calls,
         )
 
         if not clears_request_scoped_prompts:
@@ -2188,12 +2196,25 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         messages = _order_tool_results_by_call(messages)
         # After the reorder above, so the returns land where an agent run's repair after this method puts them.
-        messages = repair_dangling_translated_calls(messages, untranslated)
+        messages = self._repair_dangling_translated_tool_search_calls(messages, untranslated)
 
         if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _repair_dangling_translated_tool_search_calls(
+        self, messages: list[ModelMessage], untranslated: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        """Answer the tool-search calls translated from `untranslated` that have no return, where the API requires it.
+
+        See `_tool_search.repair_dangling_translated_calls` and `_rejects_unpaired_tool_calls`.
+        """
+        if not self._rejects_unpaired_tool_calls:
+            return messages
+        from .._tool_search import repair_dangling_translated_calls
+
+        return repair_dangling_translated_calls(messages, untranslated)
 
     def _translate_legacy_tool_reveals(
         self,

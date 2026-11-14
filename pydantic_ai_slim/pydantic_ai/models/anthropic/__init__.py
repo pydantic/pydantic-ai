@@ -1054,6 +1054,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
     _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
+    # The Messages API rejects a `tool_result` whose `tool_use_id` names no `tool_use`, and a `tool_use` with no result.
+    _rejects_unpaired_tool_calls = True
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)

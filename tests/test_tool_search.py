@@ -6428,7 +6428,7 @@ def test_synthesize_messages_pairs_returns_that_name_no_call(case: PairingCase) 
         ModelRequest(parts=[UserPromptPart(content='show metrics')]),
         ModelResponse(parts=case.parts, provider_name='openai'),
     ]
-    assert _tool_exchange(synthesize_local_tool_search_messages(history)) == case.expected
+    assert _tool_exchange(synthesize_local_tool_search_messages(history, pair_returns=True)) == case.expected
 
 
 def test_synthesize_messages_keeps_a_late_result_on_its_call() -> None:
@@ -6452,7 +6452,7 @@ def test_synthesize_messages_keeps_a_late_result_on_its_call() -> None:
             provider_name='anthropic',
         ),
     ]
-    assert _tool_exchange(synthesize_local_tool_search_messages(history)) == snapshot(
+    assert _tool_exchange(synthesize_local_tool_search_messages(history, pair_returns=True)) == snapshot(
         [
             ('call', 'srvtoolu_1'),
             ('call', 'toolu_1'),
@@ -6570,6 +6570,12 @@ TRANSLATED_HISTORY_CASES = [
 ]
 
 
+class _PairingFunctionModel(FunctionModel):
+    """A `FunctionModel` whose API, like Anthropic's and OpenAI's, rejects an unpaired tool call or result."""
+
+    _rejects_unpaired_tool_calls = True
+
+
 @pytest.mark.parametrize('fallback', [False, True], ids=['agent', 'fallback'])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in TRANSLATED_HISTORY_CASES])
 async def test_translated_tool_search_history_pairs_every_call(case: TranslatedHistoryCase, fallback: bool) -> None:
@@ -6589,12 +6595,63 @@ async def test_translated_tool_search_history_pairs_every_call(case: TranslatedH
         received[:] = messages
         return ModelResponse(parts=[TextPart('done')])
 
-    function_model = FunctionModel(respond)
+    function_model = _PairingFunctionModel(respond)
     agent = Agent(FallbackModel(function_model) if fallback else function_model, toolsets=[_METRICS_TOOLSET])
 
     await agent.run(case.prompt, message_history=case.history)
 
     assert _tool_exchange(received) == case.expected
+
+
+@dataclass(frozen=True)
+class AcceptedHistoryCase:
+    id: str
+    history: list[ModelMessage]
+    agent: list[tuple[str, str]]
+    fallback: list[tuple[str, str]]
+
+
+ACCEPTED_HISTORY_CASES = [
+    AcceptedHistoryCase(
+        id='openai-output-ids',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        agent=snapshot([('call', 'tsc_1'), ('interrupted', 'tsc_1'), ('call', 'tsc_2'), ('interrupted', 'tsc_2')]),
+        fallback=snapshot([('call', 'tsc_1'), ('success', 'tso_1'), ('call', 'tsc_2'), ('success', 'tso_2')]),
+    ),
+    AcceptedHistoryCase(
+        id='anthropic-unanswered-search',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        agent=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
+        ),
+        fallback=snapshot([('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1')]),
+    ),
+]
+
+
+@pytest.mark.parametrize('fallback', [False, True], ids=['agent', 'fallback'])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in ACCEPTED_HISTORY_CASES])
+async def test_translated_tool_search_history_is_sent_as_translated_where_the_api_accepts_it(
+    case: AcceptedHistoryCase, fallback: bool
+) -> None:
+    """A model whose API takes an unpaired tool call or result gets the translated history as before.
+
+    Gemini, for one, accepted both shapes of https://github.com/pydantic/pydantic-ai/issues/13404, so its requests
+    stay as they were: under `FallbackModel` the returns keep their IDs and the call stays unanswered, and a plain
+    agent run still applies its own repair to the prepared messages.
+    """
+    received: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received[:] = messages
+        return ModelResponse(parts=[TextPart('done')])
+
+    function_model = FunctionModel(respond)
+    agent = Agent(FallbackModel(function_model) if fallback else function_model, toolsets=[_METRICS_TOOLSET])
+
+    await agent.run('and for Q3?', message_history=case.history)
+
+    assert _tool_exchange(received) == (case.fallback if fallback else case.agent)
 
 
 def test_prepare_messages_answers_only_translated_calls_before_the_frontier() -> None:
@@ -6603,7 +6660,7 @@ def test_prepare_messages_answers_only_translated_calls_before_the_frontier() ->
     An agent run repairs every other unanswered call before `prepare_messages`, and resumes a suspended
     response without repairing it, so neither shape reaches the model through a run started here.
     """
-    model = FunctionModel(lambda messages, info: ModelResponse(parts=[]))
+    model = _PairingFunctionModel(lambda messages, info: ModelResponse(parts=[]))
     local_call = ToolSearchCallPart(args={'queries': ['metrics']}, tool_call_id='local_1')
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='show metrics')]),

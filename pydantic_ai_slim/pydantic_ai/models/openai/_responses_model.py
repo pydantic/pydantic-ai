@@ -343,6 +343,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     _renders_effort_deltas = True
     # The API takes a lookalike note ahead of a request's tool results.
     _lookalike_notes_precede_tool_results = True
+    # A `tool_search_call` or `function_call` needs an output naming its `call_id`, and an output needs its call.
+    _rejects_unpaired_tool_calls = True
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
     # compaction actually compact here.

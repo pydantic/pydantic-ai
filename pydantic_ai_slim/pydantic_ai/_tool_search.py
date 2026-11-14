@@ -388,7 +388,10 @@ def synthesize_local_from_native_return(part: NativeToolSearchReturnPart) -> Too
 
 
 def synthesize_local_tool_search_messages(
-    messages: list[ModelMessage], *, keeps_native: _StatelessArtifactPredicate | None = None
+    messages: list[ModelMessage],
+    *,
+    keeps_native: _StatelessArtifactPredicate | None = None,
+    pair_returns: bool = False,
 ) -> list[ModelMessage]:
     """Translate any `NativeToolSearch*Part` instances in the message history into local equivalents.
 
@@ -420,12 +423,13 @@ def synthesize_local_tool_search_messages(
     response only; subsequent splits get blank/zero values so downstream consumers don't
     double-count usage or treat one API call as two distinct responses.
 
-    A translated return whose `tool_call_id` names no translated call earlier in the history
-    takes the ID of the oldest call in its response that no return has answered yet. History
-    that OpenAI wrote before its anonymous search outputs were paired with their calls gives
-    such a return the output item's ID, which the receiving provider would reject as naming no
-    call. A return naming a call from an earlier response keeps its ID: Anthropic can deliver a
-    search result in the response after its call.
+    With `pair_returns`, a translated return whose `tool_call_id` names no translated call
+    earlier in the history takes the ID of the oldest call in its response that no return has
+    answered yet. Stored OpenAI history can give an anonymous search output's return the output
+    item's ID (`tso_…`) rather than its call's, which an API that pairs tool results by ID
+    rejects. A return naming a call from an earlier response keeps its ID: Anthropic can deliver
+    a search result in the response after its call. Without `pair_returns`, every return keeps
+    its ID.
     """
     out: list[ModelMessage] = []
     any_changed = False
@@ -433,7 +437,7 @@ def synthesize_local_tool_search_messages(
 
     for msg in messages:
         if isinstance(msg, _messages.ModelResponse):
-            if (split := _synthesize_local_response(msg, keeps_native, translated_call_ids)) is None:
+            if (split := _synthesize_local_response(msg, keeps_native, translated_call_ids, pair_returns)) is None:
                 out.append(msg)
             else:
                 any_changed = True
@@ -449,7 +453,10 @@ def synthesize_local_tool_search_messages(
 
 
 def _synthesize_local_response(
-    msg: ModelResponse, keeps_native: _StatelessArtifactPredicate | None, translated_call_ids: set[str]
+    msg: ModelResponse,
+    keeps_native: _StatelessArtifactPredicate | None,
+    translated_call_ids: set[str],
+    pair_returns: bool,
 ) -> list[ModelMessage] | None:
     """The messages `synthesize_local_tool_search_messages` splits `msg` into, or `None` if it translates no part.
 
@@ -475,7 +482,9 @@ def _synthesize_local_response(
                 split_emitted = True
             out.append(
                 _messages.ModelRequest(
-                    parts=[_synthesize_paired_local_return(part, unanswered_call_ids, translated_call_ids)],
+                    parts=[
+                        _synthesize_paired_local_return(part, unanswered_call_ids, translated_call_ids, pair_returns)
+                    ],
                 ),
             )
             buffer = []
@@ -490,16 +499,16 @@ def _synthesize_local_response(
 
 
 def _synthesize_paired_local_return(
-    part: NativeToolSearchReturnPart, unanswered_call_ids: deque[str], translated_call_ids: set[str]
+    part: NativeToolSearchReturnPart, unanswered_call_ids: deque[str], translated_call_ids: set[str], pair_returns: bool
 ) -> ToolSearchReturnPart:
-    """Translate `part` onto the call it answers, as `synthesize_local_tool_search_messages` pairs them.
+    """Translate `part`, onto the call it answers with `pair_returns`, as `synthesize_local_tool_search_messages` says.
 
     `unanswered_call_ids` holds the translated calls of `part`'s response that no return has answered
     yet, oldest first, and loses the one `part` answers.
     """
     if part.tool_call_id in unanswered_call_ids:
         unanswered_call_ids.remove(part.tool_call_id)
-    elif part.tool_call_id not in translated_call_ids and unanswered_call_ids:
+    elif pair_returns and part.tool_call_id not in translated_call_ids and unanswered_call_ids:
         part = replace(part, tool_call_id=unanswered_call_ids.popleft())
     return synthesize_local_from_native_return(part)
 
@@ -530,6 +539,7 @@ def repair_dangling_translated_calls(
     }
     if not native_call_ids:
         return messages
+    # The private repair helpers of `messages.py`, so these returns are the ones an agent run's own repair would add.
     dangling_by_response = _messages._dangling_tool_calls_to_repair(  # pyright: ignore[reportPrivateUsage]
         messages, repair_last_response=isinstance(messages[-1], _messages.ModelRequest)
     )

@@ -87,7 +87,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1818"
+      - "1707"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -97,15 +97,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_054702dfc5baaea0006af8ab9e3e9087d2ad6f66c7ce368d3d
+        id: resp_0ed91a096938b1a9006af8aee2b27c87d2aa5984cd159e81ea
         object: response
-        created_at: 1794681758
+        created_at: 1794682594
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1794681759
+        completed_at: 1794682595
         error: null
         frequency_penalty: 0.0
         image:
@@ -118,7 +118,7 @@ interactions:
         model: gpt-5.4-2026-03-05
         moderation: null
         output:
-        - id: msg_054702dfc5baaea0006af8ab9f6fb087d283e9a1ca18fc5dbb
+        - id: msg_0ed91a096938b1a9006af8aee3e23087d2a35abc029a129523
           type: message
           status: completed
           content:
@@ -204,4 +204,4 @@ interactions:
           total_tokens: 524
         user: null
         metadata: {}
-  recorded_at: 2026-11-14T18:42:40.055173+00:00
+  recorded_at: 2026-11-14T18:56:36.408025+00:00

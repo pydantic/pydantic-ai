@@ -111,7 +111,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "534"
+      - "416"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -121,9 +121,9 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-EkCzyempJVnDtJ5RxWByJrZHb5j8L
+        id: chatcmpl-EkDDSFCpq0J8TphvP5EGFk7FcUqG5
         object: chat.completion
-        created: 1794681762
+        created: 1794682598
         model: gpt-5.4-2026-03-05
         choices:
         - index: 0
@@ -147,4 +147,4 @@ interactions:
             rejected_prediction_tokens: 0
         service_tier: default
         system_fingerprint: null
-  recorded_at: 2026-11-14T18:42:42.594129+00:00
+  recorded_at: 2026-11-14T18:56:38.767713+00:00
