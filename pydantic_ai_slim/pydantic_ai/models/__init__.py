@@ -301,6 +301,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'ovhcloud',
         'sambanova',
         'snowflake',
+        'stav',
         'together',
         'vercel',
         'vllm',
@@ -320,6 +321,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'stav',
         'together',
     ],
 )

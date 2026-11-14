@@ -405,6 +405,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .sambanova import SambaNovaProvider
 
             return SambaNovaProvider
+        case 'stav':
+            from .stav import StavProvider
+
+            return StavProvider
         case 'sentence-transformers':
             from .sentence_transformers import SentenceTransformersProvider
 
