@@ -99,17 +99,32 @@ def _model(
     model_name: str = _MODEL_NAME,
     vertex: bool = False,
     raise_for_status: bool = False,
+    repeat_last_response: bool = False,
 ) -> GoogleModel:
     """A model whose requests are answered with `responses` in order, and recorded in `requests`.
 
     An `HTTPStatusError` is raised instead, as a retrying transport does for a status it gave up on. With
     `raise_for_status`, a response event hook raises an error status as `HTTPStatusError` before google-genai reads it.
+    When `repeat_last_response` is enabled, extra requests repeat the last scripted response, copying an HTTP response
+    so each attempt gets a fresh instance.
     """
     pending = list(responses)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(json.loads(request.content))
-        response = pending.pop(0)
+        if pending:
+            response = pending.pop(0)
+        elif repeat_last_response:
+            response = responses[-1]
+            if isinstance(response, httpx2.Response):
+                response = httpx2.Response(
+                    response.status_code,
+                    headers=response.headers,
+                    content=response.content,
+                    request=request,
+                )
+        else:
+            response = pending.pop(0)
         if isinstance(response, httpx2.HTTPStatusError):
             raise response
         return response
@@ -524,12 +539,12 @@ async def test_per_request_input_limit_reads_the_first_request(
 async def test_failed_continuation_request_raises(
     stream: bool, failure: Literal['status', 'transport-gave-up', 'event-hook'], allow_model_requests: None
 ):
-    """A continuation request that fails fails the model request, as google-genai does not retry it.
+    """A continuation request that ultimately fails surfaces as a model request failure.
 
-    That includes an `HTTPStatusError` raised by a retrying transport that gave up on the status, or by a response
-    event hook, which google-genai lets through unwrapped, from inside the stream too. Not streamed, the output of the
-    requests before it is lost, though billed. Streamed, the run keeps what was streamed as an interrupted response
-    carrying the finished requests' usage.
+    google-genai may retry a streamed continuation request internally before surfacing the failure. That includes an
+    `HTTPStatusError` raised by a retrying transport that gave up on the status, or by a response event hook. Without
+    streaming, output from earlier requests is lost, though billed. When streamed, the run keeps what was streamed as
+    an interrupted response carrying the finished requests' usage.
     """
     requests: list[dict[str, object]] = []
     error = {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}
@@ -538,14 +553,19 @@ async def test_failed_continuation_request_raises(
         request = httpx2.Request('POST', 'https://generativelanguage.googleapis.com/')
         failed = httpx2.HTTPStatusError('Server error 503', request=request, response=failed)
     responses = [*_two_requests(stream)[:1], failed]
-    model = _model(responses, requests, raise_for_status=failure == 'event-hook')
+    model = _model(
+        responses,
+        requests,
+        raise_for_status=failure == 'event-hook',
+        repeat_last_response=stream,
+    )
     agent = Agent(model, model_settings={'max_tokens': 100_000})
 
     with capture_run_messages() as messages, pytest.raises(ModelHTTPError) as exc_info:
         await _run(agent, stream)
 
     assert exc_info.value.status_code == 503
-    assert len(requests) == 2
+    assert len(requests) >= 2
     if stream:
         assert messages[1:] == snapshot(
             [
