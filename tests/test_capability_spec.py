@@ -1807,6 +1807,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Nativetool',
                         }
                     },
+                    'required': ['NativeTool'],
                     'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
@@ -1885,6 +1886,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Settoolmetadata',
                         }
                     },
+                    'required': ['SetToolMetadata'],
                     'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },

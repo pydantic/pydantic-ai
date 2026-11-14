@@ -195,12 +195,13 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
             src=file.name,
             config=CreateBatchJobConfigDict(display_name='pydantic-ai-batch', http_options=no_retries),
         )
-    except errors.ClientError:
+    except (errors.ClientError, httpx2.HTTPStatusError) as error:
         # Google refused to create the job, so nothing reads the file, which would otherwise count against the
         # project's file storage until it expires. After a server error or no response, the job may have been created,
-        # so the file is left for it.
-        with suppress(errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError):
-            await client.aio.files.delete(name=file.name)
+        # so the file is left for it. A retrying transport raises the status it gave up on as `HTTPStatusError`.
+        if isinstance(error, errors.ClientError) or 400 <= error.response.status_code < 500:
+            with suppress(errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError):
+                await client.aio.files.delete(name=file.name)
         raise
     assert job.name is not None
     _UPLOADED_INPUT_FILES[batch_credential(model), job.name] = file.name
