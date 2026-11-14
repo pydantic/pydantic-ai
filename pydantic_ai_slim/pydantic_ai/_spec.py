@@ -331,17 +331,16 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
     type has no JSON form, since no spec entry can then load `target`.
     """
-    params = inspect.signature(target).parameters
-    # An unannotated param takes any value.
-    type_hints: dict[str, Any] = dict.fromkeys(params, Any) | get_function_type_hints(target)
-    type_hints.pop('return', None)
+    hints = get_function_type_hints(target)
+    hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
-    type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
+    type_hints = {k: fv for k, v in hints.items() if (fv := filter_serializable_type(v)) is not None}
+    unrepresentable = hints.keys() - type_hints.keys()
 
     required_type_hints: dict[str, Any] = {}
 
-    for p in params.values():
+    for p in inspect.signature(target).parameters.values():
         # Skip self/cls (unbound instance/class methods) and *args/**kwargs
         if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
             type_hints.pop(p.name, None)
@@ -349,13 +348,15 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
         if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
             type_hints.pop(p.name, None)
             continue
-        # A param missing from `type_hints` had its type entirely filtered out.
-        if p.default is p.empty:
-            if p.name not in type_hints:
-                return None
-            required_type_hints[p.name] = type_hints[p.name]
-        elif p.name in type_hints:
-            type_hints[p.name] = NotRequired[type_hints[p.name]]
+        if p.default is not p.empty:
+            # Skip an optional param that is unannotated or whose type was entirely filtered out
+            if p.name in type_hints:
+                type_hints[p.name] = NotRequired[type_hints[p.name]]
+        elif p.name in unrepresentable:
+            return None
+        else:
+            # An unannotated required param takes any value
+            required_type_hints[p.name] = type_hints.setdefault(p.name, Any)
 
     return type_hints, required_type_hints
 

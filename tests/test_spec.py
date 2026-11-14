@@ -477,6 +477,24 @@ class TestBuildSchemaTypes:
             ).root_capability.capabilities
             assert [c.threshold for c in capabilities if isinstance(c, UnannotatedParam)] == [3]
 
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_unannotated_optional_param_capability_schema(self):
+        """An unannotated optional parameter leaves the schema of a sole object-typed parameter rejecting objects."""
+
+        @dataclass
+        class WeightsWithFlag(AbstractCapability[None]):
+            weights: dict[str, int]
+
+            @classmethod
+            def from_spec(cls, weights: dict[str, int], flag=False) -> Self:  # pyright: ignore[reportMissingParameterType]
+                return cls(weights=weights)
+
+        schema = AgentSpec.model_json_schema_with_capabilities([WeightsWithFlag])
+        short_form_object = {'model': 'test', 'capabilities': [{'WeightsWithFlag': {'a': 1}}]}
+        assert list(validator_for(schema)(schema).iter_errors(short_form_object))
+        with pytest.raises(ValueError, match="unexpected keyword argument 'a'"):
+            Agent.from_spec(short_form_object, custom_capability_types=[WeightsWithFlag])
+
     def test_no_params_class(self):
         class NoParams:
             def __init__(self): ...  # pragma: no cover
