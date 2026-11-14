@@ -836,14 +836,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
-        # Before trimming, as in `_build_responses_request_params`: an output acknowledges its call's checks.
-        calls = computer_calls_by_id(self._restore_response_scoped_tool_call_ids(messages))
+        restored = self._restore_response_scoped_tool_call_ids(messages)
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'),
             messages,
             store=self._resolve_store(model_settings),
             allow_no_new_messages=True,
         )
+        # As in `_build_responses_request_params`: an output acknowledges the checks of a call the server holds.
+        calls = computer_calls_by_id(restored[: len(restored) - len(messages)])
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
         messages = _without_model_settings_deltas(messages)
@@ -1529,10 +1530,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
-        # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
-        # checks even when the call itself stays in the stored response or conversation, as OpenAI's guide shows.
-        calls = computer_calls_by_id(self._restore_response_scoped_tool_call_ids(messages))
+        restored = self._restore_response_scoped_tool_call_ids(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        # The calls the server holds in the stored response or conversation: an output acknowledges its call's checks
+        # even when the call itself isn't sent again, as OpenAI's guide shows.
+        calls = computer_calls_by_id(restored[: len(restored) - len(messages)])
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
 
@@ -2732,14 +2734,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     async def _map_tool_return_part(self, part: ToolReturnPart, context: _ResponsesMapMessagesContext) -> None:
         call_id = _guard_tool_call_id(t=part)
         call_id, _ = split_combined_tool_call_id(call_id)
+        # The latest call with this ID, sent again here or held in the stored response or conversation, decides:
+        # this model made it as a `computer_call`, whatever the tool is now.
         computer_call = context.computer_calls.get(part.tool_call_id)
-        if part.tool_call_id in context.computer_call_ids or (
-            # A call not replayed here is in the stored response (`previous_response_id` or a
-            # conversation), where this model made it as a `computer_call`, whatever the tool is now.
-            computer_call is not None
-            and computer_call.provider_name == self.system
-            and part.tool_call_id not in context.replayed_call_ids
-        ):
+        if computer_call is not None and computer_call.provider_name == self.system:
             context.openai_messages.extend(map_computer_call_output(part, call_id, computer_call))
         elif call_id in context.client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
             # Replay the local `search_tools` result as a
@@ -2923,9 +2921,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         call_id = _guard_tool_call_id(t=item)
         call_id, id = split_combined_tool_call_id(call_id)
         id = id or item.id
-        context.replayed_call_ids.add(item.tool_call_id)
         # A provider can reuse a call ID in a later response, so the latest call with it decides how its result goes.
-        context.computer_call_ids.discard(item.tool_call_id)
+        context.computer_calls.pop(item.tool_call_id, None)
 
         if computer_call := self._replayed_computer_call(
             item, call_id, context, should_send_item_id=should_send_item_id
@@ -2968,7 +2965,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None
         if not (computer_call := stored_computer_call(item)):
             return None
-        context.computer_call_ids.add(item.tool_call_id)
+        context.computer_calls[item.tool_call_id] = item
         replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
         # The ID its output is sent with, which may be fitted to this request.
         replayed_call['call_id'] = call_id
@@ -3433,14 +3430,12 @@ class _ResponsesMapMessagesContext:
     client_tool_search_active: bool
     client_replay_call_ids: set[str] = field(default_factory=set[str])
     computer_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
-    """Each `computer_call` this API made in the whole history, by tool call ID, so its output can read it."""
-    computer_is_native: bool = False
-    computer_call_ids: set[str] = field(default_factory=set[str])
-    """Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
+    """The latest `computer_call` with each tool call ID so far, so its output can read it.
 
-    Both sets hold history tool call IDs, not wire IDs: a provider may reuse a wire ID in a later response.
+    It starts as the calls the server holds and follows each call sent again, which replaces the one before it:
+    a provider may reuse a call ID in a later response.
     """
-    replayed_call_ids: set[str] = field(default_factory=set[str])
+    computer_is_native: bool = False
     # Mirrors the Anthropic renderer's per-request `tool_addition` dedupe: several history
     # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
     # plus a replayed search return), and one declaration per request is enough.
