@@ -173,7 +173,7 @@ def _json_pointer_path(ref: str) -> str:
     return '.'.join(token.replace('~1', '/').replace('~0', '~') for token in ref.split('/')[1:])
 
 
-def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
+def resolve_json_pointer(schema: JsonSchema, ref: str) -> _JsonSchemaNode | None:
     """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
 
     Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the MCP
@@ -191,7 +191,7 @@ def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
             node = node[int(token)]
         else:
             node = None
-    return node if isinstance(node, dict) else None
+    return node if isinstance(node, dict | bool) else None
 
 
 class UseEnumMemberDocstrings:
