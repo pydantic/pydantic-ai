@@ -502,6 +502,10 @@ in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.
 when the stream reaches EOF without one. The option defaults to `False` because some compatible APIs
 do not guarantee the field.
 
+### Tool call IDs that repeat across responses
+
+Pydantic AI pairs each tool call with its result by the call's ID across the whole conversation. Some OpenAI-compatible APIs make tool call IDs unique only within one response, numbering the calls of every response from `call_0` again, so two different calls in one conversation share an ID. If yours does, set [`tool_call_ids_are_response_scoped=True`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] in the model profile. Each ID the API sends is then stored with a suffix derived from its response, such as `call_0_k3ZcR9aQ`, and sent back to the same endpoint as `call_0`. Other providers and endpoints, such as a [fallback model](overview.md#fallback-model), get the stored ID. The flag works with both `OpenAIChatModel` and `OpenAIResponsesModel`, and the [Bedrock Mantle](bedrock.md#bedrock-mantle) provider sets it for the GPT-5 models it serves on the Responses API.
+
 ### Models that accept only one leading system message
 
 Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.

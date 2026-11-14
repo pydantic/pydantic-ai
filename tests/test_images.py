@@ -4477,6 +4477,38 @@ async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+async def test_openai_image_generation_gave_up_status_error(edit: bool):
+    """A status a retrying transport gave up on surfaces as a categorized `ModelHTTPError`, on both endpoints.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    body = {'error': {'message': 'Rate limit reached', 'type': 'requests', 'code': 'rate_limit_exceeded'}}
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        response = httpx2.Response(429, json=body, headers={'retry-after': '3'}, request=request)
+        raise httpx2.HTTPStatusError('Client error 429', request=request, response=response)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)),
+    )
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.generate('tiny robot', images=images)
+
+    assert isinstance(exc_info.value, ModelRateLimitError)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == body
+    assert exc_info.value.retry_after == 3.0
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_generation_connection_error(openai_mock_client: AsyncMock):
     """A connection failure surfaces as `ModelAPIError` rather than the SDK's own exception.
 
