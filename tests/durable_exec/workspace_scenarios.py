@@ -465,6 +465,7 @@ CASES: dict[str, Check] = {
     'explicit_dead_ref': partial(
         check_explicit_rejected, 'dead_ref', 'WorkspaceUnavailableError', "environment 'expired' does not exist"
     ),
+    'prepare_reads': check_prepare_reads,
     'binary': check_binary,
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),
@@ -472,10 +473,6 @@ CASES: dict[str, Check] = {
 }
 
 
-def cases(*, in_process: bool = False) -> list[Any]:
-    """`CASES` as pytest params, one per scenario.
-
-    `in_process` adds the checks for engines that keep one backend per run; others rebuild it from the ref.
-    """
-    checks = {**CASES, 'prepare_reads': check_prepare_reads} if in_process else CASES
-    return [pytest.param(check, id=name) for name, check in checks.items()]
+def cases() -> list[Any]:
+    """`CASES` as pytest params, one per scenario."""
+    return [pytest.param(check, id=name) for name, check in CASES.items()]

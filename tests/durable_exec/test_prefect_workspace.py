@@ -86,7 +86,7 @@ async def run_scenario(name: str, arg: str | None) -> Any:
         raise ScenarioFailed(type(error).__name__, str(error)) from error
 
 
-@pytest.mark.parametrize('check', cases(in_process=True))
+@pytest.mark.parametrize('check', cases())
 async def test_workspace_scenario(check: Check) -> None:
     provider.reset()
     await check(run_scenario, agents)
