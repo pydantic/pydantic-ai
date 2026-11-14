@@ -1159,8 +1159,22 @@ Internal reasoning about the answer.
         }
     )
 
-    # A model the name doesn't identify, like an application inference profile, may be Claude, so its thinking still
-    # replays into a named Claude model with its signature.
+
+async def test_bedrock_unidentified_model_history_replays_into_named_claude(
+    allow_model_requests: None, mocker: MockerFixture
+):
+    """A model the name doesn't identify, like an application inference profile, may be Claude.
+
+    Its responses stay unstamped, so its thinking still replays into a named Claude model with its signature. The
+    client is mocked: the claim is about what the adapter renders from history, and the mocked responses only supply
+    that history.
+    """
+    thinking: dict[str, object] = {
+        'reasoningContent': {
+            'reasoningText': {'signature': 'own-signature', 'text': 'Internal reasoning about the answer.'}
+        }
+    }
+
     arn_model = BedrockConverseModel(
         'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123', provider=bedrock_provider()
     )
