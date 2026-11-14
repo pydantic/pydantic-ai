@@ -22,7 +22,7 @@ import anyio.abc
 
 from pydantic_ai._utils import run_in_executor
 
-from .local import _HostWorkspaceBackend  # pyright: ignore[reportPrivateUsage]
+from ._host import HostWorkspaceBackend
 from .protocol import CommandResult, WorkspaceCommand, WorkspacePlatform
 
 __all__ = ('WindowsWorkspaceBackend',)
@@ -173,7 +173,7 @@ def _job_objects() -> _JobObjects:
     return _JobObjects()
 
 
-class WindowsWorkspaceBackend(_HostWorkspaceBackend):
+class WindowsWorkspaceBackend(HostWorkspaceBackend):
     r"""Run commands as subprocesses on this Windows machine, in PowerShell, and use its filesystem.
 
     The Windows counterpart of [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend], and

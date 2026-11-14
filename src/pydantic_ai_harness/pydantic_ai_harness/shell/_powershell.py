@@ -2,8 +2,8 @@
 
 The launcher writes the command to `command.ps1` in the job directory and starts the wrapper as a
 hidden PowerShell of its own. The wrapper publishes `status.json` as the `sh` one does, runs the
-command through `cmd.exe`, whose redirection writes its output to the log files byte for byte, and
-publishes the exit code when it ends. Stopping a job ends the wrapper's process tree with `taskkill`.
+command, copies its output into the log files byte for byte, and publishes the exit code when it
+ends. Stopping a job ends the wrapper's process tree with `taskkill`.
 """
 
 from __future__ import annotations
@@ -42,21 +42,74 @@ while (-not (Test-Path -LiteralPath $ready)) {
   Start-Sleep -Milliseconds 100
 }
 if (Test-Path -LiteralPath (Join-Path $dir 'stop')) { Publish 143; exit }
-$run = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('{0}'))); exit `$LASTEXITCODE" -f `
+function Open-Log($name) {
+  $stream = [IO.FileStream]::new((Join-Path $dir $name), 'Open', 'Write', 'ReadWrite, Delete')
+  $null = $stream.Seek(0, 'End')
+  $stream
+}
+function Add-Clear {
+  $clears = [IO.File]::Open((Join-Path $dir 'log_clears'), 'Append', 'Write', 'ReadWrite, Delete')
+  $clears.WriteByte(120)
+  $clears.Dispose()
+}
+function Clear-Logs {
+  $notice = [Text.Encoding]::UTF8.GetBytes("[Log exceeded max_log_bytes=$limit; earlier output was cleared.]`n")
+  foreach ($stream in $logs.Values) {
+    if ($stream.Length -gt $limit -and $stream.Length -gt $notice.Length) {
+      Add-Clear
+      $stream.SetLength(0)
+      $stream.Position = 0
+      $stream.Write($notice, 0, $notice.Length)
+      $stream.Flush()
+      Add-Clear
+    }
+  }
+}
+$start = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+$start.Arguments = '-NoLogo -NoProfile -NonInteractive -Command "& ([ScriptBlock]::Create([IO.File]::ReadAllText(''{0}'')))"' -f `
   (Join-Path $dir 'command.ps1').Replace("'", "''")
-$command = '"{0}" -NoLogo -NoProfile -NonInteractive -Command "{1}" > "{2}" {3}' -f `
-  (Get-Process -Id $PID).Path, $run, (Join-Path $dir $out), $redirect
-$process = Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /s /c "' + $command + '"') `
-  -WorkingDirectory $cwd -WindowStyle Hidden -PassThru
-$null = $process.Handle
+$start.WorkingDirectory = $cwd
+$start.UseShellExecute = $false
+$start.RedirectStandardInput = $true
+$start.RedirectStandardOutput = $true
+$start.RedirectStandardError = $true
+$process = [Diagnostics.Process]::Start($start)
+$process.StandardInput.Close()
+$logs = @{}
+$pipes = @(@{ source = $process.StandardOutput.BaseStream; log = $out }, @{ source = $process.StandardError.BaseStream; log = $err })
+foreach ($pipe in $pipes) {
+  if (-not $logs.ContainsKey($pipe.log)) { $logs[$pipe.log] = Open-Log $pipe.log }
+  $pipe.buffer = [byte[]]::new(65536)
+  $pipe.read = $pipe.source.ReadAsync($pipe.buffer, 0, $pipe.buffer.Length)
+}
+$check = [DateTime]::UtcNow.AddSeconds($interval)
+while ($open = @($pipes | Where-Object { $_.read })) {
+  $null = [Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]@($open | ForEach-Object { $_.read }), 250)
+  foreach ($pipe in $open) {
+    if (-not $pipe.read.IsCompleted) { continue }
+    try { $count = $pipe.read.Result } catch { $count = 0 }
+    if ($count -le 0) { $pipe.read = $null; continue }
+    $stream = $logs[$pipe.log]
+    $stream.Write($pipe.buffer, 0, $count)
+    $stream.Flush()
+    $pipe.read = $pipe.source.ReadAsync($pipe.buffer, 0, $pipe.buffer.Length)
+  }
+  if ($limit -and [DateTime]::UtcNow -ge $check) { Clear-Logs; $check = [DateTime]::UtcNow.AddSeconds($interval) }
+}
+# Once more for the output since the last check, so a finished job's logs end within the limit.
+if ($limit) { Clear-Logs }
+foreach ($stream in $logs.Values) { $stream.Dispose() }
 $process.WaitForExit()
 Publish $process.ExitCode
 """
-"""The job's supervisor, given `$dir`, `$cwd`, the stdout log `$out` and the stderr redirection `$redirect`.
+"""The job's supervisor, given `$dir`, `$cwd`, the logs `$out` and `$err`, the log limit `$limit` (`0` for none),
+and the seconds between log checks `$interval`.
 
 It waits for `launch.ready`, like the `sh` wrapper, and never starts the command when its launcher died first
-or a `stop` file appeared. The command reads `command.ps1` as text rather than running it as a script file,
-so no execution policy applies to it.
+or a `stop` file appeared. It copies the command's output into the logs itself, so it can empty a log past the
+limit the way the `sh` watcher does, notice and `log_clears` bytes included: a log another process writes keeps
+that process's offset, so emptying it would leave the earlier bytes as zeros. The command reads `command.ps1` as
+text rather than running it as a script file, so no execution policy applies to it.
 """
 
 _LAUNCHER = """try {
@@ -83,14 +136,14 @@ to signal: `Job.kill` ends the wrapper's process tree instead.
 """
 
 
-def launch_script(directory: str, cwd: str, command: str, *, exclusive: bool, combined: bool) -> str:
+def launch_script(
+    directory: str, cwd: str, command: str, *, exclusive: bool, combined: bool, log_limit: int | None, interval: float
+) -> str:
     """The PowerShell that launches `command` as a job in `directory`, starting in `cwd`."""
     out, err = ('output.log', 'output.log') if combined else ('stdout.log', 'stderr.log')
-    # `cmd.exe` cannot open the same file for both streams, so a combined job's stderr follows its stdout.
-    redirect = '2>&1' if combined else f'2> "{directory}\\{err}"'
     wrapper = (
-        f'$dir = {literal(directory)}\n$cwd = {literal(cwd)}\n$out = {literal(out)}\n$redirect = {literal(redirect)}\n'
-        + _WRAPPER
+        f'$dir = {literal(directory)}\n$cwd = {literal(cwd)}\n$out = {literal(out)}\n$err = {literal(err)}\n'
+        f'$limit = {log_limit or 0}\n$interval = {interval:g}\n' + _WRAPPER
     )
     logs = ', '.join(literal(log) for log in dict.fromkeys((out, err)))
     return (

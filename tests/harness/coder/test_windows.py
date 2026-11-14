@@ -27,7 +27,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspacePlatform,
     WorkspaceRef,
-    local as local_module,
+    _host as host_module,
 )
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES
@@ -174,7 +174,7 @@ class TestFileToolsOnWindows:
         for index in range(100):
             (drive / 'project' / f'file{index:03}-{"x" * 40}.txt').write_text('main\n')
         # Above what `rg --version` prints, below the listing.
-        monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 1000)
+        monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 1000)
         result = await call_tool([file_system()], 'list_files', {}, workspace=DriveBackend(drive))
         assert result.startswith('file000-') and result.endswith(']')
         assert 'truncated' in result
@@ -257,6 +257,18 @@ class TestShellOnWindows:
             [shell, WindowsWorkspace[None](project)], 'start_command', {'command': 'Write-Output hi'}
         )
         assert 'needs a POSIX workspace' in result
+
+    async def test_a_log_past_max_log_bytes_is_cleared(self, project: Path) -> None:
+        shell = Shell[None](tools=['start_command', 'check_command'], max_log_bytes=1000)
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'start_command', {'command': "[Console]::Out.Write('x' * 5000)"})
+        assert 'ID: ' in started, started
+        check: dict[str, object] = {'command_id': started.rsplit('ID: ', 1)[1].strip()}
+        with anyio.fail_after(60):
+            while '[status: running]' in (checked := await call_tool([shell, workspace], 'check_command', check)):
+                await anyio.sleep(0.5)  # pragma: lax no cover - depends on how fast PowerShell starts
+        assert '[Log exceeded max_log_bytes=1000; earlier output was cleared.]' in checked
+        assert 'x' * 1000 not in checked
 
     async def test_stopping_a_background_command_ends_its_tree(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])

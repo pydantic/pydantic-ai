@@ -232,17 +232,33 @@ class SupportsRealpath(Protocol):
 
 @runtime_checkable
 class SupportsPlatform(Protocol):
-    """Optional: a backend that is not POSIX says so, so tools pick the right shell scripts and path syntax.
+    """Optional: a backend that says which shell and path syntax it has, and starts commands in a directory itself.
 
-    Without it, a backend is `'posix'`. A `'windows'` backend's paths are absolute Windows paths
-    wherever the rest of this module says POSIX, and its `run` also takes `cwd`, an absolute
-    directory to start the command in: with no `sh`, [`Workspace.run`][pydantic_ai.workspaces.Workspace.run]
-    cannot change directory for an argv command itself.
+    Without it, a backend is `'posix'`, and [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] starts a
+    command in a directory through `sh`. A `'windows'` backend has no `sh` to do that with, so a backend that
+    implements this protocol takes `cwd` in `run` itself, whatever its platform. A `'windows'` backend's paths
+    are absolute Windows paths wherever the rest of this module says POSIX.
     """
 
     @property
     def platform(self) -> WorkspacePlatform:
         """The workspace's shell and path syntax."""
+        ...
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        cwd: str | None = None,
+    ) -> CommandResult:
+        """[`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run], started in `cwd`.
+
+        `cwd` is an absolute directory that [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] has resolved and
+        checked; `None` starts the command in the working directory.
+        """
         ...
 
 

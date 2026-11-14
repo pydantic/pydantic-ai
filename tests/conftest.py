@@ -513,7 +513,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # A local workspace built with a relative `working_dir` resolves it against the current directory
     # once, at construction, which may happen in async code.
-    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai/workspaces/_host.py', '__init__'),
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),

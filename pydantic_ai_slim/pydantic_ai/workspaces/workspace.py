@@ -60,20 +60,6 @@ class WorkspacePaths(Protocol):
     def splitdrive(self, p: str, /) -> tuple[str, str]: ...
 
 
-class _RunsInCwd(Protocol):
-    """A `'windows'` backend's `run`, which takes `cwd` (see `SupportsPlatform`)."""
-
-    async def run(
-        self,
-        command: WorkspaceCommand,
-        *,
-        shell: bool = False,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        cwd: str | None = None,
-    ) -> CommandResult: ...
-
-
 _SHELL_READ_CHUNK_BYTES = 64 * 1024
 _SHELL_READ_ATTEMPTS = 3
 _SHELL_WRITE_CHUNK_CHARS = 64 * 1024
@@ -602,9 +588,9 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, Workspace):
             # Passed on, so wrappers (durable execution, sandboxes) see it.
             return await backend.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
-        if self.platform == 'windows':
+        if isinstance(in_directory := self._backend, SupportsPlatform):
             directory = await self._start_dir(cwd, command, shell=shell)
-            return await cast(_RunsInCwd, backend).run(command, shell=shell, env=env, timeout=timeout, cwd=directory)
+            return await in_directory.run(command, shell=shell, env=env, timeout=timeout, cwd=directory)
         return await backend.run(
             await self._command_in(cwd, command, shell=shell), shell=shell, env=env, timeout=timeout
         )

@@ -57,7 +57,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
     WrapperWorkspace,
-    local as local_module,
+    _host as host_module,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 
@@ -244,7 +244,7 @@ async def test_run_starts_in_cwd(tmp_path: Path, native: bool) -> None:
 
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
-    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
+    monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     with pytest.raises(WorkspaceError, match='shell filesystem read exceeded command output limit'):
         await workspace.read_bytes('large')
@@ -253,7 +253,7 @@ async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monk
 async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for index in range(400):
         (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
-    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
+    monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     with pytest.raises(WorkspaceError, match='shell filesystem listing exceeded command output limit'):
         await workspace.list_dir('.')
@@ -262,7 +262,7 @@ async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypa
 async def test_shell_listing_larger_than_command_output_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for index in range(600):
         (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
-    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 120 * 1024)
+    monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 120 * 1024)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     assert len(await workspace.list_dir('.')) == 600
 

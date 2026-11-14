@@ -9,7 +9,7 @@ from pathlib import Path  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.messages import Authority  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from pydantic_ai.workspaces import WindowsWorkspaceBackend
-from pydantic_ai.workspaces.local import _HostWorkspaceBackend  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.workspaces._host import HostWorkspaceBackend
 
 from .local_workspace import LocalWorkspace
 
@@ -43,5 +43,5 @@ class WindowsWorkspace(LocalWorkspace[AgentDepsT]):
     id: str | None = 'windows_workspace'
     """Fixed, so a later `WindowsWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
 
-    def _backend(self) -> _HostWorkspaceBackend:
+    def _backend(self) -> HostWorkspaceBackend:
         return WindowsWorkspaceBackend(self.working_dir, env=self.env)

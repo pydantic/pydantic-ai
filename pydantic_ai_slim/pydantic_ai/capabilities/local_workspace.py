@@ -16,7 +16,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 from pydantic_ai.workspaces._authority_paths import merge_path_authority
-from pydantic_ai.workspaces.local import _HostWorkspaceBackend  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.workspaces._host import HostWorkspaceBackend
 
 from .abstract import AbstractCapability
 
@@ -82,7 +82,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # `authority` or `path_authority` stated only on the replaced one never carries over.
         return capabilities[-1]
 
-    def _backend(self) -> _HostWorkspaceBackend:
+    def _backend(self) -> HostWorkspaceBackend:
         return LocalWorkspaceBackend(self.working_dir, env=self.env)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

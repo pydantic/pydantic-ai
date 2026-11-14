@@ -177,8 +177,7 @@ for a clear: it shows as the notice in the log and, when it happens while a
 
 On a Windows workspace (`WindowsWorkspace`), `shell` and the background-command
 tools run PowerShell, and `stop_command` ends a command's process tree with
-`taskkill`. `max_log_bytes` does not empty a log there, though output is still
-read from it in bounded slices. `run_command`, `persist_cwd` and
+`taskkill`. `max_log_bytes` applies there too. `run_command`, `persist_cwd` and
 `max_file_bytes` need a POSIX workspace.
 
 ## Environment control
