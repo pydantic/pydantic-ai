@@ -434,7 +434,7 @@ async def main():
 4. `batch_decode` raises the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the request failed with, if it did. Resubmitting failed requests is up to you, as is handling a request the batch ended without a result for.
 5. Or check from a scheduled job.
 
-[`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again. A retrying transport does retry it, unless its `validate_response` [skips batch creates](#retrying-transports).
+[`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again. A retrying transport does send it again after an error response, unless its `validate_response` [skips batch creates](#retrying-transports).
 
 ## Details
 
