@@ -10,7 +10,7 @@ from typing import Literal, assert_never, cast
 import httpx2
 
 from pydantic_ai import _model_errors
-from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.models._decode_errors import check_json_response, map_decode_errors
@@ -26,7 +26,7 @@ from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings
 
 try:
-    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
     from openai.types.images_response import ImagesResponse, Usage
 
     from pydantic_ai.models.openai import OMIT
@@ -273,15 +273,19 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                         ) from e
                     case _:
                         pass
-                raise ModelHTTPError(
+                raise ModelHTTPError.for_category(
+                    _model_errors.openai_compatible_category(status_code, e.code, e.type, e.message),
                     status_code=status_code,
                     model_name=self.model_name,
                     body=e.body,
                     headers=dict(e.response.headers),
+                    provider_error_code=e.code,
+                    provider_error_type=e.type,
                 ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+            timeout = isinstance(e, APITimeoutError)
+            raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
             raise _model_errors.transport_status_error(self.model_name, e.response) from e
