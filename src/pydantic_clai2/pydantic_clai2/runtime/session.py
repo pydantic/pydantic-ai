@@ -40,7 +40,6 @@ from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_fallback import other_workspace
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -203,11 +202,12 @@ class _LocalFallback(LocalWorkspace[DepsT]):
     def get_workspace(self, ctx: RunContext[DepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         if self._asking:
             return None
+        assert ctx.root_capability is not None, 'core sets the root capability before selecting a workspace'
         # Ask the resolved tree itself, so a provider of any shape (a group, a wrapper) is found; this
-        # instance declines while asking, as does `Coder`'s last-resort Windows fallback.
+        # instance declines while asking. Selection does no I/O, so asking twice is harmless.
         self._asking = True
         try:
-            other = other_workspace(ctx, ref=ref)
+            other = ctx.root_capability.get_workspace(ctx, ref=ref)
         finally:
             self._asking = False
         return None if other is not None else super().get_workspace(ctx, ref=ref)

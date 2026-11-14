@@ -27,10 +27,10 @@ class TestShellOnWindows:
         monkeypatch.chdir(tmp_path)
         return tmp_path
 
-    async def test_coder_works_in_the_current_directory(self, project: Path) -> None:
+    async def test_coder_works_in_a_windows_workspace(self, project: Path) -> None:
         (project / 'app.py').write_bytes(b'def main():\n    pass\n')
         results = await call_tools(
-            [Coder[None](repo_context=False, sub_agents=False)],
+            [Coder[None](repo_context=False, sub_agents=False), WindowsWorkspace[None](project)],
             [
                 ('shell', {'command': "Write-Output 'héllo'; Write-Error oops; cmd /c exit 3"}),
                 ('shell', {'command': 'Start-Sleep 30', 'mode': 'background'}),

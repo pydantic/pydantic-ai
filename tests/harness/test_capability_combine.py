@@ -326,9 +326,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
-    '_WindowsFallback': Anonymous(
-        "Coder's Windows workspace; each copy defers to any other workspace, so the first asked supplies it"
-    ),
     '_ReportExhaustedRetries': Anonymous(
         'Coder-local retry reporting; whichever sees the exhausted retry turns it into a tool failure, and the other passes that on'
     ),

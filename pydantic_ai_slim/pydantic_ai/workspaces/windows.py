@@ -233,9 +233,10 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         """Always `'windows'`: commands run in PowerShell, and paths are Windows paths."""
         return 'windows'
 
-    def _executable(self, env: Mapping[str, str]) -> str:
+    def _executable(self) -> str:
+        # From the backend's own environment, so no call's `env` decides it for later ones.
         if self._powershell is None:
-            self._powershell = _which('pwsh', env) or 'powershell.exe'
+            self._powershell = _which('pwsh', self._env) or 'powershell.exe'
         return self._powershell
 
     async def run_in_directory(
@@ -253,7 +254,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
         if isinstance(command, str):
             # Both search `PATH` on disk, so not on the event loop.
-            command = _powershell_command(await run_in_executor(self._executable, env), command)
+            command = _powershell_command(await run_in_executor(self._executable), command)
         command = await run_in_executor(_resolve_program, command, env)
         process = await anyio.open_process(
             command,

@@ -48,9 +48,8 @@ except UserError as e:
   Commands inherit only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`; pass the rest with
   `LocalWorkspace('.', env={'GH_TOKEN': ...})`. Never pass `os.environ` (leaks LLM API keys to the
   model's commands). Under `uv run`, `python`/`pytest` resolve from the agent's venv via `PATH`.
-- On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox). `Coder()` gets one for
-  the current directory when no capability supplies a workspace. Commands run in PowerShell and paths
-  are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
+- On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
+  workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
   `list_files` read the files when `rg` is missing.
 - **Harness files** (Shell job logs, sticky-`cd` state, tool-output spills) go in
   `.pydantic-ai-harness/` under the working directory, with a `.gitignore` of `*`. Spills are never

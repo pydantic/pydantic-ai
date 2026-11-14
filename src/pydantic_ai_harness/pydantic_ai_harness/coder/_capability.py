@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
-from pydantic_ai.capabilities import (
-    AbstractCapability,
-    CombinedCapability,
-    DynamicCapability,
-    ValidatedToolArgs,
-    WindowsWorkspace,
-)
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness._workspace_fallback import fallback_asking, other_workspace
 from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
@@ -179,29 +170,6 @@ class BenchmarkInstructions(AbstractCapability[AgentDepsT]):
         return BENCHMARK_INSTRUCTIONS
 
 
-@dataclass
-class _WindowsFallback(AbstractCapability[AgentDepsT]):
-    """`WindowsWorkspace('.')` for a run on Windows that no other capability gives a workspace.
-
-    `LocalWorkspace` needs a POSIX host, so without this a run on Windows has no workspace and fails at
-    its start. A capability function returns it, so core asks it only once the run's capabilities are
-    resolved, with the root capability set. It is a last resort: it defers to any capability that supplies
-    a workspace, wherever it is listed, other fallbacks such as CLAI's session directory included.
-    """
-
-    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if fallback_asking() or other_workspace(ctx, ref=ref) is not None:
-            return None
-        return WindowsWorkspace[AgentDepsT]('.').get_workspace(ctx, ref=ref)
-
-
-def _add_windows_fallback(capabilities: list[AbstractCapability[AgentDepsT]]) -> None:
-    """On Windows, add `_WindowsFallback`, from a capability function so it is asked after every other capability."""
-    if sys.platform == 'win32':
-        fallback = _WindowsFallback[AgentDepsT]()
-        capabilities.append(DynamicCapability[AgentDepsT](lambda ctx: fallback))
-
-
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
@@ -221,10 +189,9 @@ class Coder(CombinedCapability[AgentDepsT]):
 
     Files and commands go through `ctx.workspace`, and the project directory is
     its working directory: attach `LocalWorkspace('.')` for a local checkout, or
-    a sandbox provider's capability for untrusted work, alongside `Coder()`. On
-    Windows, a run that no capability gives a workspace gets `WindowsWorkspace('.')`;
-    elsewhere, a run without a workspace fails at its start. Commands are unrestricted
-    and can outlive runs.
+    a sandbox provider's capability for untrusted work, alongside `Coder()`, or
+    `WindowsWorkspace('.')` on Windows. A run without a workspace fails at its start.
+    Commands are unrestricted and can outlive runs.
 
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.
@@ -354,5 +321,4 @@ class Coder(CombinedCapability[AgentDepsT]):
             capabilities.append(_DefaultCaching[AgentDepsT]())
         if strict is not None:
             capabilities.append(_SetToolStrict[AgentDepsT](strict=strict, tool_names=frozenset(tool_names)))
-        _add_windows_fallback(capabilities)
         super().__init__(capabilities)
