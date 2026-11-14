@@ -18,6 +18,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.minimax import minimax_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
@@ -621,9 +622,9 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-# MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
-# profile. OpenAI is handled separately because Converse support differs between its model families.
+# NVIDIA and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so these profile
+# fns build a `BedrockModelProfile` from scratch instead of composing with an upstream profile. OpenAI is
+# handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -644,11 +645,14 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
     models_that_support_structured_output = ('minimax-m2',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return BedrockModelProfile(
-        supported_native_tools=frozenset(),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+    return merge_profile(
+        minimax_model_profile(model_name),
+        BedrockModelProfile(
+            supported_native_tools=frozenset(),
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+        ),
     )
 
 

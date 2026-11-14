@@ -8266,3 +8266,93 @@ async def test_non_json_response_body_raises_model_api_error(
 
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+class _MinimaxNested(BaseModel):
+    qty: int
+
+
+class _MinimaxToolArgs(BaseModel):
+    item: _MinimaxNested
+
+
+@pytest.mark.anyio
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_minimax_thinking_wire_shape(allow_model_requests: None):
+    from pydantic_ai.profiles.minimax import minimax_model_profile
+
+    request_bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = TypeAdapter(dict[str, JsonValue]).validate_json(request.content)
+        request_bodies.append(body)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        profile = minimax_model_profile('minimax-m2.7')
+        assert profile is not None
+        model = OpenAIChatModel(
+            'minimax-m2.7',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+            profile=profile,
+        )
+        await Agent(model).run('hello', model_settings=ModelSettings(thinking=False))
+
+    # `thinking=False` on an always-reasoning model sends no `reasoning_effort`, so the model keeps its
+    # (mandatory) default instead of `none`, which the M2 family rejects with 400 per the #12077 probes.
+    assert 'reasoning_effort' not in request_bodies[0]
+
+
+@pytest.mark.anyio
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_minimax_inlines_ref_tool_schema(allow_model_requests: None):
+    from pydantic_ai.profiles.minimax import minimax_model_profile
+
+    request_bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = TypeAdapter(dict[str, JsonValue]).validate_json(request.content)
+        request_bodies.append(body)
+        if len(request_bodies) == 1:
+            tool_call = ChatCompletionMessageFunctionToolCall(
+                id='call_nested',
+                function=Function(name='nested_tool', arguments='{"args": {"item": {"qty": 7}}}'),
+                type='function',
+            )
+            message = ChatCompletionMessage(content=None, role='assistant', tool_calls=[tool_call])
+        else:
+            message = ChatCompletionMessage(content='hello', role='assistant')
+        return httpx2.Response(200, json=completion_message(message).model_dump(mode='json'))
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        profile = minimax_model_profile('minimax-m2.7')
+        assert profile is not None
+        model = OpenAIChatModel(
+            'minimax-m2.7',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+            profile=profile,
+        )
+        agent = Agent(model)
+
+        @agent.tool_plain
+        async def nested_tool(args: _MinimaxToolArgs) -> str:
+            return str(args.item.qty)
+
+        result = await agent.run('hello')
+
+    # The nested `_MinimaxNested` model is inlined into the tool schema, and nested tool
+    # arguments shaped like the ones the #12077 probes sent validate and execute.
+    tools = json_objects(request_bodies[0]['tools'])
+    function = tools[0]['function']
+    assert isinstance(function, dict)
+    parameters = function['parameters']
+    assert isinstance(parameters, dict)
+    assert '$defs' not in parameters
+    assert '$ref' not in json.dumps(parameters)
+    tool_returns = [
+        part for message in result.new_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns[0].content == '7'
