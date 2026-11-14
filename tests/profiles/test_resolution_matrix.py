@@ -1527,7 +1527,10 @@ def test_bedrock_zai_glm_5_3():
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_minimax():
-    """MiniMax via Bedrock: upstream `minimax_model_profile` (thinking, `$defs` inlined) + Bedrock tool/output overrides."""
+    """MiniMax via Bedrock: upstream `minimax_model_profile` plus Bedrock's tool and output overrides.
+
+    The family profile adds the thinking flags, and the Bedrock transformer keeps its `$defs` inlining.
+    """
     assert _normalize(BedrockProvider.model_profile('us.minimax.minimax-m2.5')) == snapshot(
         {
             'json_schema_transformer': _BedrockMiniMaxJsonSchemaTransformer,
