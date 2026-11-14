@@ -269,7 +269,6 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     self.model_name,
                     status_code=status_code,
                     body=e.body,
-                    error_object=e.body,
                     code=e.code,
                     error_type=e.type,
                     message=e.message,
@@ -282,17 +281,17 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
             body, error, text = _model_errors.transport_error_body(e.response)
-            code, error_type = error.get('code'), error.get('type')
+            code, error_type = _model_errors.openai_error_fields(error)
             raise _status_error(
                 self.model_name,
                 status_code=e.response.status_code,
                 body=body,
-                error_object=error,
-                # As `openai` reads them from the error object in the body, and the whole body into its message.
-                code=str(code) if code is not None else None,
-                error_type=error_type if isinstance(error_type, str) else None,
+                code=code,
+                error_type=error_type,
+                # `openai`'s own message holds the whole body.
                 message=text,
                 headers=dict(e.response.headers),
+                error_object=error,
             ) from e
 
         return self._map_response(prompt, check_json_response(self.model_name, response))
@@ -405,16 +404,19 @@ def _status_error(
     *,
     status_code: int,
     body: object,
-    error_object: object,
     code: str | None,
     error_type: str | None,
     message: str,
     headers: dict[str, str],
+    error_object: object = None,
 ) -> ContentFilterError | ModelHTTPError:
-    """The error for an OpenAI image API error status, whose `body` is or wraps `error_object`.
+    """The error for an OpenAI image API error status.
 
-    A `moderation_blocked` one is a `ContentFilterError` holding `error_object` as JSON.
+    `body` is the error object, as `openai` unwraps it from the response body, unless `error_object` is given: the body
+    of a status a retrying transport gave up on is the whole response body, which wraps it. A `moderation_blocked` one
+    is a `ContentFilterError` holding the error object as JSON.
     """
+    error_object = body if error_object is None else error_object
     if code == 'moderation_blocked':
         return ContentFilterError(
             'OpenAI image generation was blocked for content moderation', json.dumps(error_object)

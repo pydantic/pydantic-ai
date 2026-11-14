@@ -37,15 +37,15 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gener
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
         body, error, text = _model_errors.transport_error_body(e.response)
-        code, error_type = error.get('code'), error.get('type')
+        code, error_type = _model_errors.openai_error_fields(error)
         raise status_error(
             model_name,
             model_id_namespace,
             status_code=e.response.status_code,
             body=body,
-            # As `openai` reads them from the error object in the body, and the whole body into its message.
-            code=str(code) if code is not None else None,
-            error_type=error_type if isinstance(error_type, str) else None,
+            code=code,
+            error_type=error_type,
+            # `openai`'s own message holds the whole body.
             message=text,
             headers=dict(e.response.headers),
             error_object=error,

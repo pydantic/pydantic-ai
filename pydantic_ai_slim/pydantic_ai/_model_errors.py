@@ -152,6 +152,12 @@ def openai_compatible_status_error(
     )
 
 
+def openai_error_fields(error: Mapping[str, object]) -> tuple[str | None, str | None]:
+    """The `code` and `type` of an OpenAI-compatible API's error object, as `openai` reads them."""
+    code, error_type = error.get('code'), error.get('type')
+    return str(code) if code is not None else None, error_type if isinstance(error_type, str) else None
+
+
 def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
     """Read an error response body that no SDK read, the way the provider SDKs read one.
 
@@ -512,14 +518,8 @@ def transport_error_body(response: HTTPStatusResponse) -> tuple[object, dict[str
     except RuntimeError:  # `ResponseNotRead`: the transport closed the response without reading its body.
         content = b''
     text = content.decode(errors='replace')
-    body: object = None
-    if content:
-        try:
-            body = pydantic_core.from_json(content)
-        except ValueError:
-            body = text
-    error = body.get('error', body) if is_str_dict(body) else None
-    return body, error if is_str_dict(error) else {}, text
+    parsed, error, _ = parse_error_body(text)
+    return parsed if parsed is not None else text or None, error if is_str_dict(error) else {}, text
 
 
 def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
@@ -537,19 +537,12 @@ def transport_status_error(model_name: str, response: HTTPStatusResponse) -> Mod
     )
 
 
-def google_transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
-    """The `google_status_error` for an error status the HTTP transport raised, from its body as `google.genai` reads it.
+def google_transport_error_fields(response: HTTPStatusResponse) -> tuple[object, str | None, str]:
+    """The body, Google API `status` and message of an error status the HTTP transport raised.
 
-    See `transport_error_body` for when the transport raises it.
+    They're read as `google.genai` reads them, which takes the text of a body that isn't JSON as the message. See
+    `transport_error_body` for when the transport raises it.
     """
     body, error, text = transport_error_body(response)
     status, message = error.get('status'), error.get('message')
-    return google_status_error(
-        model_name,
-        status_code=response.status_code,
-        status=status if isinstance(status, str) else None,
-        # `google.genai` takes the text of a body that isn't JSON as the message.
-        message=message if isinstance(message, str) else text,
-        body=body,
-        headers=dict(response.headers),
-    )
+    return body, status if isinstance(status, str) else None, message if isinstance(message, str) else text

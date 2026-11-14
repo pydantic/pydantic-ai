@@ -432,15 +432,13 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.HTTPStatusError):
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        body, error, text = _model_errors.transport_error_body(e.response)
-        status, message = error.get('status'), error.get('message')
+        body, status, message = _model_errors.google_transport_error_fields(e.response)
         return _http_error(
             model_name,
             model_id_namespace,
             status_code=e.response.status_code,
-            status=status if isinstance(status, str) else None,
-            # `google.genai` takes the text of a body that isn't JSON as the message.
-            message=message if isinstance(message, str) else text,
+            status=status,
+            message=message,
             body=body,
             headers=dict(e.response.headers),
         )
