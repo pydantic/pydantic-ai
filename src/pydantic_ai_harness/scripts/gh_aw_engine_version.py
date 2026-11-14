@@ -8,8 +8,9 @@ GitHub Agentic Workflows resolves the imported definition at compile time and ve
 frontmatter into the workflow it generates, so those fields are a published contract rather
 than repo-local config: `engine.id` keys the entry in gh-aw's engine catalog, and
 `engine.version` is the release the generated workflow installs for both `pydantic-ai-harness`
-and `pydantic-clai2` from PyPI at run time. A renamed field breaks the catalog entry, and a
-version missing from either package breaks every run of it at install time.
+and `pydantic-clai2` (at any pre-release stage) from PyPI at run time. A renamed field breaks
+the catalog entry, and a version missing from either package breaks every run of it at
+install time.
 
 Consumers import the file from `main`, so a merge reaches them on their next compile and
 nothing downstream re-checks it. `--published` is therefore part of the pull request gate
@@ -32,6 +33,8 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from packaging.specifiers import SpecifierSet
+from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -52,7 +55,7 @@ class _Engine(BaseModel):
     @field_validator('version')
     @classmethod
     def _pep_440(cls, value: str) -> str:
-        # gh-aw installs `pydantic-ai-harness==<version>` and `pydantic-clai2==<version>`,
+        # gh-aw installs `pydantic-ai-harness==<version>` and `pydantic-clai2>=<version>a0,<=<version>`,
         # and the publication check below interpolates it into a PyPI URL. Anything that is
         # not a version is a broken install for consumers, and a value carrying `/` or `?`
         # reaches a different PyPI endpoint than the one the check means to ask about.
@@ -76,6 +79,20 @@ class _Frontmatter(BaseModel):
     engine: _Engine
 
 
+class _IndexFile(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
+    filename: str
+    # `true` or the reason once yanked.
+    yanked: bool | str = False
+
+
+class _Index(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
+    files: list[_IndexFile]
+
+
 def _frontmatter(text: str) -> str:
     lines = text.splitlines()
     if not lines or lines[0] != '---':
@@ -93,12 +110,20 @@ def engine_version() -> str:
 
 
 def unpublished_reason(version: str) -> str | None:
-    """Return why PyPI does not serve a pinned release, or `None` when both do."""
-    for package in ('pydantic-ai-harness', 'pydantic-clai2'):
-        url = f'https://pypi.org/pypi/{package}/{version}/json'
+    """Return why PyPI does not serve a pinned release, or `None` when both do.
+
+    The harness release is `version` itself. CLAI publishes each release as a pre-release until 1.0, so its
+    release is `version` at any stage (`0.67.0a0` for `0.67.0`), which `pydantic-clai2>=<version>a0,<=<version>`
+    installs. PyPI's index page lists every stage, as JSON when asked for it.
+    """
+
+    def fetch(package: str, request: urllib.request.Request) -> bytes | str:
+        """Return the body PyPI serves for `request`, or why it does not show `package` `version` as published."""
+        body = b''
         try:
-            with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(request, timeout=PYPI_TIMEOUT_SECONDS) as response:
                 status: int = response.status
+                body = response.read()
         except urllib.error.HTTPError as exc:
             status = exc.code
             exc.close()
@@ -113,6 +138,35 @@ def unpublished_reason(version: str) -> str | None:
                 f'(HTTP {status}). gh-aw installs that version at run time, so a workflow '
                 f'compiled against this definition would fail before the agent starts.'
             )
+        return body
+
+    harness = fetch(
+        'pydantic-ai-harness', urllib.request.Request(f'https://pypi.org/pypi/pydantic-ai-harness/{version}/json')
+    )
+    if isinstance(harness, str):
+        return harness
+    index = fetch(
+        'pydantic-clai2',
+        urllib.request.Request(
+            'https://pypi.org/simple/pydantic-clai2/', headers={'Accept': 'application/vnd.pypi.simple.v1+json'}
+        ),
+    )
+    if isinstance(index, str):
+        return index
+
+    release = SpecifierSet(f'>={version}a0,<={version}')
+    names = [file.filename for file in _Index.model_validate_json(index).files if file.yanked is False]
+    if not any(
+        release.contains(
+            parse_wheel_filename(n)[1] if n.endswith('.whl') else parse_sdist_filename(n)[1], prereleases=True
+        )
+        for n in names
+    ):
+        return (
+            f'{DEFINITION} pins `engine.version: {version}`, and PyPI serves no unyanked `pydantic-clai2` '
+            f'release matching `>={version}a0,<={version}`. gh-aw installs that release at run time, so a workflow '
+            f'compiled against this definition would fail before the agent starts.'
+        )
     return None
 
 

@@ -5,12 +5,13 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
 
-# Same scheme as `pydantic-ai-harness`, which this package pins exactly; keep the two in sync.
+# Same release segment as `pydantic-ai-harness`, which this package pins exactly; keep the two in sync.
+# Until 1.0, every release is a pre-release: `a0` ships `0.67.0a0`. Set `b0` for beta, and drop it for final.
 [tool.uv-dynamic-versioning]
 vcs = "git"
 style = "pep440"
 bump = true
-format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
+format-jinja = "0.{{ minor }}.{{ patch }}a0{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
 
 [project]
 name = "pydantic-clai2"
@@ -43,6 +44,8 @@ dependencies = [
     # whose uv overrides replace the harness requirement with its own extras, so an extra added since is
     # dropped. Without PyYAML the `coder` plugin, which imports `pydantic_ai_harness.skills`, fails to load.
     "pyyaml>=6.0.2",
+    # `/update` orders PyPI versions, pre-releases included, to find the newest release.
+    "packaging>=24",
     # Speculative execution runs CodeMode's Monty sandbox. Pinned directly rather than via
     # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client CLAI does not use.
     "pydantic-monty>=1.5.0,<2",
