@@ -250,6 +250,12 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
+## Keep Anthropic Inference in the US
+
+For a data residency requirement on Anthropic, pass `AnthropicModelSettings(anthropic_inference_geo='us')`; don't use `extra_body`. It's sent on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and Message Batches, and reported back in `ModelResponse.provider_details['inference_geo']`.
+Models older than Claude 4.6 reject it with a 400, which surfaces as `ModelHTTPError` rather than the setting being dropped. Bedrock, Vertex AI and Foundry clients ignore it with a `UserWarning`: there, pick the region through the endpoint, inference profile or deployment.
+Use [Anthropic data residency](https://pydantic.dev/docs/ai/models/anthropic/#data-residency) for pricing and details.
+
 ## Reuse an OpenAI Responses WebSocket
 
 Install `pydantic-ai-slim[openai-realtime]`. Pass `OpenAIResponsesModelSettings(openai_transport='websocket')` as `settings=` on `OpenAIResponsesModel`, or as `model_settings=` on an agent or run. A plain dict fails type checking because `openai_transport` is not a `ModelSettings` key.
