@@ -56,6 +56,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _document_format,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -846,9 +847,10 @@ class XaiModel(Model[AsyncClient]):
         # Download and upload to xAI files API
         downloaded = await download_item(item, data_format='bytes')
         filename = item.identifier or 'document'
-        # Add extension if data_type is available from download
-        if 'data_type' in downloaded and downloaded['data_type']:
-            filename = f'{filename}.{downloaded["data_type"]}'
+        # Add the document extension for the downloaded media type, when one is known
+        extension = _document_format(downloaded['data_type'])
+        if extension:
+            filename = f'{filename}.{extension}'
 
         file_id = await self._upload_file_to_xai(downloaded['data'], filename)
         return file(file_id)

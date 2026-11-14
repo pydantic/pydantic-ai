@@ -17,10 +17,12 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC
 from decimal import Decimal
 from typing import Any, Literal
 
+import httpx2
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -80,6 +82,7 @@ from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
+from .conftest import mock_downloads
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -2259,46 +2262,84 @@ async def test_xai_image_url_no_force_download(allow_model_requests: None) -> No
     )
 
 
-async def test_xai_document_url_with_data_type_adds_extension(
-    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+@dataclass
+class DocumentUrlUploadCase:
+    content_type: str
+    body: bytes
+    url: str
+    identifier: str
+    expected_file_id: str
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(
+            DocumentUrlUploadCase(
+                'application/pdf', b'%PDF-1.4 test', 'https://93.184.215.14/report', 'mydoc', 'file-mydoc.pdf'
+            ),
+            id='known-media-type-adds-extension',
+        ),
+        pytest.param(
+            DocumentUrlUploadCase(
+                'application/x-pydantic-unknown',
+                b'\x00\x01\x02binary',
+                'https://93.184.215.14/file.bin',
+                'report',
+                'file-report',
+            ),
+            id='unknown-media-type-no-extension',
+        ),
+        pytest.param(
+            DocumentUrlUploadCase(
+                'text/plain; charset=utf-8',
+                b'Plain text report',
+                'https://93.184.215.14/report',
+                'report',
+                'file-report.txt',
+            ),
+            id='extensionless-url-uses-downloaded-type-without-parameters',
+        ),
+    ],
+)
+@pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
+async def test_xai_document_url_upload_file_name(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, case: DocumentUrlUploadCase
 ):
-    """Test DocumentUrl handling when download returns a data_type (extension should be added)."""
+    """A DocumentUrl is uploaded under its identifier plus the extension of the downloaded media type, if known."""
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=case.body, headers={'content-type': case.content_type}, request=request)
+
+    mock_downloads(monkeypatch, handle_request)
+
     response = create_response(content='Document processed')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    async def mock_download_item(item: Any, data_format: str = 'bytes', type_format: str = 'mime') -> dict[str, Any]:
-        return {'data': b'%PDF-1.4 test', 'data_type': 'pdf'}
-
-    monkeypatch.setattr('pydantic_ai.models.xai.download_item', mock_download_item)
-
-    # Provide an explicit identifier so we can assert the uploaded filename deterministically.
-    document_url = DocumentUrl(url='https://example.com/file', identifier='mydoc')
-    result = await agent.run(['Process this document', document_url])
+    result = await agent.run(['Process this document', DocumentUrl(url=case.url, identifier=case.identifier)])
     assert result.output == 'Document processed'
 
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
-        [
-            {
-                'model': XAI_NON_REASONING_MODEL,
-                'messages': [
-                    {
-                        'content': [
-                            {'text': 'Process this document'},
-                            {'file': {'file_id': 'file-mydoc.pdf'}},
-                        ],
-                        'role': 'ROLE_USER',
-                    }
-                ],
-                'tools': None,
-                'tool_choice': None,
-                'response_format': None,
-                'use_encrypted_content': False,
-                'include': [],
-            }
-        ]
-    )
+    assert get_mock_chat_create_kwargs(mock_client) == [
+        {
+            'model': XAI_NON_REASONING_MODEL,
+            'messages': [
+                {
+                    'content': [
+                        {'text': 'Process this document'},
+                        {'file': {'file_id': case.expected_file_id}},
+                    ],
+                    'role': 'ROLE_USER',
+                }
+            ],
+            'tools': None,
+            'tool_choice': None,
+            'response_format': None,
+            'use_encrypted_content': False,
+            'include': [],
+        }
+    ]
 
 
 async def test_xai_binary_content_document_input(allow_model_requests: None):
@@ -6429,49 +6470,6 @@ async def test_xai_file_upload_error_is_mapped(allow_model_requests: None, monke
     assert exc_info.value.status_code == 429
     assert exc_info.value.body == 'upload quota'
     assert isinstance(exc_info.value.__cause__, grpc.aio.AioRpcError)
-
-
-async def test_xai_document_url_without_data_type(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
-    """Test DocumentUrl handling when data_type is missing or empty."""
-    response = create_response(content='Document processed')
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    # Mock download_item to return empty data_type (simulating unknown content type)
-    async def mock_download_item(item: Any, data_format: str = 'bytes', type_format: str = 'mime') -> dict[str, Any]:
-        return {'data': b'%PDF-1.4 test', 'data_type': ''}  # Empty data_type
-
-    monkeypatch.setattr('pydantic_ai.models.xai.download_item', mock_download_item)
-
-    document_url = DocumentUrl(url='https://example.com/unknown-file')
-    result = await agent.run(['Process this document', document_url])
-
-    # Should succeed - filename won't have extension when data_type is empty
-    assert result.output == 'Document processed'
-
-    # Verify kwargs - file should be uploaded without extension (no data_type means no extension added)
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
-        [
-            {
-                'model': XAI_NON_REASONING_MODEL,
-                'messages': [
-                    {
-                        'content': [
-                            {'text': 'Process this document'},
-                            {'file': {'file_id': 'file-69b5dc'}},  # Note: no extension since data_type was empty
-                        ],
-                        'role': 'ROLE_USER',
-                    }
-                ],
-                'tools': None,
-                'tool_choice': None,
-                'response_format': None,
-                'use_encrypted_content': False,
-                'include': [],
-            }
-        ]
-    )
 
 
 async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
