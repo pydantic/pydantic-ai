@@ -1482,7 +1482,9 @@ def _split_loaded_instruction_parts(
 
 
 def _apply_instruction_parts(
-    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+    request: _messages.ModelRequest,
+    instruction_parts: list[_messages.InstructionPart] | None,
+    history: Sequence[_messages.ModelMessage],
 ) -> None:
     """Render the instruction parts being sent onto the request that records them.
 
@@ -1491,10 +1493,32 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone.
+    fall back to the request's own `instructions` — so it leaves the request alone. The rendered text reuses
+    the string of the latest earlier request in `history` when equal, so requests share one copy.
     """
     if instruction_parts is not None:
-        request.instructions = _messages.InstructionPart.join(instruction_parts)
+        request.instructions = _shared_instructions(_messages.InstructionPart.join(instruction_parts), request, history)
+
+
+def _shared_instructions(
+    instructions: str | None, request: _messages.ModelRequest, history: Sequence[_messages.ModelMessage]
+) -> str | None:
+    """`instructions`, or the equal string the latest earlier request in `history` holds.
+
+    Every request records the instructions it was sent with, and they rarely change between requests, so
+    sharing one string keeps a long conversation from holding a copy per request.
+    """
+    if instructions is None:
+        return None
+    previous = next(
+        (
+            message.instructions
+            for message in reversed(history)
+            if isinstance(message, _messages.ModelRequest) and message is not request and message.instructions
+        ),
+        None,
+    )
+    return previous if previous == instructions else instructions
 
 
 _NativeToolFactoryResult: TypeAlias = tuple[NativeToolFunc[DepsT], AbstractNativeTool | None]
@@ -2954,7 +2978,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         instruction_parts = await _get_instructions(ctx, run_context)
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
-        self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        self.request.instructions = _shared_instructions(
+            _messages.InstructionPart.join(instruction_parts) if instruction_parts else None,
+            self.request,
+            ctx.state.message_history,
+        )
         if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
             # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
             instruction_parts = []
@@ -3191,7 +3219,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 if any(message is self.request for message in ctx.state.message_history)
                 else recording_targets
             ):
-                _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
+                _apply_instruction_parts(
+                    target, request_context.model_request_parameters.instruction_parts, ctx.state.message_history
+                )
             _record_model_settings_changes(
                 ctx,
                 request_context.model,
@@ -3270,7 +3300,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(
-                    instructions_target, request_context.model_request_parameters.instruction_parts
+                    instructions_target,
+                    request_context.model_request_parameters.instruction_parts,
+                    ctx.state.message_history,
                 )
 
         self.last_request_context = original_request_context

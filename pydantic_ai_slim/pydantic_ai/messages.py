@@ -5248,8 +5248,22 @@ ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('k
 """Any message sent to or returned by a model."""
 
 
-ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
+def _share_instructions(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Point requests with equal `instructions` at one string.
+
+    Every request records the instructions it was sent with, and they rarely change between requests, so a
+    long history would otherwise hold one copy of them per request.
+    """
+    shared: dict[str, str] = {}
+    for message in messages:
+        if isinstance(message, ModelRequest) and message.instructions is not None:
+            message.instructions = shared.setdefault(message.instructions, message.instructions)
+    return messages
+
+
+ModelMessagesTypeAdapter: pydantic.TypeAdapter[list[ModelMessage]] = pydantic.TypeAdapter(
+    Annotated[list[ModelMessage], pydantic.AfterValidator(_share_instructions)],
+    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 

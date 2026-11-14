@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`ModelMessagesTypeAdapter` gains an `AfterValidator` that makes equal `ModelRequest.instructions` strings in a loaded history one object. Its type (`TypeAdapter[list[ModelMessage]]`), JSON schema, serialization and validated values are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13308"
+}
