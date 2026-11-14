@@ -1336,7 +1336,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 also spans `/`: '*.py' for every Python file, 'src/*.py' for those anywhere under `src`.
 
         Returns:
-            str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.
+            Matching lines formatted as file:line_number:text, with paths relative to the working directory.
         """
         return await self._search_files(
             await self._scope(ctx.workspace),

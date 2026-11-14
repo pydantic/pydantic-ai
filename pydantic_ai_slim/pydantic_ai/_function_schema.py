@@ -151,7 +151,9 @@ def function_schema(
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
-    description, field_descriptions = doc_descriptions(original_func, docstring_format=docstring_format)
+    description, field_descriptions = doc_descriptions(
+        original_func, docstring_format=docstring_format, has_return_annotation='return' in type_hints
+    )
     schema_context = _FunctionSchemaContext(
         gen_schema=gen_schema,
         type_hints=type_hints,
