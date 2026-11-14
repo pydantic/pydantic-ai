@@ -56,6 +56,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -76,6 +77,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import, without_admin_server
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 
 with try_import() as logfire_installed:
     from logfire.testing import CaptureLogfire
@@ -738,6 +740,57 @@ async def test_durable_model_scope_does_not_manage_registered_models() -> None:
 
     assert default_events == ['request']
     assert registered_events == ['request', 'stream-enter', 'stream-exit']
+
+
+async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them() -> None:
+    """Text streamed before a tool call isn't the final result under any engine built on the base capability.
+
+    `DurableModel.request_stream` replays the unit's response against the parameters the unit's model prepared, in
+    which `'auto'` has resolved to tool output, so the replay finds the same final result as a plain run, and both
+    run methods replay the response's parts as the model streamed them.
+    """
+    durable = [await run_and_stream(agent) for agent in preamble_text_agents(RecordingDurability)]
+    assert durable == await plain_run_and_stream()
+    assert durable == snapshot(
+        [
+            RunAndStreamResult(
+                run_output='Paris',
+                stream_output='Paris',
+                final_result_tool_names=['final_result'],
+                run_responses=[
+                    [
+                        TextPart(content='Let me look that up.'),
+                        ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
+                    ],
+                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                ],
+                stream_responses=[
+                    [
+                        TextPart(content='Let me look that up.'),
+                        ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
+                    ],
+                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                ],
+            ),
+            RunAndStreamResult(
+                run_output='Paris',
+                stream_output='Paris',
+                final_result_tool_names=['final_result'],
+                run_responses=[
+                    [
+                        TextPart(content='Preamble text.'),
+                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                    ]
+                ],
+                stream_responses=[
+                    [
+                        TextPart(content='Preamble text.'),
+                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                    ]
+                ],
+            ),
+        ]
+    )
 
 
 async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:

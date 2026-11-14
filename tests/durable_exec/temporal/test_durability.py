@@ -38,7 +38,6 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
-    FinalResultEvent,
     FunctionToolset,
     ImageGenerationTool,
     ImageGenerator,
@@ -243,6 +242,14 @@ with workflow.unsafe.imports_passed_through():
     from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
     from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+    from ..preamble_text import (
+        RunAndStreamResult,
+        StructuredOutput,
+        plain_run_and_stream,
+        preamble_text_agents,
+        preamble_text_before_output_tool,
+        run_and_stream,
+    )
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -3464,64 +3471,14 @@ class RunStreamEventsDurableAgentWorkflow:
             return [type(event).__name__ async for event in stream]
 
 
-async def _preamble_text_before_function_tool(
-    messages: list[ModelMessage], _info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    if len(messages) == 1:
-        yield 'Let me look that up.'
-        yield {0: DeltaToolCall(name='look_up_city', json_args='{}', tool_call_id='call_1')}
-    else:
-        yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
-
-
-async def _preamble_text_before_output_tool(
-    _messages: list[ModelMessage], _info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    yield 'Preamble text.'
-    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
-
-
-def look_up_city() -> str:
-    return 'Paris'
-
-
-@dataclass
-class StructuredOutput:
-    response: str
-
-
-_preamble_text_agents = [
-    Agent(
-        FunctionModel(stream_function=stream_function),
-        name=f'durability_{stream_function.__name__.lstrip("_")}',
-        output_type=StructuredOutput,
-        tools=[look_up_city],
-        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
-    )
-    for stream_function in (_preamble_text_before_function_tool, _preamble_text_before_output_tool)
-]
-
-
-async def _run_and_stream(agent: Agent[None, StructuredOutput]) -> tuple[str, str, list[str | None]]:
-    """The `run()` and `run_stream()` outputs, and the tool name of each `FinalResultEvent` the `run()` handler gets."""
-    final_result_tool_names: list[str | None] = []
-
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            if isinstance(event, FinalResultEvent):
-                final_result_tool_names.append(event.tool_name)
-
-    run_output = (await agent.run('hello', event_stream_handler=handler)).output
-    async with agent.run_stream('hello') as result:
-        stream_output = await result.get_output()
-    return run_output.response, stream_output.response, final_result_tool_names
+_preamble_text_agents = preamble_text_agents(lambda: TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
 
 
 @workflow.defn
 class StructuredOutputAfterPreambleTextWorkflow:
     @workflow.run
-    async def run(self) -> list[tuple[str, str, list[str | None]]]:
-        return [await _run_and_stream(agent) for agent in _preamble_text_agents]
+    async def run(self) -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in _preamble_text_agents]
 
 
 async def test_durability_structured_output_after_preamble_text_in_workflow(client: Client) -> None:
@@ -3543,12 +3500,12 @@ async def test_durability_structured_output_after_preamble_text_in_workflow(clie
             task_queue=TASK_QUEUE,
         )
 
-    assert output == snapshot([('Paris', 'Paris', ['final_result']), ('Paris', 'Paris', ['final_result'])])
+    assert output == await plain_run_and_stream()
 
 
 _rejected_native_output_agent = Agent(
     FunctionModel(
-        stream_function=_preamble_text_before_output_tool, profile=ModelProfile(supports_json_schema_output=False)
+        stream_function=preamble_text_before_output_tool, profile=ModelProfile(supports_json_schema_output=False)
     ),
     name='durability_rejected_native_output',
     output_type=NativeOutput(StructuredOutput),
@@ -3559,12 +3516,12 @@ _rejected_native_output_agent = Agent(
 @workflow.defn
 class RejectedNativeOutputWorkflow:
     @workflow.run
-    async def run(self) -> str:
-        async with _rejected_native_output_agent.run_stream('hello') as result:
-            return (await result.get_output()).response  # pragma: no cover
+    async def run(self) -> list[str]:
+        async with _rejected_native_output_agent.run_stream_events('hello') as stream:
+            return [type(event).__name__ async for event in stream]
 
 
-async def test_durability_run_stream_request_the_model_rejects_fails_in_the_activity(client: Client) -> None:
+async def test_durability_streamed_request_the_model_rejects_fails_in_the_activity(client: Client) -> None:
     """A streamed request the model rejects fails in the activity, as a request that isn't streamed does.
 
     The workflow prepares the request again for the replay only once the activity has returned, so

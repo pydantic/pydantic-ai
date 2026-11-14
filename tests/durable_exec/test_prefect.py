@@ -123,7 +123,7 @@ from pydantic_ai.models import (
     ModelSelectionContext,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -213,6 +213,7 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 
 
 def test_durability_codecs() -> None:
@@ -4628,47 +4629,6 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
     )
 
 
-async def _preamble_text_before_function_tool(
-    messages: list[ModelMessage], _info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    if len(messages) == 1:
-        yield 'Let me look that up.'
-        yield {0: DeltaToolCall(name='look_up_city', json_args='{}', tool_call_id='call_1')}
-    else:
-        yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
-
-
-async def _preamble_text_before_output_tool(
-    _messages: list[ModelMessage], _info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    yield 'Preamble text.'
-    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
-
-
-def look_up_city() -> str:
-    return 'Paris'
-
-
-@dataclass
-class StructuredOutput:
-    response: str
-
-
-async def _run_and_stream(agent: Agent[None, StructuredOutput]) -> tuple[str, str, list[str | None]]:
-    """The `run()` and `run_stream()` outputs, and the tool name of each `FinalResultEvent` the `run()` handler gets."""
-    final_result_tool_names: list[str | None] = []
-
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            if isinstance(event, FinalResultEvent):
-                final_result_tool_names.append(event.tool_name)
-
-    run_output = (await agent.run('hello', event_stream_handler=handler)).output
-    async with agent.run_stream('hello') as result:
-        stream_output = await result.get_output()
-    return run_output.response, stream_output.response, final_result_tool_names
-
-
 async def test_prefect_durability_structured_output_after_preamble_text_in_flow() -> None:
     """Text streamed before a tool call isn't the final result when the output type is structured.
 
@@ -4676,24 +4636,13 @@ async def test_prefect_durability_structured_output_after_preamble_text_in_flow(
     resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
     replayed events; one set on the capability runs in the task and would see the live stream.
     """
-    agents = [
-        Agent(
-            FunctionModel(stream_function=stream_function),
-            name=f'durability_{stream_function.__name__.lstrip("_")}',
-            output_type=StructuredOutput,
-            tools=[look_up_city],
-            capabilities=[PrefectDurability()],
-        )
-        for stream_function in (_preamble_text_before_function_tool, _preamble_text_before_output_tool)
-    ]
+    agents = preamble_text_agents(PrefectDurability)
 
     @flow
-    async def structured_output_after_preamble_text_flow() -> list[tuple[str, str, list[str | None]]]:
-        return [await _run_and_stream(agent) for agent in agents]
+    async def structured_output_after_preamble_text_flow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
 
-    assert await structured_output_after_preamble_text_flow() == snapshot(
-        [('Paris', 'Paris', ['final_result']), ('Paris', 'Paris', ['final_result'])]
-    )
+    assert await structured_output_after_preamble_text_flow() == await plain_run_and_stream()
 
 
 async def test_prefect_durability_event_stream_handler() -> None:

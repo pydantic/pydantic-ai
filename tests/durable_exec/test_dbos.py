@@ -97,7 +97,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -166,6 +166,14 @@ from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .preamble_text import (
+    RunAndStreamResult,
+    StructuredOutput,
+    plain_run_and_stream,
+    preamble_text_agents,
+    preamble_text_before_output_tool,
+    run_and_stream,
+)
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -4331,47 +4339,6 @@ async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> No
     ]
 
 
-async def _preamble_text_before_function_tool(
-    messages: list[ModelMessage], _info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    if len(messages) == 1:
-        yield 'Let me look that up.'
-        yield {0: DeltaToolCall(name='look_up_city', json_args='{}', tool_call_id='call_1')}
-    else:
-        yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
-
-
-async def _preamble_text_before_output_tool(
-    _messages: list[ModelMessage], _info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
-    yield 'Preamble text.'
-    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_2')}
-
-
-def look_up_city() -> str:
-    return 'Paris'
-
-
-@dataclass
-class StructuredOutput:
-    response: str
-
-
-async def _run_and_stream(agent: Agent[None, StructuredOutput]) -> tuple[str, str, list[str | None]]:
-    """The `run()` and `run_stream()` outputs, and the tool name of each `FinalResultEvent` the `run()` handler gets."""
-    final_result_tool_names: list[str | None] = []
-
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            if isinstance(event, FinalResultEvent):
-                final_result_tool_names.append(event.tool_name)
-
-    run_output = (await agent.run('hello', event_stream_handler=handler)).output
-    async with agent.run_stream('hello') as result:
-        stream_output = await result.get_output()
-    return run_output.response, stream_output.response, final_result_tool_names
-
-
 async def test_durability_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
     """Text streamed before a tool call isn't the final result when the output type is structured.
 
@@ -4379,25 +4346,14 @@ async def test_durability_structured_output_after_preamble_text_in_workflow(dbos
     resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
     replayed events; one set on the capability runs in the step and would see the live stream.
     """
-    agents = [
-        Agent(
-            FunctionModel(stream_function=stream_function),
-            name=f'durability_{stream_function.__name__.lstrip("_")}',
-            output_type=StructuredOutput,
-            tools=[look_up_city],
-            capabilities=[DBOSDurability()],
-        )
-        for stream_function in (_preamble_text_before_function_tool, _preamble_text_before_output_tool)
-    ]
+    agents = preamble_text_agents(DBOSDurability)
 
     @DBOS.workflow()
-    async def structured_output_after_preamble_text_workflow() -> list[tuple[str, str, list[str | None]]]:
-        return [await _run_and_stream(agent) for agent in agents]
+    async def structured_output_after_preamble_text_workflow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
 
     with SetWorkflowID(str(uuid.uuid4())):
-        assert await structured_output_after_preamble_text_workflow() == snapshot(
-            [('Paris', 'Paris', ['final_result']), ('Paris', 'Paris', ['final_result'])]
-        )
+        assert await structured_output_after_preamble_text_workflow() == await plain_run_and_stream()
 
 
 async def test_durability_run_stream_warns_once_about_an_ignored_setting(dbos: DBOS) -> None:
@@ -4407,7 +4363,7 @@ async def test_durability_run_stream_warns_once_about_an_ignored_setting(dbos: D
         unsupported_settings = frozenset({'stop_sequences'})
 
     agent = Agent(
-        NoStopSequencesFunctionModel(stream_function=_preamble_text_before_output_tool),
+        NoStopSequencesFunctionModel(stream_function=preamble_text_before_output_tool),
         name='durability_warns_once_about_an_ignored_setting',
         output_type=StructuredOutput,
         model_settings={'stop_sequences': ['STOP']},
@@ -4423,7 +4379,7 @@ async def test_durability_run_stream_warns_once_about_an_ignored_setting(dbos: D
         assert await ignored_setting_workflow() == 'Paris'
     assert [str(warning.message) for warning in record] == snapshot(
         [
-            "The `stop_sequences` setting is not supported by model 'function:function::_preamble_text_before_output_tool' and will be ignored."
+            "The `stop_sequences` setting is not supported by model 'function:function::preamble_text_before_output_tool' and will be ignored."
         ]
     )
 
