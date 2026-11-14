@@ -181,8 +181,7 @@ async def _execute(client: Client, name: str, arg: str | None = None) -> tuple[A
         return output, await handle.fetch_history()
 
 
-# `prepare_reads` is for in-process engines: each Temporal activity rebuilds the backend from the ref.
-@pytest.mark.parametrize('check', [case for case in cases() if case.id not in ('uncaught', 'prepare_reads')])
+@pytest.mark.parametrize('check', [case for case in cases() if case.id != 'uncaught'])
 async def test_workspace_scenario(client: Client, check: Check) -> None:
     provider.reset()
 

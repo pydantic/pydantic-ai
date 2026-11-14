@@ -427,7 +427,10 @@ async def check_local(run: Runner, agents: ScenarioAgents) -> None:
 
 
 async def check_prepare_reads(run: Runner, agents: ScenarioAgents) -> None:
-    """Workspace calls made while the run is prepared reach the run's one backend, not a new one each."""
+    """Workspace calls made while the run is prepared reach the run's one backend, not a new one each.
+
+    Not in `CASES`: only in-process engines keep one backend, where Temporal and Render rebuild it from the ref.
+    """
     await run('prepare_reads', None)
     assert agents.provider.log == ['create:env-1']
 
@@ -466,7 +469,6 @@ CASES: dict[str, Check] = {
     'explicit_dead_ref': partial(
         check_explicit_rejected, 'dead_ref', 'WorkspaceUnavailableError', "environment 'expired' does not exist"
     ),
-    'prepare_reads': check_prepare_reads,
     'binary': check_binary,
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),

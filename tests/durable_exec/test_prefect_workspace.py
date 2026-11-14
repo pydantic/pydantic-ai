@@ -23,7 +23,15 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceTimeoutError
 
 from ..workspace_fakes import InMemoryProvider
-from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
+from .workspace_scenarios import (
+    SCENARIOS,
+    Check,
+    ScenarioFailed,
+    cases,
+    check_prepare_reads,
+    scenario_agents,
+    tool_runs,
+)
 
 try:
     from prefect import flow, task
@@ -90,6 +98,11 @@ async def run_scenario(name: str, arg: str | None) -> Any:
 async def test_workspace_scenario(check: Check) -> None:
     provider.reset()
     await check(run_scenario, agents)
+
+
+async def test_workspace_calls_while_the_run_is_prepared_reuse_its_backend() -> None:
+    provider.reset()
+    await check_prepare_reads(run_scenario, agents)
 
 
 async def test_prefect_flow_retry_replays_workspace_tasks_and_run_ids() -> None:

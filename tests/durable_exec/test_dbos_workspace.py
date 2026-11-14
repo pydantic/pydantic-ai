@@ -23,7 +23,7 @@ from pydantic_ai.models.test import TestModel
 
 from ..conftest import without_admin_server
 from ..workspace_fakes import InMemoryProvider
-from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
+from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, check_prepare_reads, scenario_agents
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -85,6 +85,11 @@ async def run_scenario(name: str, arg: str | None) -> Any:
 async def test_workspace_scenario(dbos: DBOS, check: Check) -> None:
     provider.reset()
     await check(run_scenario, agents)
+
+
+async def test_workspace_calls_while_the_run_is_prepared_reuse_its_backend(dbos: DBOS) -> None:
+    provider.reset()
+    await check_prepare_reads(run_scenario, agents)
 
 
 async def test_dbos_workspace_calls_are_steps_and_a_fork_replays_them(dbos: DBOS) -> None:
