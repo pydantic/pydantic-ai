@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons, status and refusals, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, logprobs and compaction items."""
 
 from __future__ import annotations as _annotations
 
@@ -197,12 +197,3 @@ def responses_usage_details(response_usage: responses.ResponseUsage, web_search_
     if web_search_requests:
         details['web_search_requests'] = web_search_requests
     return details
-
-
-def response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Qualify a Responses tool-call ID with its response ID, or return it unchanged.
-
-    `response_id` is the provider response ID when the model's tool-call IDs are response-scoped (so the
-    ID must be made history-wide unique), or `None` to leave the call ID as-is.
-    """
-    return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id

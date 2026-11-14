@@ -82,7 +82,7 @@ For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 

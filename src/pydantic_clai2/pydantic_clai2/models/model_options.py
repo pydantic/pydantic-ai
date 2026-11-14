@@ -10,7 +10,7 @@ from pydantic_clai2.models.profiles import base_model, provider_of
 
 def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     """Offer native controls only for the provider that will consume them, whichever profile runs it."""
-    from pydantic_clai2.models.key_profiles import takes_endpoint
+    from pydantic_clai2.models.key_profiles import takes_endpoint, takes_key
 
     provider, _, name = base_model(model).partition(':')
     name = name.rsplit('/', 1)[-1]
@@ -34,6 +34,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     options['cache'] = ()
     if takes_endpoint(provider):
         options['base_url'] = ()
+    if takes_key(provider):
+        options['api_key'] = ()
     options.update(_glm_options(name=name))
     return options
 

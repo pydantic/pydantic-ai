@@ -7,11 +7,11 @@ While Pydantic AI Harness is on 0.x releases, the API may change between minor r
 ```mermaid
 flowchart TB
     accTitle: Memory: a notebook the agent keeps across runs
-    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
+    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileMemoryStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
     model(["model"])
     code["your code"]
     memory["Memory()<br/>four tools, such as<br/>write_memory"]:::capability
-    store[("store, such as FileStore<br/>alice/main/MEMORY.md,<br/>auth-notes.md")]:::external
+    store[("store, such as FileMemoryStore<br/>alice/main/MEMORY.md,<br/>auth-notes.md")]:::external
     snapshot["&lt;memory&gt; block<br/>MEMORY.md excerpt,<br/>names of other files"]:::capability
     code -->|"namespace, such as<br/>from ctx.deps"| memory
     model <-->|"tool call, result"| memory
@@ -42,24 +42,24 @@ The model gets four tools:
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'anthropic:claude-opus-5-5',
-    capabilities=[LocalWorkspace('.'), Memory(FileStore('.agent-memory'))],
+    capabilities=[LocalWorkspace('.'), Memory(FileMemoryStore('.agent-memory'))],
     defer_model_check=True,
 )
 ```
 
-`FileStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
+`FileMemoryStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
 ### Reading memory with `FileSystem`
 
-When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
+When the store is a `FileMemoryStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
 
-`InMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays. With `inject_memory=False`, or when the guidance alone fills `max_tokens` so no snapshot fits, `read_memory` stays too: the injected `<memory>` block is where the model learns the files' directory.
+`InMemoryMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileMemoryStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays. With `inject_memory=False`, or when the guidance alone fills `max_tokens` so no snapshot fits, `read_memory` stays too: the injected `<memory>` block is where the model learns the files' directory.
 
 The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem` whose `denied_patterns` cover the memory directory, or whose `allowed_patterns` leave it out, still replaces `read_memory` but cannot open the files. Give the store a `workspace=` of its own to keep `read_memory` in that setup.
 
@@ -73,10 +73,10 @@ When `heading` is set, the same `## {heading}` labels both the trusted guidance 
 
 ```python
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 memory = Memory(
-    FileStore('.agent-memory'),
+    FileMemoryStore('.agent-memory'),
     max_tokens=2_000,
     max_lines=200,
 )
@@ -98,9 +98,9 @@ Set `inject_memory=False` to keep memory out of the conversation entirely. The t
 
 ```python
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
-memory = Memory(FileStore('.agent-memory'), inject_memory=False)
+memory = Memory(FileMemoryStore('.agent-memory'), inject_memory=False)
 ```
 
 With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts and whether a snapshot was appended (`memory.appended`), and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. This setting controls automatic injection only. In the tools, a path that resolves outside the store asks the model to retry, and a workspace failure during `write_memory` or `delete_memory` is returned as a failed tool call unless the workspace is unavailable. The failure message names only the memory file, so backend paths and the namespace stay out of the model's context. A write or delete that keeps conflicting with concurrent changes asks the model to retry. Any other store error ends the run.
@@ -113,17 +113,17 @@ Every `read` call passes a finite `max_chars` and every `list_paths` call a fini
 
 | Store | Persistence and concurrency boundary |
 | --- | --- |
-| `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. Receipts for the 1,024 most recent mutations are kept. |
-| `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
+| `InMemoryMemoryStore()` | Process lifetime; atomic across tasks using that store instance. Receipts for the 1,024 most recent mutations are kept. |
+| `FileMemoryStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `memory_operations` table until you delete old rows. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `{table}_operations` table until you delete old rows. The caller owns the pool lifecycle. |
 | `PixeltableMemoryStore(table_name=...)` | Durable shared storage in a Pixeltable catalog; receipts and table history are retained. Install `[pixeltable]` on Python 3.11 to 3.14. See the [Pixeltable guide](../pixeltable/). |
 
 ```python
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore, SqliteMemoryStore
+from pydantic_ai_harness.memory import FileMemoryStore, SqliteMemoryStore
 
-local_memory = Memory(FileStore('.agent-memory'))
+local_memory = Memory(FileMemoryStore('.agent-memory'))
 sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 ```
 
@@ -131,7 +131,7 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
 
-`FileStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileStore` listings and searches skip symlinked directories, including links that point outside the store.
+`FileMemoryStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileMemoryStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileMemoryStore` listings and searches skip symlinked directories, including links that point outside the store.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
@@ -172,7 +172,7 @@ from dataclasses import dataclass
 from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 
 @dataclass
@@ -185,7 +185,7 @@ agent = Agent(
     deps_type=AppDeps,
     capabilities=[
         Memory(
-            FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')),
+            FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')),
             namespace=lambda ctx: ctx.deps.user_id,
         )
     ],
@@ -195,11 +195,11 @@ agent = Agent(
 
 Namespace isolation controls which records the capability addresses. It is not an authorization system for a custom or shared backing store. Validate the identity in application dependencies, restrict backend credentials, and ensure custom stores cannot escape the resolved namespace.
 
-A namespace is one or more `/`-separated segments of letters, digits, `_`, `-`, and `.`; a segment of `.` or one containing `..` raises `ValueError` when the run starts. `FileStore` keeps each namespace in a directory, so on a case-insensitive filesystem, the macOS and Windows default, `Alice` and `alice` share files: normalize the case of the identity before returning it. Windows also drops trailing dots from directory names, so there `alice.` and `alice` share files too. Spans record `memory.scope_hash`, an unsalted hash of the namespace and `agent_name`. It keeps the identity out of telemetry, but anyone who can guess an identity can confirm it.
+A namespace is one or more `/`-separated segments of letters, digits, `_`, `-`, and `.`; a segment of `.` or one containing `..` raises `ValueError` when the run starts. `FileMemoryStore` keeps each namespace in a directory, so on a case-insensitive filesystem, the macOS and Windows default, `Alice` and `alice` share files: normalize the case of the identity before returning it. Windows also drops trailing dots from directory names, so there `alice.` and `alice` share files too. Spans record `memory.scope_hash`, an unsalted hash of the namespace and `agent_name`. It keeps the identity out of telemetry, but anyone who can guess an identity can confirm it.
 
 ## Write metadata
 
-When the agent is not the only writer, for example when people can also edit what it remembered about them in your product, a store can record who made each write. `InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`: `write_with_metadata` stores a `Mapping[str, str]` with the content, and `read` returns it as `MemoryFile.metadata`. Set `write_metadata` on `Memory` to record metadata with the model's writes, either as a mapping or as a callable that resolves it from the run for each write. Your application supplies it and it never appears in a tool schema, so the model cannot choose its own provenance. The callable runs inside each `write_memory` call, after the check for a replayed call, so unlike `store_resolver` and `namespace` it need not be deterministic under Temporal or Prefect.
+When the agent is not the only writer, for example when people can also edit what it remembered about them in your product, a store can record who made each write. `InMemoryMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`: `write_with_metadata` stores a `Mapping[str, str]` with the content, and `read` returns it as `MemoryFile.metadata`. Set `write_metadata` on `Memory` to record metadata with the model's writes, either as a mapping or as a callable that resolves it from the run for each write. Your application supplies it and it never appears in a tool schema, so the model cannot choose its own provenance. The callable runs inside each `write_memory` call, after the check for a replayed call, so unlike `store_resolver` and `namespace` it need not be deterministic under Temporal or Prefect.
 
 The model's files live at `{namespace}/{agent_name}/{file}`, so with the default `agent_name='main'` your UI edits `{user_id}/main/MEMORY.md` to change the notebook the agent reads.
 
@@ -248,12 +248,12 @@ async def last_written_by(user_id: str) -> str | None:
 
 Metadata describes the write that produced the current version:
 
-- It is written in the same transaction as the content (under the same lock for `InMemoryStore`), and each write replaces it. A write without metadata, including the model's writes when `write_metadata` is unset, records none, so after the agent edits a file the user typed, the file no longer reads `updated_by='ui'`.
+- It is written in the same transaction as the content (under the same lock for `InMemoryMemoryStore`), and each write replaces it. A write without metadata, including the model's writes when `write_metadata` is unset, records none, so after the agent edits a file the user typed, the file no longer reads `updated_by='ui'`.
 - A delete removes it. A replayed tool call returns the original receipt, which carries no metadata, and leaves the stored metadata as it is; `read` the file for the metadata of its current version. Metadata is not part of the operation fingerprint, so a callable that resolves different metadata on a retry is not a conflict.
 - The bundled stores accept string keys and values without NUL characters, at most 4,096 characters as JSON, and `Memory` checks a fixed `write_metadata` mapping when it is constructed. An empty mapping is no metadata. It stays out of the model's context, the memory spans, and the memory snapshot a durable engine journals.
 - `PostgresMemoryStore` keeps it in a `write_metadata JSONB` column of its table, so the application can query it, for example `WHERE write_metadata->>'updated_by' = 'ui'`. `SqliteMemoryStore` keeps it as JSON text in a `write_metadata` column. Both add the column to an existing table on first use, and rows written before then read as `metadata=None`.
 
-`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it. `PixeltableMemoryStore` does not implement it either.
+`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileMemoryStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it. `PixeltableMemoryStore` does not implement it either.
 
 A store records write metadata when it has a `write_with_metadata` method, so a custom store opts in by implementing the one `MetadataMemoryStore` declares. It must store the metadata in the same atomic step as the content, and the store's `write` must record none, as the bundled stores' `write` does by calling `write_with_metadata` with `metadata=None`. A custom store that implements only `MemoryStore` keeps working as before without metadata. A subclass of a bundled store that overrides `write` keeps working too; with `write_metadata` set, `Memory` calls `write_with_metadata` instead, so override that method as well.
 
@@ -270,9 +270,9 @@ An agent can carry several `Memory` capabilities at once, for example a personal
 from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
-store = FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))
+store = FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))
 agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[
@@ -303,10 +303,10 @@ Before backend dispatch, queries are limited to 1,000 characters and 32 unique w
 
 ```python
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 Memory(
-    FileStore('.agent-memory'),
+    FileMemoryStore('.agent-memory'),
     store_resolver=None,               # optional per-run store resolver
     agent_name='main',                 # storage segment inside the namespace; never shown to the model
     heading='',                        # optional heading on guidance and injected content

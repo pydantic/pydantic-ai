@@ -23,7 +23,7 @@ from typing import Literal
 from anyio import fail_after, run_process, to_thread
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
-from pydantic_ai_harness.filesystem import EditFileCallPart, ReplacementArgs, WriteFileCallPart
+from pydantic_ai_harness.file_system import EditFileCallPart, ReplacementArgs, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web.protocol import Diff
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.session import STEERING

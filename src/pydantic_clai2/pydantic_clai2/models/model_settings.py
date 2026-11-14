@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
+from pydantic_clai2.models.profiles import KEY_NAME
 
 if TYPE_CHECKING:
     # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
@@ -123,6 +124,11 @@ class ModelSettingsForm(BaseModel):
         default=None,
         min_length=1,
         description="Endpoint this model's provider is built with, such as a gateway. Wins over its environment variable.",
+    )
+    api_key: str | None = Field(
+        default=None,
+        pattern=KEY_NAME,
+        description='The /keys entry this model uses instead of the API key in its environment variable.',
     )
 
     @field_validator('base_url')

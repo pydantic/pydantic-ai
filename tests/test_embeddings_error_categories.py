@@ -124,7 +124,10 @@ def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) ->
 def _gave_up(status_code: int, *, content: bytes | None = None) -> Handler:
     """What a retrying transport raises once its `validate_response` rejected the last attempt's status."""
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
+    def handler(request: Any) -> Any:
+        if isinstance(request, httpx.Request):
+            response = httpx.Response(status_code, content=content, request=request)
+            raise httpx.HTTPStatusError(f'Server error {status_code}', request=request, response=response)
         response = httpx2.Response(status_code, content=content, request=request)
         raise httpx2.HTTPStatusError(f'Server error {status_code}', request=request, response=response)
 
@@ -220,6 +223,13 @@ CASES = [
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
+        id='openai-transport-gave-up',
+        model=_openai,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
         id='openai-connection',
         model=_openai,
         handler=_raise('connect'),
@@ -268,6 +278,13 @@ CASES = [
         ),
         categories=_REJECTED,
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='cohere-transport-gave-up',
+        model=_cohere,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
     ),
     Case(
         id='cohere-timeout',
@@ -414,6 +431,20 @@ async def test_http_provider_error_category(case: Case):
     for attr, expected in case.attrs.items():
         assert getattr(exc, attr) == expected, attr
     assert exc.__cause__ is not None
+
+
+async def test_cohere_count_tokens_transport_gave_up():
+    """`count_tokens` raises a status a retrying transport gave up on as its category, as `embed` does.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(_gave_up(429)))
+    provider = CohereProvider(api_key='test', base_url='http://localhost', http_client=http_client)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Embedder(CohereEmbeddingModel('embed-v4.0', provider=provider)).count_tokens('hello')
+    assert isinstance(exc_info.value, ModelRateLimitError)
+    assert exc_info.value.status_code == 429
+    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
 
 
 def _bedrock_error(code: str, message: str, status_code: int) -> ClientError:
