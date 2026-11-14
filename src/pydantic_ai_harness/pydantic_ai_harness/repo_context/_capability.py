@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal
 
@@ -191,6 +192,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
     """
 
+    nested_exclude: Sequence[str] = field(default=('node_modules', '.venv', 'venv', 'site-packages'), kw_only=True)
+    """For Strategy 3: `fnmatch` patterns for directory names whose instruction files are never surfaced.
+
+    A directory is skipped when any component of its path below the working directory matches, either as written
+    or after resolving symlinks, so everything beneath a match is skipped too, while the directories above it are
+    still surfaced. The default covers directories package managers install into, whose instruction files are
+    written for the package's own contributors and would otherwise take precedence over the project's. Matching
+    is case-sensitive.
+    """
+
     nested_max_chars: int | None = 32_000
     """For Strategy 3 with `nested_inject='contents'`: the total characters of nested file contents to inline per conversation.
 
@@ -229,6 +240,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
+        if isinstance(self.nested_exclude, str):
+            raise UserError(
+                f'`RepoContext.nested_exclude` takes a sequence of patterns, e.g. `({self.nested_exclude!r},)`.'
+            )
         if self.nested_max_chars is not None and self.nested_max_chars < 0:
             raise UserError('`RepoContext.nested_max_chars` must not be negative.')
         if self.home_dir is not None and self.walk_up == 'repo_root':
@@ -407,7 +422,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         working_dir = await self._working_dir(ctx.workspace)
         real_working_dir: Path | None = None
         in_history = self._sync_surfaced_dirs(ctx.messages)
-        for current in directories_up_to(directory, working_dir):
+        for current in self._chain_until_excluded(directory, working_dir):
             # Already surfaced, so it passed the check below then; skipping it first saves a `realpath`, which is a
             # command round trip on shell-backed sandboxes.
             if self._surfaced(str(current), in_history):
@@ -419,12 +434,46 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             if confine_target or current != directory or current.is_relative_to(working_dir):
                 if real_working_dir is None:
                     real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
-                if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
+                verdict = await self._resolved_verdict(ctx.workspace, current, real_working_dir)
+                if verdict == 'stop':
+                    break
+                if verdict == 'skip':
                     continue
             # Only the target directory can hold the file just written, so the others skip `_same_file`'s `realpath`s.
             await self._enqueue_directory(
                 ctx, current, in_history, written_file=written_file if current == directory else None
             )
+
+    def _chain_until_excluded(self, directory: Path, working_dir: Path) -> list[Path]:
+        """The directories from the working directory down to `directory`, up to the first `nested_exclude` match.
+
+        The chain runs shallowest first, so once one directory is excluded, every deeper one is too.
+        """
+        chain = directories_up_to(directory, working_dir)
+        for index, current in enumerate(chain):
+            if self._nested_excluded(current, working_dir):
+                return chain[:index]
+        return chain
+
+    async def _resolved_verdict(
+        self, workspace: Workspace, directory: Path, real_working_dir: Path
+    ) -> Literal['surface', 'skip', 'stop']:
+        """Whether `directory`, after symlinks, is surfaced, skipped as outside the working directory, or excluded.
+
+        Exclusion stops the chain, since every deeper directory is beneath the excluded one.
+        """
+        real = Path(await workspace.realpath(str(directory)))
+        if not real.is_relative_to(real_working_dir):
+            return 'skip'
+        # A symlink such as `libs/dep -> node_modules/dep` reaches an excluded directory under another name.
+        return 'stop' if self._nested_excluded(real, real_working_dir) else 'surface'
+
+    def _nested_excluded(self, directory: Path, working_dir: Path) -> bool:
+        try:
+            parts = directory.relative_to(working_dir).parts
+        except ValueError:
+            return False
+        return any(fnmatchcase(part, pattern) for part in parts for pattern in self.nested_exclude)
 
     async def _enqueue_directory(
         self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None

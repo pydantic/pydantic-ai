@@ -600,6 +600,9 @@ applies to its subtree, the deeper file wins, and the user's direct instructions
 inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
 `None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
+`nested_exclude` (`('node_modules', '.venv', 'venv', 'site-packages')` by default) lists `fnmatch` patterns for
+directory names below the working directory whose instruction files nested traversal never surfaces, nor
+anything beneath them.
 
 ## Macroscope
 

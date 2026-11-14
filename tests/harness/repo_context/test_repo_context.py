@@ -1303,6 +1303,95 @@ AAAAAAAAAAAAAAAAAAAA
             ['<context-file path="two/AGENTS.md">\nTTTTTTTTTTTTTTTTTTTT\n</context-file>']
         )
 
+    @pytest.mark.parametrize(
+        ('nested_exclude', 'expected'),
+        [
+            pytest.param(None, ['pkg/AGENTS.md'], id='default-skips-node-modules'),
+            pytest.param(('d?p',), ['pkg/AGENTS.md', 'pkg/node_modules/AGENTS.md'], id='custom-pattern'),
+            pytest.param(
+                (), ['pkg/AGENTS.md', 'pkg/node_modules/AGENTS.md', 'pkg/node_modules/dep/AGENTS.md'], id='none'
+            ),
+        ],
+    )
+    async def test_excluded_directories_and_everything_beneath_them_are_not_surfaced(
+        self, tmp_path: Path, nested_exclude: tuple[str, ...] | None, expected: list[str]
+    ) -> None:
+        _write(tmp_path / 'pkg' / 'AGENTS.md', 'PKG BODY')
+        _write(tmp_path / 'pkg' / 'node_modules' / 'AGENTS.md', 'MODULES BODY')
+        _write(tmp_path / 'pkg' / 'node_modules' / 'dep' / 'AGENTS.md', 'DEP BODY')
+        _write(tmp_path / 'pkg' / 'node_modules' / 'dep' / 'index.js', 'x')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                path = 'pkg/node_modules/dep/index.js'
+                yield {0: DeltaToolCall(name='read_file', json_args=f'{{"path":"{path}"}}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        repo_context = (
+            RepoContext(autoload_instructions=False, nested_inject='pointer')
+            if nested_exclude is None
+            else RepoContext(autoload_instructions=False, nested_inject='pointer', nested_exclude=nested_exclude)
+        )
+        result = await Agent(
+            FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path), repo_context]
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        notes = _repo_notes(result.all_messages())
+        assert [path for path in expected if any(path in note for note in notes)] == expected
+        assert len(notes) == len(expected)
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_link_into_an_excluded_directory_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'libs' / 'AGENTS.md', 'LIBS BODY')
+        _write(tmp_path / 'node_modules' / 'dep' / 'AGENTS.md', 'DEP BODY')
+        _write(tmp_path / 'node_modules' / 'dep' / 'index.js', 'DEP SOURCE')
+        (tmp_path / 'libs' / 'dep').symlink_to(tmp_path / 'node_modules' / 'dep', target_is_directory=True)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {
+                    0: DeltaToolCall(name='read_file', json_args='{"path":"libs/dep/index.js"}', tool_call_id='read')
+                }
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=tmp_path), RepoContext(autoload_instructions=False)],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        # The read itself is allowed; only the dependency's instruction file is held back.
+        returns = [
+            str(part.content)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == 'read'
+        ]
+        assert len(returns) == 1 and 'DEP SOURCE' in returns[0]
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="libs/AGENTS.md">\nLIBS BODY\n</context-file>']
+        )
+
+    async def test_a_working_directory_inside_an_excluded_name_is_not_excluded(self, tmp_path: Path) -> None:
+        working_dir = tmp_path / 'node_modules' / 'pkg'
+        _write(working_dir / 'sub' / 'AGENTS.md', 'SUB BODY')
+        _write(working_dir / 'sub' / 'x.py', 'x')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/x.py"}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=working_dir), RepoContext(autoload_instructions=False)],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=working_dir))
+        assert ['SUB BODY' in note for note in _repo_notes(result.all_messages())] == [True]
+
+    def test_nested_exclude_rejects_a_bare_string(self) -> None:
+        with pytest.raises(UserError, match=r'`RepoContext\.nested_exclude` takes a sequence of patterns'):
+            RepoContext(nested_exclude='node_modules')
+
     def test_negative_budget_is_rejected(self) -> None:
         with pytest.raises(UserError, match=r'`RepoContext\.nested_max_chars` must not be negative'):
             RepoContext(nested_max_chars=-1)

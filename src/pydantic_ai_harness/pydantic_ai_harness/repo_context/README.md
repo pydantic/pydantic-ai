@@ -160,10 +160,23 @@ surfaces it again. The working directory's files are not surfaced again when
 the walk-up already loaded them. Every part of a note carries
 `{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
 in its `metadata`, which is how `RepoContext` and compaction recognize it.
+
 Same-directory instruction symlinks are named after their targets, and load
 only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
+
+`nested_exclude` skips directories whose instruction files are written for
+someone else: by default `node_modules`, `.venv`, `venv` and `site-packages`,
+where package managers install dependencies. Without it, reading a file in an
+installed package would surface that package's `AGENTS.md`, and as the deeper
+file it would take precedence over the project's. Each entry is an `fnmatch`
+pattern matched against every directory name below the working directory, both
+as written and after resolving symlinks, so a link such as
+`libs/dep -> node_modules/dep` is skipped too. Everything beneath a match is
+skipped, while the directories above it are still surfaced. `vendor/` and
+`third_party/` aren't in the default because projects often commit and own
+them; add them if yours doesn't.
 
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the
@@ -243,6 +256,7 @@ RepoContext(
     inventory_tool_name='inventory_agent_context',
     nested_traversal=True,          # Strategy 3
     nested_inject='contents',       # 'contents' | 'pointer'
+    nested_exclude=('node_modules', '.venv', 'venv', 'site-packages'),  # fnmatch patterns Strategy 3 skips
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
     traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
     traversal_path_arg='path',                                       # deprecated fallback
