@@ -85,15 +85,26 @@ class TestWindowsCommands:
         # On `PATH`, a batch file is passed over, as if it weren't there.
         assert (await backend.run(['tool', 'x&whoami'])).exit_code == 127
 
-    async def test_stream_names_are_refused(self, tmp_path: Path) -> None:
-        """`.env::$DATA` names `.env`'s data, so it would get past a policy that matched the spelling."""
+    @pytest.mark.parametrize(
+        ('path', 'written', 'error'),
+        [
+            ('.env::$DATA', '.env', 'NTFS stream names are not supported'),
+            ('notes.txt:hidden', 'notes.txt', 'NTFS stream names are not supported'),
+            ('server.key.', 'server.key', 'names ending in a dot or a space are not supported'),
+            ('server.key ', 'server.key', 'names ending in a dot or a space are not supported'),
+            ('keys. \\server.key', 'keys\\server.key', 'names ending in a dot or a space are not supported'),
+        ],
+    )
+    async def test_aliases_of_another_name_are_refused(
+        self, tmp_path: Path, path: str, written: str, error: str
+    ) -> None:
+        """Windows writes `.env::$DATA` to `.env` and `server.key.` to `server.key`, past a policy matching the spelling."""
         workspace = Workspace(WindowsWorkspaceBackend(tmp_path))
-        for path in ('.env::$DATA', 'notes.txt:hidden'):
-            with pytest.raises(ValueError, match='NTFS stream names are not supported'):
-                await workspace.write_text(path, 'secret')
-            with pytest.raises(ValueError, match='NTFS stream names are not supported'):
-                await workspace.realpath(path)
-        assert not (tmp_path / '.env').exists()
+        with pytest.raises(ValueError, match=error):
+            await workspace.write_text(path, 'secret')
+        with pytest.raises(ValueError, match=error):
+            await workspace.realpath(path)
+        assert not (tmp_path / written).exists()
 
     async def test_commands_inherit_only_what_windows_tools_need(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -2518,6 +2518,8 @@ class TestShellOnWindowsWorkspace:
         agent: Agent[None, str] = Agent(FunctionModel(capture), capabilities=[Shell[object](tools=_ALL_TOOLS)])
         await agent.run('go', workspace=_WindowsCommandsBackend())
         assert sorted(offered) == snapshot(['check_command', 'shell', 'start_command', 'stop_command'])
+        # Fails, rather than only changing the snapshot, if rewording `shell`'s docstring breaks the replacement.
+        assert offered['shell'] is not None and '`kill`' not in offered['shell'] and 'PowerShell' in offered['shell']
         assert offered['shell'] == snapshot("""\
 Run a shell command and return its output.
 

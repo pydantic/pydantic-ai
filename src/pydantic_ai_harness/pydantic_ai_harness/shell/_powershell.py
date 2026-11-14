@@ -8,10 +8,7 @@ ends. Stopping a job ends the wrapper's process tree with `taskkill`.
 
 from __future__ import annotations
 
-from pydantic_ai.workspaces.windows import (
-    _EPILOGUE,  # pyright: ignore[reportPrivateUsage]
-    _PREAMBLE,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.workspaces.windows import powershell_script
 
 MISSING_PROCESS = 128
 """`taskkill`'s exit status when no process has the PID."""
@@ -157,7 +154,7 @@ def launch_script(
     logs = ', '.join(literal(log) for log in dict.fromkeys((out, err)))
     return (
         f'$dir = {literal(directory)}\n$exclusive = ${str(exclusive).lower()}\n$logs = @({logs})\n'
-        f'$script = {literal(_PREAMBLE + command + _EPILOGUE)}\n$supervisor = {literal(wrapper)}\n' + _LAUNCHER
+        f'$script = {literal(powershell_script(command))}\n$supervisor = {literal(wrapper)}\n' + _LAUNCHER
     )
 
 

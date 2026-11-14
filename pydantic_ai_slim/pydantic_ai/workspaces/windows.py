@@ -11,6 +11,7 @@ import errno
 import functools
 import ntpath
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -25,7 +26,7 @@ from pydantic_ai._utils import run_in_executor
 from ._host import HostWorkspaceBackend
 from .protocol import CommandResult, SupportsPlatform, SupportsRunInDirectory, WorkspaceCommand, WorkspacePlatform
 
-__all__ = ('WindowsWorkspaceBackend',)
+__all__ = ('WindowsWorkspaceBackend', 'powershell_script')
 
 _INHERITED_ENV = (
     'PATH',
@@ -79,13 +80,23 @@ def _on_windows() -> bool:
     return sys.platform == 'win32'
 
 
+def powershell_script(script: str) -> str:
+    """`script` as [`WindowsWorkspaceBackend`][pydantic_ai.workspaces.WindowsWorkspaceBackend] runs a `shell=True` command.
+
+    It writes its output as UTF-8 without progress bars, and exits with its last native command's code, as `sh`
+    does, rather than PowerShell's 1 for any failure. For a tool that runs PowerShell some other way, such as a
+    detached job, so that it behaves like a command run directly.
+    """
+    return f'{_PREAMBLE}{script}{_EPILOGUE}'
+
+
 def _powershell_command(executable: str, script: str) -> list[str]:
     """The argv that runs `script` in PowerShell, exiting with its last native command's code.
 
     The script is passed as `-EncodedCommand`, so no quoting rule of `CreateProcess` or PowerShell
     applies to it. Raises `OSError(E2BIG)` when the encoded script is too long for one command line.
     """
-    encoded = base64.b64encode(f'{_PREAMBLE}{script}{_EPILOGUE}'.encode('utf-16-le')).decode('ascii')
+    encoded = base64.b64encode(powershell_script(script).encode('utf-16-le')).decode('ascii')
     argv = [executable, *_POWERSHELL_FLAGS, '-EncodedCommand', encoded]
     if len(subprocess.list2cmdline(argv)) >= _MAX_COMMAND_LINE:
         raise OSError(errno.E2BIG, 'the PowerShell command is too long for one Windows command line')
@@ -289,8 +300,12 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
     def _path(path: str) -> Path:
         # `file::$DATA` and `file:stream` name a file's data streams, so `.env::$DATA` would write `.env`
         # past a policy that matched the spelling.
-        if ':' in ntpath.splitdrive(path)[1]:
+        rest = ntpath.splitdrive(path)[1]
+        if ':' in rest:
             raise ValueError(f'NTFS stream names are not supported, got {path!r}')
+        # Windows drops a name's trailing dots and spaces, so `server.key.` would write `server.key`.
+        if any(part.endswith(('.', ' ')) for part in re.split(r'[\\/]', rest) if part not in ('', '.', '..')):
+            raise ValueError(f'names ending in a dot or a space are not supported, got {path!r}')
         return HostWorkspaceBackend._path(path)
 
     def _open_for_read(self, target: Path) -> int:

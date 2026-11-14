@@ -5,6 +5,7 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NoReturn
 
 import pytest
@@ -269,3 +270,35 @@ async def test_coder_tools_reach_each_provider_non_strict(
 
 def test_coder_loads_from_agent_spec() -> None:
     Agent.from_spec({'model': 'test', 'capabilities': ['Coder']}, custom_capability_types=[Coder])
+
+
+@pytest.fixture
+def on_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Pretend to run on Windows, in `tmp_path`."""
+    monkeypatch.setattr('pydantic_ai_harness.coder._capability.sys', SimpleNamespace(platform='win32'))
+    monkeypatch.setattr('pydantic_ai_harness.coder._capability.WindowsWorkspace', LocalWorkspace)
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+class TestCoderWindowsFallback:
+    async def test_a_run_without_a_workspace_gets_the_current_directory(self, on_windows: Path) -> None:
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Coder(repo_context=False, sub_agents=False)])
+        result = await agent.run('hello')
+        assert result.workspace is not None
+        assert result.workspace.ref == WorkspaceRef(provider='local', id=str(on_windows))
+
+    async def test_another_workspace_wins(self, on_windows: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+        other = tmp_path_factory.mktemp('other')
+        agent = Agent(
+            TestModel(call_tools=[]),
+            capabilities=[Coder(repo_context=False, sub_agents=False), LocalWorkspace(other)],
+        )
+        result = await agent.run('hello')
+        assert result.workspace is not None
+        assert result.workspace.ref == WorkspaceRef(provider='local', id=str(other))
+
+    async def test_only_on_windows(self) -> None:
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Coder(repo_context=False, sub_agents=False)])
+        with pytest.raises(UserError, match='needs a workspace'):
+            await agent.run('hello')

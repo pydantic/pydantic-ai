@@ -61,14 +61,23 @@ class TestShellOnWindows:
         result = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
         assert 'True 1' in result
 
-    async def test_a_stream_name_does_not_reach_a_protected_file(self, project: Path) -> None:
+    @pytest.mark.parametrize(
+        ('path', 'protected', 'error'),
+        [
+            ('.env::$DATA', '.env', 'NTFS stream names are not supported'),
+            ('server.key.', 'server.key', 'names ending in a dot or a space are not supported'),
+        ],
+    )
+    async def test_an_alias_does_not_reach_a_protected_file(
+        self, project: Path, path: str, protected: str, error: str
+    ) -> None:
         result = await call_tool(
             [FileSystem[None](tools=['write_file']), WindowsWorkspace[None](project)],
             'write_file',
-            {'path': '.env::$DATA', 'content': 'SECRET=1'},
+            {'path': path, 'content': 'SECRET=1'},
         )
-        assert 'NTFS stream names are not supported' in result
-        assert not (project / '.env').exists()
+        assert error in result
+        assert not (project / protected).exists()
 
     async def test_a_log_past_max_log_bytes_is_cleared(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command'], max_log_bytes=1000)

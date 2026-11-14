@@ -50,6 +50,7 @@ _OUTPUT_BYTES_PER_CHAR = 4
 
 
 _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
+"""A background command's ID: the name of its job directory."""
 
 _POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process with `kill` and the\nreturned PID.'
 """How the `shell` description says to read a job's log and stop it; on a `'windows'` workspace it is replaced."""
@@ -58,7 +59,7 @@ _WINDOWS_JOB_HINT = (
     '(e.g.\n`Get-Content -Tail` in a later shell call) and stop the process tree with the\n'
     '`taskkill` command the result names. Commands run in PowerShell, not `sh`.'
 )
-"""A background command's ID: the name of its job directory."""
+"""`_POSIX_JOB_HINT` for a `'windows'` workspace."""
 
 
 class ShellToolset(FunctionToolset[AgentDepsT]):

@@ -34,3 +34,10 @@
     options:
         members:
             - WorkspaceBackendSuite
+
+# `pydantic_ai.workspaces.windows`
+
+::: pydantic_ai.workspaces.windows
+    options:
+        members:
+            - powershell_script
