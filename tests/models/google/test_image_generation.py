@@ -8,12 +8,14 @@ capability runs its local fallback instead.
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import AsyncIterator
 from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     Agent,
@@ -31,6 +33,7 @@ from pydantic_ai import (
     RetryInfo,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import ImageGeneration, NativeTool
@@ -44,6 +47,8 @@ from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
+    from google.genai.types import Blob, Candidate, Content, FinishReason, GenerateContentResponse, Part
+
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -410,6 +415,64 @@ async def test_google_2_5_flash_image_ignores_thinking(
     assert result.output == snapshot('Hi!')
     body = request_capture.body(':generateContent')
     assert body['generationConfig'] == snapshot({'responseModalities': ['TEXT', 'IMAGE']})
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_image_generation_drops_thought_images(
+    allow_model_requests: None, gemini_api_key: str, mocker: MockerFixture, stream: bool
+):
+    """Interim thought images never reach the output or the message history; the final image keeps its signature.
+
+    With thinking on, a Gemini 3 image model can send up to two interim images marked `thought=True` before the final
+    image, which carries the thought signature. The response is hand-built rather than recorded because Gemini decides
+    per request whether to emit interim thought images, so a recording cannot be relied on to contain them.
+    """
+    response = GenerateContentResponse(
+        model_version='gemini-3-pro-image-preview',
+        candidates=[
+            Candidate(
+                content=Content(
+                    role='model',
+                    parts=[
+                        Part(text='Planning the composition...', thought=True),
+                        Part(inline_data=Blob(data=b'draft-1', mime_type='image/png'), thought=True),
+                        Part(inline_data=Blob(data=b'draft-2', mime_type='image/png'), thought=True),
+                        Part(inline_data=Blob(data=b'final', mime_type='image/png'), thought_signature=b'signature'),
+                    ],
+                ),
+                finish_reason=FinishReason.STOP,
+            )
+        ],
+    )
+
+    async def stream_response() -> AsyncIterator[GenerateContentResponse]:
+        yield response
+
+    model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_response())
+    agent = Agent(model, output_type=BinaryImage, model_settings={'thinking': True})
+
+    if stream:
+        async with agent.run_stream('Generate an image of an axolotl.') as result:
+            output = await result.get_output()
+        messages = result.all_messages()
+    else:
+        run_result = await agent.run('Generate an image of an axolotl.')
+        output = run_result.output
+        messages = run_result.all_messages()
+
+    assert output.data == b'final'
+    assert messages[-1].parts == snapshot(
+        [
+            ThinkingPart(content='Planning the composition...'),
+            FilePart(
+                content=BinaryImage(data=b'final', media_type='image/png', identifier='d594c2'),
+                provider_name='google',
+                provider_details={'thought_signature': 'c2lnbmF0dXJl'},
+            ),
+        ]
+    )
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, gemini_api_key: str):
