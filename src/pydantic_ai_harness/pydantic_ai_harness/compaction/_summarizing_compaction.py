@@ -112,7 +112,8 @@ The immediate actions still required to finish the task.
 ## Open questions
 Unresolved questions or blockers.
 
-Focus on results, not a replay of completed actions.  Respond ONLY with the summary -- no \
+Focus on results, not a replay of completed actions. Use terse bullets and keep the summary \
+much shorter than the conversation it replaces. Respond ONLY with the summary -- no \
 preamble, no markdown fences.
 
 <messages>
@@ -636,6 +637,21 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     policy that differs from the running agent without mutating the model.
     """
 
+    max_summary_tokens: int | None = field(default=None, kw_only=True)
+    """Token budget for the generated summary, stated in its prompt and applied as `max_tokens`.
+
+    The smaller of this budget and the `max_tokens` in the summary agent's merged settings (the
+    summary model's defaults, `model_settings` and summarization capabilities) wins. Defaults on the
+    models inside a `FallbackModel` aren't considered, so a smaller limit there can be raised to the
+    budget. `None` leaves existing output settings unchanged.
+    This limits the summary, not the recent messages preserved alongside it; a smaller
+    budget can omit useful details. It's the request's output-token limit, which includes
+    reasoning and thinking tokens on providers that count them: on a reasoning summary model,
+    set it well above the expected reasoning, or disable thinking via `model_settings`. Keep it
+    at or below any `max_tokens` already set for the summary call: the prompt states this
+    budget, while the request is capped at the lower of the two.
+    """
+
     event_stream_handler: EventStreamHandler[object] | None = field(default=None, kw_only=True)
     """If set, this handler is passed to the nested summary run, so the summarizer's own
     model-streaming events surface to the caller.
@@ -791,6 +807,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
+        if self.max_summary_tokens is not None and self.max_summary_tokens < 1:
+            raise ValueError('max_summary_tokens must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         if self.keep_messages < 0:
             raise ValueError('keep_messages must be non-negative.')
@@ -1122,6 +1140,20 @@ async def write_summary(
             f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
         )
 
+    budget = summarizer.max_summary_tokens
+    run_settings: Callable[[RunContext[None]], ModelSettings] | None = None
+    if budget is not None:
+        prompt = f'{prompt}\n\nWrite the complete summary within {budget} tokens.'
+        if previous_summary is not None:
+            prompt = (
+                f'{prompt} When updating a previous summary, rewrite it within this budget rather than appending to it.'
+            )
+
+        def limit_summary(ctx: RunContext[None]) -> ModelSettings:
+            return {'max_tokens': min(budget, (ctx.model_settings or {}).get('max_tokens', budget))}
+
+        run_settings = limit_summary
+
     model = summarizer.model if summarizer.model is not None else ctx.model
     # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
     # realtime run reaches here only when no summarizer `model=` was configured, so ask for
@@ -1150,15 +1182,35 @@ async def write_summary(
         output_type=TextOutput(_non_empty_summary),
         instructions=summarizer.instructions,
         model_settings=summarizer.model_settings,
-        capabilities=list(summarizer.summarization_capabilities),
+        capabilities=[*summarizer.summarization_capabilities, _CompleteSummary()],
         retries=summarizer.retries,
     )
     with second_model_prompt():
         result = await agent.run(
             prompt,
+            model_settings=run_settings,
             conversation_id=ctx.conversation_id,
             usage=ctx.usage,
             usage_limits=reserved_usage_limits(ctx.usage_limits),
             event_stream_handler=summarizer.event_stream_handler,
         )
     return result.output
+
+
+class _CompleteSummary(AbstractCapability[None]):
+    """Reject truncated summaries before core accepts their partial text."""
+
+    async def after_model_request(
+        self,
+        ctx: RunContext[None],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        if response.finish_reason == 'length':
+            max_tokens = (ctx.model_settings or {}).get('max_tokens')
+            limit = f'{max_tokens} tokens' if max_tokens is not None else 'the output token limit'
+            raise ModelRetry(
+                f'The summary was cut off by the output limit. Write a complete, shorter summary within {limit}.'
+            )
+        return response

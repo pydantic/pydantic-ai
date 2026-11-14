@@ -631,16 +631,19 @@ from the edit point onward -- the next request pays a cache-write. Use `ClearToo
 ## Model inheritance
 
 `SummarizingCompaction(model=...)` accepts a model name or `Model`; when left `None` it inherits the
-running agent's model. That model has to write text, so an agent running a model that can't, such as a
-decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction
-raises a `UserError` saying so. A summary that is empty or only whitespace is retried within the summary
-run's output retries. Exhausting those retries raises `UnexpectedModelBehavior` rather than replacing
-history with an empty summary. Its nested summary run inherits the parent usage limits and reserves
-one request from a finite request limit for the pending parent request. These limits also apply to
-retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To fall
-back on either failure, set `FallbackCompaction`'s
-`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy that
-makes no model requests. This does not increase the parent run's limits.
+running agent's model. That model has to write text, so an agent running a model that can't, such as
+a decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first
+compaction raises a `UserError` saying so. A summary that is empty or only whitespace is retried
+within the summary run's output retries. Exhausting those retries raises `UnexpectedModelBehavior`
+rather than replacing history with an empty summary. A response with `finish_reason='length'` is
+also rejected, even when it contains text, and retried within the same output retries (`retries`,
+one by default) with the output limit restated; exhausting them raises `UnexpectedModelBehavior`. A
+truncated summary does not replace the history. Its nested summary run inherits the parent usage
+limits and reserves one request from a finite request limit for the pending parent request. These
+limits also apply to retries: if the summary run exhausts its budget first, it raises
+`UsageLimitExceeded` instead. To fall back on either failure, set `FallbackCompaction`'s
+`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy
+that makes no model requests. This does not increase the parent run's limits.
 
 Pass `model_settings` to give the dedicated summary call
 settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
@@ -675,6 +678,32 @@ anchor rather than regenerating it from scratch (see
 when it falls outside the window. Pass `keep_tokens` to retain a minimum amount of original message text
 instead of using `keep_messages`.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
+
+Set `max_summary_tokens` to limit summary growth (recommended). The budget is stated in the prompt,
+and the summary request's `max_tokens` becomes the smaller of the budget and the `max_tokens` in the
+summary agent's merged settings (the summary model's defaults, `model_settings` and summarization
+capabilities). Defaults on the individual models inside a `FallbackModel` aren't considered, so a
+smaller limit there can be raised to the budget. With the default `None`, output settings are
+unchanged. Keep `max_summary_tokens` at or below any `max_tokens` already set for the summary call:
+the prompt states `max_summary_tokens`, while the request is capped at the lower of the two, so a
+larger budget tells the model it has more room than it does and spends the first output retry. The
+budget is the summary request's output-token limit, which on providers that count them includes
+reasoning and thinking tokens: OpenAI sends it as `max_completion_tokens`, and Anthropic counts an
+extended-thinking `budget_tokens` toward it and rejects a request whose limit isn't larger than that
+budget. On a reasoning summary model, a small budget can be used up by reasoning, leaving a
+length-stopped response that's retried and then raises `UnexpectedModelBehavior`. Set it well above
+the expected reasoning, or disable thinking for the summary call through `model_settings`.
+
+```python
+from pydantic_ai_harness import SummarizingCompaction
+
+SummarizingCompaction(max_messages=60, keep_messages=20, max_summary_tokens=1_024)
+```
+
+Incremental updates rewrite the previous summary within the same budget rather than append to it. A
+smaller budget can omit useful details or cause a summary attempt to hit the output limit. The
+budget covers the summary call's output, not the recent messages preserved alongside it, so it does
+not guarantee that the complete compacted history fits a particular size.
 
 The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
 which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
@@ -723,7 +752,7 @@ Content a harness capability added on the user channel and tagged with an `origi
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
 treat it as the user's requests or standing constraints; that guidance is the only conditional part of
-the summary request.
+the transcript rendering, while `max_summary_tokens` adds a length instruction of its own.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 

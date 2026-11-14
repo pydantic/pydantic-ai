@@ -324,6 +324,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_CoderGuidance': Rejected(
         'Coder-local guidance; its `coder_instructions` id is set per instance, so a second copy raises rather than merging'
     ),
+    '_CompleteSummary': Anonymous('summary-local validation; repeating it rejects the same truncated responses'),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
     '_ReportExhaustedRetries': Anonymous(

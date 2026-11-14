@@ -148,6 +148,21 @@ contain `{messages}` and no other replacement field; any other prompt emits a `H
 and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
 inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
+
+`max_summary_tokens=None` leaves existing output limits unchanged. Setting a positive budget is
+recommended to limit summary growth: it is stated in the prompt and caps the `max_tokens` in the
+summary agent's merged settings (the summary model's defaults, `model_settings` and summarization
+capabilities). Defaults on the models inside a `FallbackModel` aren't considered, so a smaller limit
+there can be raised to the budget.
+Incremental summaries are rewritten within the same budget. Smaller budgets can lose details;
+they do not cap retained recent messages. A length-stopped summary is rejected and retried within
+the summary run's output retries (`retries`, one by default) with the output limit restated;
+exhausting them raises `UnexpectedModelBehavior` rather than replacing history. The budget is the
+request's output-token limit, which includes reasoning/thinking tokens on providers that count
+them: on a reasoning summary model, set it well above the expected reasoning or disable thinking
+for the summary call via `model_settings`.
+Configure `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded), ...)`
+to move to the next strategy on summary failure or exhausted usage.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
 is discarded and the history left unchanged (a `compact_messages` span with
