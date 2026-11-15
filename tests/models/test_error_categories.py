@@ -2245,6 +2245,7 @@ _TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
     _openrouter,
     _zai,
     _moonshotai,
+    _ollama,
     _anthropic,
     _anthropic_bedrock,
     _google,
