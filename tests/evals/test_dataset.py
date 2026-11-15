@@ -1170,6 +1170,16 @@ def test_from_file_roundtrip_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 
     assert Dataset[int, int, None].from_file(path) == dataset
 
 
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    path = tmp_path / 'truncated.json'
+    path.write_bytes(content)
+
+    with pytest.raises(UnicodeDecodeError):
+        Dataset[int, int, None].from_file(path)
+
+
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {

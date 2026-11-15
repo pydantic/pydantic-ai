@@ -2929,6 +2929,15 @@ def test_from_file_json_with_utf8_bom(tmp_path: Path):
     assert spec.name == 'café'
 
 
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    spec_path = tmp_path / 'agent.json'
+    spec_path.write_bytes(content)
+    with pytest.raises(UnicodeDecodeError):
+        AgentSpec.from_file(spec_path)
+
+
 def test_from_file_with_schema_field(tmp_path: str):
     """$schema field in the file should be accepted and not cause validation errors."""
     spec_path = Path(tmp_path) / 'agent.yaml'
