@@ -279,13 +279,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the model includes thinking content in requests. Default: `'auto'`.
 
     This can be:
-    * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
-    (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
-    it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
-    default when receiving responses. If your provider uses a different field name, you must explicitly set
-    `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
-    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
-    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
+    * `'auto'` (default): Automatically detects how to send thinking content. Thinking received from this provider
+    (tracked via `ThinkingPart.provider_name`) is sent back in a field only when its `ThinkingPart.id` is the
+    configured `openai_chat_thinking_field`, or, with none configured, `reasoning` or `reasoning_content`, the fields
+    checked by default when receiving responses. Any other thinking is sent using tags, including thinking received in
+    a field this profile doesn't name, such as history from another model on the same provider. If your provider uses
+    a different field name, you must explicitly set `openai_chat_thinking_field` to that field name. When the request
+    sends exactly one of these fields back, it's also sent empty on tool-calling assistant turns after the last user
+    message that don't already carry it, such as a step served by another model or provider, since DeepSeek-style APIs
+    reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
