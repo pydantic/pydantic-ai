@@ -578,13 +578,13 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
-- With `google-genai` 2.31.0 and later, a later request of a streamed run that fails before it streams any output,
-  with an error the HTTP client raises, is sent 3 more times from the same continuation token, with no wait, before
-  the model request fails as above. That includes a connection that can't be opened or that drops, a timeout and the
-  `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up, but not an error status
-  the SDK reads itself. `retry_options` and
-  [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off. They also retry a
-  connection that can't be opened, and a timeout before the response arrives, on each of those 4 requests: with
+- With `google-genai` 2.31.0 and later, a streamed run sends a later request that fails before it streams any output
+  3 more times from the same continuation token, with no wait. If they all fail, the model request fails as above.
+  This applies to errors the HTTP client raises: a connection that can't be opened or that drops, a timeout, or the
+  `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up. It doesn't apply to an
+  error status the SDK reads itself. `retry_options` and
+  [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off, and they also retry a
+  connection that can't be opened, or a timeout before the response arrives, on each of those 4 requests: with
   `max_retries=2`, such an error goes on the wire 12 times.
 - The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
   model request fails as above instead, since the resumed request would repeat that output.
