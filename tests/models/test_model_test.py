@@ -612,6 +612,19 @@ def test_json_schema_number_uses_strictest_bounds():
     assert _JsonSchemaTestData(json_schema).generate() == snapshot({'lower': 0.75, 'upper': 0.0})
 
 
+def test_int_uses_strictest_bounds():
+    class MyOutput(BaseModel):
+        lower: Annotated[int, Field(ge=0, gt=5)]
+        upper: Annotated[int, Field(le=10, lt=-5)]
+        both: Annotated[int, Field(ge=0, gt=5, le=100, lt=20)]
+
+    agent = Agent(output_type=MyOutput)
+    outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(3)]
+    assert [(output.lower, output.upper, output.both) for output in outputs] == snapshot(
+        [(6, -6, 6), (7, -7, 7), (8, -8, 8)]
+    )
+
+
 def test_narrow_exclusive_bounds_tool_args():
     """An agent tool with `Field(ge=0, lt=1)`-style parameters runs without errors."""
 
@@ -796,6 +809,37 @@ def test_boolean_schema_tool_args() -> None:
     assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
 
 
+def test_int_fractional_bounds_tool_args() -> None:
+    """Integer arguments are integers inside fractional bounds.
+
+    Pydantic rejects a fractional bound on an `int` field, so only a hand-written tool schema has one.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def bounded_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'collapsed': {'type': 'integer', 'minimum': 1, 'maximum': 1, 'exclusiveMinimum': 0.5},
+            'narrow': {'type': 'integer', 'minimum': 0, 'maximum': 1, 'exclusiveMinimum': 0.5},
+            'exclusive': {'type': 'integer', 'exclusiveMinimum': 0.5},
+            'inclusive_lower': {'type': 'integer', 'minimum': 2.5},
+            'inclusive_upper': {'type': 'integer', 'maximum': -2.5},
+        },
+        'required': ['collapsed', 'narrow', 'exclusive', 'inclusive_lower', 'inclusive_upper'],
+    }
+    tool = Tool.from_schema(
+        bounded_tool, name='bounded_tool', description='Takes bounded integers.', json_schema=schema
+    )
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot(
+        [{'collapsed': 1, 'narrow': 1, 'exclusive': 1, 'inclusive_lower': 3, 'inclusive_upper': -3}]
+    )
+
+
 @pytest.mark.parametrize(
     'content',
     [
@@ -844,65 +888,9 @@ def test_int_inclusive_upper_bound_reachable():
         }
         return [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in seeds]
 
-    assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
-    assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
+    assert generated_values(2.5, 5.5, list(range(4))) == [3, 4, 5, 3]
+    assert generated_values(2.0, 5.5, list(range(5))) == [2, 3, 4, 5, 2]
     assert generated_values(0.0, 1e20, [10**20]) == [10**20]
-
-
-def test_agent_test_model_mixed_int_lower_bounds():
-    class MyOutput(BaseModel):
-        value: Annotated[int, Field(ge=0, gt=5, le=10)]
-
-    model = TestModel()
-    result = Agent(output_type=MyOutput).run_sync('hello', model=model)
-
-    params = model.last_model_request_parameters
-    assert params is not None
-    value_schema = params.output_tools[0].parameters_json_schema['properties']['value']
-    assert value_schema['minimum'] == 0
-    assert value_schema['exclusiveMinimum'] == 5
-    assert value_schema['maximum'] == 10
-    assert result.output.value >= 0
-    assert result.output.value > 5
-    assert result.output.value <= 10
-
-
-def test_agent_test_model_mixed_int_upper_bounds():
-    class MyOutput(BaseModel):
-        value: Annotated[int, Field(ge=0, le=10, lt=5)]
-
-    model = TestModel(seed=6)
-    result = Agent(output_type=MyOutput).run_sync('hello', model=model)
-
-    params = model.last_model_request_parameters
-    assert params is not None
-    value_schema = params.output_tools[0].parameters_json_schema['properties']['value']
-    assert value_schema['minimum'] == 0
-    assert value_schema['maximum'] == 10
-    assert value_schema['exclusiveMaximum'] == 5
-    assert result.output.value >= 0
-    assert result.output.value <= 10
-    assert result.output.value < 5
-
-
-def test_agent_test_model_mixed_int_all_four_bounds():
-    class MyOutput(BaseModel):
-        value: Annotated[int, Field(ge=0, gt=5, le=10, lt=8)]
-
-    model = TestModel()
-    result = Agent(output_type=MyOutput).run_sync('hello', model=model)
-
-    params = model.last_model_request_parameters
-    assert params is not None
-    value_schema = params.output_tools[0].parameters_json_schema['properties']['value']
-    assert value_schema['minimum'] == 0
-    assert value_schema['exclusiveMinimum'] == 5
-    assert value_schema['maximum'] == 10
-    assert value_schema['exclusiveMaximum'] == 8
-    assert result.output.value >= 0
-    assert result.output.value > 5
-    assert result.output.value <= 10
-    assert result.output.value < 8
 
 
 class Cat(BaseModel):

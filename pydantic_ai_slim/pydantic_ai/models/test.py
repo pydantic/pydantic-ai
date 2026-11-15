@@ -1,12 +1,13 @@
 from __future__ import annotations as _annotations
 
 import itertools
+import math
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, assert_never, cast
+from typing import Any, Literal, TypeVar, assert_never, cast
 
 import pydantic_core
 
@@ -479,6 +480,7 @@ class TestStreamedResponse(StreamedResponse):
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
+_BoundT = TypeVar('_BoundT', int, float)
 
 
 class _JsonSchemaTestData:
@@ -595,31 +597,22 @@ class _JsonSchemaTestData:
 
         return self._char()
 
-    def _int_gen(self, schema: dict[str, Any]) -> int | float:
+    def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
-        maximum = schema.get('maximum')
-        minimum = schema.get('minimum')
-
-        if (exc_max := schema.get('exclusiveMaximum')) is not None:
-            maximum = self._tightest_bound(maximum, exc_max - 1, min)
+        # Each bound becomes the nearest integer inside it, so fractional bounds still generate integers.
+        minimum: int | None = None if (bound := schema.get('minimum')) is None else math.ceil(bound)
+        maximum: int | None = None if (bound := schema.get('maximum')) is None else math.floor(bound)
         if (exc_min := schema.get('exclusiveMinimum')) is not None:
-            minimum = self._tightest_bound(minimum, exc_min + 1, max)
-
-        if minimum is not None and maximum == minimum:
-            return minimum
+            minimum = self._tightest_bound(minimum, math.floor(exc_min) + 1, max)
+        if (exc_max := schema.get('exclusiveMaximum')) is not None:
+            maximum = self._tightest_bound(maximum, math.ceil(exc_max) - 1, min)
 
         if minimum is not None and maximum is not None:
+            if minimum == maximum:
+                return minimum
             span = maximum - minimum
-            if (
-                schema.get('type') == 'integer'
-                and minimum % 1 == 0
-                and maximum % 1 == 0
-                and 'exclusiveMinimum' not in schema
-                and 'exclusiveMaximum' not in schema
-                and span > 0
-            ):
-                minimum = int(minimum)
-                span = int(maximum) - minimum + 1
+            if 'exclusiveMinimum' not in schema and 'exclusiveMaximum' not in schema and span > 0:
+                span += 1
             return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
@@ -650,8 +643,8 @@ class _JsonSchemaTestData:
 
     @staticmethod
     def _tightest_bound(
-        bound: float | None, exclusive_bound: float | None, tightest: Callable[[float, float], float]
-    ) -> float | None:
+        bound: _BoundT | None, exclusive_bound: _BoundT | None, tightest: Callable[[_BoundT, _BoundT], _BoundT]
+    ) -> _BoundT | None:
         """The tighter of an inclusive and an exclusive JSON Schema bound, as `tightest` picks it."""
         if exclusive_bound is None:
             return bound
