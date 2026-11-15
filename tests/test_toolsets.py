@@ -791,6 +791,129 @@ async def test_context_manager_failed_initialization():
     assert server1.is_running is False
 
 
+async def test_combined_toolset_concurrent_aenter():
+    """`CombinedToolset.__aenter__` enters child toolsets concurrently and exits each in the task that entered it."""
+    from contextlib import AsyncExitStack
+
+    all_started = anyio.Event()
+    started_count = 0
+
+    class BarrierCancelScopeToolset(AbstractToolset[None]):
+        def __init__(self) -> None:
+            self._stack: AsyncExitStack | None = None
+            self.entered = False
+            self.exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            nonlocal started_count
+            started_count += 1
+            if started_count == 2:
+                all_started.set()
+            # Would deadlock under serial `__aenter__` because the second toolset never starts until the first finishes.
+            with anyio.fail_after(1.0):
+                await all_started.wait()
+            self._stack = AsyncExitStack()
+            await self._stack.__aenter__()
+            await self._stack.enter_async_context(anyio.create_task_group())
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            assert self._stack is not None
+            await self._stack.__aexit__(*args)
+            self._stack = None
+            self.exited = True
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    t1 = BarrierCancelScopeToolset()
+    t2 = BarrierCancelScopeToolset()
+    combined = CombinedToolset([t1, t2])
+
+    async with combined:
+        assert t1.entered and t2.entered
+        async with combined:
+            assert t1.entered and t2.entered
+        assert not t1.exited and not t2.exited
+
+    assert t1.exited and t2.exited
+
+    # Empty and single-element CombinedToolset also enter and exit cleanly.
+    async with CombinedToolset([]):
+        pass
+    single = FunctionToolset[None]()
+    async with CombinedToolset([single]):
+        pass
+
+
+async def test_combined_toolset_aenter_failure_cleans_up_and_cancels_siblings():
+    """When one child fails in `__aenter__`, already-entered siblings are exited and still-entering ones are cancelled."""
+    first_entered = anyio.Event()
+    slow_completed = False
+
+    class FastToolset(WrapperToolset[Any]):
+        exited = False
+
+        async def __aenter__(self) -> Self:
+            first_entered.set()
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await anyio.sleep(0)
+            self.exited = True
+            return None
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def __aenter__(self) -> Self:
+            await first_entered.wait()
+            raise InitializationError('boom')
+
+    class SlowToolset(WrapperToolset[Any]):
+        async def __aenter__(self) -> Self:
+            nonlocal slow_completed
+            await anyio.sleep(1.0)
+            slow_completed = True  # pragma: no cover
+            return self  # pragma: no cover
+
+    inner = FunctionToolset[None]()
+    fast = FastToolset(inner)
+    combined = CombinedToolset([fast, FailingToolset(inner), SlowToolset(inner)])
+
+    with pytest.raises(InitializationError, match='boom'):
+        async with combined:
+            pass  # pragma: no cover
+
+    assert fast.exited is True
+    assert slow_completed is False
+
+    # Multiple concurrent failures surface as an ExceptionGroup.
+    @dataclass
+    class RaisingEnterToolset(WrapperToolset[Any]):
+        message: str = ''
+
+        async def __aenter__(self) -> Self:
+            raise InitializationError(self.message)
+
+    multi_fail = CombinedToolset(
+        [RaisingEnterToolset(wrapped=inner, message='err1'), RaisingEnterToolset(wrapped=inner, message='err2')]
+    )
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        async with multi_fail:
+            pass  # pragma: no cover
+    assert {str(e) for e in exc_info.value.exceptions} == {'err1', 'err2'}
+
+
 async def test_tool_manager_reuse_self():
     """Test the retry logic with failed_tools and for_run_step method."""
 

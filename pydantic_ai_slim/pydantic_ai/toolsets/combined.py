@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any, Self
+
+import anyio
 
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
@@ -11,6 +13,58 @@ from ..exceptions import UserError
 from ..messages import InstructionPart
 from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
+
+
+@asynccontextmanager
+async def _enter_toolsets(toolsets: Sequence[AbstractToolset[Any]]) -> AsyncIterator[None]:
+    """Enter all toolsets concurrently, each in the same task that later exits it."""
+    if not toolsets:
+        yield
+        return
+    if len(toolsets) == 1:
+        async with toolsets[0]:
+            yield
+        return
+
+    done = anyio.Event()
+    ready = [anyio.Event() for _ in toolsets]
+    enter_scopes = [anyio.CancelScope() for _ in toolsets]
+    entered = [False] * len(toolsets)
+    errors: list[BaseException] = []
+
+    async def hold(index: int, toolset: AbstractToolset[Any]) -> None:
+        try:
+            with enter_scopes[index]:
+                async with toolset:
+                    entered[index] = True
+                    ready[index].set()
+                    await done.wait()
+        except BaseException as exc:
+            errors.append(exc)
+            done.set()
+            for j, is_entered in enumerate(entered):
+                if j != index and not is_entered:
+                    enter_scopes[j].cancel()
+        finally:
+            ready[index].set()
+
+    async with anyio.create_task_group() as tg:
+        for i, toolset in enumerate(toolsets):
+            tg.start_soon(hold, i, toolset)
+        for event in ready:
+            await event.wait()
+        if errors:
+            done.set()
+        else:
+            try:
+                yield
+            finally:
+                done.set()
+
+    if errors:
+        if len(errors) == 1:
+            raise errors[0]
+        raise BaseExceptionGroup('unhandled errors in a TaskGroup', errors)
 
 
 @dataclass(kw_only=True)
@@ -31,6 +85,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
+    _running_count: int = field(init=False, default=0)
 
     @property
     def id(self) -> str | None:
@@ -51,14 +106,17 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return replace(self, toolsets=new_toolsets)
 
     async def __aenter__(self) -> Self:
-        async with AsyncExitStack() as exit_stack:
-            for toolset in self.toolsets:
-                await exit_stack.enter_async_context(toolset)
-            self._exit_stack = exit_stack.pop_all()
+        if self._running_count == 0:
+            async with AsyncExitStack() as exit_stack:
+                await exit_stack.enter_async_context(_enter_toolsets(self.toolsets))
+                self._exit_stack = exit_stack.pop_all()
+        self._running_count += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if self._exit_stack is not None:
+        if self._running_count > 0:
+            self._running_count -= 1
+        if self._running_count == 0 and self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None
 
