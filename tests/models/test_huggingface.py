@@ -544,6 +544,10 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatComp
     return chunk([ChatCompletionStreamOutputDelta(content=text, role='assistant')], finish_reason=finish_reason)
 
 
+def reasoning_chunk(text: str) -> ChatCompletionStreamOutput:
+    return chunk([ChatCompletionStreamOutputDelta(reasoning=text, role='assistant')])
+
+
 async def test_stream_text(allow_model_requests: None):
     stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockHuggingFace.create_stream_mock(stream)
@@ -1325,10 +1329,6 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
     )
 
 
-def reasoning_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
-    return chunk([ChatCompletionStreamOutputDelta(reasoning=text, role='assistant')], finish_reason=finish_reason)
-
-
 async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None):
     """No recorded Hugging Face response carries `reasoning`, so a mock client returns `message.reasoning`."""
     mock_client = MockHuggingFace.create_mock(
@@ -1413,9 +1413,7 @@ async def test_hf_model_reasoning_field_thinking_part_round_trip(allow_model_req
     assert second_result.output == '43'
 
     assistant_messages = [
-        message
-        for message in get_mock_chat_completion_kwargs(mock_client)[1]['messages']
-        if message['role'] == 'assistant'
+        sent for sent in get_mock_chat_completion_kwargs(mock_client)[1]['messages'] if sent['role'] == 'assistant'
     ]
     assert len(assistant_messages) == 1
     assert assistant_messages[0]['content'] == '<think>\nI computed it\n</think>\n\n42'
