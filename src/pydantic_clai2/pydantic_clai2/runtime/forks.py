@@ -124,7 +124,7 @@ class Forks(Generic[DepsT, OutputT]):
         *,
         console: Console,
         history: Callable[[], Sequence[ModelMessage]],
-        spawn: Callable[[str | None, Sequence[ModelMessage]], Session[DepsT, OutputT]],
+        spawn: Callable[[str | None, Sequence[ModelMessage]], Awaitable[Session[DepsT, OutputT]]],
         models: Callable[[], Iterable[str]] = lambda: (),
         fire: Callable[[HostEvent], Awaitable[None]] | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -267,7 +267,7 @@ class Forks(Generic[DepsT, OutputT]):
         )
 
     async def _prepare(self, model: str | None) -> Session[DepsT, OutputT]:
-        session = self._spawn(model, self._snapshot())
+        session = await self._spawn(model, self._snapshot())
         if session.conversations is not None and not self._store_ready:
             # Concurrent first connections to a brand-new sessions.db can fail on the store's WAL switch.
             # Open it here, while the command owns the shell and before any fork runs.

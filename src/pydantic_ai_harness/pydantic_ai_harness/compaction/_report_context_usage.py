@@ -11,8 +11,8 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction._context_usage_events import ContextUsageEvent
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
+from pydantic_ai_harness.compaction._events import ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._shared import (
     estimate_context_tokens,
     get_compaction_reclaim,
@@ -88,7 +88,7 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
     on_usage: Callable[[ContextUsage], None | Awaitable[None]] | None = None
     """Deprecated callback with a fresh reading before every model request.
 
-    Subscribe to `ContextUsageEvent` instead. A coroutine function is awaited and an exception
+    Subscribe to `ContextUsageMeasuredEvent` instead. A coroutine function is awaited and an exception
     raised here propagates and fails the run.
     """
 
@@ -104,7 +104,7 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.on_usage is not None:
             warnings.warn(
-                '`ReportContextUsage.on_usage` is deprecated; subscribe to `ContextUsageEvent` with '
+                '`ReportContextUsage.on_usage` is deprecated; subscribe to `ContextUsageMeasuredEvent` with '
                 '`@agent.on_event` instead, or with `@on_event` on a capability of your own.',
                 HarnessDeprecationWarning,
                 stacklevel=2,
@@ -147,7 +147,7 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         """Measure the pending history, emit it, and invoke the compatibility callback."""
         reading = self._measure(ctx, request_context)
         await ctx.emit(
-            ContextUsageEvent(
+            ContextUsageMeasuredEvent(
                 used_tokens=reading.used_tokens,
                 window_tokens=reading.window_tokens,
                 resolved=reading.resolved,

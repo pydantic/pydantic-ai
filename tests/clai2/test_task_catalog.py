@@ -26,7 +26,12 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTask, DelegationTaskEvent
+from pydantic_ai_harness.sub_agents import (
+    DelegationFinishedEvent,
+    DelegationStartedEvent,
+    DelegationTask,
+    DelegationTaskEvent,
+)
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -116,8 +121,8 @@ async def test_tasks_reach_plugins_while_the_shell_runs(tmp_path: Path) -> None:
     )
     first, last = Watcher.events[0], Watcher.events[-1]
     assert first.event is None and first.task.status == 'running' and first.task.activity == 'starting'
-    assert any(isinstance(event.event, DelegationStartEvent) for event in Watcher.events)
-    assert any(isinstance(event.event, DelegationEndEvent) for event in Watcher.events)
+    assert any(isinstance(event.event, DelegationStartedEvent) for event in Watcher.events)
+    assert any(isinstance(event.event, DelegationFinishedEvent) for event in Watcher.events)
     assert last.event is None
     assert (last.task.status, last.task.outcome, last.task.usage.requests) == ('finished', 'ok', 2)
     assert last.task.finished_at is not None and last.task.finished_at >= last.task.started_at

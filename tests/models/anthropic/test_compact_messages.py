@@ -140,11 +140,11 @@ async def test_compact_messages(
                 'cache_read_input_tokens': 0,
                 'message_iterations': 0,
                 'compaction_iterations': 1,
-                'compaction_input_tokens': 790,
-                'compaction_output_tokens': 859,
+                'compaction_input_tokens': 1054,
+                'compaction_output_tokens': 596,
             },
-            input_tokens=790,
-            output_tokens=859,
+            input_tokens=1054,
+            output_tokens=596,
         )
     )
 

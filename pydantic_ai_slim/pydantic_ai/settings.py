@@ -90,6 +90,9 @@ class ToolOrOutput:
 ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
 """Type alias for all valid tool_choice values."""
 
+FramingAnnouncement: TypeAlias = Literal['always', 'when_needed', 'never']
+"""When to tell a model what the `<system>` tag means; see [`ModelSettings.framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement]."""
+
 ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
 """Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
 
@@ -119,8 +122,8 @@ On Google Cloud the unified field maps only to safe PT-with-spillover variants s
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
-(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT routing tiers) are reachable
-only through the per-provider field.
+(OpenAI's `'scale'`, `'fast'` and `'ultrafast'`, Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT
+routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
 `google_cloud_service_tier`) always take precedence over this unified field when set.
@@ -293,6 +296,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     request_timeout: float
@@ -334,6 +338,39 @@ class ModelSettings(TypedDict, total=False):
     sent to the provider. See [Timeouts](../timeouts.md#waiting-for-the-first-event).
     """
 
+    framing_announcement: FramingAnnouncement
+    """When to tell the model what the application's `<system>` blocks and lookalike notes mean.
+
+    A model whose API has no system role inside the conversation gets each mid-conversation system prompt as a
+    `<system>` block in a user turn, and follows it far more reliably once its system prompt has said what the tag
+    means. Text from a user, a tool or a file that looks like one of the application's frames goes out as written,
+    with a short note from the application next to it, and the announcement also says what those notes mean. On such
+    a model Pydantic AI adds the announcement, a fixed text of about 120 words (about 185 where the blocks are
+    `<system verified>`), to a request that has a system prompt or instructions:
+
+    - `'when_needed'` (the default on most models): at the start of the system prompt, ahead of the leading system
+      prompts and the instructions, so the application's own text comes last, from the first request whose history
+      has a mid-conversation system prompt, a lookalike note or another frame on the user channel, such as retry
+      feedback or a compaction summary, and on every request after it. A
+      mid-conversation system prompt includes an instruction change appended by a dynamic instruction with
+      `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`). A conversation
+      with none of these keeps its system prompt as written; one that has them changes its cached prompt prefix
+      once, at that request, and keeps it stable from then on, as long as the stored history keeps what needed it.
+      A UI adapter's frontend doesn't send a mid-conversation system prompt back (AG-UI, Vercel AI), so there the
+      announcement drops out of the next turn and the prefix changes every turn: use `'always'`.
+    - `'always'`: at the start of the system prompt, on every request from the first, so the prefix never changes, at
+      the cost of the announcement in conversations that never need it. The default on Claude Sonnet 4.6 and
+      gpt-oss, which follow the system prompt less reliably without it (see
+      [`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]).
+    - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the
+      text added. Models then follow a `<system>`-tagged change less reliably. The lookalike notes are still added.
+
+    A model with a native mid-conversation system role gets a shorter announcement as a system message in the
+    first request with a frame or a note, with `'when_needed'` and `'always'` alike, and none with `'never'`. The
+    setting is applied by Pydantic AI for every model and is not sent to the provider. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
+    """
+
     max_retries: int
     """Override how many times the provider SDK's client retries a failed request, for one request.
 
@@ -369,6 +406,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
     * OpenAI Decisions
+    * Google Decisions
     """
 
     parallel_tool_calls: bool
@@ -568,6 +606,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     thinking: ThinkingLevel
@@ -621,7 +660,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models with the
-      `20260209` web tools, which on the Anthropic API the setting has the model call directly unless the request
+      `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
       needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
@@ -727,6 +766,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
@@ -741,6 +781,7 @@ ModelSettingName: TypeAlias = Literal[
     'timeout',
     'request_timeout',
     'first_event_timeout',
+    'framing_announcement',
     'max_retries',
     'parallel_tool_calls',
     'tool_choice',

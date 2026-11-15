@@ -11,7 +11,7 @@ from acp import schema
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.experimental.acp import InMemorySessionStore, PydanticAIACPAgent
@@ -63,8 +63,7 @@ async def test_models_all_advertises_every_known_model() -> None:
     response = await adapter.new_session(cwd='/ws')
     option = _model_option(response)
     ids = [model.value for model in _select_options(option)]
-    assert len(ids) > 100  # the whole known set, not a curated handful
-    assert 'openai:gpt-4o' in ids
+    assert ids == list(known_model_names())
     assert option.current_value == ids[0]  # first known model is the default
 
 

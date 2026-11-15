@@ -17,7 +17,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 
-from ..conftest import detach_dbos_logging
+from ..conftest import detach_dbos_logging, without_admin_server
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID, StepInfo
@@ -57,11 +57,10 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
     dbos_config: DBOSConfig = {
         'name': 'pydantic_dbos_online_eval',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
-        'run_admin_server': False,
         # DBOS steps record spans, which the evaluators' span tree shows.
         'enable_otlp': True,
     }
-    dbos = DBOS(config=dbos_config)
+    dbos = DBOS(config=without_admin_server(dbos_config))
     DBOS.launch()
     try:
         yield dbos

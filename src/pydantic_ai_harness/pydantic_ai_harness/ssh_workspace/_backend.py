@@ -221,19 +221,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             'exit "$__pydantic_ai_status"\n'
             '} < /dev/null\n'
         )
-        # `ssh` hands the command to the remote login shell. `/bin/sh` is absolute so a writable `PATH` entry
-        # cannot supply the shell that interprets this script. Either way the tag is an argument of that `sh`.
         # The mode is read once: a concurrent command can switch it while this one waits on `ssh`.
         on_stdin = self._script_on_stdin
-        if on_stdin:
-            # The script reaches the remote `sh` on stdin, so the remote command line stays short whatever the
-            # command's size: as an argument, its quoted form could pass the operating system's limit on one, on
-            # either host. A local `printf` builtin feeds it, in arguments small enough for any host.
-            ssh = shlex.join([*self._ssh, f'/bin/sh -s {tag}'])
-            chunks = [script[start : start + _SCRIPT_CHUNK] for start in range(0, len(script), _SCRIPT_CHUNK)]
-            argv = ['/bin/sh', '-c', f'printf %s "$@" | {ssh}', 'sh', *chunks]
-        else:
-            argv = [*self._ssh, f'/bin/sh -c {shlex.quote(script)} {tag}']
+        argv = self._ssh_argv(script, tag, on_stdin=on_stdin)
         started = anyio.current_time()
         try:
             result = await self._runner.run(argv, timeout=timeout)
@@ -279,6 +269,19 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             stdout=_after_ready(result.stdout),
             stderr=pattern.sub('', stderr),
         )
+
+    def _ssh_argv(self, script: str, tag: str, *, on_stdin: bool) -> list[str]:
+        """The local command that runs `script` on the host, in a remote `sh` that has `tag` as its argument."""
+        # `ssh` hands the command to the remote login shell. `/bin/sh` is absolute so a writable `PATH` entry
+        # cannot supply the shell that interprets this script. Either way the tag is an argument of that `sh`.
+        if on_stdin:
+            # The script reaches the remote `sh` on stdin, so the remote command line stays short whatever the
+            # command's size: as an argument, its quoted form could pass the operating system's limit on one, on
+            # either host. A local `printf` builtin feeds it, in arguments small enough for any host.
+            ssh = shlex.join([*self._ssh, f'/bin/sh -s {tag}'])
+            chunks = [script[start : start + _SCRIPT_CHUNK] for start in range(0, len(script), _SCRIPT_CHUNK)]
+            return ['/bin/sh', '-c', f'printf %s "$@" | {ssh}', 'sh', *chunks]
+        return [*self._ssh, f'/bin/sh -c {shlex.quote(script)} {tag}']
 
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.
