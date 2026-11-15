@@ -2537,9 +2537,9 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
 @pytest.mark.parametrize(
     'thinking_settings',
     [
-        pytest.param(AnthropicModelSettings(anthropic_thinking={'type': 'disabled'}), id='anthropic_thinking'),
-        pytest.param(AnthropicModelSettings(thinking=False), id='unified_thinking'),
-        pytest.param(AnthropicModelSettings(extra_body={'thinking': {'type': 'disabled'}}), id='extra_body'),
+        pytest.param({'anthropic_thinking': {'type': 'disabled'}}, id='anthropic_thinking'),
+        pytest.param({'thinking': False}, id='unified_thinking'),
+        pytest.param({'extra_body': {'thinking': {'type': 'disabled'}}}, id='extra_body'),
     ],
 )
 @pytest.mark.parametrize('effort', ['xhigh', 'max'])
@@ -6971,20 +6971,20 @@ _EXTRA_BODY_BUDGET_THINKING = (
     ('settings', 'rejected'),
     [
         pytest.param(
-            AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+            {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             _TYPED_BUDGET_THINKING,
             id='anthropic_thinking',
         ),
         pytest.param(
-            AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
+            {'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
             _EXTRA_BODY_BUDGET_THINKING,
             id='extra_body',
         ),
         pytest.param(
-            AnthropicModelSettings(
-                anthropic_thinking={'type': 'adaptive'},
-                extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
-            ),
+            {
+                'anthropic_thinking': {'type': 'adaptive'},
+                'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            },
             _EXTRA_BODY_BUDGET_THINKING,
             id='extra_body_over_adaptive',
         ),
