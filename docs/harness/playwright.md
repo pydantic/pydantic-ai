@@ -181,6 +181,8 @@ not raised to abort the agent run.
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
 | `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
+| `cdp_url_factory` | `None` | Async function returning a CDP endpoint on the first browser tool call, once per run. Mutually exclusive with `cdp_url`; unavailable in specs. |
+| `cdp_context` | `'new'` | Create an isolated context, or use `'existing'` to reuse the connected browser's default context and open tabs. Requires a CDP endpoint. |
 
 ## Two of them
 
@@ -285,6 +287,48 @@ higher-risk choice -- that process holds every account you are logged into, and
 anything the agent can reach through it is reachable in one prompt injection.
 Prefer a browser started for the agent, with a scoped `storage_state`. Provider
 endpoints sometimes embed an auth token in the URL; treat those as secrets.
+
+### Reusing the provider's context
+
+For a managed browser whose default context holds a saved profile, set
+`cdp_context='existing'`. Pydantic uses that context's first page, tracks its
+existing tabs, and installs the same request guards, event listeners, and dialog
+handling as for a new context. If it has no page, one is opened. A missing
+default context or more than eight existing tabs returns a tool error rather
+than opening an empty context or closing inherited tabs.
+
+Pass `cdp_url_factory` instead of `cdp_url` when obtaining the endpoint should
+also be lazy. Supply an async function that creates or resumes the provider
+browser and returns its CDP URL. The resulting capability goes in the agent's
+`capabilities` list:
+
+```python
+from pydantic_ai_harness.playwright import CdpUrlFactory, PlaywrightBrowser
+
+
+def provider_browser(endpoint: CdpUrlFactory) -> PlaywrightBrowser[None]:
+    return PlaywrightBrowser(cdp_url_factory=endpoint, cdp_context='existing')
+```
+
+The factory is not called at agent construction, run start, or tool discovery.
+Its result is cached for that run, including connection retries; the factory is
+called again for a later run. It uses `navigation_timeout_ms`. If provisioning
+fails or times out before returning an endpoint, the factory must handle any
+provider resources it created and ambiguous provisioning results. Pydantic does
+not own the provider API or its retry policy.
+
+`storage_state` cannot be combined with `'existing'`: the context already has
+its state. The agent inherits that context's signed-in accounts, open pages, and
+in-memory state. Use a dedicated agent profile rather than an everyday browser.
+The browser owner controls downloads and service workers on an existing context;
+Pydantic cannot apply their creation-time settings retroactively. Requests from
+service workers or connections established before attachment may bypass the
+newly installed guards.
+
+At run end Pydantic closes its CDP connection and Playwright driver, not the
+provider browser. The caller decides whether to retain, sleep, or delete that
+browser through its provider API. A profile's persistence rules remain the
+provider's responsibility.
 
 ## Lifecycle
 

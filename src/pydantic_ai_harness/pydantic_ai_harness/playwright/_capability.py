@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
@@ -21,6 +21,7 @@ from pydantic_ai_harness.playwright._toolset import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_MAX_CONTENT_TOKENS,
     DEFAULT_NAVIGATION_TIMEOUT_MS,
+    CdpUrlFactory,
     EgressPolicy,
     PlaywrightBrowserSession,
     PlaywrightBrowserToolset,
@@ -233,14 +234,33 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     When set, the capability connects instead of launching, so no local Chromium
     binary is needed and `auto_install_chromium` does not apply. Used for
     managed-browser providers and benchmark harnesses that hand the agent a
-    browser. A new browser context is still created for the run, so
+    browser. By default a new browser context is created for the run, so
     `storage_state` and the egress guards apply as they do for a launched
     browser, and the run does not inherit the sessions already open in that
     Chrome. Provider endpoints sometimes carry an auth token in the URL; treat
-    those as secrets.
+    those as secrets. Set `cdp_context='existing'` to opt into the default
+    context's existing state instead.
     """
 
     _: KW_ONLY
+    cdp_url_factory: CdpUrlFactory | None = field(default=None, repr=False)
+    """Resolve a CDP endpoint on the first browser tool call, once per run.
+
+    Mutually exclusive with `cdp_url`. The async factory can create or resume a
+    managed browser; the caller owns its provider-side lifetime. Factory execution
+    uses the navigation timeout. Once resolved, the endpoint is reused on retries
+    rather than calling a provisioning factory again. Not available in specs.
+    """
+
+    cdp_context: Literal['new', 'existing'] = 'new'
+    """Create an isolated context, or use the CDP browser's existing default context.
+
+    `existing` requires `cdp_url` or `cdp_url_factory` and excludes `storage_state`.
+    It inherits saved sign-ins and open tabs. Egress guards and native session
+    handlers still apply, but the browser owner controls service workers and
+    downloads; those creation-time settings cannot be changed on an existing context.
+    """
+
     id: str | None = 'playwright_browser'
     """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
 
@@ -270,6 +290,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             headless=self.headless,
             storage_state=self.storage_state,
             cdp_url=self.cdp_url,
+            cdp_url_factory=self.cdp_url_factory,
+            cdp_context=self.cdp_context,
             auto_install_chromium=self.auto_install_chromium,
             chromium_sandbox=self.chromium_sandbox,
             launch_timeout_ms=self.navigation_timeout_ms,
@@ -357,6 +379,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
+        cdp_context: Literal['new', 'existing'] = 'new',
         id: str | None = 'playwright_browser',
         description: str | None = None,
         defer_loading: bool = False,
@@ -379,6 +402,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             auto_install_chromium=auto_install_chromium,
             chromium_sandbox=chromium_sandbox,
             cdp_url=cdp_url,
+            cdp_context=cdp_context,
             id=id,
             description=description,
             defer_loading=defer_loading,

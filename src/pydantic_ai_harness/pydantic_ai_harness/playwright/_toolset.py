@@ -108,6 +108,7 @@ import socket
 import sys
 import warnings
 from collections import deque
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -141,7 +142,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
+    from collections.abc import Coroutine, Iterable, Sequence
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -1021,6 +1022,10 @@ class _FailedRequest(Protocol):
     def failure(self) -> str | None: ...  # pragma: no cover
 
 
+CdpUrlFactory = Callable[[], Awaitable[str]]
+"""Obtain a CDP endpoint lazily, once per browser session, without exposing it to the model."""
+
+
 class PlaywrightBrowserSession:
     """One agent run's Chromium: how a page is obtained, guarded, and released.
 
@@ -1045,15 +1050,28 @@ class PlaywrightBrowserSession:
         headless: bool = True,
         storage_state: StorageState | None = None,
         cdp_url: str | None = None,
+        cdp_url_factory: CdpUrlFactory | None = None,
+        cdp_context: Literal['new', 'existing'] = 'new',
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         launch_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
     ) -> None:
+        if cdp_url is not None and cdp_url_factory is not None:
+            raise UserError('Pass either `cdp_url` or `cdp_url_factory`, not both.')
+        if cdp_context not in ('new', 'existing'):
+            raise UserError('`cdp_context` must be `new` or `existing`.')
+        if cdp_context == 'existing':
+            if cdp_url is None and cdp_url_factory is None:
+                raise UserError('`cdp_context="existing"` requires `cdp_url` or `cdp_url_factory`.')
+            if storage_state is not None:
+                raise UserError('`storage_state` cannot be applied to an existing CDP context.')
         self.policy = policy if policy is not None else EgressPolicy()
         """Egress policy the route guard enforces, and the default for a toolset built on this session."""
         self._headless = headless
         self._storage_state = storage_state
         self._cdp_url = cdp_url
+        self._cdp_url_factory = cdp_url_factory
+        self._cdp_context = cdp_context
         self._auto_install_chromium = auto_install_chromium
         self._chromium_sandbox = chromium_sandbox
         self._launch_timeout_ms = launch_timeout_ms
@@ -1240,26 +1258,37 @@ class PlaywrightBrowserSession:
         # Assigned before the context and page are built, so teardown closes Chromium
         # even when a later setup step raises.
         self._browser = browser
-        # Service workers can issue requests that context routes never see, so they
-        # are blocked to keep all traffic on the routable path. Downloads are refused
-        # because no tool exposes them: accepting them only lets a page write to the
-        # host's temporary storage for the length of the run.
-        context = await self._bounded(
-            browser.new_context(
-                storage_state=self._storage_state,
-                service_workers='block',
-                accept_downloads=False,
+        if self._cdp_context == 'existing':
+            if not browser.contexts:
+                raise BrowserUnavailableError('The CDP browser has no existing context.')
+            context = browser.contexts[0]
+            pages = list(context.pages)
+            if len(pages) > _MAX_TABS:
+                raise BrowserUnavailableError(
+                    f'The existing CDP context has more than {_MAX_TABS} tabs. Close some first.'
+                )
+        else:
+            # These creation-time controls cannot be applied to an existing context.
+            # Service workers bypass routes; downloads have no tool-level contract.
+            context = await self._bounded(
+                browser.new_context(
+                    storage_state=self._storage_state,
+                    service_workers='block',
+                    accept_downloads=False,
+                )
             )
-        )
+            pages = []
         self._context = context
-        page = await self._bounded(context.new_page())
+        if not pages:
+            pages = [await self._bounded(context.new_page())]
         if self.policy.enforced():
             await self._bounded(context.route('**/*', self._route_guard))
             # A network route never sees a WebSocket, so sockets get a guard of their own.
             await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
-        self._wire_page(page)
-        self.pages.append(page)
-        self.page = page
+        for page in pages:
+            self._wire_page(page)
+            self.pages.append(page)
+        self.page = pages[0]
 
     async def _bounded(self, awaitable: Awaitable[_T]) -> _T:
         """Run a setup step that has no `timeout` parameter under `launch_timeout_ms`.
@@ -1290,6 +1319,8 @@ class PlaywrightBrowserSession:
         A browser reached over `cdp_url` is already running, so its own
         configuration decides this.
         """
+        if self._cdp_url is None and self._cdp_url_factory is not None:
+            self._cdp_url = await self._bounded(self._cdp_url_factory())
         if self._cdp_url is not None:
             try:
                 return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
@@ -1528,6 +1559,8 @@ class PlaywrightBrowserSession:
         self._driver_cm = async_playwright()
         self._driver = None
         self._driver_entered = False
+        if self._cdp_url_factory is not None:
+            self._cdp_url = None
         self.launch_error = None
         self.dialog_decision = None
         return self
@@ -1580,9 +1613,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     The tools read the active page from a shared `PlaywrightBrowserSession`, which
     `PlaywrightBrowser.wrap_run` populates lazily on the first tool call. Use the
-    toolset through `PlaywrightBrowser` rather than directly; construct it
-    directly (with a `session` whose `page` you set) only to drive tools against a
-    page double.
+    toolset through `PlaywrightBrowser`, or supply a session held open with
+    `async with` when driving the toolset directly.
 
     Page text is extracted with Playwright itself (`inner_text`), across the main
     frame and any child frames, and every textual result is truncated to

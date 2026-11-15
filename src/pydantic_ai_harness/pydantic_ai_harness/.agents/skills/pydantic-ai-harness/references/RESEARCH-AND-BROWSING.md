@@ -343,7 +343,12 @@ Fields: `headless=True`, `allowed_domains=None` (exact host plus subdomains), `p
 `EgressPolicy`), `block_private_addresses=True`, `screenshot_on_navigate=False`,
 `max_content_tokens=4000`, `action_timeout_ms=5000`, `navigation_timeout_ms=60000` (`0` disables
 either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=None` (Playwright
-cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium).
+cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium). Set
+`cdp_url_factory` to an async endpoint supplier to create/resume the provider browser only on the
+first browser tool call. Its endpoint is cached per run; the caller owns provider cleanup. Set
+`cdp_context='existing'` to reuse the default context's sign-ins and tabs; the default remains
+`'new'`. Existing mode requires a CDP endpoint and rejects `storage_state`. Native session handlers
+and request guards still run; the browser owner controls service workers and downloads.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,

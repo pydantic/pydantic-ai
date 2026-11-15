@@ -101,6 +101,13 @@ A provider-resolved uploaded-file identifier or cloud-storage URL can exercise p
 
 Applications that opt into local/private destinations must authorize those destinations. Native provider tools and custom tools have the behavior and credentials of their provider or implementation. A domain list passed to a provider-native tool applies only where that provider supports it ([tracking issue](https://github.com/pydantic/pydantic-ai/issues/9706)). Browser capabilities are separate fetch transports with their own address checks; `BrowserUse` does not resolve hostnames before navigation, so sensitive networks need its domain allowlist.
 
+`PlaywrightBrowser(cdp_context='existing')` opts into the CDP browser's default context,
+including its signed-in accounts and open tabs. Request guards and page handlers are installed
+on attachment, but the browser owner controls downloads and service workers. Creation-time
+settings cannot be applied retroactively, and service workers or already-established connections
+may bypass those guards. Use dedicated agent profiles. `cdp_url_factory` is application code
+that owns provider provisioning and cleanup; returned connection credentials are not model input.
+
 Canonical guidance: [web fetching](docs/capabilities/web-fetch.md), [multimodal input](docs/input.md), [adapter trust model](docs/ui/overview.md), [local download controls](pydantic_ai_slim/pydantic_ai/_ssrf.py), [Playwright egress](docs/harness/playwright.md#egress-and-ssrf), and [BrowserUse safety](docs/harness/browser-use.md#sessions-and-safety).
 
 ### Tool actions, approvals, and prompt injection
