@@ -240,6 +240,19 @@ replay_agent = Agent(
 )
 
 
+async def diverge() -> str:
+    """Fail as a diverged replay would."""
+    raise DBOSUnexpectedStepError('wf', 1, 'v2', 'v1')
+
+
+outside_workflow_agent = Agent(
+    FunctionModel(_replay_model),
+    name='code_mode_dbos_outside_workflow_agent',
+    toolsets=[FunctionToolset(tools=[diverge], id='diverge')],
+    capabilities=[CodeMode(), DBOSDurability()],
+)
+
+
 @DBOS.workflow()
 def run_replay_agent(prompt: str) -> str:
     return replay_agent.run_sync(prompt).output
@@ -434,3 +447,9 @@ def test_elapsed_time_limit_is_off_in_dbos_workflow(dbos_instance: DBOS) -> None
         output = run_spin_agent('Spin.')
 
     assert output == 'done: 1000000'
+
+
+def test_snippet_still_catches_the_error_outside_a_workflow(dbos_instance: DBOS) -> None:
+    """Outside a workflow `DBOSDurability` is transparent, so the snippet handles the error as before."""
+    assert outside_workflow_agent.run_sync('diverge').output == 'final answer'
+    assert _replay_model_calls[-1] == ['caught']

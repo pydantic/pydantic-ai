@@ -222,7 +222,7 @@ def _nondeterminism_error_types(ctx: RunContext[object]) -> tuple[type[BaseExcep
     return tuple(
         error_type
         for capability in ctx.capabilities.values()
-        if isinstance(capability, BaseDurabilityCapability)
+        if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
         for error_type in capability.engine_spec.nondeterminism_error_types
     )
 
