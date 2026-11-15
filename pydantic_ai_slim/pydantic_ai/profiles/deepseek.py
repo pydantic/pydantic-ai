@@ -5,14 +5,15 @@ import re
 from . import ModelProfile
 
 # DeepSeek ships V4 point releases under several spellings for the same models:
-# `deepseek-v4.1-flash`, `deepseek-v4p1-flash` and `deepseek-v4-1-flash` all denote V4.1.
+# `deepseek-v4.1-flash`, `deepseek-v4p1-flash` and `deepseek-v4-1-flash` all denote V4.1. Normalizing version
+# spellings before matching (#12102) would leave only the `.` separator here.
 _DEEPSEEK_V4_PATTERN = re.compile(r'deepseek-v4(?:[.p-]\d+)?-')
 
 
 def deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model."""
     is_r1 = model_name == 'r1' or model_name.startswith('deepseek-r1') or model_name == 'deepseek-reasoner'
-    # V4 models (deepseek-v4-flash, deepseek-v4-pro, …) support thinking via reasoning_effort
+    # V4 models and their point releases (deepseek-v4-flash, deepseek-v4.1-flash, …) support thinking via reasoning_effort
     # but do not always enable it — thinking_always_enabled stays False.
     is_v4 = _DEEPSEEK_V4_PATTERN.match(model_name) is not None
     # `default_cache_retention` is intentionally left unset (None): DeepSeek's context-caching docs only

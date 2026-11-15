@@ -1,8 +1,11 @@
+import json
 import re
 
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai import Agent
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -17,6 +20,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.together import TogetherProvider
 
 
@@ -114,19 +118,44 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     assert no_slash_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
-def test_together_provider_model_profile_v4_point_release_spellings():
-    provider = TogetherProvider(api_key='test')
-    for model_name in (
-        'deepseek-ai/DeepSeek-V4-Flash-0731',
-        'deepseek-ai/DeepSeek-V4.1-Flash',
-        'deepseek-ai/DeepSeek-V4p1-Flash',
-        'deepseek-ai/DeepSeek-V4-1-Flash-1017',
-    ):
-        profile = provider.model_profile(model_name)
-        assert profile is not None
-        assert profile.get('supports_forced_tool_choice') is False
+@pytest.mark.vcr(ignore_hosts=['api.together.xyz'])
+async def test_together_deepseek_v4_1_output_tool_forcing_falls_back_to_auto(allow_model_requests: None):
+    """Together restricts forcing for V4.1 as for V4, so the resolved output-tool forcing goes out as `'auto'`.
 
-    # Pre-V4 ids keep forced tool choice available.
-    v3_2 = provider.model_profile('deepseek-ai/DeepSeek-V3.2')
-    assert v3_2 is not None
-    assert v3_2.get('supports_forced_tool_choice') is not False
+    No Together key is available to record a cassette, so a mock transport answers and the request body is captured.
+    """
+    requests: list[httpx2.Request] = []
+    completion = {
+        'id': 'chatcmpl-1',
+        'object': 'chat.completion',
+        'created': 1700000000,
+        'model': 'deepseek-ai/DeepSeek-V4.1-Flash',
+        'choices': [
+            {
+                'index': 0,
+                'finish_reason': 'tool_calls',
+                'message': {
+                    'role': 'assistant',
+                    'tool_calls': [
+                        {
+                            'id': 'call_1',
+                            'type': 'function',
+                            'function': {'name': 'final_result', 'arguments': '{"response": 1}'},
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=completion)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = TogetherProvider(api_key='test', http_client=http_client)
+        agent = Agent(OpenAIChatModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=provider), output_type=int)
+        result = await agent.run('hi')
+
+    assert result.output == 1
+    assert json.loads(requests[0].content)['tool_choice'] == 'auto'

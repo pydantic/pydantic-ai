@@ -131,7 +131,7 @@ def test_deep_seek_reasoner_model_profile():
 
 
 def test_deep_seek_v4_future_sku_inherits_tool_choice_restriction():
-    """Future deepseek-v4-* SKUs must inherit the thinking-conditional restriction via the startswith predicate."""
+    """Future deepseek-v4-* SKUs must inherit the thinking-conditional restriction via the shared V4 pattern."""
     provider = DeepSeekProvider(api_key='api-key')
     profile = provider.model_profile('deepseek-v4-turbo')
     assert profile is not None
