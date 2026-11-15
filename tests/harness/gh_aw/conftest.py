@@ -4,6 +4,8 @@ import subprocess
 
 import pytest
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 
 @pytest.fixture(scope='package')
 def started_node() -> None:
@@ -14,5 +16,4 @@ def started_node() -> None:
     to run first. Package-scoped, so it covers every module that runs `node` (each requests it with
     `pytestmark`), not only the first one a worker collects.
     """
-    # Bounded only against a hang: far longer than any cold start or runner stall.
-    subprocess.run(['node', '-e', ''], check=True, timeout=300)
+    subprocess.run(['node', '-e', ''], check=True, timeout=READINESS_WAIT_TIMEOUT)
