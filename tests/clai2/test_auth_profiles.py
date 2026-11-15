@@ -3,6 +3,7 @@
 import io
 import json
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from pydantic_clai2 import chat
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, login_command
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -40,6 +42,7 @@ from pydantic_clai2.models.model_settings import ModelSettingsForm
 from pydantic_clai2.models.profiles import ModelRef, base_model, parse_model, provider_of, with_profile
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginLogin
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_summary
 from tests.clai2.test_app_edges import inputs
 from tests.clai2.test_auth import fake_browser, never_pasted
@@ -329,8 +332,115 @@ async def test_a_chain_falls_back_from_a_limited_account(tmp_path: Path) -> None
     assert result.output == 'spare answered with b'
 
 
+def refuses(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[], finish_reason='content_filter')
+
+
+async def test_a_chain_falls_back_from_a_refusal(tmp_path: Path) -> None:
+    providers = {
+        'strict': ModelProvider(prefix='strict', resolve=lambda name: FunctionModel(refuses)),
+        'pooled': ModelProvider(prefix='pooled', resolve=echo),
+    }
+    models = resolver(tmp_path, providers)
+    assert models.store is not None
+    models.store.save_chain(name='pool', models=['strict:a', 'pooled:b'])
+    result = await Agent(await models.resolve('chain:pool')).run('hello')
+    assert result.output == 'b'
+
+
 def echo(name: str) -> Model:
     return TestModel(custom_output_text=name)
+
+
+async def fails_streaming(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise ModelHTTPError(status_code=429, model_name='limited', body='usage limit reached')
+    yield ''  # pragma: no cover
+
+
+def chain_session(tmp_path: Path, chains: dict[str, list[str]]) -> tuple[Session[None, str], list[Model], list[str]]:
+    """A stock-agent session over `limited:NAME` models, which fail, and `pooled:NAME` ones, which answer `NAME`.
+
+    Also returns every `limited` model resolved, and the names of the `limited` models requested, in order.
+    """
+    limited: list[Model] = []
+    tried: list[str] = []
+
+    def limit(name: str) -> Model:
+        def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tried.append(name)
+            return fails(messages, info)
+
+        async def fail_streaming(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            tried.append(name)
+            async for chunk in fails_streaming(messages, info):  # pragma: no branch
+                yield chunk  # pragma: no cover
+
+        limited.append(FunctionModel(fail, stream_function=fail_streaming))
+        return limited[-1]
+
+    providers = {
+        'limited': ModelProvider(prefix='limited', resolve=limit),
+        'pooled': ModelProvider(
+            prefix='pooled', resolve=lambda name: TestModel(call_tools=[], custom_output_text=name)
+        ),
+    }
+    models = resolver(tmp_path, providers)
+    assert models.store is not None
+    for name, members in chains.items():
+        models.store.save_chain(name=name, models=members)
+    session = Session(create_stock_agent(TestModel()), deps=None)
+    session.resolve_model = models.resolve
+    session.expand_model = models.expand
+    return session, limited, tried
+
+
+async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path: Path) -> None:
+    """A delegated task on the model the session ran on falls back through the chain; one on another model does not."""
+    session, limited, _ = chain_session(tmp_path, {'pool': ['limited:a', 'pooled:b']})
+    session.model = 'chain:pool'
+    assert (await session.prompt('hello')).output == 'b'
+    # As delegated tasks run: on the session's model, and on a delegate's own option.
+    assert (await session.agent.run('task', model=limited[0])).output == 'b'
+    with pytest.raises(ModelHTTPError, match='usage limit reached'):
+        await session.agent.run('task', model=FunctionModel(fails))
+
+
+async def test_a_delegated_task_on_a_fallen_back_model_tries_the_rest(tmp_path: Path) -> None:
+    """A task inheriting the model the session fell back to moves on to the models it skipped, not to that one again."""
+    session, limited, tried = chain_session(tmp_path, {'pool': ['limited:a', 'limited:b', 'pooled:c']})
+    session.model = 'chain:pool'
+    assert (await session.prompt('hello')).output == 'c'
+    assert tried == ['a', 'b']
+    tried.clear()
+    assert (await session.agent.run('task', model=limited[1])).output == 'c'
+    assert tried == ['b', 'a']
+
+
+async def test_a_new_chain_rebuilds_the_stock_agent(tmp_path: Path) -> None:
+    """Choosing a chain, or another chain with the same first model, binds its own fallback for delegated tasks."""
+    session, limited, _ = chain_session(tmp_path, {'one': ['limited:a', 'pooled:b'], 'two': ['limited:a', 'pooled:c']})
+    session.model = 'pooled:z'
+    assert (await session.prompt('hello')).output == 'z'
+    single = session.agent
+    session.model = 'chain:one'
+    assert (await session.prompt('hello')).output == 'b'
+    one = session.agent
+    assert one is not single
+    session.model = 'chain:two'
+    assert (await session.prompt('hello')).output == 'c'
+    assert session.agent is not one
+    assert (await session.agent.run('task', model=limited[-1])).output == 'c'
+
+
+async def test_switching_between_single_models_keeps_the_stock_agent() -> None:
+    session = Session(create_stock_agent(TestModel()), deps=None)
+    session.resolve_model = lambda name: TestModel(call_tools=[], custom_output_text=name)
+    session.model = 'a:x'
+    assert (await session.prompt('hello')).output == 'a:x'
+    agent = session.agent
+    session.model = 'a:y'
+    assert (await session.prompt('hello')).output == 'a:y'
+    assert session.agent is agent
 
 
 async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: Path) -> None:
@@ -430,8 +540,41 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
     assert 'Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.' in text
     assert 'Fast mode on for chain:pool' in text
     assert 'openai-codex:test answered' in text
-    assert resolved == ['openai-codex:test', 'openai-codex@work:test']
+    # `ModelFallback` resolves a later model only once the run falls back to it.
+    assert resolved == ['openai-codex:test']
     assert store.model_settings('chain:pool') == {'service_tier': 'priority'}
+
+
+@pytest.mark.parametrize('stock', [False, True])
+async def test_shell_chain_falls_back_with_its_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stock: bool
+) -> None:
+    """A stock agent binds `ModelFallback` itself, so its delegated tasks fall back too; another agent gets it per run."""
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_chain(name='pool', models=['openai-codex:test', 'openai-codex@work:test'])
+    inputs(monkeypatch, ['/model chain:pool', '/fast', 'hello', '/exit'])
+    tiers: list[tuple[str, object]] = []
+
+    def model(self: CodexAuth, name: str) -> FunctionModel:
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            tiers.append((name, (info.model_settings or {}).get('service_tier')))
+            if name == 'openai-codex:test':
+                raise ModelHTTPError(status_code=429, model_name=name, body='usage limit reached')
+            yield f'{name} answered'
+
+        return FunctionModel(stream_function=stream)
+
+    monkeypatch.setattr(CodexAuth, 'model', model)
+    output = io.StringIO()
+    await chat(
+        create_stock_agent(TestModel()) if stock else Agent(TestModel()),
+        deps=None,
+        settings=Settings(model='test', session_namer=False),
+        store=store,
+        console=Console(file=output, width=200),
+    )
+    assert 'openai-codex@work:test answered' in output.getvalue()
+    assert tiers == [('openai-codex:test', 'priority'), ('openai-codex@work:test', 'priority')]
 
 
 def test_key_users_cover_profile_connections() -> None:

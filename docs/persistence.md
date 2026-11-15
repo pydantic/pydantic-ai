@@ -120,6 +120,8 @@ Each stored message is a [`ConversationEntry`][pydantic_ai.conversation_store.Co
 
 [`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore] is for tests and examples. For a real database, subclass `ConversationStore`: it implements the loading, saving and forking on five storage primitives, so a backend only reads and writes records and entries.
 
+To have a [UI adapter](ui/overview.md#saving-to-a-conversation-store) load and save each chat request's conversation through a store, pass it as `conversation_store`. The client is sent a [`UserError`][pydantic_ai.exceptions.UserError] your store raises as is, so keep queries, hostnames and credentials out of it: for any other exception, the adapter warns on the server and sends a generic message.
+
 ## Not writing that code yourself
 
 [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite, PostgreSQL and MongoDB backends, and its store is a protocol you can implement against your own database. Its snapshots hold the messages only, not the usage and pending deferred tool requests a `Conversation` carries, so store the `Conversation` too when you need those.

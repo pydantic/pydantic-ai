@@ -199,6 +199,11 @@ def _leaf(name: str) -> str:
     return name.rsplit('::', 1)[-1]
 
 
+def _same_qualified_name(offender: _Offender, pool: list[_Removed]) -> _Removed | None:
+    """The most complex removed function of the same qualified name: a move between files."""
+    return max((r for r in pool if r.name == offender.function.name), key=lambda r: r.complexity, default=None)
+
+
 def _same_name(offender: _Offender, pool: list[_Removed]) -> _Removed | None:
     """The most complex removed function of the same name: a move, or a rename of its class."""
     leaf = _leaf(offender.function.name)
@@ -213,10 +218,11 @@ def _same_score(offender: _Offender, pool: list[_Removed]) -> _Removed | None:
 def _predecessors(offenders: list[_Offender], pool: list[_Removed]) -> dict[int, _Removed]:
     """The removed function each new function continues, by offender index.
 
-    Names pair first, so a rename cannot take the predecessor of a move.
+    Names pair first, so a rename cannot take the predecessor of a move. A qualified name pairs before a bare
+    method name, so classes that move with a method of the same name each keep their own.
     """
     found: dict[int, _Removed] = {}
-    for match in (_same_name, _same_score):
+    for match in (_same_qualified_name, _same_name, _same_score):
         for i, o in enumerate(offenders):
             source = match(o, pool) if o.failure == 'new' and i not in found else None
             if source is not None:

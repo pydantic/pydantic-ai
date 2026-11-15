@@ -24,10 +24,19 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
+    SessionUsage,
     ToolCall,
     ToolCallCancelled,
+    ToolResult,
 )
-from pydantic_ai.realtime.lifecycle import AnswersRevised, InferredLifecycle, LifecycleEvent, RealtimeFrame
+from pydantic_ai.realtime.lifecycle import (
+    AnswersRevised,
+    InferredLifecycle,
+    LifecycleEvent,
+    RealtimeFrame,
+    ResponseStarted,
+)
+from pydantic_ai.usage import RequestUsage
 
 
 def lifecycle(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[str]:
@@ -237,3 +246,81 @@ def test_a_microphone_streaming_silence_is_no_sign_the_user_spoke() -> None:
     assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
         AnswersRevised(response_id='pydantic_ai_response_1', released=(3,))
     ]
+
+
+def test_a_turn_that_ends_silently_after_a_tool_result_completes() -> None:
+    """Once every result of a response its usage report ended is out, the next terminal answers them.
+
+    Gemini Live closes a tool-call frame with an (empty) usage report and sends no terminal of its own for it: a
+    model with nothing to say about the result just ends its turn (#12765).
+    """
+    tracker = InferredLifecycle()
+    tracker.frame_for(
+        [
+            ToolCall(tool_call_id='call-1', tool_name='save', args='{}', response_usage_follows=True),
+            SessionUsage(RequestUsage()),
+        ]
+    )
+    tracker.input_sent(ToolResult('call-1', output='saved'))
+    tracker.take_pending()
+    frame = tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])
+    assert lifecycle(frame) == snapshot(['ResponseStarted', 'ResponseEnded'])
+    started = [event for event in frame if isinstance(event, ResponseStarted)][0]
+    assert started.answers == (0,)
+
+
+def test_a_terminal_between_the_results_of_parallel_calls_answers_none_of_them() -> None:
+    """With a result still owed, a terminal is the tool-call response's own (Vertex `gemini-live-2.5-flash` sends one).
+
+    The model answers the calls once all their results are in.
+    """
+    tracker = InferredLifecycle()
+    tracker.frame_for(
+        [
+            ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True),
+            ToolCall(tool_call_id='c2', tool_name='slow', args='{}', response_usage_follows=True),
+            SessionUsage(RequestUsage()),
+        ]
+    )
+    tracker.input_sent(ToolResult('c1', output='fast result'))
+    tracker.take_pending()
+    assert lifecycle(tracker.frame_for([SessionUsage(RequestUsage(input_tokens=7)), ResponseDone()])) == snapshot([])
+    tracker.input_sent(ToolResult('c2', output='slow result'))
+    tracker.take_pending()
+    frame = tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])
+    assert [event.answers for event in frame if isinstance(event, ResponseStarted)] == [(0, 1)]
+
+
+def test_the_terminal_a_usage_report_came_with_ends_nothing_more_after_a_fast_result() -> None:
+    """A usage report on the provider's terminal (OpenAI's `response.done`) ends the calls' response there.
+
+    The result of a fast tool may go out before that terminal: it is still the calls' response's.
+    """
+    tracker = InferredLifecycle()
+    assert lifecycle(
+        tracker.frame_for([ToolCall(tool_call_id='c1', tool_name='save', args='{}', response_usage_follows=True)])
+    ) == snapshot(['ResponseStarted'])
+    tracker.input_sent(ToolResult('c1', output='saved'))
+    tracker.take_pending()
+    assert lifecycle(tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])) == snapshot(
+        ['ResponseEnded', 'InputAdded']
+    )
+    frame = tracker.frame_for([OutputTranscript('Saved.')])
+    assert [event.answers for event in frame if isinstance(event, ResponseStarted)] == [(0,)]
+
+
+def test_a_late_terminal_of_a_response_its_call_ended_answers_nothing() -> None:
+    """A response with no usage report to come ends at its call: a terminal that comes later is still its own.
+
+    Even after the call's result went out, and with session usage reported in between.
+    """
+    tracker = InferredLifecycle()
+    assert lifecycle(tracker.frame_for([ToolCall(tool_call_id='c1', tool_name='save', args='{}')])) == snapshot(
+        ['ResponseStarted', 'ResponseEnded']
+    )
+    tracker.input_sent(ToolResult('c1', output='saved'))
+    tracker.take_pending()
+    assert lifecycle(tracker.frame_for([SessionUsage(RequestUsage(), response_scoped=False)])) == snapshot([])
+    assert lifecycle(tracker.frame_for([ResponseDone()])) == snapshot([])
+    frame = tracker.frame_for([OutputTranscript('Saved.')])
+    assert [event.answers for event in frame if isinstance(event, ResponseStarted)] == [(0,)]
