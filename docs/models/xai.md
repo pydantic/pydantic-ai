@@ -298,7 +298,7 @@ agent = Agent(
 
 xAI has no auto or flex tier, so `'auto'` and `'flex'` are omitted from the request and xAI's standard processing applies.
 
-A priority request can be served at the default tier, and xAI bills the priority rate only when the response confirms `'priority'`. When xAI reports the tier that served a response, it's stored in `ModelResponse.provider_details['service_tier']`.
+A priority request can be served at the default tier, and xAI bills the priority rate only when the response confirms `'priority'`. When xAI reports the tier that served a response, it's stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
 
 ## Streaming cancellation
 
