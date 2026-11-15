@@ -426,7 +426,7 @@ def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
 def test_replay_divergence_in_nested_call_fails_the_workflow(dbos_instance: DBOS, tool_name: str) -> None:
     """DBOS's error for a diverged replay fails the workflow, as it does for a native tool call.
 
-    It must not reach the sandbox, where a `try/except` would hide it and the run would succeed (#12539).
+    It must not reach the sandbox, where a `try/except` would hide it and the run would succeed.
     """
     global _lookups
     _lookups = 0
@@ -442,7 +442,7 @@ def test_replay_divergence_in_nested_call_fails_the_workflow(dbos_instance: DBOS
 
 
 def test_elapsed_time_limit_is_off_in_dbos_workflow(dbos_instance: DBOS) -> None:
-    """DBOS replays `run_code`, so an elapsed-time limit could make a replay take another path (#12539)."""
+    """DBOS replays `run_code`, so an elapsed-time limit could make a replay take another path."""
     with SetWorkflowID(str(uuid.uuid4())):
         output = run_spin_agent('Spin.')
 

@@ -1,4 +1,4 @@
-"""`MontyExecutor.reraise` errors end the feed instead of reaching the sandbox (#12539)."""
+"""`MontyExecutor.reraise` errors end the feed instead of reaching the sandbox."""
 
 from __future__ import annotations
 

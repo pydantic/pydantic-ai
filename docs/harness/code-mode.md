@@ -891,7 +891,7 @@ agent = Agent(
 
 Sandboxed code now reads the worker's clock in that zone with no handler at all: `datetime.datetime.now()`, `astimezone()`, `%Z`, and `time.tzname` all agree on Paris time. A `datetime` value in place of `'system'` freezes the clock at that instant. `{'timezone': 'Europe/Paris'}` on its own keeps the clock on your `os_access` handler, but makes the sandbox read the handler's naive local time in that zone rather than as UTC.
 
-Inside a [Temporal workflow](#temporal-durability), a `'system'` clock or `random_start` is read again on replay, so keep the defaults (or fixed values) there.
+Under durable execution, a `'system'` clock or `random_start` is read again on replay, so keep the defaults (or fixed values) there.
 
 !!! note "Monty-specific types"
     These parameters use Monty's `AbstractOS`/`MountDir`/`OSPolicy` types from `pydantic_monty`.

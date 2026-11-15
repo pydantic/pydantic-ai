@@ -910,7 +910,7 @@ CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})
 Sandboxed code then reads the worker's clock in that zone with no handler: `datetime.datetime.now()`,
 `astimezone()`, `%Z`, and `time.tzname` all agree. A `datetime` value in place of `'system'` freezes
 the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but reads its naive
-local time in that zone rather than as UTC. Inside a Temporal workflow a `'system'` clock or
+local time in that zone rather than as UTC. Under durable execution a `'system'` clock or
 `random_start` is read again on replay, so keep the defaults (or fixed values) there.
 
 > Monty-specific: these parameters use Monty's `AbstractOS`/`MountDir`/`OSPolicy` types.
