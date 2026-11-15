@@ -643,9 +643,15 @@ class _JsonSchemaTestData:
 
     @staticmethod
     def _finite_bound(schema: dict[str, Any], key: str) -> float | None:
-        """A JSON Schema bound, or `None` when it is missing, null or not finite."""
+        """A JSON Schema bound, or `None` when it is missing, not a number or not finite.
+
+        A draft-4 boolean `exclusiveMinimum` or `exclusiveMaximum` only marks its inclusive bound as exclusive,
+        so it counts as missing too.
+        """
         bound = schema.get(key)
-        return bound if bound is not None and math.isfinite(bound) else None
+        if isinstance(bound, bool) or not isinstance(bound, int | float):
+            return None
+        return bound if isinstance(bound, int) or math.isfinite(bound) else None
 
     @staticmethod
     def _tightest_bound(

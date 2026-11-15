@@ -810,9 +810,9 @@ def test_boolean_schema_tool_args() -> None:
 
 
 def test_int_hand_written_bounds_tool_args() -> None:
-    """Integer arguments are integers inside fractional, infinite and null bounds.
+    """Integer arguments are integers inside the unusual bounds a hand-written tool schema can carry.
 
-    Pydantic rejects these on an `int` field, so only a hand-written tool schema has them.
+    Pydantic never emits a fractional, infinite, null or draft-4 boolean bound for an `int` field.
     """
     calls: list[dict[str, Any]] = []
 
@@ -820,27 +820,18 @@ def test_int_hand_written_bounds_tool_args() -> None:
         calls.append(kwargs)
         return 'ok'
 
-    schema = {
-        'type': 'object',
-        'properties': {
-            'collapsed': {'type': 'integer', 'minimum': 1, 'maximum': 1, 'exclusiveMinimum': 0.5},
-            'narrow': {'type': 'integer', 'minimum': 0, 'maximum': 1, 'exclusiveMinimum': 0.5},
-            'exclusive': {'type': 'integer', 'exclusiveMinimum': 0.5},
-            'inclusive_lower': {'type': 'integer', 'minimum': 2.5},
-            'inclusive_upper': {'type': 'integer', 'maximum': -2.5},
-            'unbounded': {'type': 'integer', 'minimum': 0, 'maximum': float('inf')},
-            'null_bound': {'type': 'integer', 'minimum': None, 'maximum': 3},
-        },
-        'required': [
-            'collapsed',
-            'narrow',
-            'exclusive',
-            'inclusive_lower',
-            'inclusive_upper',
-            'unbounded',
-            'null_bound',
-        ],
+    properties = {
+        'collapsed': {'type': 'integer', 'minimum': 1, 'maximum': 1, 'exclusiveMinimum': 0.5},
+        'narrow': {'type': 'integer', 'minimum': 0, 'maximum': 1, 'exclusiveMinimum': 0.5},
+        'exclusive': {'type': 'integer', 'exclusiveMinimum': 0.5},
+        'inclusive_lower': {'type': 'integer', 'minimum': 2.5},
+        'inclusive_upper': {'type': 'integer', 'maximum': -2.5},
+        'unbounded': {'type': 'integer', 'minimum': 0, 'maximum': float('inf')},
+        'null_bound': {'type': 'integer', 'minimum': None, 'maximum': 3},
+        'draft4_exclusive': {'type': 'integer', 'minimum': -5, 'maximum': 0, 'exclusiveMinimum': False},
+        'huge': {'type': 'integer', 'minimum': 0, 'maximum': 10**400},
     }
+    schema = {'type': 'object', 'properties': properties, 'required': list(properties)}
     tool = Tool.from_schema(
         bounded_tool, name='bounded_tool', description='Takes bounded integers.', json_schema=schema
     )
@@ -855,6 +846,8 @@ def test_int_hand_written_bounds_tool_args() -> None:
                 'inclusive_upper': -3,
                 'unbounded': 0,
                 'null_bound': 3,
+                'draft4_exclusive': -5,
+                'huge': 0,
             }
         ]
     )
