@@ -173,6 +173,15 @@ async def test_gateway_reported_cost_anthropic_stream(allow_model_requests: None
         # Without the header, the genai-prices estimate applies.
         pytest.param('gemini-2.5-flash', {}, Decimal('0.0028'), id='no-header'),
         pytest.param('custom-model', {'logfire-ai-gateway-cost': 'abcUSD'}, None, id='malformed'),
+        # `'0.50000'[:-3]` parses, so only the suffix check keeps this cost out.
+        pytest.param('gemini-2.5-flash', {'logfire-ai-gateway-cost': '0.50000'}, Decimal('0.0028'), id='no-usd-suffix'),
+        # The deprecated header is rounded to 4 decimals, so it isn't read.
+        pytest.param(
+            'gemini-2.5-flash',
+            {'pydantic-ai-gateway-price-estimate': '0.5USD'},
+            Decimal('0.0028'),
+            id='deprecated-estimate-header',
+        ),
     ],
 )
 async def test_gateway_header_cost_google(
@@ -383,7 +392,7 @@ def test_gateway_reported_cost_parsing():
         Decimal('0.25')
     )
     # NaN would break `cost_limit` comparisons and a negative cost would reduce the run total.
-    for bad_cost in ('NaN', '-0.5', True, 'not-a-number'):
+    for bad_cost in ('NaN', 'Infinity', '-0.5', True, 'not-a-number'):
         assert extract(pydantic_ai_gateway={'cost_estimate': bad_cost}).cost is None
     assert extract(pydantic_ai_gateway={}).cost is None
     assert extract().input_tokens == 2

@@ -132,7 +132,10 @@ class TestCommands:
         with pytest.raises(WorkspaceError, match='could not run the command'):
             await _create(server, working_dir).run(['sh', '-c', 'kill -KILL $PPID'])
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='root ignores directory permissions, and Windows does not enforce POSIX file modes',
+    )
     async def test_a_wrapper_that_cannot_record_its_pid_says_why(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
