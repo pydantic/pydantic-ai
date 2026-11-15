@@ -2754,9 +2754,10 @@ def test_fireworks_gemma():
     reason='openai, google, bedrock or huggingface extras not installed',
 )
 def test_gemma_4_thinking_across_routes():
-    """Every route that resolves Gemma 4 through the Google family profile gets its thinking flags.
+    """Gemma 4's thinking flags on the Gemini API, the hosts issue #12067 names, Together and Fireworks.
 
-    Hosts that don't map the Google family keep their own answer: Cerebras, Vercel and SambaNova stay unchanged.
+    The routes that map the Google family take its flags; Cerebras, Vercel and SambaNova don't map it and stay
+    unchanged.
     """
     profiles = {
         'google': GoogleProvider.model_profile('gemma-4-31b-it'),
