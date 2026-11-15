@@ -25,9 +25,6 @@ model's commands every secret in the process, LLM API keys included. `read_only=
 and `authority='user'` or `'none'` (or any `path_authority`) in `AuthorityWorkspace`, for files the operator didn't write (a user's upload, a cloned repo). Two
 `LocalWorkspace`s share the default id `local_workspace` and combine into the last one (none of
 the earlier one's settings carry over); give one a distinct `id` to keep both.
-`LocalWorkspace` needs POSIX; on Windows use `WindowsWorkspace(working_dir, ...)`, which takes the same options:
-commands run in PowerShell, paths are Windows paths, its ref is `WorkspaceRef(provider='windows', ...)`,
-and `ctx.workspace.platform` is `'windows'`, with `ctx.workspace.paths` (`ntpath`) for joining its paths.
 Its ref is `WorkspaceRef(provider='local', id=<absolute working_dir>)` from construction (the
 directory is not checked then; the first operation raises `WorkspaceUnavailableError` if it is
 missing), and the capability
@@ -37,6 +34,12 @@ configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
 `workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
 durable execution; see below).
+`LocalWorkspace` needs POSIX. On Windows, use `WindowsWorkspace(working_dir, ...)`, with the same parameters
+and the same lack of isolation. Commands run in PowerShell and inherit only the variables Windows tools need
+to start (`PATH`, `PATHEXT`, `SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like) plus `env`. Paths
+are Windows paths: `ctx.workspace.platform` is `'windows'`, and `ctx.workspace.paths` (`ntpath`) joins them.
+Its ref is `WorkspaceRef(provider='windows', id=<absolute working_dir>)`, and it claims only that exact ref,
+as `LocalWorkspace` does. For a single run, pass `workspace=WindowsWorkspaceBackend('.')`.
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
