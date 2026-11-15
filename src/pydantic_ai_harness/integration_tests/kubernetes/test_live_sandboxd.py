@@ -12,7 +12,7 @@ the kubelet stops a deleted pod, and removes the directory. Claims, warm pools a
 
 Run with `make integration-kubernetes` after building sandboxd from a release tag:
 
-    GOBIN="$PWD/.bin" go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7
+    GOBIN="$PWD/.bin" go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.11
     SANDBOXD_BIN="$PWD/.bin/sandboxd" make integration-kubernetes
 
 Without the binary the tests skip, unless `SANDBOXD_REQUIRE_LIVE` is set (CI does), where a missing

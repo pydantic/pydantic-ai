@@ -24,7 +24,7 @@ The `coder` extra is there because the examples use `Coder`; the sandbox itself 
 Install agent-sandbox (v1.0.7 or later) with its extensions:
 
 ```bash
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.10/sandbox-with-extensions.yaml
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.11/sandbox-with-extensions.yaml
 ```
 
 Each sandbox pod must run [sandboxd](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/packages/sandboxd), agent-sandbox's in-pod server. Commands run in the container that runs sandboxd, so that container's image decides which tools the agent has. This template copies sandboxd into `python:3.12` and keeps three sandboxes warm:
@@ -41,7 +41,7 @@ spec:
       securityContext: {runAsNonRoot: true, fsGroup: 1000}
       initContainers:
         - name: install-sandboxd
-          image: registry.k8s.io/agent-sandbox/sandboxd:v1.0.10
+          image: registry.k8s.io/agent-sandbox/sandboxd:v1.0.11
           command: [/bin/sh, -c, cp /usr/local/bin/sandboxd /sandboxd-bin/sandboxd]
           securityContext: {runAsUser: 1000}
           volumeMounts: [{name: sandboxd-bin, mountPath: /sandboxd-bin}]

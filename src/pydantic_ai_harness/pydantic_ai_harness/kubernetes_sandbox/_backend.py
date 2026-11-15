@@ -1,13 +1,15 @@
 """A [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
 SDK assumptions verified 2026-11-02 against `k8s-agent-sandbox` 1.0.9, sandboxd from agent-sandbox
-v1.0.7, and a kind cluster running the v1.0.7 controller, and re-checked 2026-11-09 against SDK 1.0.10
-(none of the calls below changed) and the v1.0.10 controller:
+v1.0.7, and a kind cluster running the v1.0.7 controller, re-checked 2026-11-09 against SDK 1.0.10 and
+the v1.0.10 controller, and 2026-11-15 against SDK 1.0.11 and sandboxd v1.0.11 (only `get_sandbox`
+changed, below):
 
 * `AsyncSandboxClient.create_sandbox` claims a sandbox from a `SandboxWarmPool` under the claim
   name it is given and waits until it is Ready; it deletes only claims it named itself when that
-  fails, so the backend deletes the claims it names. `get_sandbox` attaches to a claim by name, waits
-  30 seconds for a claim that does not exist, and raises `SandboxNotFoundError` for any failed lookup;
+  fails, so the backend deletes the claims it names. `get_sandbox` attaches to a claim by name, fails
+  at once for a claim that does not exist (since 1.0.11), and raises `SandboxNotFoundError` for any
+  failed lookup;
 * `client.k8s_helper.get_sandbox_claim` and `get_sandbox` return `None` only for a 404, and
   `delete_sandbox_claim` ignores only a 404; `resolve_sandbox_name` reads the name of the Sandbox a
   claim binds from the claim's status;
@@ -469,17 +471,13 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _attach(self, client: AsyncSandboxClient[AsyncSandbox], ref: WorkspaceRef) -> AsyncSandbox:
         """Attach to the claim `ref` names; raise `WorkspaceUnavailableError` only when the API server says it is gone."""
         namespace, claim_name = parse_ref(ref)
-        # Workaround: `get_sandbox` watches a missing claim for 30 seconds before failing, and then
-        # raises the `SandboxNotFoundError` it raises for any failed lookup, an unreachable API server
-        # too. The API server's answer is immediate, and only its 404 means gone for good; any other
-        # failure of `get_sandbox` propagates for the caller to retry. Not tracked upstream yet.
-        if await client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
-            raise WorkspaceUnavailableError(f'Kubernetes sandbox {ref.id!r} no longer exists')
         try:
             return await client.get_sandbox(claim_name, namespace=namespace)
         except SandboxNotFoundError as error:
-            # The claim may have been deleted since the check above; otherwise ask about the Sandbox it
-            # binds. Only a 404 means gone for good, as in `_raise_if_gone`.
+            # Workaround: `get_sandbox` raises `SandboxNotFoundError` for any failed lookup, an
+            # unreachable API server too (https://github.com/kubernetes-sigs/agent-sandbox/issues/1785).
+            # Only the API server's 404 for the claim, or for the Sandbox it binds, means gone for good,
+            # as in `_raise_if_gone`; any other failure propagates for the caller to retry.
             if await client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
                 raise WorkspaceUnavailableError(f'Kubernetes sandbox {ref.id!r} no longer exists') from error
             sandbox_id = await client.k8s_helper.resolve_sandbox_name(

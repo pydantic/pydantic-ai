@@ -31,6 +31,7 @@ exclude-newer-span = "P7D"
 pillow = "2026-10-16T22:19:00Z"
 prefect = "2026-10-21T03:46:00Z"
 pydantic-monty-runtime = false
+k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 pydantic-handlebars = false
 pydantic-extra-types = false
 pydantic = false
@@ -4135,7 +4136,7 @@ wheels = [
 
 [[package]]
 name = "k8s-agent-sandbox"
-version = "1.0.10"
+version = "1.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kubernetes" },
@@ -4144,9 +4145,9 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/f3/fa8ffcd10010b90f57f7cfb3468a2c2f74db2e58839e7685de91a4861a21/k8s_agent_sandbox-1.0.10.tar.gz", hash = "sha256:c17a0768298b506481e3c7fa88c3726a06354f946d8997b176c47e1d730bf192", size = 285379, upload-time = "2026-11-06T18:46:05.944Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/33/7a3a4688526a5dcf2a3e45c69b091ab1f203e96cee2debe7bc195d43dcdd/k8s_agent_sandbox-1.0.11.tar.gz", hash = "sha256:3305d558341de29ed7fb3819c82c4d800224996c9564f7eee14a1e6f32868772", size = 300798, upload-time = "2026-11-12T19:36:55.824Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ac/4f/a050739476ead7ece44707d95bdc34d93ba8fe3add7b1ca7505d117c8c90/k8s_agent_sandbox-1.0.10-py3-none-any.whl", hash = "sha256:fc84cd91da4e80e1751c37f36a8e5a1dda8e60ef1ea4ba6f0f2abdd428a7079d", size = 157355, upload-time = "2026-11-06T18:46:04.16Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/0e/6ecaf8f63a5a937328a268936bb60c9f24ee2cd9c816a67629719c483f38/k8s_agent_sandbox-1.0.11-py3-none-any.whl", hash = "sha256:54afde20ecc4f73641af459eeae1fe230e7c6f1707a00d7a71e8b45d615b3ea4", size = 163679, upload-time = "2026-11-12T19:36:54.171Z" },
 ]
 
 [package.optional-dependencies]
@@ -7719,7 +7720,7 @@ requires-dist = [
     { name = "json-repair", marker = "extra == 'coder'", specifier = ">=0.58.0" },
     { name = "json-repair", marker = "extra == 'repair-tool-arguments'", specifier = ">=0.58.0" },
     { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.3" },
-    { name = "k8s-agent-sandbox", extras = ["async", "grpc"], marker = "extra == 'kubernetes'", specifier = ">=1.0.10,<2" },
+    { name = "k8s-agent-sandbox", extras = ["async", "grpc"], marker = "extra == 'kubernetes'", specifier = ">=1.0.11,<2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },

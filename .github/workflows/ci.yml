@@ -2150,7 +2150,7 @@ jobs:
 
       # The release the backend's sandboxd assumptions were verified against; `GOTOOLCHAIN=auto`
       # fetches the Go version its module requires.
-      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7
+      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.11
         env:
           GOBIN: ${{ github.workspace }}/.bin
           GOTOOLCHAIN: auto

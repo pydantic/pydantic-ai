@@ -35,7 +35,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 
-    from .fake_sandboxd import FakeCluster, FakeK8sHelper, FakeSandboxd
+    from .fake_sandboxd import FakeClient, FakeCluster, FakeSandboxd
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-harness[kubernetes] not installed')
 
@@ -435,29 +435,6 @@ async def test_attaching_to_a_claim_whose_sandbox_was_deleted_is_unavailable(clu
     await probe.aclose()
 
 
-async def test_attaching_to_a_claim_deleted_meanwhile_is_unavailable(
-    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A claim deleted between the existence check and the SDK's lookup is gone, not a lookup to retry."""
-    probe = KubernetesSandboxBackend(warm_pool='pool')
-    await probe.run(['true'])
-    get_sandbox_claim = FakeK8sHelper.get_sandbox_claim
-
-    async def deleted_after_answering(
-        helper: FakeK8sHelper, name: str, namespace: str
-    ) -> dict[str, dict[str, str]] | None:
-        claim = await get_sandbox_claim(helper, name, namespace)
-        if claim is not None:
-            await helper.cluster.delete((namespace, name))
-        return claim
-
-    monkeypatch.setattr(FakeK8sHelper, 'get_sandbox_claim', deleted_after_answering)
-    with pytest.raises(WorkspaceUnavailableError, match='no longer exists') as caught:
-        await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
-    assert isinstance(caught.value.__cause__, SandboxNotFoundError)
-    await probe.aclose()
-
-
 async def test_a_claim_that_stalls_times_out_and_is_deleted(
     cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -479,10 +456,10 @@ async def test_an_attach_that_stalls_times_out(cluster: FakeCluster, monkeypatch
     monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._ACQUIRE_TIMEOUT', 0.1)
     stalled = anyio.Event()
 
-    async def never_answers(helper: FakeK8sHelper, name: str, namespace: str) -> None:
+    async def never_answers(client: FakeClient, claim_name: str, namespace: str = 'default') -> None:
         await stalled.wait()
 
-    monkeypatch.setattr(FakeK8sHelper, 'get_sandbox_claim', never_answers)
+    monkeypatch.setattr(FakeClient, 'get_sandbox', never_answers)
     attached = KubernetesSandboxBackend(ref=probe.ref)
     with pytest.raises(TimeoutError, match='did not complete within'):
         await attached.run(['true'])
