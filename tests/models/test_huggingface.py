@@ -41,7 +41,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import PartDeltaEvent, PartStartEvent
+from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, ThinkingPartDelta
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -1347,7 +1347,7 @@ async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None
 
 async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests: None):
     """No recorded Hugging Face response carries `reasoning`, so a mock client streams `delta.reasoning`."""
-    stream = [reasoning_chunk('I computed it'), text_chunk('42', finish_reason='stop')]
+    stream = [reasoning_chunk('I computed'), reasoning_chunk(' it'), text_chunk('42', finish_reason='stop')]
     mock_client = MockHuggingFace.create_stream_mock(stream)
     m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
@@ -1365,7 +1365,7 @@ async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests:
     assert result.output == '42'
     assert result.all_messages()[-1].parts == [ThinkingPart(content='I computed it'), TextPart(content='42')]
     assert [event.part if isinstance(event, PartStartEvent) else event.delta for event in part_events] == snapshot(
-        [ThinkingPart(content='I computed it'), TextPart(content='42')]
+        [ThinkingPart(content='I computed'), ThinkingPartDelta(content_delta=' it'), TextPart(content='42')]
     )
 
 
