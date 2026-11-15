@@ -35,7 +35,6 @@ def test_xai_provider_need_api_key(env: TestEnv) -> None:
         XaiProvider()
 
 
-@pytest.mark.anyio
 async def test_xai_pass_xai_client() -> None:
     xai_client = AsyncClient(api_key='api-key')
     try:

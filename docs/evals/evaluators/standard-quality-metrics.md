@@ -1,3 +1,7 @@
+---
+description: "Score LLM outputs with G-Eval in Pydantic Evals, plus LLM judge rubrics for RAG faithfulness, answer relevance, context precision and recall, and translation."
+---
+
 # Standard Quality Metrics
 
 This page shows how to express widely-used LLM evaluation methods with Pydantic Evals primitives:
@@ -53,6 +57,8 @@ The result is an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason
 the raw integer score — on the scale you chose via `score_range`, not normalized to `0.0`-`1.0`
 like [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] scores. If the judge returns a score outside
 `score_range`, the evaluation fails rather than recording a misleading value.
+When the judge cannot generate text, `GEval` uses an integer rubric of at most 20 levels on the same
+scale and returns `reason=None` instead of a reasoning trace.
 
 !!! note "Simplified G-Eval"
     The published G-Eval method computes a probability-weighted expectation over score tokens

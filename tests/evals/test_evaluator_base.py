@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Generator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +22,7 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_evaluation_reason():
@@ -85,20 +85,20 @@ def test_strict_abc_meta():
     with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class InvalidEvaluator(Evaluator[Any, Any, Any]):
             pass
 
     with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):
             pass
 
     # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
     with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class PartialAbstract(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class PartialAbstract(Evaluator[Any, Any, Any]):
             @abstractmethod
             def other(self) -> None: ...
 
@@ -135,6 +135,23 @@ if TYPE_CHECKING or imports_successful():  # pragma: no branch
     class MultiEvaluator(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool]:
             return {'test1': True, 'test2': False}
+
+    class Deferred:
+        """An awaitable that isn't a coroutine, like an `asyncio.Future` or `asyncio.Task`."""
+
+        def __init__(self, value: bool) -> None:
+            self.value = value
+
+        def __await__(self) -> Generator[Any, Any, bool]:
+            return self._resolve().__await__()
+
+        async def _resolve(self) -> bool:
+            return self.value
+
+    @dataclass
+    class DeferredEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> Awaitable[bool]:
+            return Deferred(True)
 
 
 async def test_evaluator_sync():
@@ -194,6 +211,30 @@ async def test_evaluator_async():
     evaluator = SimpleEvaluator()
     result = await evaluator.evaluate_async(ctx)
     assert result is True
+
+
+def _make_context() -> EvaluatorContext:
+    return EvaluatorContext(
+        name='test',
+        inputs=dict[str, Any](),
+        metadata=None,
+        expected_output=None,
+        output=dict[str, Any](),
+        duration=0.0,
+        _span_tree=SpanTreeRecordingError('did not record spans'),
+        attributes={},
+        metrics={},
+    )
+
+
+def test_evaluator_sync_awaits_non_coroutine_awaitable():
+    """`evaluate_sync` runs an awaitable that isn't a coroutine to completion instead of returning it."""
+    assert DeferredEvaluator().evaluate_sync(_make_context()) is True
+
+
+async def test_evaluator_async_awaits_non_coroutine_awaitable():
+    """`evaluate_async` awaits an awaitable that isn't a coroutine instead of returning it."""
+    assert await DeferredEvaluator().evaluate_async(_make_context()) is True
 
 
 async def test_evaluation_name():

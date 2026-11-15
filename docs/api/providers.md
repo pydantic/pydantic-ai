@@ -16,11 +16,23 @@
 
 ::: pydantic_ai.providers.openai
 
+::: pydantic_ai.providers.openai_compatible
+
 ::: pydantic_ai.providers.openai_codex
     options:
       inherited_members: true
 
+::: pydantic_ai.providers.openai_chatgpt
+    options:
+      inherited_members: true
+
+::: pydantic_ai.providers.openai_decisions
+    options:
+      inherited_members: true
+
 ::: pydantic_ai.providers.xai
+
+::: pydantic_ai.providers.elevenlabs
 
 ::: pydantic_ai.providers.deepseek
 
@@ -52,11 +64,19 @@
 
 ::: pydantic_ai.providers.github_copilot.GitHubCopilotProvider
 
+::: pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotDeviceAuthorization
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotCredentials
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
 ::: pydantic_ai.providers.vercel.VercelProvider
 
 ::: pydantic_ai.providers.huggingface.HuggingFaceProvider
+
+::: pydantic_ai.providers.meta.MetaProvider
 
 ::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
 
@@ -77,5 +97,9 @@
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
 
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
+
+::: pydantic_ai.providers.typesafe.TypeSafeProvider
+
+::: pydantic_ai.providers.system_one.SystemOneProvider
 
 ::: pydantic_ai.providers.zai.ZaiProvider

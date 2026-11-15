@@ -13,14 +13,28 @@ module only depends on `messages`, `exceptions`, and `_utils`, so
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, StrictBool, Tag
+from pydantic import Discriminator, Field, StrictBool, Tag
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed, UserError
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+
+# TODO(v3): remove `RetryPromptPart`
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn  # pyright: ignore[reportDeprecated]
+
+DeferredToolKind: TypeAlias = Literal['approval', 'question', 'external']
+"""What a deferred tool call waits for.
+
+- `'approval'`: consent to run a call the model made, from [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]
+  or `requires_approval=True`. Answered in `DeferredToolResults.approvals`.
+- `'question'`: content the model asked for, from `CallDeferred(kind='question')`, such as Pydantic AI
+  Harness's `AskUser` question. Answered in `DeferredToolResults.calls`.
+- `'external'`: the result of a call run outside the agent, from [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]
+  or an external tool. Answered in `DeferredToolResults.calls`.
+"""
 
 
 @dataclass(kw_only=True)
@@ -40,13 +54,36 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    # Internal, not part of the public API: read a call's kind with `kind()`. The calls in `calls` that are
+    # questions, keyed by `tool_call_id`. Serialized as `_kinds` only when there are any, so a
+    # `DeferredToolRequests` stored, journaled or recorded in telemetry keeps its questions, and one
+    # without questions serializes as it did before; left out of the repr.
+    _kinds: Annotated[dict[str, DeferredToolKind], Field(exclude_if=lambda kinds: not kinds)] = field(
+        default_factory=dict[str, DeferredToolKind], repr=False
+    )
+
+    def kind(self, tool_call_id: str) -> DeferredToolKind:
+        """What the pending call with this ID waits for: an approval, an answer to a question, or an external result.
+
+        A call in `approvals` is an `'approval'`, and one in `calls` is a `'question'` when the tool deferred
+        it with `CallDeferred(kind='question')`, and otherwise `'external'`.
+
+        Raises:
+            ValueError: No pending call has this ID.
+        """
+        if any(call.tool_call_id == tool_call_id for call in self.approvals):
+            return 'approval'
+        if not any(call.tool_call_id == tool_call_id for call in self.calls):
+            raise ValueError(f'No pending deferred tool call has ID {tool_call_id!r}')
+        return self._kinds.get(tool_call_id, 'external')
 
     def build_results(
         self,
         *,
-        approvals: dict[str, bool | DeferredToolApprovalResult] | None = None,
+        approvals: Mapping[str, bool | DeferredToolApprovalResult] | None = None,
         calls: dict[str, DeferredToolCallResult | Any] | None = None,
         metadata: dict[str, dict[str, Any]] | None = None,
+        answered_by: dict[str, str] | None = None,
         approve_all: bool = False,
     ) -> DeferredToolResults:
         """Create a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] for these requests.
@@ -57,6 +94,7 @@ class DeferredToolRequests:
             calls: Results for tool calls that required external execution. Keys must
                 match `tool_call_id`s in `self.calls`.
             metadata: Per-call metadata, keyed by `tool_call_id`.
+            answered_by: Who answered each call, keyed by `tool_call_id`.
             approve_all: If `True`, every approval-requesting call not already listed in
                 `approvals` is approved (with default `ToolApproved()`).
 
@@ -83,7 +121,9 @@ class DeferredToolRequests:
             for tool_call_id in approval_ids - set(approvals):
                 approvals[tool_call_id] = ToolApproved()
 
-        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata or {})
+        return DeferredToolResults(
+            approvals=approvals, calls=calls, metadata=metadata or {}, answered_by=answered_by or {}
+        )
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
@@ -95,6 +135,7 @@ class DeferredToolRequests:
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
+            _kinds={k: v for k, v in self._kinds.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
 
@@ -146,7 +187,9 @@ DeferredToolCallResult: TypeAlias = Annotated[
     Annotated[ToolReturn, Tag('tool-return')]
     | Annotated[ToolFailed, Tag('tool-failed')]
     | Annotated[ModelRetry, Tag('model-retry')]
-    | Annotated[RetryPromptPart, Tag('retry-prompt')],
+    # TODO(v3): remove `RetryPromptPart`. A handler still answering with one gets the same result as
+    # `ModelRetry`: the retry is bound to the call being resolved and travels as its own return.
+    | Annotated[RetryPromptPart, Tag('retry-prompt')],  # pyright: ignore[reportDeprecated]
     Discriminator(_deferred_tool_call_result_discriminator),
 ]
 """Result for a tool call that required external execution."""
@@ -171,12 +214,21 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+    answered_by: dict[str, str] = field(default_factory=dict[str, str])
+    """Who answered each call, keyed by `tool_call_id`: a person's ID, a bot or a policy name.
+
+    Reported as given in the [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent]
+    of calls a handler resolves during the run; not yet recorded in the message history, so results
+    passed to a new run with `deferred_tool_results` don't report it. Pydantic AI doesn't check it, so
+    authorize whoever answers before you record who they are.
+    """
 
     def update(self, other: DeferredToolResults) -> None:
         """Update this `DeferredToolResults` with entries from another, in-place."""
         self.approvals.update(other.approvals)
         self.calls.update(other.calls)
         self.metadata.update(other.metadata)
+        self.answered_by.update(other.answered_by)
 
     def to_tool_call_results(self) -> dict[str, DeferredToolResult]:
         """Convert results into the internal per-call format used by the tool-execution pipeline.
@@ -215,4 +267,9 @@ def filter_deferred_results(requests: DeferredToolRequests, results: DeferredToo
         },
         calls={tool_call_id: result for tool_call_id, result in results.calls.items() if tool_call_id in call_ids},
         metadata=results.metadata,
+        answered_by={
+            tool_call_id: answerer
+            for tool_call_id, answerer in results.answered_by.items()
+            if tool_call_id in approval_ids | call_ids
+        },
     )

@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
+import importlib
 import inspect
 import subprocess
 import sys
 from importlib.metadata import requires
+from types import ModuleType
 
 import httpx2
 import pytest
 from packaging.requirements import Requirement
 
+import pydantic_ai
 from pydantic_ai._http import create_async_httpx2_client
 
 from .conftest import try_import
@@ -32,8 +35,8 @@ with try_import() as google_imports_successful:
 with try_import() as mistral_imports_successful:
     from mistralai.client import Mistral
 
-# Prepended to every subprocess script below: legacy HTTPX is installed in the test environment, so the
-# scripts have to make it unimportable to stand in for an install that never had it.
+# Runs first in the subprocess below: legacy HTTPX is installed in the test environment, so the
+# script has to make it unimportable to stand in for an install that never had it.
 _BLOCK_HTTPX = """
 import sys
 
@@ -47,9 +50,7 @@ class BlockHttpx:
 sys.meta_path.insert(0, BlockHttpx())
 """
 
-_HTTPX_FREE_CORE = (
-    _BLOCK_HTTPX
-    + """
+_HTTPX_FREE_CORE = """
 import asyncio
 import typing
 
@@ -76,12 +77,13 @@ async def break_out_of_stream():
 
 asyncio.run(break_out_of_stream())
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'the SDK-less core imported httpx'
+# `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which used to account for about half of `import pydantic_ai`.
+assert not any(
+    name in ('pydantic_ai.mcp', 'mcp', 'fastmcp') or name.startswith(('mcp.', 'fastmcp.')) for name in sys.modules
+), 'the SDK-less core imported MCP'
 """
-)
 
-_HTTPX_FREE_OPENAI = (
-    _BLOCK_HTTPX
-    + """
+_HTTPX_FREE_OPENAI = """
 import asyncio
 import warnings
 
@@ -124,12 +126,9 @@ with warnings.catch_warnings():
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'OpenAI providers imported httpx'
 """
-)
 
 
-_HTTPX_FREE_ANTHROPIC = (
-    _BLOCK_HTTPX
-    + """
+_HTTPX_FREE_ANTHROPIC = """
 import asyncio
 
 import httpx2
@@ -155,38 +154,135 @@ asyncio.run(construct_providers())
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'Anthropic providers imported httpx'
 """
-)
 
 
-def test_core_runs_without_httpx() -> None:
-    result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_CORE],
-        capture_output=True,
-        text=True,
+_HTTPX_FREE_MISTRAL = """
+import asyncio
+
+import httpx2
+
+from pydantic_ai.models.mistral import MistralModel
+from pydantic_ai.providers.mistral import MistralProvider
+
+
+async def construct_provider():
+    async with httpx2.AsyncClient() as client:
+        provider = MistralProvider(api_key='test', http_client=client)
+        assert provider.client.sdk_configuration.async_client is client
+        MistralModel('mistral-large-latest', provider=provider)
+
+
+asyncio.run(construct_provider())
+
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'Mistral provider imported httpx'
+"""
+
+# The public download boundary, with `_ssrf`'s resolver and client stood in for: it patches module
+# globals, so it runs last.
+_HTTPX_FREE_SAFE_DOWNLOAD = """
+import asyncio
+
+import httpx2
+
+from pydantic_ai import _ssrf
+
+
+class FailingClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def build_request(self, method, url, **kwargs):
+        return httpx2.Request(method, url, **kwargs)
+
+    async def send(self, request, **kwargs):
+        raise httpx2.ConnectError('Connection failed', request=request)
+
+
+async def validate_and_resolve_url(url, allow_local):
+    return _ssrf.ResolvedUrl(
+        resolved_ip='93.184.216.34',
+        hostname='example.com',
+        port=80,
+        is_https=False,
+        path='/',
     )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ''
 
 
-def test_openai_providers_run_without_httpx() -> None:
-    result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_OPENAI],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ''
+def create_async_httpx2_client(*, timeout):
+    return FailingClient()
 
 
+_ssrf.validate_and_resolve_url = validate_and_resolve_url
+_ssrf.create_async_httpx2_client = create_async_httpx2_client
+
+
+async def main():
+    try:
+        await _ssrf.safe_download('http://example.com')
+    except httpx2.RequestError as error:
+        assert type(error) is httpx2.RequestError
+    else:
+        raise AssertionError('safe_download did not raise the failed request')
+
+
+asyncio.run(main())
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), '`safe_download` imported httpx'
+"""
+
+
+@pytest.fixture(scope='module')
+def httpx_free_run() -> subprocess.CompletedProcess[str]:
+    """Run every stage in one interpreter, printing each stage's name once it passes.
+
+    Each interpreter spawn cold-imports `pydantic_ai` under coverage, which takes seconds in CI. The
+    stages share one: every stage only adds imports, and each re-checks that none of them is HTTPX,
+    so the core stage runs first and later stages can't hide what an earlier one imported.
+    """
+    stages = {'core': _HTTPX_FREE_CORE, 'openai': _HTTPX_FREE_OPENAI}
+    if anthropic_imports_successful():
+        stages['anthropic'] = _HTTPX_FREE_ANTHROPIC
+    if mistral_imports_successful():
+        stages['mistral'] = _HTTPX_FREE_MISTRAL
+    stages['safe_download'] = _HTTPX_FREE_SAFE_DOWNLOAD
+    script = _BLOCK_HTTPX + ''.join(f'{code}\nprint({name!r}, flush=True)\n' for name, code in stages.items())
+    return subprocess.run([sys.executable, '-W', 'error', '-c', script], capture_output=True, text=True)
+
+
+def _assert_stage_passed(run: subprocess.CompletedProcess[str], stage: str) -> None:
+    assert stage in run.stdout.splitlines(), run.stderr
+    # A later stage's traceback is that stage's failure; anything else on stderr is every stage's.
+    assert run.returncode != 0 or run.stderr == '', run.stderr
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+def test_core_runs_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'core')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+def test_openai_providers_run_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'openai')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-def test_anthropic_providers_run_without_httpx() -> None:
-    result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_ANTHROPIC],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ''
+def test_anthropic_providers_run_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'anthropic')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+@pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
+def test_mistral_provider_runs_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'mistral')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+def test_safe_download_works_without_legacy_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    """The public download boundary remains usable when only httpx2 is installed."""
+    _assert_stage_passed(httpx_free_run, 'safe_download')
 
 
 async def test_httpx2_client_constructs_without_blocking() -> None:
@@ -198,6 +294,33 @@ async def test_httpx2_client_constructs_without_blocking() -> None:
     """
     async with create_async_httpx2_client() as client:
         assert isinstance(client, httpx2.AsyncClient)
+
+
+def _fresh_http_module_without_httpcore2(monkeypatch: pytest.MonkeyPatch, platform: str) -> ModuleType:
+    """Run `_http.py` again with `httpcore2` unimportable, as it is on Pyodide, and `sys.platform` set to `platform`.
+
+    Only that one module body sees the fake platform: everything it imports is already loaded, and monkeypatch
+    puts the original module back in `sys.modules` and on the `pydantic_ai` package afterwards.
+    """
+    original = sys.modules['pydantic_ai._http']
+    monkeypatch.setitem(sys.modules, 'httpcore2', None)
+    monkeypatch.delitem(sys.modules, 'pydantic_ai._http')
+    monkeypatch.setattr(pydantic_ai, '_http', original)
+    monkeypatch.setattr(sys, 'platform', platform)
+    return importlib.import_module('pydantic_ai._http')
+
+
+def test_http_module_imports_on_emscripten_without_httpcore2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Pyodide httpx2 sends requests through `fetch` and doesn't install `httpcore2`, so `_http.py` must not import it."""
+    module = _fresh_http_module_without_httpcore2(monkeypatch, 'emscripten')
+    assert module.DEFAULT_HTTP_TIMEOUT == 600
+
+
+@pytest.mark.parametrize('platform', ['linux', 'darwin', 'win32'])
+def test_http_module_still_requires_httpcore2_elsewhere(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    """Skipping the preload is limited to Emscripten: a missing `httpcore2` anywhere else is a broken install."""
+    with pytest.raises(ModuleNotFoundError, match='httpcore2'):
+        _fresh_http_module_without_httpcore2(monkeypatch, platform)
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -226,7 +349,7 @@ async def test_google_accepts_httpx2_client() -> None:
 @pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
 async def test_mistral_accepts_httpx2_client() -> None:
     async with httpx2.AsyncClient() as client:
-        mistral_client = Mistral(api_key='test', async_client=client)  # pyright: ignore[reportArgumentType]
+        mistral_client = Mistral(api_key='test', async_client=client)
 
         assert mistral_client.sdk_configuration.async_client is client
 

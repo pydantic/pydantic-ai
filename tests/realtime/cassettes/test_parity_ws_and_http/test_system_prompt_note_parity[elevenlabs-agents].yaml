@@ -1,0 +1,94 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: You are Sam, a phone support agent for Acme Telecom. Answer in one
+            short sentence.
+      conversation:
+        text_only: true
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_5301m5wr65qtfnsa5h3r6wja0w8f
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: contextual_update
+    text: <system>The caller has been verified as the account holder, Jamie. Address
+      them by name.</system>
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: Hi, can you tell me whose account this is?
+    id: pydantic_ai_input_1
+- kind: message
+  direction: received
+  at: 0.738
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: a9fd74b4-a225-4bca-a850-952ec661973b
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.738
+  data:
+    text_response_part:
+      text: This is Jamie's account
+      type: delta
+      event_id: 1
+      response_id: a9fd74b4-a225-4bca-a850-952ec661973b
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.738
+  data:
+    text_response_part:
+      text: .
+      type: delta
+      event_id: 1
+      response_id: a9fd74b4-a225-4bca-a850-952ec661973b
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.738
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: a9fd74b4-a225-4bca-a850-952ec661973b
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.739
+  data:
+    agent_response_event:
+      agent_response: This is Jamie's account.
+      event_id: 1
+      response_id: a9fd74b4-a225-4bca-a850-952ec661973b
+      in_response_to_ids:
+      - pydantic_ai_input_1
+      response_type: text
+      attachments: []
+    type: agent_response

@@ -2,11 +2,12 @@ version: 1
 interactions:
 - kind: message
   direction: received
+  at: 0.0
   data:
-    event_id: event_71SIYb5kIuxeDtikYyk43X
+    event_id: event_1vYdV285cJWWyKoCPxz0V7
     type: session.created
     session:
-      id: sess_E4BAwpeEqR1fZDn5U9AxF
+      id: sess_ETb0jnU5gXvP3WriYJNCQ
       model: gpt-realtime-global-standard
       modalities:
       - audio
@@ -21,7 +22,7 @@ interactions:
         name: alloy
         type: openai
       input_audio_format: pcm16
-      output_audio_format: null
+      output_audio_format: pcm16
       input_audio_transcription: null
       input_audio_noise_reduction: null
       turn_detection:
@@ -33,13 +34,12 @@ interactions:
         interrupt_response: true
         idle_timeout_ms: null
         speech_duration_ms: null
-        end_of_utterance_detection: null
         auto_truncate: false
         appended_text_after_truncation: null
       tools: []
       tool_choice: auto
       max_response_output_tokens: inf
-      expires_at: 1784668578
+      expires_at: 1790726089
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -48,8 +48,11 @@ interactions:
       output_audio_timestamp_types: null
       truncation_strategy: null
       include: null
+      greeting: null
+      handoff: null
 - kind: message
   direction: sent
+  at: 0.0
   data:
     type: session.update
     session:
@@ -67,11 +70,12 @@ interactions:
         model: whisper-1
 - kind: message
   direction: received
+  at: 0.108
   data:
-    event_id: event_6RbBFNIbaujyIPSD7jBMIq
+    event_id: event_61WJxN3dKSjW4XNbBil0kj
     type: session.updated
     session:
-      id: sess_E4BAwpeEqR1fZDn5U9AxF
+      id: sess_ETb0jnU5gXvP3WriYJNCQ
       model: gpt-realtime-global-standard
       modalities:
       - text
@@ -91,6 +95,7 @@ interactions:
         model: whisper-1
         language: null
         prompt: null
+        delay: null
         custom_speech: null
         phrase_list: null
       input_audio_noise_reduction: null
@@ -103,13 +108,12 @@ interactions:
         interrupt_response: true
         idle_timeout_ms: null
         speech_duration_ms: null
-        end_of_utterance_detection: null
         auto_truncate: false
         appended_text_after_truncation: null
       tools: []
       tool_choice: auto
       max_response_output_tokens: inf
-      expires_at: 1784668578
+      expires_at: 1790726089
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -118,8 +122,11 @@ interactions:
       output_audio_timestamp_types: null
       truncation_strategy: null
       include: null
+      greeting: null
+      handoff: null
 - kind: message
   direction: sent
+  at: 0.108
   data:
     type: conversation.item.create
     item:
@@ -130,6 +137,7 @@ interactions:
         text: My name is Alice and my favorite color is teal.
 - kind: message
   direction: sent
+  at: 0.109
   data:
     type: conversation.item.create
     item:
@@ -140,9 +148,12 @@ interactions:
         text: Nice to meet you, Alice!
 - kind: message
   direction: sent
+  at: 0.109
   data:
     type: conversation.item.create
+    event_id: pydantic_ai.content.0
     item:
+      id: pydantic_ai_item_0
       type: message
       role: user
       content:
@@ -150,16 +161,22 @@ interactions:
         text: What is my name and favorite color?
 - kind: message
   direction: sent
+  at: 0.109
   data:
     type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
+  at: 0.281
   data:
-    event_id: event_7SqK2r07V8SRrv7PLOxaVO
+    event_id: event_qc3sllJGnDD0fQxHjOKL8
     type: conversation.item.created
     previous_item_id: null
     item:
-      id: item_502DFDvolZ8VetrqA6mFvP
+      id: item_7QHEcU2eaPD8dOIMafIbQI
       object: realtime.item
       type: message
       status: completed
@@ -169,12 +186,13 @@ interactions:
         text: My name is Alice and my favorite color is teal.
 - kind: message
   direction: received
+  at: 0.281
   data:
-    event_id: event_6LuQrTES1UDrzCGPxNdQOm
+    event_id: event_yuOtVUA4lfVrGkFrOZxBr
     type: conversation.item.created
-    previous_item_id: item_502DFDvolZ8VetrqA6mFvP
+    previous_item_id: item_7QHEcU2eaPD8dOIMafIbQI
     item:
-      id: item_3Iw6iOWQ8fzzT19ijANWog
+      id: item_16dkDtmu4d74PCAEL6CNvl
       object: realtime.item
       type: message
       status: completed
@@ -184,12 +202,13 @@ interactions:
         text: Nice to meet you, Alice!
 - kind: message
   direction: received
+  at: 0.281
   data:
-    event_id: event_2WzbYYr1H0RQTKCwJn5Xln
+    event_id: event_1WsSYH8ChInEivBqVPrlq7
     type: conversation.item.created
-    previous_item_id: item_3Iw6iOWQ8fzzT19ijANWog
+    previous_item_id: item_16dkDtmu4d74PCAEL6CNvl
     item:
-      id: item_4rM3Tcyn8EHtAC1rAtEU8T
+      id: pydantic_ai_item_0
       object: realtime.item
       type: message
       status: completed
@@ -199,17 +218,18 @@ interactions:
         text: What is my name and favorite color?
 - kind: message
   direction: received
+  at: 0.299
   data:
-    event_id: event_1pegi3h4tKDlvjKwWuoaci
+    event_id: event_3tWcWRhOKs8GnCDCPchGBj
     type: response.created
     response:
       object: realtime.response
-      id: resp_E4BAw18ZvlnLr5fYfudww
+      id: resp_ETb0khUMK8B1uWCOKBc5J
       status: in_progress
       status_details: null
       output: []
       usage: null
-      conversation_id: conv_E4BAwJimWJRoJdYFdJRhX
+      conversation_id: conv_ETb0j3OjOMAEC9iCb8tYp
       modalities:
       - text
       voice:
@@ -218,16 +238,18 @@ interactions:
       output_audio_format: pcm16
       temperature: null
       max_output_tokens: inf
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
+  at: 0.518
   data:
-    event_id: event_76l8LEvp3UUjdMOYwRy7NU
+    event_id: event_5EenK78BVT0sRMpZUvG6Uf
     type: response.output_item.added
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
     output_index: 0
     item:
-      id: item_E4BAwex9dP7OdCGHkmTH8
+      id: item_ETb0kA2Ywf2pPaShxVJmr
       object: realtime.item
       type: message
       status: in_progress
@@ -235,12 +257,13 @@ interactions:
       content: []
 - kind: message
   direction: received
+  at: 0.518
   data:
-    event_id: event_32qnp9agM7A5LwjYdI295X
+    event_id: event_4e9wLcOOM7oR85OESXo7YG
     type: conversation.item.created
-    previous_item_id: item_4rM3Tcyn8EHtAC1rAtEU8T
+    previous_item_id: pydantic_ai_item_0
     item:
-      id: item_E4BAwex9dP7OdCGHkmTH8
+      id: item_ETb0kA2Ywf2pPaShxVJmr
       object: realtime.item
       type: message
       status: in_progress
@@ -248,11 +271,12 @@ interactions:
       content: []
 - kind: message
   direction: received
+  at: 0.518
   data:
-    event_id: event_2JreUbr4kDlhm6CJ3khF1l
+    event_id: event_52ugBTLTtlDIehWEKlA94T
     type: response.content_part.added
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     part:
@@ -260,272 +284,233 @@ interactions:
       text: ''
 - kind: message
   direction: received
+  at: 0.519
   data:
-    event_id: event_1tpk9uSMaZLXP9jefuVQE1
+    event_id: event_5sL9pH4rlblV2FywJRuJn8
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: Your
 - kind: message
   direction: received
+  at: 0.535
   data:
-    event_id: event_HtOnXiI1SMoLb2ayABo6r
+    event_id: event_1pPE5QglJKwAXAAQza9RY9
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' name'
 - kind: message
   direction: received
+  at: 0.555
   data:
-    event_id: event_5iJfumd8cK2oHVon6sO5ah
+    event_id: event_7EwHSq15eyiZhmFrGagJaC
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' is'
 - kind: message
   direction: received
+  at: 0.571
   data:
-    event_id: event_7iM35fTLRfTemNAo2jRbnE
+    event_id: event_5V5rAnN7MUYHnZfYCJDf4d
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' Alice'
 - kind: message
   direction: received
+  at: 0.591
   data:
-    event_id: event_4YnWjJnCudMtuwQIzWcwBg
+    event_id: event_g7zkUj6ZbmdFe5y7YT4jm
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ','
 - kind: message
   direction: received
+  at: 0.604
   data:
-    event_id: event_198E8vwBbC01TZKsLPnHbO
+    event_id: event_1XbQUrWc6X7xfRL4oVwp8a
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' and'
 - kind: message
   direction: received
+  at: 0.626
   data:
-    event_id: event_6WOBbjYvZK5AaULKSNXQcd
+    event_id: event_5uzsS1nlrhaLoiRcl9z2g5
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' your'
 - kind: message
   direction: received
+  at: 0.646
   data:
-    event_id: event_2yejisFw2orjX3BWCAEsv1
+    event_id: event_4Il2ky2n2kHcuiqUdCeGWM
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' favorite'
 - kind: message
   direction: received
+  at: 0.653
   data:
-    event_id: event_1CQ1SN0JqBSr5Gjd5VuVFF
+    event_id: event_7KRyQKFOZiWNNDVNXcT5eU
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' color'
 - kind: message
   direction: received
+  at: 0.669
   data:
-    event_id: event_1LnkjSV2QZXvfWVlsYhWEK
+    event_id: event_4TU0TenzKPdJFYNj4Gain1
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' is'
 - kind: message
   direction: received
+  at: 0.691
   data:
-    event_id: event_2QAKJZ2eww56UuIZRpEC8D
+    event_id: event_51JzmMZbCSKYeNxM98GMu5
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: ' teal'
 - kind: message
   direction: received
+  at: 0.709
   data:
-    event_id: event_7gXQ5xbueFx025N8i3eIwd
+    event_id: event_13B6av889Cuo3UR7msFz7G
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
-    output_index: 0
-    content_index: 0
-    delta: '!'
-- kind: message
-  direction: received
-  data:
-    event_id: event_2MU7L9OLkqSq5vdJ4UEIh5
-    type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
-    output_index: 0
-    content_index: 0
-    delta: ' Got'
-- kind: message
-  direction: received
-  data:
-    event_id: event_UXUxzEZbI4vqUe3UILZWW
-    type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
-    output_index: 0
-    content_index: 0
-    delta: ' it'
-- kind: message
-  direction: received
-  data:
-    event_id: event_430yqt1qR55cPguh1ilOe1
-    type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
-    output_index: 0
-    content_index: 0
-    delta: ' locked'
-- kind: message
-  direction: received
-  data:
-    event_id: event_6jO6o1xXOwIiWVpq8lFzOP
-    type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
-    output_index: 0
-    content_index: 0
-    delta: ' in'
-- kind: message
-  direction: received
-  data:
-    event_id: event_231V2z6theEHYlI5VGz7mY
-    type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     delta: .
 - kind: message
   direction: received
+  at: 0.779
   data:
-    event_id: event_VbkC0RRcCs5lE9Ee5P0co
+    event_id: event_7M4UblWLvw8hEBZdWFh6xh
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' Anything'
+    delta: ' I'
 - kind: message
   direction: received
+  at: 0.779
   data:
-    event_id: event_2P95Dxaylfdr26I9KwwrPC
+    event_id: event_1PYlZeEb24hxYLjBZN2KmD
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' else'
+    delta: ’ve
 - kind: message
   direction: received
+  at: 0.779
   data:
-    event_id: event_3Y9iXki0u79YQZ74v9Oeie
+    event_id: event_5NJR95iJO4AXoryZw58aqH
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' fun'
+    delta: ' got'
 - kind: message
   direction: received
+  at: 0.779
   data:
-    event_id: event_6qxS3Oh0JkmHJOgqeuZCa4
+    event_id: event_6o6TZoFYwLIa33XFvCS7hq
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' you'
+    delta: ' it'
 - kind: message
   direction: received
+  at: 0.779
   data:
-    event_id: event_RruDBYaFZskastzO3YJOr
+    event_id: event_2pJNFVb2SK9P2Xe6SthMVC
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' want'
+    delta: ' locked'
 - kind: message
   direction: received
+  at: 0.781
   data:
-    event_id: event_6QcpWcbB0J5f9InHvffZqv
+    event_id: event_6gaYjYFlX20IxVit1rXAi8
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' to'
+    delta: ' in'
 - kind: message
   direction: received
+  at: 0.796
   data:
-    event_id: event_7TxkXaV3DLpwhSzuUKIwGv
+    event_id: event_2bSu5F44N5xiTQKokniKpF
     type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    delta: ' share'
+    delta: '!'
 - kind: message
   direction: received
+  at: 0.876
   data:
-    event_id: event_4q2cYeBpNrXqAURvTJcCVZ
-    type: response.text.delta
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
-    output_index: 0
-    content_index: 0
-    delta: '?'
-- kind: message
-  direction: received
-  data:
-    event_id: event_31DGGEDsW0GbgpGFIh5j5q
+    event_id: event_6rRgqOyXgR64OA5VcaYCAz
     type: response.text.done
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
-    text: Your name is Alice, and your favorite color is teal! Got it locked in. Anything
-      else fun you want to share?
+    text: Your name is Alice, and your favorite color is teal. I’ve got it locked
+      in!
 - kind: message
   direction: received
+  at: 0.876
   data:
-    event_id: event_7groshEaRPMXlPpq7iiFxa
+    event_id: event_6ZDdp9ANDZ7snHl4BO6Ki3
     type: response.content_part.done
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
-    item_id: item_E4BAwex9dP7OdCGHkmTH8
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
     output_index: 0
     content_index: 0
     part:
@@ -533,59 +518,62 @@ interactions:
       text: ''
 - kind: message
   direction: received
+  at: 0.876
   data:
-    event_id: event_4h8nXIqm1BE0YCXes1cBne
+    event_id: event_5QLBi8VCP08W2pplQQytbj
     type: response.output_item.done
-    response_id: resp_E4BAw18ZvlnLr5fYfudww
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
     output_index: 0
     item:
-      id: item_E4BAwex9dP7OdCGHkmTH8
+      id: item_ETb0kA2Ywf2pPaShxVJmr
       object: realtime.item
       type: message
       status: completed
       role: assistant
       content:
       - type: text
-        text: Your name is Alice, and your favorite color is teal! Got it locked in.
-          Anything else fun you want to share?
+        text: Your name is Alice, and your favorite color is teal. I’ve got it locked
+          in!
 - kind: message
   direction: received
+  at: 0.876
   data:
-    event_id: event_7ZZIsoV8wvKxMT0PgrycUQ
+    event_id: event_bsHszOjXQtLFl2Q3ver5H
     type: response.done
     response:
       object: realtime.response
-      id: resp_E4BAw18ZvlnLr5fYfudww
+      id: resp_ETb0khUMK8B1uWCOKBc5J
       status: completed
       status_details: null
       output:
-      - id: item_E4BAwex9dP7OdCGHkmTH8
+      - id: item_ETb0kA2Ywf2pPaShxVJmr
         object: realtime.item
         type: message
         status: completed
         role: assistant
         content:
         - type: text
-          text: Your name is Alice, and your favorite color is teal! Got it locked
-            in. Anything else fun you want to share?
+          text: Your name is Alice, and your favorite color is teal. I’ve got it locked
+            in!
       usage:
-        total_tokens: 176
+        total_tokens: 170
         input_tokens: 149
-        output_tokens: 27
+        output_tokens: 21
         input_token_details:
-          cached_tokens: 128
+          cached_tokens: 0
+          cache_write_tokens: 0
           text_tokens: 149
           audio_tokens: 0
           image_tokens: 0
           cached_tokens_details:
-            text_tokens: 128
+            text_tokens: 0
             audio_tokens: 0
             image_tokens: 0
         output_token_details:
-          text_tokens: 27
+          text_tokens: 21
           audio_tokens: 0
           reasoning_tokens: 0
-      conversation_id: conv_E4BAwJimWJRoJdYFdJRhX
+      conversation_id: conv_ETb0j3OjOMAEC9iCb8tYp
       modalities:
       - text
       voice:
@@ -594,4 +582,5 @@ interactions:
       output_audio_format: pcm16
       temperature: null
       max_output_tokens: inf
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'

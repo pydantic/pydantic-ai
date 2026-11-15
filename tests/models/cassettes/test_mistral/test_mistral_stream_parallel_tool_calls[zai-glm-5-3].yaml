@@ -1,0 +1,271 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: "https://api.mistral.ai/v1/chat/completions#stream"
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "667"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: zai-glm-5-3
+        messages:
+        - content: >-
+            Call get_weather for Paris, get_weather for London, and get_time for UTC. Call
+            all three tools at once.
+          role: user
+        top_p: 1.0
+        stream: true
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: ""
+          type: function
+        - function:
+            name: get_time
+            parameters:
+              additionalProperties: false
+              properties:
+                tz:
+                  type: string
+              required:
+              - tz
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      mistral-correlation-id:
+      - 01a1a38b-63b7-7ddd-b3bc-e01cdec98052
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745183,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"role":"assistant","index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":"The"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" user wants me"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" to call three tools at"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" once: get_weather for Paris"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":", get_weather for London,"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" and get_time for UTC."}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" These are all independent calls,"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" so I should make them"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":" all in the same function"}],"closed":true}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":[{"type":"thinking","thinking":[{"type":"text","text":"_calls block."}],"closed":true},{"type":"text","text":"I"}]},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":"'ll make"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" all three calls at"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" once since they're independent of"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" each other."},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-a3e7e88e93ca0b08","type":"function","function":{"name":"get_weather","arguments":"{\"city\": \"Paris"},"index":0}],"index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"tool_calls":[{"type":"function","function":{"name":"","arguments":"\"}"},"index":0},{"id":"chatcmpl-tool-9c49fd171e27c24f","type":"function","function":{"name":"get_weather","arguments":""},"index":1}],"index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"tool_calls":[{"type":"function","function":{"name":"","arguments":"{\"city\": \"London\"}"},"index":1}],"index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-9a5a1060e45bc189","type":"function","function":{"name":"get_time","arguments":"{\"tz\": \""},"index":2}],"index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"tool_calls":[{"type":"function","function":{"name":"","arguments":"UTC\"}"},"index":2}],"index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"032662f9522949949b473cfadd932705","object":"chat.completion.chunk","created":1793745184,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":""},"finish_reason":"tool_calls","logprobs":null,"response_error":{"format_error":null,"content_validation":["valid_think_chunk","valid_text_chunk"],"tool_calls_validation":["valid_tool_call","valid_tool_call","valid_tool_call"],"extra_tags":[]}}],"usage":{"prompt_tokens":222,"total_tokens":316,"completion_tokens":94,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":46}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-03T22:33:04.375619+00:00
+- request:
+    method: POST
+    uri: "https://api.mistral.ai/v1/chat/completions#stream"
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1651"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: zai-glm-5-3
+        messages:
+        - content: >-
+            Call get_weather for Paris, get_weather for London, and get_time for UTC. Call
+            all three tools at once.
+          role: user
+        - role: assistant
+          content:
+          - thinking:
+            - text: "The user wants me to call three tools at once: get_weather for Paris, get_weather for London, and get_time for UTC. These are all independent calls, so I should make them all in the same function_calls block."
+              type: text
+            type: thinking
+          - text: I'll make all three calls at once since they're independent of each other.
+            type: text
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+            id: JCLikSr4u
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+            id: vKYf3ymAu
+            type: function
+            index: 0
+          - function:
+              name: get_time
+              arguments: "{\"tz\":\"UTC\"}"
+            id: T7WwfJWXz
+            type: function
+            index: 0
+          prefix: false
+        - content: Sunny in Paris.
+          role: tool
+          tool_call_id: JCLikSr4u
+        - content: Sunny in London.
+          role: tool
+          tool_call_id: vKYf3ymAu
+        - content: 12:00 in UTC.
+          role: tool
+          tool_call_id: T7WwfJWXz
+        top_p: 1.0
+        stream: true
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: ""
+          type: function
+        - function:
+            name: get_time
+            parameters:
+              additionalProperties: false
+              properties:
+                tz:
+                  type: string
+              required:
+              - tz
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      mistral-correlation-id:
+      - 01a1a38b-6dec-799b-8414-11e720cf8fc0
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"role":"assistant","index":0,"content":""},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":"Here are the results of"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" all three calls:\n\n-"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" **Paris**: Sunny"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" ☀️\n- **London"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":"**: Sunny ☀️\n"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":"- **UTC time"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":"**: 12:00 ("},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":"noon)\n\nBoth cities are enjoying"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" sunny weather, and it's"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" currently noon in"},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":" UTC."},"finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"e3f2ed7d7a774e5ca531dfde1c3746d5","object":"chat.completion.chunk","created":1793745187,"model":"zai-glm-5-3","choices":[{"index":0,"delta":{"index":0,"content":""},"finish_reason":"stop","logprobs":null,"response_error":{"format_error":null,"content_validation":["valid_text_chunk"],"tool_calls_validation":[],"extra_tags":[]}}],"usage":{"prompt_tokens":340,"total_tokens":396,"completion_tokens":56,"prompt_tokens_details":{"cached_tokens":192},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-03T22:33:12.018851+00:00

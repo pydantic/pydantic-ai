@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "256"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: "Find Pydantic AI's GitHub repository and cite it in one sentence. Start your answer with exactly '🐍 Pydantic AI (café): ', cite inline, and use only ASCII punctuation."
+        model: gpt-5-search-api
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "5458"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-7d75f01c-e686-4bd7-923a-0da9396e8f2d
+        object: chat.completion
+        created: 1790939410
+        model: gpt-5-search-api-2025-10-14
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "🐍 Pydantic AI (café): The GitHub repository for Pydantic AI is located at https://github.com/pydantic/pydantic-ai ([github.com](https://github.com/pydantic/pydantic-ai?utm_source=openai))"
+            refusal: null
+            annotations:
+            - type: url_citation
+              url_citation:
+                end_index: 187
+                start_index: 114
+                title: "GitHub - pydantic/pydantic-ai: How Python does AI. Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end. · GitHub"
+                url: https://github.com/pydantic/pydantic-ai?utm_source=openai
+          finish_reason: stop
+        usage:
+          prompt_tokens: 16529
+          completion_tokens: 51
+          total_tokens: 16580
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        system_fingerprint: null
+  recorded_at: 2026-10-02T11:10:11.057164+00:00

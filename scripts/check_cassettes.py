@@ -24,7 +24,7 @@ _FORBIDDEN_CHARS = r"""<>?%*:|"'/\\"""
 
 
 def _sanitize_cassette_name(name: str) -> str:
-    """Replicate pytest-recording's cassette name sanitization."""
+    """Replicate the cassette name sanitization of cassetter's pytest plugin."""
     for ch in _FORBIDDEN_CHARS:
         name = name.replace(ch, '-')
     return name
@@ -90,11 +90,11 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
 # function in the module counts. Keyed off the `_ws` naming convention so a new provider fits in.
 _WS_CASSETTE_SUFFIX = '_ws'
 
-# A WebRTC sideband test records a second, WebSocket cassette under a dedicated `<module>_sideband`
-# subdirectory so it doesn't collide with the module-named subdirectory holding its HTTP VCR cassette
-# (the SDP offer relay). Both belong to the same test in `<module>.py`, so attribute the sideband
-# subdirectory back to that module.
-_SIDEBAND_CASSETTE_SUFFIX = '_sideband'
+# A realtime test that also makes HTTP requests records its WebSocket cassette under a dedicated
+# `<module>_sideband` (a WebRTC sideband, whose offer relay is the HTTP part) or `<module>_and_http`
+# subdirectory, so it doesn't collide with the module-named subdirectory holding its HTTP VCR cassette.
+# Both belong to the same test in `<module>.py`, so attribute the subdirectory back to that module.
+_SECOND_CASSETTE_SUFFIXES = ('_sideband', '_and_http')
 
 
 def _collect_all_tests_from_file(path: Path) -> set[str]:
@@ -125,8 +125,8 @@ def get_all_cassettes() -> dict[str, set[str]]:
         for subdir in cassette_dir.iterdir():
             if subdir.is_dir():
                 test_stem = subdir.name
-                if test_stem.endswith(_SIDEBAND_CASSETTE_SUFFIX):
-                    test_stem = test_stem[: -len(_SIDEBAND_CASSETTE_SUFFIX)]
+                for suffix in _SECOND_CASSETTE_SUFFIXES:
+                    test_stem = test_stem.removesuffix(suffix)
                 # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
                 cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}
                 cassettes.setdefault(test_stem, set()).update(cassette_names)
