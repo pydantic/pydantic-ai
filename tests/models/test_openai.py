@@ -2668,7 +2668,7 @@ async def test_chat_completions_tools_with_reasoning_rejected_before_send(
             await agent.run('What is the temperature in Tokyo?')
 
     assert str(exc_info.value) == snapshot(
-        "OpenAI rejects function tools while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or disable reasoning with `thinking=False` instead."
+        "OpenAI rejects tools, output tools included, while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or disable reasoning with `thinking=False` instead."
     )
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
@@ -2744,7 +2744,7 @@ async def test_chat_completions_function_tools_explicit_effort_error_names_effor
         await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low', thinking=False))
 
     assert str(exc_info.value) == snapshot(
-        "OpenAI rejects function tools while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or set `openai_reasoning_effort='none'` instead."
+        "OpenAI rejects tools, output tools included, while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or set `openai_reasoning_effort='none'` instead."
     )
     assert get_mock_chat_completion_kwargs(mock_client) == []
 

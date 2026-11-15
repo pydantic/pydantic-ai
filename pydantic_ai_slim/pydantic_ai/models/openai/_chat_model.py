@@ -549,8 +549,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 )
             raise ModelRequestRejectedError(
                 self.model_name,
-                f'OpenAI rejects function tools while reasoning is enabled on {self.model_name!r} over Chat '
-                f'Completions. Use `OpenAIResponsesModel`{remedy} instead.',
+                f'OpenAI rejects tools, output tools included, while reasoning is enabled on {self.model_name!r} over '
+                f'Chat Completions. Use `OpenAIResponsesModel`{remedy} instead.',
             )
 
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
