@@ -810,9 +810,9 @@ def test_boolean_schema_tool_args() -> None:
 
 
 def test_int_hand_written_bounds_tool_args() -> None:
-    """Integer arguments are integers inside fractional and infinite bounds.
+    """Integer arguments are integers inside fractional, infinite and null bounds.
 
-    Pydantic rejects both on an `int` field, so only a hand-written tool schema has them.
+    Pydantic rejects these on an `int` field, so only a hand-written tool schema has them.
     """
     calls: list[dict[str, Any]] = []
 
@@ -829,15 +829,34 @@ def test_int_hand_written_bounds_tool_args() -> None:
             'inclusive_lower': {'type': 'integer', 'minimum': 2.5},
             'inclusive_upper': {'type': 'integer', 'maximum': -2.5},
             'unbounded': {'type': 'integer', 'minimum': 0, 'maximum': float('inf')},
+            'null_bound': {'type': 'integer', 'minimum': None, 'maximum': 3},
         },
-        'required': ['collapsed', 'narrow', 'exclusive', 'inclusive_lower', 'inclusive_upper', 'unbounded'],
+        'required': [
+            'collapsed',
+            'narrow',
+            'exclusive',
+            'inclusive_lower',
+            'inclusive_upper',
+            'unbounded',
+            'null_bound',
+        ],
     }
     tool = Tool.from_schema(
         bounded_tool, name='bounded_tool', description='Takes bounded integers.', json_schema=schema
     )
     Agent(TestModel(), tools=[tool]).run_sync('hello')
     assert calls == snapshot(
-        [{'collapsed': 1, 'narrow': 1, 'exclusive': 1, 'inclusive_lower': 3, 'inclusive_upper': -3, 'unbounded': 0}]
+        [
+            {
+                'collapsed': 1,
+                'narrow': 1,
+                'exclusive': 1,
+                'inclusive_lower': 3,
+                'inclusive_upper': -3,
+                'unbounded': 0,
+                'null_bound': 3,
+            }
+        ]
     )
 
 

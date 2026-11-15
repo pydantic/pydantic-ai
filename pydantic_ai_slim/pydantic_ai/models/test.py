@@ -599,13 +599,12 @@ class _JsonSchemaTestData:
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
-        # Skip a missing or non-finite bound, and move each other bound to the nearest integer inside it,
-        # so fractional bounds still generate integers.
-        minimum: int | None = math.ceil(bound) if math.isfinite(bound := schema.get('minimum', math.inf)) else None
-        maximum: int | None = math.floor(bound) if math.isfinite(bound := schema.get('maximum', math.inf)) else None
-        if math.isfinite(exc_min := schema.get('exclusiveMinimum', math.inf)):
+        # Each bound moves to the nearest integer inside it, so fractional bounds still generate integers.
+        minimum = None if (bound := self._finite_bound(schema, 'minimum')) is None else math.ceil(bound)
+        maximum = None if (bound := self._finite_bound(schema, 'maximum')) is None else math.floor(bound)
+        if (exc_min := self._finite_bound(schema, 'exclusiveMinimum')) is not None:
             minimum = self._tightest_bound(minimum, math.floor(exc_min) + 1, max)
-        if math.isfinite(exc_max := schema.get('exclusiveMaximum', math.inf)):
+        if (exc_max := self._finite_bound(schema, 'exclusiveMaximum')) is not None:
             maximum = self._tightest_bound(maximum, math.ceil(exc_max) - 1, min)
 
         if minimum is not None and maximum is not None:
@@ -641,6 +640,12 @@ class _JsonSchemaTestData:
             return float(maximum - self.seed - offset)
         else:
             return float(self.seed)
+
+    @staticmethod
+    def _finite_bound(schema: dict[str, Any], key: str) -> float | None:
+        """A JSON Schema bound, or `None` when it is missing, null or not finite."""
+        bound = schema.get(key)
+        return bound if bound is not None and math.isfinite(bound) else None
 
     @staticmethod
     def _tightest_bound(
