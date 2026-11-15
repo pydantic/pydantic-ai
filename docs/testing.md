@@ -272,6 +272,8 @@ async def test_forecast_future():
 
 If your replacement model needs to carry state between requests, `FunctionModel` also accepts a callable instance with an `async def __call__` in place of a function; see the [`FunctionModel` API docs](api/models/function.md) for an example.
 
+A `FunctionModel` built with only a `function` answers only non-streamed requests. Some runs stream every model request even when you call `agent.run()`: those of an agent with a capability that listens to run events through [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] or [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream], such as the harness's [`Coder`](harness/coder.md) and [`RepoContext`](harness/repo-context.md), as well as runs started with `agent.run_stream()` or `agent.run_stream_events()`. To test those, pass a [`stream_function`][pydantic_ai.models.function.StreamFunctionDef] too, or instead: an async generator taking the same arguments that yields text as a `str`, and tool calls as a [`DeltaToolCalls`][pydantic_ai.models.function.DeltaToolCalls] dict.
+
 ### Testing batch processing
 
 `TestModel` and `FunctionModel` implement the [batch API](batch.md) in memory: a batch's requests run as soon as it's created, and it ends straight away. To test an agent that uses [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests], replace its model with one of them, and set short intervals so the test doesn't wait:
