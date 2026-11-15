@@ -882,11 +882,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
-        """Refuse an `override(capabilities=...)` set without this bound copy, inside or outside a durable container.
+        """Refuse an `override(capabilities=...)` list that doesn't pass this bound copy through.
 
-        Dropping it would run the agent without durability, and binding a copy again would register this
-        engine's durable units a second time. Checked wherever the override is entered, because DBOS and
-        Prefect carry an override entered outside a workflow or flow into it.
+        `capabilities` are the leaves of the list's items taken unchanged from `root_capability.capabilities`.
+        Dropping this copy would run the agent without durability, and reaching it any other way, as a copy
+        you constructed or inside another capability, would bind it again and register this engine's durable
+        units a second time. Checked wherever the override is entered, inside or outside a durable container,
+        because DBOS and Prefect carry an override entered outside a workflow or flow into it.
         """
         for capability in capabilities:
             while isinstance(capability, WrapperCapability):
@@ -895,11 +897,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 return
         name = type(self).__name__
         raise UserError(
-            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep the bound "
-            f'`{name}` the agent registered its durable {self.durable_unit_plural} with. The `{name}` you '
-            'constructed is not that one: the agent holds a bound copy. Build the list from '
-            '`agent.root_capability.capabilities`, for example '
-            '`agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, "
+            f'the item of `agent.root_capability.capabilities` that holds the bound `{name}` the agent registered '
+            f'its durable {self.durable_unit_plural} with. A `{name}` you construct, or the bound one inside '
+            'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, '
+            'for example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
         )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:

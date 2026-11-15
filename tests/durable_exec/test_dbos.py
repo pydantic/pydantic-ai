@@ -64,6 +64,7 @@ from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
     Capability,
+    CombinedCapability,
     DynamicCapability,
     Hooks,
     ModelFallback,
@@ -5512,17 +5513,17 @@ async def test_dbos_durability_override_capabilities_keeps_the_registered_steps(
     assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
 
 
-class _OverrideAddedOperation(AbstractCapability[Any]):
+class _OverrideAddedOperation(AbstractCapability[object]):
     id = 'override_added_operation'
 
     def __init__(self) -> None:
         self.calls = 0
 
-    async def before_run(self, ctx: RunContext[Any]) -> None:
+    async def before_run(self, ctx: RunContext[object]) -> None:
         await self._count(ctx)
 
     @durable_operation('count')
-    async def _count(self, ctx: RunContext[Any]) -> None:
+    async def _count(self, ctx: RunContext[object]) -> None:
         self.calls += 1
 
 
@@ -5552,6 +5553,49 @@ async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(db
         ):
             await run_agent()
     assert added.calls == 1
+
+
+@pytest.mark.parametrize('shape', ['nested', 'rewrapped', 'from_agent'])
+async def test_dbos_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
+    dbos: DBOS, caplog: pytest.LogCaptureFixture, shape: str
+) -> None:
+    """The bound `DBOSDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register the agent's steps with DBOS a second time, under the same names.
+    """
+    durability = DBOSDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{shape}',
+        capabilities=[WrapperCapability(wrapped=durability) if shape == 'from_agent' else durability],
+    )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+    if shape == 'nested':
+        capabilities: list[AbstractCapability[object]] = [CombinedCapability([*agent.root_capability.capabilities])]
+    elif shape == 'rewrapped':
+        capabilities = [WrapperCapability(wrapped=bound)]
+    else:
+        capabilities = [bound]
+
+    dbos_logger = logging.getLogger('dbos')
+    dbos_logger.addHandler(caplog.handler)
+    try:
+        with patch.object(
+            DBOSDurability,
+            '_bind_for_agent',
+            autospec=True,
+            side_effect=DBOSDurability._bind_for_agent,  # pyright: ignore[reportPrivateUsage]
+        ) as bind_for_agent:
+            with pytest.raises(UserError, match='must keep, unchanged, the item'):
+                with agent.override(capabilities=capabilities):
+                    pass
+    finally:
+        dbos_logger.removeHandler(caplog.handler)
+
+    assert bind_for_agent.call_count == 0
+    assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
 
 
 @pytest.mark.parametrize('kind', ['mcp', 'dynamic'])

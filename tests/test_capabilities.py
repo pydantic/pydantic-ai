@@ -16,19 +16,21 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import _agent_graph
+from pydantic_ai import AgentInstructions, SourcedInstruction, _agent_graph
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
+    AgentInstructions as CapabilitiesAgentInstructions,
     Capability,
     CapabilityOrdering,
     DynamicCapability,
     HandleDeferredToolCalls,
     PrefixTools,
     ResolveModelId,
+    SourcedInstruction as CapabilitiesSourcedInstruction,
     Thinking,
     ToolSearch,
     Toolset,
@@ -4920,14 +4922,6 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
 
 async def test_instruction_types_publicly_importable() -> None:
     """`AgentInstructions` and `SourcedInstruction` are importable from public entry points."""
-    from pydantic_ai import AgentInstructions, SourcedInstruction
-    from pydantic_ai.capabilities import (
-        AgentInstructions as CapabilitiesAgentInstructions,
-        SourcedInstruction as CapabilitiesSourcedInstruction,
-    )
-    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
-    from pydantic_ai.models.function import FunctionModel
-
     assert AgentInstructions is CapabilitiesAgentInstructions
     assert SourcedInstruction is CapabilitiesSourcedInstruction
 
@@ -4954,8 +4948,6 @@ async def test_instruction_types_publicly_importable() -> None:
 
 async def test_override_capabilities_kwarg() -> None:
     """`override(capabilities=...)` replaces the capability set, restores it after the block, and stacks explicitly."""
-    from pydantic_ai import AgentInstructions
-
     captured_instructions: list[str] = []
 
     class BaseCap(AbstractCapability):
@@ -5000,10 +4992,10 @@ async def test_override_capabilities_binds_only_the_capabilities_it_adds() -> No
     bound_for: list[str] = []
 
     @dataclass
-    class Binds(AbstractCapability[Any]):
+    class Binds(AbstractCapability[object]):
         label: str = ''
 
-        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+        def for_agent(self, agent: AbstractAgent[object, Any]) -> AbstractCapability[object]:
             bound_for.append(self.label)
             return replace(self)
 

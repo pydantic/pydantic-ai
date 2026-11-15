@@ -2557,6 +2557,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._safe_at_runtime"
       ]
     },
+    "AbstractCapability._validate_override_capabilities": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_override_capabilities"
+      ]
+    },
     "AbstractCapability._validate_runtime_capabilities": {
       "engines": [
         "durable_exec"
@@ -3210,6 +3221,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_override_capabilities",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.from_agent"
       ]
     }

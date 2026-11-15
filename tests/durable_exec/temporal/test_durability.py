@@ -411,7 +411,7 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
         assert output == 'Echo: What is the capital of Mexico?'
 
 
-class _OverrideExtra(AbstractCapability[Any]):
+class _OverrideExtra(AbstractCapability[object]):
     def get_instructions(self) -> str:
         return 'extra'
 
@@ -2158,11 +2158,11 @@ def test_durability_override_capabilities_must_keep_the_bound_durability():
     durability = TemporalDurability()
     agent = Agent(_durability_fn_model, name='durability_override_keep', capabilities=[durability])
     message = snapshot(
-        "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep the bound "
-        '`TemporalDurability` the agent registered its durable activities with. The `TemporalDurability` you '
-        'constructed is not that one: the agent holds a bound copy. Build the list from '
-        '`agent.root_capability.capabilities`, for example '
-        '`agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+        "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, the "
+        'item of `agent.root_capability.capabilities` that holds the bound `TemporalDurability` the agent '
+        'registered its durable activities with. A `TemporalDurability` you construct, or the bound one inside '
+        'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, for '
+        'example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
     )
 
     with pytest.raises(UserError) as dropped:
@@ -2190,9 +2190,43 @@ def test_durability_override_capabilities_keeps_a_wrapped_durability():
     with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
         pass
 
-    with pytest.raises(UserError, match='must keep the bound `TemporalDurability`'):
+    with pytest.raises(UserError, match='holds the bound `TemporalDurability`'):
         with agent.override(capabilities=[_OverrideExtra()]):
             pass
+
+
+@pytest.mark.parametrize('shape', ['nested', 'rewrapped', 'from_agent'])
+def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(shape: str):
+    """The bound `TemporalDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register its activities a second time.
+    """
+    durability = TemporalDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{shape}',
+        capabilities=[WrapperCapability(wrapped=durability) if shape == 'from_agent' else durability],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    if shape == 'nested':
+        capabilities: list[AbstractCapability[object]] = [CombinedCapability([*agent.root_capability.capabilities])]
+    elif shape == 'rewrapped':
+        capabilities = [WrapperCapability(wrapped=bound)]
+    else:
+        capabilities = [bound]
+
+    with patch.object(
+        TemporalDurability,
+        '_bind_for_agent',
+        autospec=True,
+        side_effect=TemporalDurability._bind_for_agent,  # pyright: ignore[reportPrivateUsage]
+    ) as bind_for_agent:
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
+    assert bind_for_agent.call_count == 0
 
 
 def test_durability_from_agent_rejects_duplicates():

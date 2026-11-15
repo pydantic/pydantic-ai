@@ -3581,30 +3581,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> CombinedCapability[AgentDepsT]:
         """Build the root capability `override(capabilities=...)` installs, binding only what the agent hasn't bound.
 
-        Capabilities taken from `root_capability.capabilities` are bound to this agent already, so they pass
-        through: binding a durability capability again would register its durable units a second time. A
-        complexity helper for `override`.
+        Items taken from `root_capability.capabilities` are bound to this agent already, so they pass through;
+        every other item goes through `for_agent`, and so does anything it holds. The agent's own capabilities
+        validate the leaves that pass through, before anything is bound: a durability capability reached any
+        other way would be bound again and register its durable units a second time.
         """
         override_caps = wrap_capability_funcs(capabilities)
         _inject_auto_capabilities(override_caps)
         _reject_second_of_a_kind(override_caps)
+        configured = {id(capability) for capability in self._root_capability.capabilities}
         self._root_capability._validate_override_capabilities(  # pyright: ignore[reportPrivateUsage]
-            [leaf for capability in override_caps for leaf in leaf_capabilities(capability)]
-        )
-        configured = self._root_capability.capabilities
-        return CombinedCapability(
             [
-                capability if any(capability is bound for bound in configured) else capability.for_agent(self)
+                leaf
                 for capability in override_caps
+                if id(capability) in configured
+                for leaf in leaf_capabilities(capability)
             ]
+        )
+        return CombinedCapability(
+            [capability if id(capability) in configured else capability.for_agent(self) for capability in override_caps]
         )
 
     def _override_added_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """The leaves an active capability override holds that the agent wasn't constructed with.
 
         A durable engine registered nothing for them, so `_resolve_run_capabilities` validates them with the
-        run's own capabilities. Auto-injected infrastructure is left out. A complexity helper for
-        `_resolve_run_capabilities`.
+        run's own capabilities. Auto-injected infrastructure is left out.
         """
         override = self._override_root_capability.get()
         if override is None:

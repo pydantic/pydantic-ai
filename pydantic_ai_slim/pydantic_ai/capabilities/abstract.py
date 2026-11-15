@@ -569,10 +569,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
 
     def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
-        """Validate the leaf capabilities `Agent.override(capabilities=...)` replaces the agent's own with.
+        """Validate what `Agent.override(capabilities=...)` keeps of the agent's own capabilities.
 
-        Called on the agent's own capabilities, before anything in the replacement is bound. Private for the
-        same reason as `_validate_runtime_capabilities`.
+        Called on the agent's own capabilities with the leaves of the replacement's items taken unchanged from
+        `root_capability.capabilities`, before anything in the replacement is bound. Private for the same reason
+        as `_validate_runtime_capabilities`.
         """
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
