@@ -65,7 +65,7 @@ class AgentSpec(BaseModel):
         """
         path = Path(path)
         fmt = _infer_fmt(path, fmt)
-        content = path.read_text(encoding='utf-8')
+        content = path.read_text(encoding='utf-8-sig')
         return cls.from_text(content, fmt=fmt)
 
     @classmethod

@@ -2922,6 +2922,13 @@ def test_from_file_json(tmp_path: str):
     assert spec.name == 'my-agent'
 
 
+def test_from_file_json_with_utf8_bom(tmp_path: Path):
+    spec_path = tmp_path / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "café"}', encoding='utf-8-sig')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.name == 'café'
+
+
 def test_from_file_with_schema_field(tmp_path: str):
     """$schema field in the file should be accepted and not cause validation errors."""
     spec_path = Path(tmp_path) / 'agent.yaml'
