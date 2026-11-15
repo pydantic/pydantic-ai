@@ -81,8 +81,8 @@ class Selection:
     def span(self, *, width: int, rows: int) -> range:
         """Frame indexes from the earlier end to the later one, inclusive, within the top `rows`.
 
-        Only the transcript is selectable: a drag into the editor or footer below it stops at its
-        last row, so a copy never picks up the draft, borders, or status.
+        The surface supplies the selectable rows: normally just the transcript, or the question
+        widget too while it owns the panel. Ordinary editor and status rows remain excluded.
         """
         if self.anchor is None or self.head is None:
             return range(0)
@@ -149,14 +149,10 @@ def url_at(frame: ScreenBuffer, cell: Cell, *, rows: int, joins: Sequence[bool])
     width = frame.width
     if not (0 <= row < rows and 0 <= column < width):
         return None
-
-    def joined(index: int) -> bool:
-        return index < len(joins) and joins[index]
-
     first, last = row, row
-    while first > 0 and joined(first):
+    while first > 0 and _joined(joins, first):
         first -= 1
-    while last + 1 < rows and joined(last + 1):
+    while last + 1 < rows and _joined(joins, last + 1):
         last += 1
     cells = frame.chars[first * width : (last + 1) * width]
     text = ''.join(cells)
@@ -164,7 +160,12 @@ def url_at(frame: ScreenBuffer, cell: Cell, *, rows: int, joins: Sequence[bool])
     for match in _URL.finditer(text):
         url = trim_url(match[0])
         if match.start() <= offset < match.start() + len(url):
-            above = match.start() == 0 and first == 0 and joined(0)
-            below = match.end() == len(text) and last == rows - 1 and joined(rows)
+            above = match.start() == 0 and first == 0 and _joined(joins, 0)
+            below = match.end() == len(text) and last == rows - 1 and _joined(joins, rows)
             return None if above or below else url
     return None
+
+
+def _joined(joins: Sequence[bool], index: int) -> bool:
+    """Whether row `index` wraps on from the row above, which a row beyond `joins` never does."""
+    return index < len(joins) and joins[index]

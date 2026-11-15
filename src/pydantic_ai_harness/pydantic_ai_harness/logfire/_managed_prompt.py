@@ -91,15 +91,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     result = agent.run_sync('My order never arrived.')
     ```
 
-    The prompt is resolved once per run, in the run's
-    [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] hook. The
-    [`ResolvedVariable`][logfire.variables.ResolvedVariable] stays open as a context manager for
-    the whole run, so the selected label (and the version, on Logfire 4.34 and later) is attached as
-    baggage to every span of the run.
-
-    The resolved value lands in the system instructions, so a new value starts new conversations on
-    their own cached prompt prefix; a conversation already under way gets the change appended
-    instead. See the docs' "Prompt-cache trade-off" section.
+    The prompt is resolved once per run, and the selected label (and the version, on Logfire 4.34
+    and later) is attached as baggage to every span of the run.
 
     Each `ManagedPrompt` constructs its own unregistered variable, so several agents can use the
     same prompt name. Within one agent, the capability's `id` is derived from the prompt name
@@ -139,7 +132,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     filled from `deps`. Anyone who can edit the prompt in Logfire can then place any `deps` value
     in the system prompt. A remote prompt that fails to compile falls back to the code default
     with a `RuntimeWarning` and a Logfire warning log, and the run is then reported as the code
-    default. Defaults to `False`, so the resolved prompt is used verbatim."""
+    default."""
 
     logfire_instance: Logfire | None = None
     """Logfire instance to resolve the variable on. When `None`, the global default instance
@@ -153,6 +146,40 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         default_factory=_new_active_var, init=False, repr=False, compare=False
     )
     """Per-run resolution, isolated across concurrent runs via the context variable."""
+
+    @classmethod
+    def from_spec(
+        cls,
+        name: str,
+        default: str | None = None,
+        label: str | None = None,
+        targeting_key: str | None = None,
+        attributes: Mapping[str, Any] | None = None,
+        render_template: bool = False,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        **kwargs: Any,
+    ) -> ManagedPrompt[Any]:
+        """Build from an agent spec, covering the fields a spec can express.
+
+        Every JSON-expressible parameter is named because that signature is what core reads to
+        generate the spec's JSON schema. `logfire_instance` has no JSON form, so it is passed
+        through `**kwargs`, which the schema omits.
+        """
+        return cls(
+            name,
+            default,
+            label,
+            targeting_key,
+            attributes,
+            render_template,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            **kwargs,
+        )
 
     def __post_init__(self) -> None:
         self._variable = self._build_variable()
@@ -226,7 +253,6 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
             active = self._active.get()
             if active is None:
-                # No active run -- contribute no instructions.
                 return None
             if active.template is not None:
                 return active.template.render(ctx.deps)
@@ -274,7 +300,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         """
         try:
             return resolved, TemplateStr[object](resolved.value)
-        except HandlebarsError as e:
+        except HandlebarsError as exc:
             # Resolve the code default through Logfire, so a callable default sees the same merged
             # targeting context (resource attributes, baggage, targeting key fallback) it would in `get()`.
             with self._variable.override(self._variable.default):
@@ -284,7 +310,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             template = TemplateStr[object](fallback.value)  # an invalid code default raises here
             message = (
                 f'Managed prompt {self._variable.name!r} (label {resolved.label!r}, version {resolved.version!r}) '
-                f'is not a valid template, so the code default is used: {e}'
+                f'is not a valid template, so the code default is used: {exc}'
             )
             warnings.warn(message, RuntimeWarning)
             # Also log it where whoever edited the prompt in Logfire will see it.
@@ -294,7 +320,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
                 variable=self._variable.name,
                 label=resolved.label,
                 version=resolved.version,
-                _exc_info=e,
+                _exc_info=exc,
             )
-            fallback.exception = e
+            fallback.exception = exc
             return fallback, template

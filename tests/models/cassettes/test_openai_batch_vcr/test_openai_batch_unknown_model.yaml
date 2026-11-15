@@ -1,0 +1,250 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://api.openai.com/v1/batches/batch_6ad154c0fd50819086f8336d5b30addb
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "19"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: batch_6ad154c0fd50819086f8336d5b30addb
+        object: batch
+        endpoint: /v1/responses
+        model: null
+        errors:
+          object: list
+          data:
+          - code: model_not_found
+            message: The provided model 'not-a-real-openai-model' is not supported by the Batch API.
+            param: body.model
+            line: 1
+        input_file_id: file-BgtJwGfdyTNV64QEDWCykQ
+        completion_window: 24h
+        status: failed
+        output_file_id: null
+        error_file_id: null
+        created_at: 1792103616
+        in_progress_at: null
+        expires_at: 1792190016
+        finalizing_at: null
+        completed_at: null
+        failed_at: 1792103617
+        expired_at: null
+        cancelling_at: null
+        cancelled_at: null
+        request_counts:
+          total: 0
+          completed: 0
+          failed: 0
+        usage:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+        metadata: null
+  recorded_at: 2026-10-15T22:33:52.220578+00:00
+- request:
+    method: GET
+    uri: https://api.openai.com/v1/files/file-BgtJwGfdyTNV64QEDWCykQ/content
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename="batch.jsonl"
+      content-length:
+      - "184"
+      content-type:
+      - application/octet-stream
+      openai-processing-ms:
+      - "121"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: text
+      content: "{\"custom_id\":\"batch-error\",\"method\":\"POST\",\"url\":\"/v1/responses\",\"body\":{\"model\":\"not-a-real-openai-model\",\"input\":[{\"role\":\"user\",\"content\":\"Reply with OK.\"}],\"max_output_tokens\":16}}"
+  recorded_at: 2026-10-15T22:33:52.428282+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/batches
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "100"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        completion_window: 24h
+        endpoint: /v1/responses
+        input_file_id: file-BgtJwGfdyTNV64QEDWCykQ
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "105"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: batch_6ad154c0fd50819086f8336d5b30addb
+        object: batch
+        endpoint: /v1/responses
+        model: null
+        errors: null
+        input_file_id: file-BgtJwGfdyTNV64QEDWCykQ
+        completion_window: 24h
+        status: validating
+        output_file_id: null
+        error_file_id: null
+        created_at: 1792103616
+        in_progress_at: null
+        expires_at: 1792190016
+        finalizing_at: null
+        completed_at: null
+        failed_at: null
+        expired_at: null
+        cancelling_at: null
+        cancelled_at: null
+        request_counts:
+          total: 0
+          completed: 0
+          failed: 0
+        usage:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+        metadata: null
+  recorded_at: 2026-10-15T22:33:37.088848+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/files
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "464"
+      content-type:
+      - multipart/form-data; boundary=c221fea12aacc867ae1127cb5e8a8f96
+      host:
+      - api.openai.com
+    body:
+      type: text
+      content: "--c221fea12aacc867ae1127cb5e8a8f96\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nbatch\r\n--c221fea12aacc867ae1127cb5e8a8f96\r\nContent-Disposition: form-data; name=\"file\"; filename=\"batch.jsonl\"\r\nContent-Type: application/octet-stream\r\n\r\n{\"custom_id\":\"batch-error\",\"method\":\"POST\",\"url\":\"/v1/responses\",\"body\":{\"model\":\"not-a-real-openai-model\",\"input\":[{\"role\":\"user\",\"content\":\"Reply with OK.\"}],\"max_output_tokens\":16}}\r\n--c221fea12aacc867ae1127cb5e8a8f96--\r\n"
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "224"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        object: file
+        id: file-BgtJwGfdyTNV64QEDWCykQ
+        purpose: batch
+        filename: batch.jsonl
+        bytes: 184
+        created_at: 1792103616
+        expires_at: 1794695616
+        status: processed
+        status_details: null
+  recorded_at: 2026-10-15T22:33:36.915168+00:00

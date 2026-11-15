@@ -1,7 +1,7 @@
 """A full-screen editor for a set of named, validated fields. `/set`, `/model add`, and plugin settings use it."""
 
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 
@@ -12,18 +12,19 @@ from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
+from pydantic_clai2.plugins.menus import ChoicePreview, CloseMenu, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
-_LIST_HINT = 'type to filter - Enter edit - R reset - Esc close'
+_LIST_HINT = 'Enter edit - R reset - Esc close'
 _PREVIEW_LIST_WIDTH = 30
 
 
@@ -82,6 +83,10 @@ class FieldMenu:
         self._searchable = searchable
         self._source = source
         self.rows = list(source.rows())
+        self.messages: list[str] = []
+        self.action_keys: Collection[str] = ()
+        self.matching_filter_keys: set[str] = set()
+        self.retained_filter_keys: set[str] | None = None
 
     def items(self) -> list[MenuItem]:
         """One row per field with its current value, then Save & close."""
@@ -119,22 +124,70 @@ class FieldMenu:
         return '\n'.join(lines)
 
     def build(self, initial: int = 0) -> Menu:
-        """The field list. Searchable lists use uppercase `R` so typing still filters."""
+        """The field list: choice cycling uses slash search; other searchable lists filter as you type."""
         self.rows = list(self._source.rows())
+        self.reset_filter()
+        cycle_hint = 'Space cycle - ' if any(self.can_cycle(row) for row in self.rows) else ''
         builder = (
             MenuBuilder(self._source.title)
             .style(markdown_style())
             .items(self.items())
-            .searchable(self._searchable)
             .initial_index(min(initial, len(self.rows) - 1))
             .preview(self.details)
-            .on_key('R' if self._searchable else 'r', self._reset_key)
-            .footer_hint(_LIST_HINT if self._searchable else 'Enter edit - r reset - Esc back')
-            .key_source(menu_key)
         )
-        if not self._searchable:
-            builder.list_width(46)
-        return builder.build()
+        if self._searchable and cycle_hint:
+            return slash_search(
+                builder.filter_fn(self.matches_filter),
+                footer=cycle_hint + _LIST_HINT,
+                key_source=menu_key,
+                hotkeys={' ': self.cycle, 'R': self._reset_key},
+                on_query_change=self.reset_filter,
+            )
+        # Only lists offering choice cycling need hotkey routing; keep ordinary filtering for the rest.
+        if self._searchable:
+            builder.searchable().on_key('R', self._reset_key).footer_hint('type to filter - ' + _LIST_HINT)
+        else:
+            builder.list_width(46).on_key('r', self._reset_key).footer_hint(
+                cycle_hint + 'Enter edit - r reset - Esc back'
+            )
+            if cycle_hint:
+                builder.on_key(' ', self.cycle)
+        return builder.key_source(menu_key).build()
+
+    def reset_filter(self) -> None:
+        """Editing or clearing the query recomputes matches from the current values."""
+        self.matching_filter_keys.clear()
+        self.retained_filter_keys = None
+
+    def matches_filter(self, query: str, item: MenuItem) -> bool:
+        """Keep a searched field set stable while its displayed values change."""
+        matches = query.lower() in item.label.lower()
+        if not isinstance(item.value, str):
+            return matches
+        if self.retained_filter_keys is not None:
+            return item.value in self.retained_filter_keys
+        if matches:
+            self.matching_filter_keys.add(item.value)
+        else:
+            self.matching_filter_keys.discard(item.value)
+        return matches
+
+    def can_cycle(self, row: FieldRow) -> bool:
+        """Rows with multiple choices cycle; action and submenu rows keep their own flow."""
+        return len(row.choices) > 1 and row.key not in self.action_keys
+
+    def cycle(self, menu: Menu, item: MenuItem) -> None:
+        """Space advances to the next declared choice, wrapping, without reopening the list."""
+        row = self.row_for(item.value)
+        if row is not None and self.can_cycle(row):
+            # Cycling can change the text that matched; retain the field set until the query changes.
+            if self.retained_filter_keys is None:
+                self.retained_filter_keys = self.matching_filter_keys.copy()
+            current = self._source.current(row)
+            index = row.choices.index(current) + 1 if current in row.choices else 0
+            self.messages.append(self.apply(row, row.choices[index % len(row.choices)]))
+            self.rows = list(self._source.rows())
+            menu.replace_items(self.items())
 
     def reset_marker(self, menu: object, item: MenuItem) -> MenuResult:
         """R: hand the row back to the loop tagged for reset."""
@@ -268,7 +321,7 @@ def run_flow(
     messages: list[str] = []
     cursor = 0
     while True:
-        step = _next_step(menu, runners, cursor, messages)
+        step = _next_step(menu, runners, cursor, messages, submenus or ())
         if step is None:
             return messages
         row, cursor = step
@@ -291,19 +344,22 @@ async def run_flow_async(
     """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
 
     Each widget runs in its own `run_worker`, so a submenu can open its own worker without nesting one
-    terminal owner inside another.
+    terminal owner inside another. A submenu that returns `CloseMenu` closes the list too.
     """
     messages: list[str] = []
     cursor = 0
     while True:
-        step = await run_worker(partial(_next_step, menu, runners, cursor, messages))
+        step = await run_worker(partial(_next_step, menu, runners, cursor, messages, submenus or ()))
         if step is None:
             return messages
         row, cursor = step
         if row is None:
             continue
         if submenus and row.key in submenus:
-            messages.extend(await submenus[row.key]())
+            done = await submenus[row.key]()
+            messages.extend(done)
+            if isinstance(done, CloseMenu):
+                return messages
             continue
         message = await run_worker(partial(_edit, menu, row, runners))
         if message is not None:
@@ -311,10 +367,14 @@ async def run_flow_async(
 
 
 def _next_step(
-    menu: FieldMenu, runners: Runners, cursor: int, messages: list[str]
+    menu: FieldMenu, runners: Runners, cursor: int, messages: list[str], action_keys: Collection[str]
 ) -> tuple[FieldRow | None, int] | None:
     """Show the list and act on the pick in one step, so sources that touch the keyring stay off the event loop."""
-    return _selected(menu, runners.run_list(menu.build(cursor)), messages)
+    menu.action_keys = action_keys
+    result = runners.run_list(menu.build(cursor))
+    messages.extend(menu.messages)
+    menu.messages.clear()
+    return _selected(menu, result, messages)
 
 
 def _selected(menu: FieldMenu, result: MenuResult, messages: list[str]) -> tuple[FieldRow | None, int] | None:

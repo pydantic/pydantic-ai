@@ -133,7 +133,7 @@ def _present_command_ref(args: Mapping[str, object]) -> ToolCallPresentation | N
 
 
 # Recognized `FileSystem`/`Shell` tool names mapped to their presenters. Coupling is by tool
-# name (a rename in those capabilities silently falls back to generic rendering).
+# name (a renamed tool falls back to generic rendering).
 _HANDLERS: dict[str, Callable[[Mapping[str, object]], ToolCallPresentation | None]] = {
     'read_file': _present_read,
     'file_info': _present_read,

@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai._model_errors import transport_phase
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import (
@@ -21,16 +22,20 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelRequestTimeout,
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    OutputTokenLimitExceeded,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -77,6 +82,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
         lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
+        lambda: OutputTokenLimitExceeded('test'),
         lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
     ids=[
@@ -94,6 +100,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'ModelHTTPError-ModelRateLimitError',
         'ModelRequestTimeout',
         'IncompleteToolCall',
+        'OutputTokenLimitExceeded',
         'ToolRetryError',
     ],
 )
@@ -117,8 +124,9 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     [
         (lambda: ModelRetry('retry msg'), {'message': 'retry msg'}),
         (lambda: ToolFailed('failed msg'), {'message': 'failed msg'}),
-        (lambda: CallDeferred(), {'metadata': None}),
-        (lambda: CallDeferred({'key': 'value'}), {'metadata': {'key': 'value'}}),
+        (lambda: CallDeferred(), {'metadata': None, 'kind': 'external'}),
+        (lambda: CallDeferred({'key': 'value'}), {'metadata': {'key': 'value'}, 'kind': 'external'}),
+        (lambda: CallDeferred({'key': 'value'}, kind='question'), {'metadata': {'key': 'value'}, 'kind': 'question'}),
         (lambda: ApprovalRequired(), {'metadata': None}),
         (lambda: ApprovalRequired({'key': 'value'}), {'metadata': {'key': 'value'}}),
         (lambda: UserError('user error'), {'message': 'user error'}),
@@ -229,13 +237,34 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'hint': 'Check the provider account setting',
             },
         ),
+        (
+            lambda: ModelHTTPError.for_category(
+                ModelNotFoundError,
+                status_code=404,
+                model_name='gpt-5x',
+                provider_error_code='model_not_found',
+                suggested_model_id='openai:gpt-5',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'provider_error_code': 'model_not_found',
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (lambda: OutputTokenLimitExceeded('cut off'), {'message': 'cut off', 'body': None}),
+        (
+            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
+            {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
+        ),
     ],
     ids=[
         'ModelRetry',
         'ToolFailed',
         'CallDeferred-no-metadata',
         'CallDeferred-with-metadata',
+        'CallDeferred-question',
         'ApprovalRequired-no-metadata',
         'ApprovalRequired-with-metadata',
         'UserError',
@@ -256,7 +285,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelContextWindowExceededError',
         'ModelHTTPError-with-hint',
         'ModelHTTPError-with-model-suggestion-and-hint',
+        'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
+        'OutputTokenLimitExceeded',
+        'InlinedSchemaTooLargeError',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):
@@ -562,19 +594,19 @@ def test_model_http_error_headers_provider_openai():
     """Headers from an openai.APIStatusError land on ModelHTTPError.
 
     This is a unit test — not a VCR test — because the header propagation path
-    lives in our own _map_api_errors helper, not in recorded API behaviour.
+    lives in our own map_api_errors helper, not in recorded API behaviour.
     """
     openai = pytest.importorskip('openai', reason='openai extra not installed')
     import httpx
 
-    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._errors import map_api_errors
 
     req = httpx.Request('POST', 'https://api.openai.com/v1/chat/completions')
     resp = httpx.Response(429, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, request=req)
     sdk_exc = openai.RateLimitError('Rate limited', response=resp, body=None)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors('gpt-4o'):
+        with map_api_errors('gpt-4o'):
             raise sdk_exc
 
     exc = exc_info.value
@@ -587,7 +619,7 @@ def test_model_http_error_headers_provider_openai():
 
 @pytest.mark.parametrize(
     'model_name',
-    ['gpt-5', 'claude-sonet-4-5'],
+    ['gpt-5.6-sol', 'claude-sonet-5-5'],
     ids=['requested-known-model', 'different-provider-model'],
 )
 def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
@@ -595,7 +627,7 @@ def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
     openai = pytest.importorskip('openai', reason='openai extra not installed')
     import httpx
 
-    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._errors import map_api_errors
 
     req = httpx.Request('POST', 'https://example.com/v1/responses')
     resp = httpx.Response(404, request=req)
@@ -606,7 +638,7 @@ def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors(model_name):
+        with map_api_errors(model_name):
             raise sdk_exc
 
     assert exc_info.value.suggested_model_id is None
@@ -833,7 +865,18 @@ _HTTP_CATEGORIES = [
     ModelOverloadedError,
     ModelServerError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 ]
+
+
+@pytest.mark.parametrize('category', [ModelContextWindowExceededError, ModelAuthenticationError, ModelNotFoundError])
+def test_rejection_subcategories_are_rejected_requests(category: type[ModelRequestRejectedError]):
+    """An overflow, a rejected credential and an unknown model are rejected requests, with or without a status."""
+    assert isinstance(category('gpt-4', 'rejected'), ModelRequestRejectedError)
+    http_error = ModelHTTPError.for_category(category, status_code=400, model_name='gpt-4')
+    assert isinstance(http_error, ModelRequestRejectedError) and isinstance(http_error, category)
 
 
 @pytest.mark.parametrize('category', _HTTP_CATEGORIES, ids=lambda c: c.__name__)

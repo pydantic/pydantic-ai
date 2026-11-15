@@ -17,7 +17,7 @@ does:
   [`elevenlabs_language`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_language]);
 - voices are ElevenLabs voices, set with
   [`elevenlabs_voice`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_voice];
-- `response.done` carries no usage, so sessions report no token counts;
+- `response.done` carries no usage, so sessions count these responses as unmeasured;
 - `conversation.item.delete` is not implemented, so `openai_prune_tool_items` is ignored;
 - images are dropped from user messages, and seeded history can only carry text;
 - text output (`output_modalities: ['text']`) ignores audio input altogether, so `output_modality='text'` is
@@ -82,7 +82,6 @@ from ._lifecycle import (
 )
 from ._openai_lifecycle import OpenAILifecycle
 from ._openai_protocol import (
-    AUTO_TRANSCRIPTION_MODEL,
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_CREATE_EVENT,
     ProtocolResponse,
@@ -149,8 +148,9 @@ class ElevenLabsRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `openai_voice` (ElevenLabs voices are set with `elevenlabs_voice`), `openai_input_noise_reduction`,
     `openai_output_speed`, `openai_truncation`, and `openai_prune_tool_items` and `openai_keep_tool_items` (the
     server doesn't implement `conversation.item.delete`). So are the shared `parallel_tool_calls` and `thinking`
-    settings. Input audio is always transcribed: `input_transcription_model` takes `'auto'` (the default) or
-    `None`, which still leaves transcripts on, and any other value raises a `UserError`.
+    settings. Input audio is always transcribed, with no model to choose, so `input_transcription_model` is
+    ignored too: `None` still leaves transcripts on, and a pinned id has no effect (set the language with
+    `elevenlabs_language`).
     """
 
     elevenlabs_voice: str
@@ -256,6 +256,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
 
     _provider_name = 'elevenlabs'
     _provider_label = 'ElevenLabs Realtime'
+    _omits_response_usage: ClassVar[bool] = True
     # Images are dropped from conversation items, so there is nowhere for a tool result's images to go.
     _supports_tool_result_images = False
     _keep_alive_after: ClassVar[float | None] = 45.0
@@ -550,6 +551,7 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
     """
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = ElevenLabsRealtimeConnection
+    unsupported_settings = frozenset({'parallel_tool_calls', 'input_transcription_model'})
     _elevenlabs_provider: ElevenLabsProvider = field(init=False, repr=False)
 
     def __init__(
@@ -627,13 +629,6 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         model_settings: OpenAIRealtimeModelSettings | None,
     ) -> dict[str, Any]:
         settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
-        transcription_model = settings.get('input_transcription_model', AUTO_TRANSCRIPTION_MODEL)
-        if transcription_model not in (AUTO_TRANSCRIPTION_MODEL, None):
-            raise UserError(
-                'Eleven Realtime always transcribes input audio and takes no transcription model: leave '
-                "`input_transcription_model` at `'auto'`, and set the language with `elevenlabs_language`; "
-                f'got {transcription_model!r}.'
-            )
         config = super()._session_config(instructions, tools, model_settings=settings)
         config['model'] = self.model
         audio_input: dict[str, Any] = config['audio']['input']

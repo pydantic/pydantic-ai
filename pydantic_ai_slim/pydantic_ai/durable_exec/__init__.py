@@ -14,7 +14,9 @@ capability you attach to an [`Agent`][pydantic_ai.Agent]:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._base import BaseDurabilityCapability
+    from .._durable_replay import record_durable_unit, replay_scope
+    from ..external_events import ExternalEventError, ExternalEventWaiter, external_event_scope
+    from ._base import BaseDurabilityCapability, conversation_id_from_run_id
     from ._capability_operation import (
         CapabilityMethodDeclaration,
         CapabilityOperationParams,
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     'BaseDurabilityCapability',
+    'conversation_id_from_run_id',
     'ToolsetCallToolId',
     'CallableOperationBackend',
     'ModelCancelSuspendedResponseId',
@@ -115,10 +118,18 @@ __all__ = [
     'WorkspaceCall',
     'WorkspaceCallParams',
     'WorkspaceCallResult',
+    'ExternalEventError',
+    'ExternalEventWaiter',
+    'external_event_scope',
+    'record_durable_unit',
+    'replay_scope',
 ]
 
 _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
+    'record_durable_unit': ('.._durable_replay', 'record_durable_unit'),
+    'replay_scope': ('.._durable_replay', 'replay_scope'),
+    'conversation_id_from_run_id': ('._base', 'conversation_id_from_run_id'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
     'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),
     'IDENTITY_CODEC': ('._codec', 'IDENTITY_CODEC'),
@@ -168,6 +179,9 @@ _exports = {
     'WorkspaceCall': ('._workspace', 'WorkspaceCall'),
     'WorkspaceCallParams': ('._workspace', 'WorkspaceCallParams'),
     'WorkspaceCallResult': ('._workspace', 'WorkspaceCallResult'),
+    'ExternalEventError': ('..external_events', 'ExternalEventError'),
+    'ExternalEventWaiter': ('..external_events', 'ExternalEventWaiter'),
+    'external_event_scope': ('..external_events', 'external_event_scope'),
 }
 
 

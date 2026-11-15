@@ -33,6 +33,24 @@ async def ask(question: str, conversation_id: str) -> str:
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Conversation Search: recall what compaction dropped
+    accDescr: The model sends a query to search_conversation_history, the tool of the ConversationSearch capability, and gets BM25-ranked excerpts. StepPersistence saves the full history to a step store, which holds snapshots of each step, from before compaction too, and ConversationSearch replays complete snapshots from it. With scope='conversation', other conversations are not searched.
+    model(["model"])
+    search["ConversationSearch()<br/>search_conversation_history"]:::capability
+    persist["StepPersistence"]
+    store[("step store<br/>snapshots of each step,<br/>before compaction too")]:::external
+    other["other conversations<br/>scope='conversation'"]:::blocked
+    model <-->|"query,<br/>BM25-ranked excerpts"| search
+    persist -->|"saves the full history"| store
+    search -->|"replays complete<br/>snapshots"| store
+    search -.-x|"not searched"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Why
 
 Compaction keeps the live history inside the context window, so an exact detail (a file path, a value, a decision) can end up only in a summary's paraphrase, and nothing from earlier runs is in context at all. `ConversationSearch` writes nothing itself. It reads what `StepPersistence` stored, through a `HistorySource`, and lets the model pull exact excerpts back on demand. Give both capabilities the same store instance; they can be listed in any order.

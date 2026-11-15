@@ -29,7 +29,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
 )
-from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
+from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, Instructions, revalidate_function_call
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -131,6 +131,15 @@ class _GetToolsTransport(TemporalParameterTransport[ToolsetGetToolsParams, tuple
         return ToolsetGetToolsParams(
             self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         )
+
+
+class _GetInstructionsTransport(_GetToolsTransport):
+    """An MCP server's `get_instructions` takes the parameters `get_tools` does, and returns its instructions.
+
+    The result type is what the workflow decodes the activity's result as, so it can't be `get_tools`'.
+    """
+
+    result_type = Instructions
 
 
 class _MCPCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
@@ -548,8 +557,8 @@ class TemporalParameterTransports(ParameterTransports):
     def get_tools(self, toolset: AbstractToolset[Any]) -> _GetToolsTransport:
         return _GetToolsTransport(self._durability)
 
-    def get_instructions(self, toolset: AbstractToolset[Any]) -> _GetToolsTransport:
-        return _GetToolsTransport(self._durability)
+    def get_instructions(self, toolset: AbstractToolset[Any]) -> _GetInstructionsTransport:
+        return _GetInstructionsTransport(self._durability)
 
     def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> _DynamicGetToolsTransport:
         return _DynamicGetToolsTransport(self._durability)

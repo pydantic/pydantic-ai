@@ -53,6 +53,8 @@ def loaded(plugin: PluginHost[None]) -> GoogleWorkspace[None]:
     [factory] = load_plugin(google_workspace.GoogleWorkspacePlugin, plugin).capabilities
     capability = per_run(factory)(context())
     assert is_workspace(capability)
+    assert capability.defer_loading
+    assert capability.id == 'google_workspace', 'stable whatever the products, so a load survives an edit'
     return capability
 
 
@@ -115,7 +117,6 @@ async def test_the_conventional_key_is_resolved_on_every_run(monkeypatch: pytest
     capability = loaded(plugin)
     assert capability.services == ('gmail', 'calendar', 'drive')
     assert capability.read_only is True
-    assert capability.id == 'google-workspace-calendar-drive-gmail'
     assert run_token(capability) == 'saved-token'
     api_keys.save_key(name='GOOGLE_ACCESS_TOKEN', value='refreshed-token')
     assert run_token(capability) == 'refreshed-token'

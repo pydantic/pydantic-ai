@@ -1,0 +1,5 @@
+{
+  "against": "v2.60.0",
+  "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
+}

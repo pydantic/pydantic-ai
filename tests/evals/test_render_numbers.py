@@ -63,10 +63,34 @@ def test_default_render_number(value: float | int, expected: str):
         (0.02, -25.0, snapshot('-25.0 / -1,250x')),
         (0.001, 25.0, snapshot('+25.0')),
         (0.0, 25.0, snapshot('+25.0')),
+        (0.0, -25.0, snapshot('-25.0')),
+        (1.0, -3.0, snapshot('-4.0 / -3.0x')),
+        # A negative base keeps the percentage form past 100%, where a multiplier would read backwards.
+        (-2.0, -1.0, snapshot('+1.0 / +50.0%')),
+        (-1.0, -2.0, snapshot('-1.0 / -100.0%')),
+        (-1.0, -3.0, snapshot('-2.0 / -200.0%')),
+        (-1.0, 0.0, snapshot('+1.0 / +100.0%')),
+        (-2.0, 1.0, snapshot('+3.0 / +150.0%')),
+        (-1.0, 3.0, snapshot('+4.0 / +400.0%')),
+        (-0.5, -0.25, snapshot('+0.25 / +50.0%')),
+        (-0.02, -25.0, snapshot('-25.0 / -124,900.0%')),
+        (-0.001, -25.0, snapshot('-25.0')),
+        (-10.023, -10.024, snapshot('-0.001')),
     ],
 )
 def test_default_render_number_diff(old: int | float, new: int | float, expected: str | None):
     assert default_render_number_diff(old, new) == expected
+
+
+@pytest.mark.parametrize('old', [-2.0, -0.5, 0.5, 2.0])
+@pytest.mark.parametrize('new', [-5.0, -1.0, -0.25, 0.0, 0.25, 1.0, 5.0])
+def test_default_render_number_diff_sign_matches_direction(old: float, new: float):
+    """The absolute and relative halves of a diff never point in opposite directions, whatever the signs."""
+    rendered = default_render_number_diff(old, new)
+    assert rendered is not None
+    abs_part, _, rel_part = rendered.partition(' / ')
+    assert rel_part
+    assert abs_part.startswith('-') == rel_part.startswith('-')
 
 
 @pytest.mark.parametrize(

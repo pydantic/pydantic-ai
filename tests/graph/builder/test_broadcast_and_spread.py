@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import anyio
+import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.graph_builder import EndMarker
 from pydantic_graph.join import reduce_list_append
 
 
@@ -48,6 +50,49 @@ async def test_broadcast_to_multiple_steps():
     result = await graph.run(state=CounterState())
     # Results can be in any order due to parallel execution
     assert sorted(result) == [11, 12, 13]
+
+
+@pytest.mark.parametrize('separate_edges', [False, True])
+async def test_broadcast_starts_branches_in_edge_order(separate_edges: bool):
+    """Broadcast branch tasks are started in the order their destinations were added, not reversed.
+
+    This asserts the task list `graph.iter()` yields rather than the order the steps begin running, which is up to
+    the async backend's scheduler.
+    """
+    g = GraphBuilder(output_type=list[str])
+
+    @g.step
+    async def c(ctx: StepContext[None, None, None]) -> str:
+        return 'c'
+
+    @g.step
+    async def a(ctx: StepContext[None, None, None]) -> str:
+        return 'a'
+
+    @g.step
+    async def b(ctx: StepContext[None, None, None]) -> str:
+        return 'b'
+
+    collect = g.join(reduce_list_append, initial_factory=list[str])
+
+    if separate_edges:
+        g.add_edge(g.start_node, c)
+        g.add_edge(g.start_node, a)
+        g.add_edge(g.start_node, b)
+    else:
+        g.add(g.edge_from(g.start_node).to(c, a, b))
+    g.add(
+        g.edge_from(c, a, b).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    task_batches: list[list[str]] = []
+    async with g.build().iter() as run:
+        async for event in run:
+            if not isinstance(event, EndMarker):
+                task_batches.append([task.node_id for task in event])
+    # The first batch is the broadcast fork itself; the second is its branches.
+    assert task_batches[1] == ['c', 'a', 'b']
 
 
 async def test_map_over_list():

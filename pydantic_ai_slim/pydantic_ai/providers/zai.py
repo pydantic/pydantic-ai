@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.zai import zai_model_profile
 
@@ -19,11 +20,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class ZaiProvider(_OpenAICompatibleProvider):
+class ZaiProvider(_OpenAISDKProvider):
     """Provider for Z.AI (Zhipu AI) API.
 
     Z.AI provides GLM models with support for thinking/reasoning mode
@@ -54,6 +55,7 @@ class ZaiProvider(_OpenAICompatibleProvider):
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
             ),
+            special_token_route_profile('zai', model_name),
         )
 
     @overload

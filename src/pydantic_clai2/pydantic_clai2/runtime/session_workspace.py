@@ -10,12 +10,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from anyio import to_thread
+
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.plugins.loader import SessionPlugins
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -65,12 +67,12 @@ class SessionWorkspace:
         Raises `ValueError` for a path that is not a directory or a project file that does not load,
         and `RuntimeError` while something runs; either way nothing changes.
         """
-        directory = workspace_directory(path)
+        directory = await to_thread.run_sync(workspace_directory, path)
         if str(directory) == self.session.workspace:
             return
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
-        project = load_project_settings(directory)
+        project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
         self.context.use_project(project, settings)

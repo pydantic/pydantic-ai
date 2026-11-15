@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+}

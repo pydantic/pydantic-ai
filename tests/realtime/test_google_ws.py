@@ -24,7 +24,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, StringConstraints
 
-from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
+from pydantic_ai import Agent, RequestUsage, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -252,6 +252,32 @@ async def test_rejected_config_raises_realtime_error(
     assert exc_info.value.message == snapshot(
         "Gemini Live connection closed: 1007 None. Requested voice api_name 'alloy' is not available for model models/gemini-2.5-flash-native-audio-preview-09-2025"
     )
+
+
+async def test_proactive_audio_on_the_default_client(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`google_proactive_audio` opens and answers on the provider's default client.
+
+    `proactivity` is served on `v1alpha` only, and the provider's client is on the SDK default `v1beta`, so the
+    Live connection dials `v1alpha` itself; the setup frame carries the field.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in two or three words.')
+
+    settings = GoogleRealtimeModelSettings(google_proactive_audio=True)
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    [setup] = sent_frames_containing(cassette, 'proactivity')
+    assert setup['setup']['proactivity'] == {'proactive_audio': True}
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart) and part.transcript
 
 
 @pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
@@ -669,6 +695,87 @@ async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider
     assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Saved oak.'])
 
 
+async def test_tool_with_property_names_and_contains_refs(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A tool with `$ref`s under `propertyNames` and `contains` is declared without them, and the model calls it.
+
+    `Schema` has neither keyword, so both are dropped before the walk, and the `Node` recursion that only
+    `contains` reaches isn't refused. Pydantic never emits `contains`, so the schema is written by hand.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+
+    def tally(nodes: list[str], counts: dict[str, int] | None = None) -> str:
+        return f'Tallied {len(nodes)} nodes.'
+
+    tally_tool = Tool.from_schema(
+        tally,
+        name='tally',
+        description='Tally counts per color across named nodes.',
+        json_schema={
+            '$defs': {
+                'Color': {'type': 'string', 'enum': ['red', 'blue']},
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        'name': {'type': 'string'},
+                        'kids': {'type': 'array', 'items': {'type': 'string'}, 'contains': {'$ref': '#/$defs/Node'}},
+                    },
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'counts': {
+                    'type': 'object',
+                    'additionalProperties': {'type': 'integer'},
+                    'propertyNames': {'$ref': '#/$defs/Color'},
+                },
+                'nodes': {'type': 'array', 'items': {'type': 'string'}, 'contains': {'$ref': '#/$defs/Node'}},
+            },
+            'required': ['nodes'],
+        },
+    )
+    agent = Agent(
+        instructions='Use tally when asked to tally, then confirm it in one short sentence.', tools=[tally_tool]
+    )
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Tally the nodes ["oak"].')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, 'Tally counts per color across named nodes.')
+    assert setup['setup']['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Tally counts per color across named nodes.',
+                        'name': 'tally',
+                        'parameters': {
+                            'properties': {
+                                'counts': {'type': 'OBJECT'},
+                                'nodes': {'items': {'type': 'STRING'}, 'type': 'ARRAY'},
+                            },
+                            'required': ['nodes'],
+                            'type': 'OBJECT',
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    assert [e.part.args_as_dict() for e in events if isinstance(e, FunctionToolCallEvent)] == snapshot(
+        [{'nodes': ['oak']}]
+    )
+    assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Tallied 1 nodes.'])
+
+
 async def test_asap_enqueue_waits_for_response_boundary(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -754,12 +861,12 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
 
     assert len(completions) == 2
     assert [
-        part.content
+        (type(part).__name__, part.content)
         for message in session.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
-    ] == ['Begin.', '<system>Say exactly "QUEUED MARKER RECEIVED".</system>']
+        if isinstance(part, (UserPromptPart, SystemPromptPart))
+    ] == [('UserPromptPart', 'Begin.'), ('SystemPromptPart', 'Say exactly "QUEUED MARKER RECEIVED".')]
     assert [
         part.transcript
         for message in session.all_messages()
@@ -941,6 +1048,7 @@ def test_profile_allow_seeding() -> None:
         supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         supports_audio_output=True,
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
@@ -954,6 +1062,7 @@ def test_profile_allow_seeding() -> None:
         supported_native_tools=frozenset({WebSearchTool}),
         # Gemini Live never reports user speech start/end; a UI must key off interruption events.
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=True,

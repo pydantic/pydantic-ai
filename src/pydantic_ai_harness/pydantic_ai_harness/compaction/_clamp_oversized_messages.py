@@ -63,6 +63,9 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     Clamping rewrites message content, so it invalidates the provider's prompt cache from the
     clamped message onward. That is unavoidable here -- the alternative is a failed request.
 
+    A clamped part also loses its item ID (`TextPart.id`, `ToolCallPart.id`): the OpenAI Responses
+    API uses its stored copy of an item sent with its ID and ignores the content sent alongside.
+
     A part is clamped only when it is oversized *and* the clamp actually shrinks it, so set
     `keep_head_chars` + `keep_tail_chars` well below your per-part threshold.
 
@@ -134,6 +137,24 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
             return None
         return clamped
 
+    def _clamp_part(self, part: ModelResponsePart) -> ModelResponsePart | None:
+        """The clamped copy of *part*, or `None` if it is not clamped."""
+        if isinstance(part, TextPart):
+            clamped = self._clamp(part.content)
+            # The OpenAI Responses API resolves an item ID to its stored copy and ignores the
+            # content sent with it, so an edited part can't keep its ID. Same for the args below.
+            return None if clamped is None else replace(part, content=clamped, id=None)
+        # Exact type, not `isinstance`: typed `ToolCallPart` subclasses such as
+        # `ToolSearchCallPart` and `LoadCapabilityCallPart` narrow `args` to a typed shape
+        # that `ModelMessagesTypeAdapter` validates when persisted history is restored
+        # (e.g. a `StepPersistence` resume). Replacing that shape with the `_clamped`
+        # object keeps the concrete class but fails the round-trip, so only plain tool
+        # calls are clamped.
+        if type(part) is ToolCallPart and self.clamp_tool_call_args:
+            clamped = self._clamp(part.args_as_json_str())
+            return None if clamped is None else replace(part, args={_CLAMP_ARGS_KEY: clamped}, id=None)
+        return None
+
     async def compact(
         self,
         messages: list[ModelMessage],
@@ -141,34 +162,21 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     ) -> list[ModelMessage]:
         """Clamp every oversized response text part (and tool-call args, if enabled)."""
         out: list[ModelMessage] = []
-        for msg in messages:
-            if not isinstance(msg, ModelResponse):
-                out.append(msg)
+        for message in messages:
+            if not isinstance(message, ModelResponse):
+                out.append(message)
                 continue
 
             new_parts: list[ModelResponsePart] = []
             changed = False
-            for part in msg.parts:
-                if isinstance(part, TextPart):
-                    clamped = self._clamp(part.content)
-                    if clamped is not None:
-                        new_parts.append(replace(part, content=clamped))
-                        changed = True
-                        continue
-                # Exact type, not `isinstance`: typed `ToolCallPart` subclasses such as
-                # `ToolSearchCallPart` and `LoadCapabilityCallPart` narrow `args` to a typed shape
-                # that `ModelMessagesTypeAdapter` validates when persisted history is restored
-                # (e.g. a `StepPersistence` resume). Replacing that shape with the `_clamped`
-                # object keeps the concrete class but fails the round-trip, so only plain tool
-                # calls are clamped.
-                elif type(part) is ToolCallPart and self.clamp_tool_call_args:
-                    clamped = self._clamp(part.args_as_json_str())
-                    if clamped is not None:
-                        new_parts.append(replace(part, args={_CLAMP_ARGS_KEY: clamped}))
-                        changed = True
-                        continue
-                new_parts.append(part)
-            out.append(replace(msg, parts=new_parts) if changed else msg)
+            for part in message.parts:
+                clamped_part = self._clamp_part(part)
+                if clamped_part is None:
+                    new_parts.append(part)
+                else:
+                    new_parts.append(clamped_part)
+                    changed = True
+            out.append(replace(message, parts=new_parts) if changed else message)
         return out
 
     async def before_model_request(

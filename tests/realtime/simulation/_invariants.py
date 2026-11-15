@@ -533,11 +533,19 @@ class Checker:
             return False
         truth = self.sim.truth
         # A call the client never saw, or one from a response that was cancelled or failed, leads nowhere; nor
-        # does one the provider cancelled. Any other has to be answered, and its answer spoken.
+        # does one the provider cancelled, or gave up on in a response the client had seen start by `by`. Any other
+        # has to be answered, and its answer spoken.
         calls = [
             call
             for call in map(truth.tool_calls.__getitem__, response.tool_calls)
-            if call.read and response.status == 'completed' and not call.cancelled_by_server
+            if call.read
+            and response.status == 'completed'
+            and not call.cancelled_by_server
+            and not (
+                call.abandoned_by is not None
+                and (started := truth.responses[call.abandoned_by].started_read) is not None
+                and started <= by
+            )
         ]
         outputs = [truth.input(call.call_id) for call in calls]
         return all(
@@ -594,9 +602,9 @@ class Checker:
         def ended_by_failure(since: int) -> bool:
             """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
 
-            A tool that raised, a usage limit a tool's result would pass, or a tool result that failed to send ends the
-            exchange in progress, though the session goes on receiving. (Not a tool failure whose result went out
-            anyway, as on GPT-Live: the model answers it, so the exchange goes on.)
+            A usage limit a tool's result would pass, or a tool result that failed to send, ends the exchange in
+            progress, though the session goes on receiving. (Not a tool that raised, whose failure result goes out on
+            every provider: the model answers it, so the exchange goes on.)
             """
             return any(since < at <= returned for at in sim.exchanges_abandoned_at)
 

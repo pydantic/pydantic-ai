@@ -33,7 +33,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileOverflowStore, Spill
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
@@ -218,6 +219,7 @@ async def test_dynamic_tool_discovery_and_call_run_as_render_child_tasks() -> No
     assert 'dynamic-support__dynamic_toolset__dynamic-tools.call_tool' in context.task_names
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
     """A dynamic toolset's child tasks list it under the prefix the run listed it under.
 
@@ -668,7 +670,9 @@ async def test_explicit_overflow_reader_opt_out_reads_the_parent_tasks_spill(tmp
         name='overflow-reader',
         deps_type=type(None),
         capabilities=[
-            ToolOutputLimits(bands=[Band(over=20, action=Spill(preview_chars=10))], store=LocalFileStore(tmp_path)),
+            ToolOutputLimits(
+                bands=[Band(over=20, action=Spill(preview_chars=10))], store=LocalFileOverflowStore(tmp_path)
+            ),
             runtime,
         ],
     )

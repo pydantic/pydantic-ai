@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
+from tests.conftest import detach_dbos_logging, without_admin_server
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -17,10 +17,10 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -37,9 +37,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_relevance_compaction',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance
@@ -109,7 +108,7 @@ async def _workflow() -> list[str]:
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, CompactionPart) and part.content is not None
     ]
 
 
@@ -118,9 +117,9 @@ async def test_dbos_replays_the_recorded_judgements_and_summary(dbos: DBOS) -> N
     workflow_id = str(uuid.uuid4())
 
     with SetWorkflowID(workflow_id):
-        assert await _workflow() == ['Summary of previous conversation:\n\nnested summary']
+        assert await _workflow() == ['nested summary']
     with SetWorkflowID(workflow_id):
-        assert await _workflow() == ['Summary of previous conversation:\n\nnested summary']
+        assert await _workflow() == ['nested summary']
 
     assert _calls == {'judge': 2, 'summary': 1}
     steps = {step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)}

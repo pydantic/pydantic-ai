@@ -38,7 +38,9 @@ def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     provider = LiteLLMProvider(api_key='test-key')
 
     mock_profile: dict[str, object] = {'supports_tools': True}
-    mock_openai_profile = mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile)
+    mock_openai_profile = mocker.patch(
+        'pydantic_ai.providers.openai_compatible.openai_model_profile', return_value=mock_profile
+    )
 
     profile = provider.model_profile('gpt-3.5-turbo')
 
@@ -55,21 +57,47 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
 
     mock_profile: dict[str, object] = {'supports_tools': True}
 
-    # Mock all profile functions
+    # Mock all profile functions, in the shared family map and in the OpenAI-compatible provider's own vendors
     mock_profiles = {
-        'openai': mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile),
-        'anthropic': mocker.patch('pydantic_ai.providers.litellm.anthropic_model_profile', return_value=mock_profile),
-        'google': mocker.patch('pydantic_ai.providers.litellm.google_model_profile', return_value=mock_profile),
-        'meta': mocker.patch('pydantic_ai.providers.litellm.meta_model_profile', return_value=mock_profile),
-        'mistral': mocker.patch('pydantic_ai.providers.litellm.mistral_model_profile', return_value=mock_profile),
-        'cohere': mocker.patch('pydantic_ai.providers.litellm.cohere_model_profile', return_value=mock_profile),
-        'amazon': mocker.patch('pydantic_ai.providers.litellm.amazon_model_profile', return_value=mock_profile),
-        'deepseek': mocker.patch('pydantic_ai.providers.litellm.deepseek_model_profile', return_value=mock_profile),
-        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_model_profile', return_value=mock_profile),
-        'grok': mocker.patch('pydantic_ai.providers.litellm.grok_model_profile', return_value=mock_profile),
-        'moonshotai': mocker.patch('pydantic_ai.providers.litellm.moonshotai_model_profile', return_value=mock_profile),
-        'qwen': mocker.patch('pydantic_ai.providers.litellm.qwen_model_profile', return_value=mock_profile),
+        family: mocker.MagicMock(return_value=mock_profile)
+        for family in (
+            'anthropic',
+            'google',
+            'meta',
+            'mistral',
+            'cohere',
+            'amazon',
+            'deepseek',
+            'groq',
+            'grok',
+            'moonshotai',
+            'qwen',
+        )
     }
+    mock_profiles['openai'] = mocker.patch(
+        'pydantic_ai.providers.openai_compatible.openai_model_profile', return_value=mock_profile
+    )
+    mocker.patch('pydantic_ai.providers.openai_compatible.mistral_model_profile', mock_profiles['mistral'])
+    mocker.patch.dict(
+        'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES',
+        {
+            'anthropic': mock_profiles['anthropic'],
+            'openai': mock_profiles['openai'],
+            'google': mock_profiles['google'],
+            'cohere': mock_profiles['cohere'],
+            'amazon': mock_profiles['amazon'],
+            'meta-llama': mock_profiles['meta'],
+            'meta': mock_profiles['meta'],
+            'deepseek': mock_profiles['deepseek'],
+            'moonshotai': mock_profiles['moonshotai'],
+            'x-ai': mock_profiles['grok'],
+            'qwen': mock_profiles['qwen'],
+        },
+    )
+    mocker.patch.dict(
+        'pydantic_ai.providers.openai_compatible._OPENAI_COMPATIBLE_VENDOR_PROFILES',
+        {'bedrock': mock_profiles['amazon'], 'groq': mock_profiles['groq']},
+    )
 
     # Test models without provider prefix (should use openai profile)
     models_without_prefix = ['gpt-4', 'claude-sonnet-4-5', 'gemini-pro', 'llama2-70b']

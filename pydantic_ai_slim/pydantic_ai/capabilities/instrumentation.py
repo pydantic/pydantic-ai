@@ -14,6 +14,7 @@ from pydantic_core import ValidationError, to_json
 
 from pydantic_ai import _usage_attribution
 from pydantic_ai._cache_health import CacheHealthDetector, CollapseReason, ConversationCacheMarkStore
+from pydantic_ai._durable_replay import start_as_current_span
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -70,8 +71,11 @@ from .abstract import (
 
 
 def _usage_response(request_context: ModelRequestContext) -> ModelResponse | None:
-    """Represent the usage committed at the provider boundary without changing semantic output."""
-    responses = request_context._usage_responses  # pyright: ignore[reportPrivateUsage]
+    """Represent the usage committed at the provider boundary without changing semantic output.
+
+    A response a hook rejected to make another attempt is left out: its failed attempt's span reports it.
+    """
+    responses = request_context._unrejected_usage_responses  # pyright: ignore[reportPrivateUsage]
     if not responses:
         return None
     usage = RequestUsage()
@@ -128,7 +132,10 @@ class Instrumentation(AbstractCapability[Any]):
     continues a conversation is judged against what the previous run cached. A request long enough
     to cache on a model that needs prompt caching configured, but has none configured, sets
     `pydantic_ai.cache.not_enabled` and emits a `pydantic_ai.cache.not_enabled` span event, once per
-    conversation.
+    conversation. An Anthropic request with cache breakpoints records the ones it asked for and the ones that
+    fit the provider's limit as `pydantic_ai.cache.requested_breakpoints` and
+    `pydantic_ai.cache.applied_breakpoints`, as paths into the request as sent to Anthropic (after consecutive
+    request parts are merged into one message), not into the message history.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -294,7 +301,8 @@ class Instrumentation(AbstractCapability[Any]):
                 span_attributes['gen_ai.agent.description'] = rendered
 
         with (
-            settings.tracer.start_as_current_span(
+            start_as_current_span(
+                settings.tracer,
                 names.get_agent_run_span_name(agent_name),
                 attributes=span_attributes,
                 record_exception=False,
@@ -448,7 +456,7 @@ class Instrumentation(AbstractCapability[Any]):
 
             segments: list[ModelResponse] = []
 
-            def capture_response(response: ModelResponse, time_to_first_chunk: float | None) -> None:
+            def capture_response(response: ModelResponse | None, time_to_first_chunk: float | None) -> None:
                 nonlocal captured_response, captured_time_to_first_chunk
                 captured_response = response
                 captured_time_to_first_chunk = time_to_first_chunk
@@ -578,7 +586,8 @@ class Instrumentation(AbstractCapability[Any]):
         # span, but say so in the message and mark the failure stage for querying.
         attributes['logfire.msg'] = f'invalid tool call: {call.tool_name}'
         attributes[names.tool_failure_stage_attr] = 'validation'
-        with self.settings.tracer.start_as_current_span(
+        with start_as_current_span(
+            self.settings.tracer,
             names.get_tool_span_name(call.tool_name),
             attributes=attributes,
             record_exception=False,
@@ -660,7 +669,8 @@ class Instrumentation(AbstractCapability[Any]):
         names = self._instrumentation_names
         include_content = settings.include_content
 
-        with settings.tracer.start_as_current_span(
+        with start_as_current_span(
+            settings.tracer,
             span_name,
             attributes=attributes,
             record_exception=False,

@@ -18,9 +18,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
+SHOW_SANDBOX_CALLS_EVENTS = 'show_sandbox_calls'
+"""The namespace of the events `ShowSandboxCalls` emits."""
+
 
 @dataclass(kw_only=True)
-class SandboxCallStartedEvent(CapabilityEvent, namespace='pydantic_clai2'):
+class SandboxCallStartedEvent(CapabilityEvent, namespace=SHOW_SANDBOX_CALLS_EVENTS):
     """A tool called from inside `run_code` started, or a speculative launch was claimed."""
 
     call: ToolCallPart
@@ -36,7 +39,7 @@ class DelegationToolCallEvent(FunctionToolCallEvent):
 
 
 @dataclass(kw_only=True)
-class SandboxCallFinishedEvent(CapabilityEvent, namespace='pydantic_clai2'):
+class SandboxCallFinishedEvent(CapabilityEvent, namespace=SHOW_SANDBOX_CALLS_EVENTS):
     """A tool called from inside `run_code` returned or failed."""
 
     result: ToolReturnPart

@@ -66,8 +66,8 @@ class ReplStates:
             return await run_sync(path.read_bytes, abandon_on_cancel=True)
         except FileNotFoundError:
             return None
-        except OSError as error:
-            _logger.warning('Could not read the saved REPL state %s: %s', path, error)
+        except OSError as exc:
+            _logger.warning('Could not read the saved REPL state %s: %s', path, exc)
             return None
 
     async def save(self, ctx: RunContext[object], state: bytes | None) -> None:
@@ -87,8 +87,8 @@ class ReplStates:
                 # Abandoned rather than awaited when harness gives up on the save; the write is atomic.
                 deletions = self._deletions.get(path.stem, 0)
                 await run_sync(self._write_unless_deleted, path, state, deletions, abandon_on_cancel=True)
-        except OSError as error:
-            _logger.warning('Could not save the REPL state %s: %s', path, error)
+        except OSError as exc:
+            _logger.warning('Could not save the REPL state %s: %s', path, exc)
 
     def copy(self, *, source: str, target: str) -> None:
         """Give `target` the REPL `source` has now, for a fork.
@@ -105,8 +105,8 @@ class ReplStates:
             target_path.unlink(missing_ok=True)
             if source_path.exists():
                 os.link(source_path, target_path)
-        except OSError as error:
-            _logger.warning('Could not copy the REPL state to %s: %s', target_path, error)
+        except OSError as exc:
+            _logger.warning('Could not copy the REPL state to %s: %s', target_path, exc)
 
     def delete(self, conversation_id: str) -> None:
         """Remove `conversation_id`'s REPL with the session, including one a write still in flight would leave."""
@@ -116,8 +116,8 @@ class ReplStates:
         self._deletions[conversation_id] = self._deletions.get(conversation_id, 0) + 1
         try:
             path.unlink(missing_ok=True)
-        except OSError as error:
-            _logger.warning('Could not delete the REPL state %s: %s', path, error)
+        except OSError as exc:
+            _logger.warning('Could not delete the REPL state %s: %s', path, exc)
 
     def _write_unless_deleted(self, path: Path, state: bytes, deletions: int) -> None:
         """Write `state`, then remove it again if `delete` ran meanwhile.
