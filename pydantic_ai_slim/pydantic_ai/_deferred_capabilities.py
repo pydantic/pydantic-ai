@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 
+@pydantic.with_config(extra='allow')
 class LoadCapabilityArgs(TypedDict):
     """Typed arguments for a `load_capability` tool call."""
 
@@ -35,6 +36,7 @@ class LoadCapabilityArgs(TypedDict):
     """ID of the capability to load."""
 
 
+@pydantic.with_config(extra='allow')
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 
@@ -53,6 +55,9 @@ class LoadCapabilityReturn(TypedDict):
     those still seed the block's value without being sent again.
     """
 
+
+DEFERRED_CAPABILITY_CATALOG_ID = 'deferred_capabilities'
+"""The source key of the deferred capability catalog's instruction block, whose id is `capability:deferred_capabilities`."""
 
 CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
     'capability-load', args=LoadCapabilityArgs, content=LoadCapabilityReturn

@@ -11,7 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
+from pydantic_ai_harness.file_system import FileSystem, FileSystemToolset
 from pydantic_ai_harness.macroscope import Macroscope, MacroscopeToolset
 from pydantic_ai_harness.repo_context import RepoContext, RepoContextToolset
 from pydantic_ai_harness.shell import Shell, ShellToolset

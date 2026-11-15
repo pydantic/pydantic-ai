@@ -143,7 +143,13 @@ class TestCreate:
         host.create_gate = asyncio.Event()
         host.create_then_hang = True
         backend = BoxdSandboxBackend()
-        await backend.run(['true'])
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['true'])
+            with anyio.fail_after(300):
+                while not host.machines:
+                    await anyio.sleep(0)
+            # Only the create runs out of time; the wait for the machine it left behind has a real probe to run.
+            monkeypatch.setattr(f'{_MODULE}._LIFECYCLE_TIMEOUT', 120.0)
         assert backend.ref == _ref(host.only.id)
 
     async def test_a_lost_reply_is_looked_up_among_the_orgs_machines(self, host: FakeBoxd) -> None:

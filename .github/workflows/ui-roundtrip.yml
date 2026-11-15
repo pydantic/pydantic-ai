@@ -106,4 +106,7 @@ jobs:
 
           Close this issue once a nightly run passes.
           EOF
-          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md"
+          # The alert goes to the owner of the UI adapters. `pydanty:skip` keeps pydanty from
+          # triaging it: the run page already shows what failed.
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md" \
+            --assignee dsfaccini --label pydanty:skip

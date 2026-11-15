@@ -14,6 +14,8 @@ from pydantic_clai2.ui.menus.set_menu import SettingsSource
 VERSION = 'version'
 CHECK_WAIT = 1.0
 """Seconds the menu waits for the update check before it first shows: it cannot redraw once the answer comes."""
+ABOUT_MAX_AGE = 300.0
+"""Seconds before opening the menu checks again."""
 
 
 class AboutSource:
@@ -33,16 +35,19 @@ class AboutSource:
 
     def status(self) -> str:
         """Whether a newer CLAI is out on the update channel, checking for one in the background first."""
-        found = self._updates.check(wait=CHECK_WAIT)
+        found = self._updates.check(wait=CHECK_WAIT, max_age=ABOUT_MAX_AGE)
         if found is None:
             return 'Checking for a newer CLAI…'
         if found.error is not None:
             return f'Could not check for a newer CLAI: {found.error}'
+        minutes = int((self._updates.clock() - found.checked) // 60)
+        checked = 'just now' if minutes < 1 else f'{minutes} min ago' if minutes < 60 else f'{minutes // 60} h ago'
         if found.update is None:
             return (
-                f'clai2 is already on the latest version {self._updates.current.label} on the {found.channel} channel.'
+                f'clai2 is already on the latest version {self._updates.current.label} '
+                f'on the {found.channel} channel (checked {checked}).'
             )
-        return f'a new version {found.update.label} of clai2 is available on the {found.channel} channel.'
+        return f'a new version {found.update.label} of clai2 is available on the {found.channel} channel (checked {checked}).'
 
     def rows(self) -> list[FieldRow]:
         """The version, whose note says whether a newer one is out and whose action updates, then the channel."""

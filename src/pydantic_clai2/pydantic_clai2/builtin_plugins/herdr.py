@@ -21,7 +21,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 from pydantic_clai2.builtin_plugins.herdr_client import SOURCE, HerdrClient
 from pydantic_clai2.config.settings_store import config_dir
 from pydantic_clai2.plugins import (
@@ -173,7 +173,7 @@ class _Reporter:
         self.waiting.discard(event.request_id)
         self.report()
 
-    async def usage(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
+    async def usage(self, ctx: RunContext[None], event: ContextUsageMeasuredEvent) -> None:
         self.context = f'{event.fraction:.0%}' if event.resolved else None
         # Mid-turn, so the sidebar's context figure keeps up during a long run.
         self.refresh()
@@ -212,8 +212,8 @@ class _Reporting(AbstractCapability[None]):
     async def _answered(self, ctx: RunContext[None], event: AskUserAnsweredEvent) -> None:
         await self.reporter.answered(ctx, event)
 
-    @on_event(ContextUsageEvent)
-    async def _usage(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
+    @on_event(ContextUsageMeasuredEvent)
+    async def _usage(self, ctx: RunContext[None], event: ContextUsageMeasuredEvent) -> None:
         await self.reporter.usage(ctx, event)
 
 

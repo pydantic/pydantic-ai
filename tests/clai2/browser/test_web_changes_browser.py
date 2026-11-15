@@ -15,7 +15,7 @@ from playwright.async_api import Page, expect
 from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.filesystem import EDIT_FILE_KIND, WRITE_FILE_KIND
+from pydantic_ai_harness.file_system import EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
@@ -114,7 +114,7 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await page.goto(f'{changes_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Changes', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Changes')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     # Opened before the turns, the panel and the header's count each ask again once the session has saved each turn.
     await page.get_by_role('button', name=re.compile(r'^Changes')).click()
@@ -162,7 +162,7 @@ async def test_changes_panel_opened_during_a_turn_loads_at_once(page: Page, chan
     await page.goto(f'{changes_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Changes', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Changes')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill(HOLD)
@@ -179,6 +179,7 @@ async def test_changes_panel_opened_during_a_turn_loads_at_once(page: Page, chan
         )
         await panel.get_by_role('tab', name='This session').click()
         await expect(panel.locator('.changes-body')).not_to_have_text('Loading…', timeout=2_000)
+        await expect(panel.get_by_role('button', name='Refresh')).to_be_enabled()
         await expect(activity).not_to_have_text('ready')
     finally:
         changes_ui.released.set()

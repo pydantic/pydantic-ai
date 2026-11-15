@@ -13,8 +13,10 @@ from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, Tool
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.exa._toolset import (
+    EXA_DEFAULT_MAX_RESULTS,
     EXA_MAX_NUM_RESULTS,
     EXA_MAX_PAGE_TEXT_CHARS,
     ExaClient,
@@ -65,7 +67,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     request again.
     """
 
-    num_results: int = 5
+    max_results: int = EXA_DEFAULT_MAX_RESULTS
     """Number of results `web_search` returns per query (1 to 100, the Exa API range)."""
 
     max_text_chars: int = 10_000
@@ -77,7 +79,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     text_summary: bool | str = False
-    """Have `web_search` also return a synthesized text summary above the results. Off by default.
+    """Have `web_search` also return a synthesized text summary above the results.
 
     When enabled, each `web_search` call requests Exa's plain-text output
     schema, so the response carries a short summary synthesized from the
@@ -88,11 +90,11 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     include_deep_search: bool = False
-    """Also expose the `deep_search` tool. Off by default.
+    """Also expose the `deep_search` tool.
 
     Deep search (Exa search `type='deep'`) runs a multi-step agentic search
     and synthesizes a cited answer in one call. Each call invests more time
-    and search depth than `web_search` (Exa's research-grade mode), and the
+    and search depth than `web_search`, and the
     model decides when to invoke tools, so that investment is opt-in rather
     than the default.
     """
@@ -126,7 +128,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     native: bool = False
-    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback. Off by default.
+    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback.
 
     When enabled, the capability also adds the provider's native web search
     tool, and Exa's `web_search` is only sent to models that do not support it,
@@ -134,7 +136,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     on every model. `include_domains` and `exclude_domains` are passed to the
     native tool as `allowed_domains` and `blocked_domains`, and a model whose
     native search can't apply them (such as Gemini) gets Exa's `web_search`
-    instead. `num_results` and `text_summary` only apply to Exa's search.
+    instead. `max_results` and `text_summary` only apply to Exa's search.
 
     To use Exa as the fallback of a core `WebSearch` instead, with its native
     options and no `get_page`, pass `WebSearch(local=ExaSearch().web_search_tool())`.
@@ -144,10 +146,18 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     id: str | None = 'exa_search'
     """Stable identity for durable execution, which records each Exa request under it."""
 
+    num_results: int | None = None
+    """Deprecated: renamed to `max_results`."""
+
     def __post_init__(self) -> None:
         """Validate configuration against the Exa API's documented bounds."""
-        if not 1 <= self.num_results <= EXA_MAX_NUM_RESULTS:
-            raise ValueError(f'num_results must be between 1 and {EXA_MAX_NUM_RESULTS}, got {self.num_results}')
+        if self.num_results is not None:
+            if self.max_results != EXA_DEFAULT_MAX_RESULTS:
+                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
+            warn_argument_renamed('ExaSearch', 'num_results', 'max_results', stacklevel=4)
+            self.max_results, self.num_results = self.num_results, None
+        if not 1 <= self.max_results <= EXA_MAX_NUM_RESULTS:
+            raise ValueError(f'max_results must be between 1 and {EXA_MAX_NUM_RESULTS}, got {self.max_results}')
         if not 1 <= self.max_text_chars <= EXA_MAX_PAGE_TEXT_CHARS:
             raise ValueError(
                 f'max_text_chars must be between 1 and {EXA_MAX_PAGE_TEXT_CHARS}, got {self.max_text_chars}'
@@ -209,7 +219,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     ) -> ExaSearchToolset[AgentDepsT]:
         return ExaSearchToolset[AgentDepsT](
             client=self._client,
-            num_results=self.num_results,
+            max_results=self.max_results,
             max_text_chars=self.max_text_chars,
             include_deep_search=self.include_deep_search,
             include_domains=self.include_domains,
@@ -232,7 +242,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     def from_spec(
         cls,
         *,
-        num_results: int = 5,
+        max_results: int = EXA_DEFAULT_MAX_RESULTS,
         max_text_chars: int = 10_000,
         text_summary: bool | str = False,
         include_deep_search: bool = False,
@@ -243,6 +253,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         id: str | None = 'exa_search',
         description: str | None = None,
         defer_loading: bool = False,
+        num_results: int | None = None,
     ) -> ExaSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -250,7 +261,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         always build the default client, which wraps `exa_py.AsyncExa`, from `EXA_API_KEY`.
         """
         return cls(
-            num_results=num_results,
+            max_results=max_results,
             max_text_chars=max_text_chars,
             text_summary=text_summary,
             include_deep_search=include_deep_search,
@@ -261,4 +272,5 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             id=id,
             description=description,
             defer_loading=defer_loading,
+            num_results=num_results,
         )

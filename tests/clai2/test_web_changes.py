@@ -1,13 +1,19 @@
 """The Changes panel's data: a session's changed files from its own file tools, and from Git."""
 
+import json
+import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime, timedelta
 from itertools import count
 from pathlib import Path
 from typing import Literal
 
+import anyio
 import pytest
+from anyio.from_thread import BlockingPortal
 
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -16,7 +22,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai_harness.filesystem import EditFileCallPart, WriteFileCallPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.file_system import WRITE_FILE_KIND, EditFileCallPart, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.runtime.session import STEERING
@@ -40,9 +47,11 @@ class History:
         *calls: Call,
         steering: bool = False,
         outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success',
+        at: datetime | None = None,
     ) -> None:
         metadata = {STEERING: True} if steering else None
-        self.messages.append(ModelRequest(parts=[UserPromptPart(prompt)], metadata=metadata))
+        prompt_part = UserPromptPart(prompt, timestamp=at or datetime.now(UTC))
+        self.messages.append(ModelRequest(parts=[prompt_part], metadata=metadata))
         for part, name, args in calls:
             call_id = f'call{next(self._ids)}'
             self.messages.append(ModelResponse(parts=[part(name, args, call_id)]))
@@ -260,6 +269,38 @@ async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatc
     assert listed(turn) == [(str(tmp_path / 'outside.py'), 'M', 1, 1), ('gone.py', 'D', 0, 1)]
 
 
+async def test_files_changed_outside_the_file_tools_are_listed_in_their_scope(repo: Path) -> None:
+    """Files a shell command changed show, without a diff, in the turns since they changed; older ones stay out."""
+    now = datetime.now(UTC)
+    history = History()
+    shell: Call = ToolCallPart, 'shell', {'command': 'echo x > new.txt; echo y >> a.py'}
+    history.turn('one', shell, at=now - timedelta(hours=2))
+    history.turn('two', shell, write('c.py', C1), at=now - timedelta(minutes=30))
+    (repo / 'before.txt').write_text('untracked before the session\n')
+    (repo / 'early.txt').write_text('x\n')
+    for name, age in (('before.txt', timedelta(hours=3)), ('early.txt', timedelta(hours=1))):
+        stamp = (now - age).timestamp()
+        os.utime(repo / name, (stamp, stamp))
+    (repo / 'new.txt').write_text('x\n')
+    (repo / 'a.py').write_text('def a():\n    return 1\ny\n')
+    (repo / 'c.py').write_text(C1)
+    (repo / 'b.py').unlink()
+
+    turn = await session_changes(history.messages, repo, scope='turn')
+    assert listed(turn) == [('a.py', 'M', 0, 0), ('c.py', 'A', 2, 0), ('new.txt', 'A', 0, 0)]
+    note = 'Changed outside the file tools, as by a shell command, so it has no diff here; see Uncommitted.'
+    assert turn.files[0].note == turn.files[2].note == note
+    session = await session_changes(history.messages, repo, scope='session', diffs=False)
+    assert [change.path for change in session.files] == ['a.py', 'c.py', 'early.txt', 'new.txt']
+    assert (await session_changes([], repo, scope='session')).files == [], 'no turn, no scope to have changed in'
+
+    fresh = repo.parent / 'fresh'
+    fresh.mkdir()
+    git(fresh, 'init', '-q')
+    (fresh / 'new.txt').write_text('x\n')
+    assert listed(await session_changes(history.messages, fresh, scope='turn')) == [('new.txt', 'A', 0, 0)]
+
+
 async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (repo / 'a.py').write_text('def a():\n    return 10\n')
     (repo / 'b.py').unlink()
@@ -405,3 +446,41 @@ def test_changes_route(make_fleet: MakeFleet) -> None:
     assert fleet.get('/api/changes?scope=uncommitted').json()['note'] == 'This workspace is not in a Git repository.'
     assert fleet.get('/api/sessions/nope/changes').status_code == 404
     assert fleet.get(f'/api/sessions/{conversation}/changes?scope=everything').status_code == 422
+
+
+def test_changes_route_counts_a_running_turns_writes(make_fleet: MakeFleet, tmp_path: Path) -> None:
+    """While a turn runs, the session's scopes include the files its finished tool calls wrote."""
+    events: list[anyio.Event] = []
+
+    async def turn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if isinstance(messages[-1].parts[-1], UserPromptPart):
+            arguments = json.dumps({'path': 'a.py', 'content': A1})
+            yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='write')}
+        else:
+            asked, release = events
+            asked.set()
+            await release.wait()
+            yield 'Done'
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        events.extend(portal.call(anyio.Event) for _ in range(2))
+        agent = Agent(FunctionModel(stream_function=turn))
+
+        @agent.tool_plain(tool_kind=WRITE_FILE_KIND)
+        def write_file(path: str, content: str) -> str:
+            (tmp_path / 'work' / path).write_text(content)
+            return f'Wrote {path}.'
+
+        return {'work': agent}
+
+    fleet = make_fleet(agents)
+    conversation = fleet.new('work')
+    asked, release = events
+    assert fleet.post(f'/api/sessions/{conversation}/input', {'text': 'write a.py'}).status_code == 200
+    fleet.portal.call(asked.wait)
+    try:
+        for scope in ('session', 'turn'):
+            files = fleet.get(f'/api/sessions/{conversation}/changes?scope={scope}').json()['files']
+            assert [(file['path'], file['status']) for file in files] == [('a.py', 'A')]
+    finally:
+        fleet.portal.call(release.set)

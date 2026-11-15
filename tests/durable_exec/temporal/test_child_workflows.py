@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
-from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import CallDeferred, ContentFilterError, ModelRetry, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -296,6 +296,54 @@ async def test_child_workflow_retry_policy_skips_non_retryable_errors(client: Cl
     assert (cause.type, cause.message) == ('UserError', 'Misconfigured.')
     child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
     # The child's latest run is its first attempt: the `UserError` wasn't retried.
+    child_history = await client.get_workflow_handle(child_id).fetch_history()
+    assert child_history.events[0].workflow_execution_started_event_attributes.attempt == 1
+
+
+content_filter_toolset = FunctionToolset[None](id='content_filter_child_tools')
+
+
+@content_filter_toolset.tool_plain(
+    metadata={
+        'temporal': {
+            'child_workflow': ChildWorkflowConfig(
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=1))
+            )
+        }
+    }
+)
+async def content_filter_child_tool() -> str:
+    raise ContentFilterError('Content filter triggered.')
+
+
+content_filter_agent = _metadata_error_agent('content_filter_child_workflow_agent', content_filter_toolset)
+
+
+@workflow.defn
+class ContentFilterChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await content_filter_agent.run('call the tool')).output
+
+
+async def test_child_workflow_retry_policy_skips_subclasses_of_non_retryable_errors(client: Client) -> None:
+    """A subclass of a non-retryable error, like `ContentFilterError`, isn't retried either, though the retry policy
+    only names `UnexpectedModelBehavior`."""
+    workflow_id = 'test_child_workflow_retry_policy_skips_subclasses_of_non_retryable_errors'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ContentFilterChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(content_filter_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ContentFilterChildWorkflowAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.message) == ('ContentFilterError', 'Content filter triggered.')
+    child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
     child_history = await client.get_workflow_handle(child_id).fetch_history()
     assert child_history.events[0].workflow_execution_started_event_attributes.attempt == 1
 

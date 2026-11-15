@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
+from tests.conftest import detach_dbos_logging, without_admin_server
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -28,9 +28,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_summarizing_compaction',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance

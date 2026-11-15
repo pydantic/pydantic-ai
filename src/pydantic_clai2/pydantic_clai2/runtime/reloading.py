@@ -153,6 +153,22 @@ class _Imports(ast.NodeVisitor):
 
 
 def _reload_plan(names: Iterable[str]) -> tuple[tuple[str, Path], ...]:
+    sources = _sources()
+    dependencies: dict[str, set[str]] = {}
+    pending = list(names)
+    while pending:
+        name = pending.pop()
+        if name in dependencies:
+            continue
+        targets = _module_dependencies(name, sources)
+        dependencies[name] = targets
+        pending.extend(targets - dependencies.keys())
+
+    return tuple((name, sources[name]) for name in TopologicalSorter(dependencies).static_order())
+
+
+def _sources() -> dict[str, Path]:
+    """The source file of each CLAI module, by module name, the first of `pydantic_clai2.__path__` winning."""
     sources: dict[str, Path] = {}
     for directory in pydantic_clai2.__path__:
         root = Path(directory)
@@ -161,31 +177,26 @@ def _reload_plan(names: Iterable[str]) -> tuple[tuple[str, Path], ...]:
             if parts[-1] == '__init__':
                 parts = parts[:-1]
             sources.setdefault('.'.join(('pydantic_clai2', *parts)), path)
+    return sources
 
-    dependencies: dict[str, set[str]] = {}
-    pending = list(names)
-    while pending:
-        name = pending.pop()
-        if name in dependencies:
-            continue
-        path = sources[name]
-        package = name if path.name == '__init__.py' else name.rpartition('.')[0]
-        imports = _Imports(package=package, name=name)
-        with tokenize.open(path) as source:
-            imports.visit(ast.parse(source.read(), filename=str(path)))
-        targets = {target for target in imports.names if target in sources and target != name}
-        # Importing a submodule can also execute a previously unloaded package initializer.
-        # A module's own enclosing packages are already initializing when it runs, so they are not dependencies.
-        for target in tuple(targets):
-            parent = target.rpartition('.')[0]
-            while parent in sources:
-                if parent != name and not name.startswith(f'{parent}.'):
-                    targets.add(parent)
-                parent = parent.rpartition('.')[0]
-        dependencies[name] = targets
-        pending.extend(targets - dependencies.keys())
 
-    return tuple((name, sources[name]) for name in TopologicalSorter(dependencies).static_order())
+def _module_dependencies(name: str, sources: dict[str, Path]) -> set[str]:
+    """The CLAI modules that importing `name` from its current source executes first."""
+    path = sources[name]
+    package = name if path.name == '__init__.py' else name.rpartition('.')[0]
+    imports = _Imports(package=package, name=name)
+    with tokenize.open(path) as source:
+        imports.visit(ast.parse(source.read(), filename=str(path)))
+    targets = {target for target in imports.names if target in sources and target != name}
+    # Importing a submodule can also execute a previously unloaded package initializer.
+    # A module's own enclosing packages are already initializing when it runs, so they are not dependencies.
+    for target in tuple(targets):
+        parent = target.rpartition('.')[0]
+        while parent in sources:
+            if parent != name and not name.startswith(f'{parent}.'):
+                targets.add(parent)
+            parent = parent.rpartition('.')[0]
+    return targets
 
 
 def reload_clai(build: Callable[[], T]) -> T:
@@ -199,19 +210,7 @@ def reload_clai(build: Callable[[], T]) -> T:
     ordered = _reload_plan(modules)
     importlib.invalidate_caches()
     try:
-        # `importlib.reload` looks up a submodule through its parent's __path__. A shell
-        # running from a different source tree may have loaded that package before the
-        # new tree was added to pydantic_clai2.__path__. Point nested packages at the
-        # selected tree before reloading any children; snapshots restore this on failure.
-        for name, path in ordered:
-            if path.name == '__init__.py' and name in modules:
-                vars(modules[name])['__path__'] = [str(path.parent)]
-        # Invalidate newly referenced modules too, before an importer can load their bytecode.
-        for _, path in ordered:
-            Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
-        for name, _ in ordered:
-            if name in modules:
-                importlib.reload(modules[name])
+        _reload(modules, ordered)
         return build()
     except BaseException:
         for module, namespace in snapshots.items():
@@ -221,3 +220,20 @@ def reload_clai(build: Callable[[], T]) -> T:
             if name.startswith('pydantic_clai2.') and name not in modules:
                 del sys.modules[name]
         raise
+
+
+def _reload(modules: dict[str, ModuleType], ordered: tuple[tuple[str, Path], ...]) -> None:
+    """Reload the loaded `modules` from the sources in `ordered`, in its order."""
+    # `importlib.reload` looks up a submodule through its parent's __path__. A shell
+    # running from a different source tree may have loaded that package before the
+    # new tree was added to pydantic_clai2.__path__. Point nested packages at the
+    # selected tree before reloading any children; snapshots restore this on failure.
+    for name, path in ordered:
+        if path.name == '__init__.py' and name in modules:
+            vars(modules[name])['__path__'] = [str(path.parent)]
+    # Invalidate newly referenced modules too, before an importer can load their bytecode.
+    for _, path in ordered:
+        Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
+    for name, _ in ordered:
+        if name in modules:
+            importlib.reload(modules[name])

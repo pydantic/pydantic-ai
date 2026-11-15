@@ -17,7 +17,11 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
-from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
+from pydantic_ai.providers._bedrock_model_names import (
+    _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    bedrock_claude_cache_retentions,
+    split_bedrock_model_id,
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -326,6 +330,10 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert zai_profile.get('supports_thinking', False) is True
     assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
+    # The `us.` inference-profile prefix is stripped before the upstream Z.AI profile is looked up.
+    provider.model_profile('us.zai.glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+
     # Moonshot AI's Kimi models are registered under both the `moonshot.` and `moonshotai.` prefixes.
     for kimi_model in ('moonshot.kimi-k2-thinking', 'moonshotai.kimi-k2.5'):
         kimi_profile = provider.model_profile(kimi_model)
@@ -454,6 +462,27 @@ def test_bedrock_provider_model_profile_with_unknown_geo_prefix(env: TestEnv):
     model_name = 'narnia.anthropic.claude-sonnet-4-5-20250929-v1:0'
     profile = provider.model_profile(model_name)
     assert profile is None, f'model_profile returned {profile} for {model_name}'
+
+
+# Prefixes from the automatic-caching list whose Claude models Bedrock doesn't grant the 1-hour cache TTL, each with
+# the reason.
+_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE: dict[str, str] = {}
+
+
+def test_bedrock_automatic_caching_claude_models_take_one_hour_cache():
+    """Every Claude model that takes automatic caching on Bedrock also takes the 1-hour cache TTL.
+
+    Automatic caching is the newer feature, so a model added to its list and not to the 1-hour list most likely
+    belongs on both: otherwise `cache='1h'` silently snaps down to `'5m'` for it, as it did for Claude Haiku 5.5.
+    Add its prefix to `_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE` with the reason if Bedrock rejects the 1-hour TTL.
+    """
+    missing_one_hour = [
+        prefix
+        for prefix in _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES
+        if prefix not in _AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE
+        and '1h' not in bedrock_claude_cache_retentions(prefix)
+    ]
+    assert missing_one_hour == []
 
 
 def test_latest_bedrock_model_names_geo_prefixes_are_supported():
