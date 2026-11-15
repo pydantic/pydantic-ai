@@ -120,8 +120,7 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     # Z.AI's API reference lists only for `glm-5.3` itself.
     profile_5_3_flash = provider.model_profile('glm-5.3-flash')
     zai_model_profile_mock.assert_called_with('glm-5.3-flash')
-    assert profile_5_3_flash is not None
-    assert {**profile_5_3_flash, 'zai_supports_tool_stream': True} == profile_5_3
+    assert profile_5_3_flash == {key: value for key, value in profile_5_3.items() if key != 'zai_supports_tool_stream'}
 
     # `glm-5.1` reasons and can still be told not to, and predates per-request effort.
     profile_5_1 = provider.model_profile('glm-5.1')
