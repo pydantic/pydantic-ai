@@ -1,0 +1,45 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://api.cerebras.ai/v1/models
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+      host:
+      - api.cerebras.ai
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "190"
+      content-type:
+      - application/json
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+    body:
+      type: json
+      content:
+        object: list
+        data:
+        - id: qwen-3.8-27b
+          object: model
+          created: 0
+          owned_by: Cerebras
+        - id: gpt-oss-120b
+          object: model
+          created: 0
+          owned_by: Cerebras
+  recorded_at: 2026-11-07T18:56:12.228573+00:00

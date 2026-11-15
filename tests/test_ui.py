@@ -16,6 +16,7 @@ from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -70,8 +71,13 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, conversation_view, message, message_part
+from .conftest import IsDatetime, conversation_view, message, message_part, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytest.importorskip('starlette')
 
@@ -1428,6 +1434,35 @@ async def test_run_stream_on_complete_error():
     )
 
 
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+async def test_run_stream_on_complete_error_is_recorded_on_current_span():
+    """An `on_complete` failure runs after the agent run's span has ended, so it's recorded on the span current then.
+
+    That's the HTTP request's span on an instrumented server. Only the exception's type is recorded: the stream doesn't
+    know the run's `include_content` setting, and the message can quote the run's output.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    def raise_error(run_result: AgentRunResult[Any]) -> None:
+        raise ValueError(f'Could not save {run_result.output!r}')
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    adapter = DummyUIAdapter(agent, request)
+    with provider.get_tracer('test').start_as_current_span('POST /chat'):
+        events = [event async for event in adapter.run_stream(on_complete=raise_error)]
+
+    assert events[-2:] == snapshot(
+        ["<error type='ValueError'>Could not save 'success (no tool calls)'</error>", '</stream>']
+    )
+    [span] = exporter.get_finished_spans()
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == snapshot(
+        [('exception', {'exception.type': 'ValueError', 'exception.escaped': 'False'})]
+    )
+
+
 async def test_run_stream_on_complete():
     agent = Agent(model=TestModel())
 
@@ -2045,8 +2080,10 @@ def test_manage_message_history_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
 
-    assert from_request_parameters['manage_message_history'].default == 'client'
-    assert dispatch_request_parameters['manage_message_history'].default == 'client'
+    for parameters in (from_request_parameters, dispatch_request_parameters):
+        assert parameters['manage_message_history'].default == 'client'
+        assert parameters['conversation_store'].default is None
+        assert parameters['conversation_scope'].default is None
 
 
 def _with_ui_id(message: ModelMessage, ui_message_id: str) -> ModelMessage:
@@ -2105,6 +2142,56 @@ async def test_client_message_history_without_overlapping_ids_does_not_warn():
         await _run(adapter, stored)
 
     assert conversation_view(requests[0]) == snapshot(['user-prompt: server context', 'text: noted', 'user-prompt: hi'])
+
+
+async def test_conversation_store_without_protocol_saved_events_still_saves():
+    """An adapter that doesn't announce saved entries still saves the turn, and `on_complete` runs after the save."""
+    agent, requests = _recording_agent()
+    store = InMemoryConversationStore()
+    run_input = DummyUIRunInput(messages=[_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1')])
+    adapter = DummyUIAdapter(agent=agent, run_input=run_input, conversation_store=store)
+    revisions: list[str | None] = []
+
+    async def on_complete(result: AgentRunResult[Any]) -> AsyncIterator[str]:
+        revisions.append(result.conversation.revision)
+        yield '<saved>'
+
+    events = [event async for event in adapter.run_stream(conversation_id='chat', on_complete=on_complete)]
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi'])
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+    assert revisions == [conversation.revision]
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>ok',
+            '<final-result tool_name=None />',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<saved>',
+            '<run-result>ok</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_conversation_store_announces_only_a_run_it_saved():
+    """`transform_stream` on a native stream the adapter didn't run has no save to announce."""
+    agent, _ = _recording_agent()
+    store = InMemoryConversationStore()
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('hi')])
+    adapter = DummyUIAdapter(agent=agent, run_input=run_input, conversation_store=store)
+    completed: list[AgentRunResult[Any]] = []
+
+    async with agent.run_stream_events('hi') as native:
+        events = [event async for event in adapter.transform_stream(native, on_complete=completed.append)]
+
+    assert len(completed) == 1
+    assert '<run-result>ok</run-result>' in events
+    assert await store.load(completed[0].conversation.conversation_id) is None
 
 
 @pytest.mark.parametrize('client_sends', ['everything', 'new turn only'])
@@ -2272,7 +2359,7 @@ async def test_server_message_history_rejects_a_regenerate_of_an_unknown_message
     assert events == snapshot(
         [
             '<stream>',
-            "<error type='UserError'>The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server.</error>",
+            "<error type='UserError'>The message to regenerate ('u2') is not in the stored conversation. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server.</error>",
             '</stream>',
         ]
     )

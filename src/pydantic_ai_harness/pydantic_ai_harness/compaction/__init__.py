@@ -8,12 +8,12 @@ from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
 from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
-from pydantic_ai_harness.compaction._context_usage_events import REPORT_CONTEXT_USAGE_EVENTS, ContextUsageEvent
 from pydantic_ai_harness.compaction._context_window import (
     DEFAULT_CONTEXT_WINDOW,
     resolve_context_window,
 )
 from pydantic_ai_harness.compaction._deduplicate_file_reads import DeduplicateFileReads
+from pydantic_ai_harness.compaction._events import REPORT_CONTEXT_USAGE_EVENTS, ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompaction
 from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import is_pinned, pin, reinject_pinned
@@ -39,7 +39,7 @@ __all__ = [
     'CompactOnRequest',
     'CompactionStrategy',
     'ContextUsage',
-    'ContextUsageEvent',
+    'ContextUsageMeasuredEvent',
     'REPORT_CONTEXT_USAGE_EVENTS',
     'RelevanceCompaction',
     'ReportContextUsage',
@@ -64,6 +64,7 @@ __all__ = [
 ]
 
 _RENAMED = {
+    'ContextUsageEvent': ContextUsageMeasuredEvent,
     'LimitWarner': WarnNearLimits,
     'SlidingWindow': SlidingWindowCompaction,
 }

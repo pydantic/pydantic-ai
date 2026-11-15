@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from anyio import to_thread
+
 from pydantic_ai.exceptions import UserError
 
 INSTALL = 'Install the GitHub CLI from https://cli.github.com, or use a token saved in /keys.'
@@ -82,9 +84,9 @@ class GhToken:
     hostname: str
     setup: str
 
-    def __call__(self, ctx: object, /) -> str:
-        """The current token; fails the run when `gh` has none."""
-        token = gh_token(self.hostname)
+    async def __call__(self, ctx: object, /) -> str:
+        """The current token, asked of `gh` in a worker thread; fails the run when `gh` has none."""
+        token = await to_thread.run_sync(gh_token, self.hostname)
         if token is None:
             raise UserError(f'The GitHub CLI has no login for {self.hostname}. {self.setup}')
         return token

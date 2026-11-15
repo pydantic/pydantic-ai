@@ -30,6 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
+from tests.realtime.simulation._loop import SimulatedLoop
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
 
@@ -305,8 +306,15 @@ class TestRun:
         fake_modal.sandboxes[0].poll_error = ValueError('control plane unavailable')
         assert (await backend.run(['kill-self'])).exit_code == 137
 
-    async def test_early_sigkill_with_slow_output_is_a_real_exit(self, fake_modal: FakeModal) -> None:
-        # A delayed output drain should not make an early exit look like a deadline kill.
+    @pytest.mark.parametrize(
+        'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+    )
+    async def test_early_sigkill_with_slow_output_is_a_real_exit(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A delayed output drain should not make an early exit look like a deadline kill. On a virtual clock, a stalled
+        # runner can't use up the command's deadline before it exits.
+        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=asyncio.get_running_loop().time))
         fake_modal.responder = lambda argv, timeout: ('', '', 137)
         fake_modal.stdout_delay = 1.1
         backend = await started()

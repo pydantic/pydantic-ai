@@ -72,7 +72,7 @@ class ConcurrencyLimitedModel(WrapperModel):
 
     def __init__(
         self,
-        wrapped: Model | KnownModelName,
+        wrapped: Model | KnownModelName | str,
         limiter: int | ConcurrencyLimit | AbstractConcurrencyLimiter,
     ):
         """Initialize the ConcurrencyLimitedModel.
@@ -159,7 +159,7 @@ class ConcurrencyLimitedModel(WrapperModel):
 
 
 def limit_model_concurrency(
-    model: Model | KnownModelName,
+    model: Model | KnownModelName | str,
     limiter: AnyConcurrencyLimit,
 ) -> Model:
     """Wrap a model with concurrency limiting.
