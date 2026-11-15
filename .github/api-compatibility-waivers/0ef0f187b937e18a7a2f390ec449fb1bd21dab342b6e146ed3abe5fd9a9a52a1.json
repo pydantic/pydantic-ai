@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Adds `SystemPromptPart` to the `RealtimeSessionInput` union `RealtimeSession.send()` accepts; every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
+}

@@ -1,0 +1,89 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "232"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is 2+2? Reply with just the number.
+            type: text
+        model: claude-opus-5-5
+        output_config:
+          effort: max
+        stream: true
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad906a7000000009d7841de335e8c46-db8b6c8ddf1d1fc8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgFsMZ5KzLAxFr8ZvnbfM","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":23,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS8wQKEAgTGAI4AUIIdGhpbmtpbmcSDPZGK4V0ycSuEFxRFRoMOTcx6nxYCt8lhSjaIjBthWaAg9h6VHhDFMXmxMsMME6gBdMVnF8Jjx49jvxPFrUsMNzjSlhxgljcCU+TR0oqkASh4v+gl9zKq0PyEVluD6rrzbYx6+LODim2THs5u7Ec3A+Q1q9xZkC5wfsj1jLwfT0UnGiMZFcLFv0kMdp+gJzPrakpyyEBU3zvrbR0sMrSwPNrkBOsOv3jIlifApYHrlZUZTZkNoXef5bdJzgkeF+wOWlsKy3YWFpBEqwPtRCiTlNvWD6DbInXEwanuG6DchD8k65GndqnSiaUzQZbhQaSeTmtD7mKgsf0XcGvUtnEugMIY3BQPUyVXMyVtjSqX0ny33+3SA4V1GGDj5eGV5a88W0trvv6NE8SuPjAXTezwOUfI6t7tNXVwI11zjdayn4yE50LIiCJO1xKOwF1GJC2HAUMzWh0rrZuYAw4bKWK4I49IiZldiCzVN6UTPvHblLaqVjL0hDe3dwbeE2eFRs0D471fRbJUXyNp5BilZ1Udm163XWwhIe4sCxrrMeXc/BBucwttvMgiFmgqXW+2lweMXNFViKmEGyY+jEb4T8VkkSkZsfHAnEGOfCbPZlLXllmmidt2/w4zR3tb4vJSiv6LZhWDtXNM2BciZDy4mt49AUIqk5D7vlKg3S92uE7cZ0BObIV4ugiT+2O18JSZs+ZCKj0yQujD7Ga6KHTCq2liLL298qpSzpFjlurDaEizxakypOhZkmVQKGgI0OQae9/R+Qsj20FUcb6/4SdU2xzrGTf6aAHgv6tIBn9HutOSacYAQ=="}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"4"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":23,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":31,"output_tokens_details":{"thinking_tokens":28}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-10-21T18:38:39.858975+00:00

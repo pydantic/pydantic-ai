@@ -7,6 +7,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -29,7 +30,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -50,7 +51,7 @@ def _heroku_kimi_model_profile(model_name: str) -> ModelProfile | None:
     return moonshotai_model_profile(model_name)
 
 
-class HerokuProvider(_OpenAICompatibleProvider):
+class HerokuProvider(_OpenAISDKProvider):
     """Provider for Heroku API."""
 
     @property
@@ -97,6 +98,7 @@ class HerokuProvider(_OpenAICompatibleProvider):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            special_token_route_profile('heroku', model_name),
         )
 
     @overload

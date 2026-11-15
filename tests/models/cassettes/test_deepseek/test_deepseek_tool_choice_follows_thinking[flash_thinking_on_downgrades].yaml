@@ -1,0 +1,93 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "374"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        messages:
+        - role: user
+          content: Say hi.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters:
+              properties:
+                text:
+                  type: string
+              required:
+              - text
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        id: 6ed47134-bdeb-4df4-a9dc-2d84697b8f30
+        object: chat.completion
+        created: 1792951688
+        model: deepseek-flash
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: ""
+            reasoning_content: >-
+              The user says "Say hi." I should respond with a greeting. I have a final_result
+              tool available which ends the conversation. I should use it.
+            tool_calls:
+            - index: 0
+              id: call_00_Tj0hyKGjeuYEGdja7jxf4045
+              type: function
+              function:
+                name: final_result
+                arguments: "{\"text\": \"Hi! 👋 How can I help you today?\"}"
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          prompt_tokens: 297
+          completion_tokens: 78
+          total_tokens: 375
+          prompt_tokens_details:
+            cached_tokens: 128
+          completion_tokens_details:
+            reasoning_tokens: 31
+          prompt_cache_hit_tokens: 128
+          prompt_cache_miss_tokens: 169
+        system_fingerprint: e72d3c7f663d3e1383b00b3884cb4501
+  recorded_at: 2026-10-25T18:08:09.302855+00:00

@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "False positive: Griffe compares the expression assigned to `Case.evaluators`. `Evaluator` instances are kept unchanged; only plain functions, newly accepted, are wrapped in `FunctionEvaluator`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10292"
+}

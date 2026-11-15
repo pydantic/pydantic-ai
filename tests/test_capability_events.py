@@ -11,7 +11,14 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessEventStream, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CombinedCapability,
+    Hooks,
+    ProcessEventStream,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_EVENT_TYPES,
@@ -26,12 +33,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._inline_snapshot import snapshot
-
-pytestmark = pytest.mark.anyio
 
 FILE_SYSTEM_EVENTS = 'test_file_system'
 
@@ -68,7 +73,7 @@ def test_missing_namespace_rejected():
     with pytest.raises(UserError, match='requires a namespace'):
 
         @dataclass(kw_only=True)
-        class MissingEvent(CapabilityEvent):  # pyright: ignore[reportUnusedClass]
+        class MissingEvent(CapabilityEvent):
             pass
 
 
@@ -77,7 +82,7 @@ def test_invalid_namespace_rejected(namespace: str):
     with pytest.raises(UserError, match='invalid namespace'):
 
         @dataclass(kw_only=True)
-        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):  # pyright: ignore[reportUnusedClass]
+        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):
             pass
 
 
@@ -92,9 +97,7 @@ def test_duplicate_kind_rejected():
     with pytest.raises(UserError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
         @dataclass(kw_only=True)
-        class DuplicateEvent(  # pyright: ignore[reportUnusedClass]
-            CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'
-        ):
+        class DuplicateEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
             pass
 
 
@@ -156,7 +159,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: capability_id, data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):
             data: dict[str, int]
             capability_id: str | None = None
 
@@ -225,7 +228,7 @@ def test_undecorated_capability_event_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class BareFieldsChildEvent(BareFieldsBase):  # pyright: ignore[reportUnusedClass]
+        class BareFieldsChildEvent(BareFieldsBase):
             pass
 
 
@@ -334,6 +337,20 @@ async def test_hook_emission_stamps_an_explicit_id() -> None:
     assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['my_id']
 
 
+async def test_hook_emission_from_a_deferred_group_member_stamps_the_member_id() -> None:
+    """A member of a deferred group emits under its own `id` once the group is loaded, not the group's."""
+
+    async def load_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "group"}')}
+        else:
+            yield 'done'
+
+    group = CombinedCapability([EmitCapability(id='member')], id='group', description='Group.', defer_loading=True)
+    events = await _collect(Agent(FunctionModel(stream_function=load_then_text), capabilities=[group]))
+    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['member']
+
+
 async def test_hook_emission_stamps_a_synthetic_id_when_unnamed() -> None:
     """An unnamed capability is attributed by the run-local handle, which reads as one.
 
@@ -369,6 +386,60 @@ async def test_capability_tool_emission_stamps_attribution() -> None:
     stamped = [event.capability_id for event in unnamed if isinstance(event, FileReadEvent)]
     assert len(stamped) == 1
     assert stamped[0] is not None and re.fullmatch(r'<capability:[0-9a-f]{6}>', stamped[0]), stamped[0]
+
+
+async def test_prefixed_capability_tool_emission_stamps_attribution() -> None:
+    """A capability tool exposed through `prefix_tools()` still emits under its capability.
+
+    `PrefixedToolset` hands the tool the unprefixed name as `ctx.tool_name`, while the tool manager
+    holds it under the prefixed name, so resolving the owner must account for the prefix. The event
+    keeps stamping `ctx.tool_name`, which stays the tool's own name inside the wrapper.
+    """
+    capability = Capability[Any](id='files')
+
+    @capability.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(FileReadEvent(path='tool.txt'))
+        return 'ok'
+
+    async def prefixed_tool_then_text(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not _has_tool_return(messages):
+            yield {0: DeltaToolCall(name='fs_read_file', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'done'
+
+    events = await _collect(
+        Agent(FunctionModel(stream_function=prefixed_tool_then_text), capabilities=[capability.prefix_tools('fs')])
+    )
+    assert [event for event in events if isinstance(event, FileReadEvent)] == [
+        FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')
+    ]
+
+
+async def test_renamed_capability_tool_emission_stamps_attribution() -> None:
+    """A capability tool renamed by `RenamedToolset` still emits under its capability."""
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(FileReadEvent(path='tool.txt'))
+        return 'ok'
+
+    async def renamed_tool_then_text(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not _has_tool_return(messages):
+            yield {0: DeltaToolCall(name='open_file', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'done'
+
+    capability = Capability[Any](id='files', toolsets=[toolset.renamed({'open_file': 'read_file'})])
+    events = await _collect(Agent(FunctionModel(stream_function=renamed_tool_then_text), capabilities=[capability]))
+    assert [event for event in events if isinstance(event, FileReadEvent)] == [
+        FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')
+    ]
 
 
 async def test_multiple_instances_get_distinct_run_ids() -> None:
@@ -598,7 +669,7 @@ async def test_pre_set_capability_id_is_preserved():
 
 
 async def test_emission_with_unresolvable_tool_name_attributes_nothing():
-    """A context whose `tool_name` no longer resolves in the tool manager attributes no capability.
+    """A context whose tool no longer resolves in the tool manager attributes no capability.
 
     This can happen when a context copy outlives a dynamic toolset change; the emission still
     succeeds for a `CustomEvent`, un-attributed.
@@ -609,7 +680,7 @@ async def test_emission_with_unresolvable_tool_name_attributes_nothing():
 
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        stale = dc.replace(ctx, tool_name='vanished')
+        stale = dc.replace(ctx, tool_name='vanished', _dispatched_tool_name='vanished')
         await stale.emit(BridgeEvent())
         return 'ok'
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic_ai._run_context import RunContext
@@ -25,7 +25,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
+TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @dataclass

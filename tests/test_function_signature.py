@@ -5,11 +5,11 @@ from __future__ import annotations
 import ast
 import typing
 from enum import Enum
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import pytest
 import typing_extensions
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel, RootModel, create_model
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
@@ -25,11 +25,9 @@ from pydantic_ai.tools import Tool, ToolDefinition
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 
 # Module-level types for tests that need get_type_hints() resolution
-class _Color(str, Enum):
+class _Color(str, Enum):  # noqa: UP042
     RED = 'red'
     GREEN = 'green'
 
@@ -451,6 +449,13 @@ def test_structurally_equal():
     )
     # Different field type — not equal
     assert not ts1.structurally_equal(ts3)
+
+    ts4 = TypeSignature(
+        name='D',
+        fields={'y': TypeFieldSignature(name='y', type=SimpleTypeExpr('int'), required=True)},
+    )
+    # Different field name — not equal
+    assert not ts1.structurally_equal(ts4)
 
 
 def test_schema_nested_object_name_with_digit_prefix():
@@ -1710,3 +1715,406 @@ def test_boolean_additional_properties_render_as_dict_any():
             },
         )
         assert str(sig.params['meta'].type) == 'dict[str, Any]'
+
+
+# =============================================================================
+# Type names: every type in a rendered tool catalog has one name and one definition
+# =============================================================================
+
+# These are unit tests because the names decide the text a model reads and the stubs Monty type checks, with no model
+# request involved. `tests/harness/code_mode/test_code_mode.py` holds Monty itself to the three reported bugs.
+
+
+def _model(name: str, /, **fields: Any) -> type[BaseModel]:
+    """A Pydantic model, with every field required."""
+    definitions: dict[str, Any] = {field: (annotation, ...) for field, annotation in fields.items()}
+    return create_model(name, **definitions)
+
+
+def _signature(name: str, returns: type[BaseModel] | None = None, **params: Any) -> FunctionSignature:
+    """A tool's signature, with the schemas Pydantic builds from typed arguments."""
+    return FunctionSignature.from_schema(
+        name=name,
+        parameters_schema=_model('Args', **params).model_json_schema(),
+        return_schema=returns.model_json_schema() if returns else None,
+    )
+
+
+def _catalog(*signatures: FunctionSignature) -> str:
+    """The text code mode builds: every definition once, then every function."""
+    conflicting = FunctionSignature.get_conflicting_type_names(list(signatures))
+    definitions = FunctionSignature.render_type_definitions(list(signatures), conflicting)
+    functions = [signature.render('...', conflicting_type_names=conflicting) for signature in signatures]
+    return '\n\n'.join([*definitions, *functions])
+
+
+USER_WITH_NAME = _model('User', name=str)
+USER_WITH_ID = _model('User', id=int)
+
+
+def test_param_and_return_types_with_one_name_get_two_names():
+    """Bug 1 of #8816: both types rendered as `sync_user_User`, and `RetWrap.user` as a plain `User`."""
+    ret_wrap = _model('RetWrap', user=USER_WITH_ID)
+    assert _catalog(_signature('sync_user', returns=ret_wrap, user=USER_WITH_NAME)) == snapshot("""\
+class sync_user_User(TypedDict):
+    name: str
+
+class sync_user_User_2(TypedDict):
+    id: int
+
+class RetWrap(TypedDict):
+    user: sync_user_User_2
+
+def sync_user(*, user: sync_user_User) -> RetWrap:
+    ...\
+""")
+
+
+def test_type_keeping_its_name_refers_to_a_renamed_type():
+    """Bug 2 of #8816: `Wrapper.user` rendered as a plain `User`, which nothing defined."""
+    wrapper = _model('Wrapper', user=USER_WITH_NAME)
+    assert _catalog(_signature('tool_a', wrap=wrapper), _signature('tool_b', user=USER_WITH_ID)) == snapshot("""\
+class tool_a_User(TypedDict):
+    name: str
+
+class Wrapper(TypedDict):
+    user: tool_a_User
+
+class tool_b_User(TypedDict):
+    id: int
+
+def tool_a(*, wrap: Wrapper) -> Any:
+    ...
+
+def tool_b(*, user: tool_b_User) -> Any:
+    ...\
+""")
+
+
+def test_type_shared_by_two_tools_has_one_name():
+    """Bug 3 of #8816: `tool_b` was annotated `tool_b_User`, but the shared class was only defined as `tool_a_User`."""
+    signatures = [
+        _signature('tool_a', user=USER_WITH_NAME),
+        _signature('tool_b', user=USER_WITH_NAME),
+        _signature('tool_c', user=USER_WITH_ID),
+    ]
+    assert _catalog(*signatures) == snapshot("""\
+class tool_a_User(TypedDict):
+    name: str
+
+class tool_c_User(TypedDict):
+    id: int
+
+def tool_a(*, user: tool_a_User) -> Any:
+    ...
+
+def tool_b(*, user: tool_a_User) -> Any:
+    ...
+
+def tool_c(*, user: tool_c_User) -> Any:
+    ...\
+""")
+    # Dynamic workflows render part of a catalog, reusing the names of the whole.
+    conflicting = FunctionSignature.get_conflicting_type_names(signatures)
+    assert FunctionSignature.render_type_definitions(signatures[1:2], conflicting) == [
+        'class tool_a_User(TypedDict):\n    name: str'
+    ]
+
+
+@pytest.mark.parametrize(
+    'user_a,user_b,field_a,field_b',
+    [
+        pytest.param(USER_WITH_NAME, USER_WITH_ID, 'a_User', 'b_User', id='direct'),
+        pytest.param(list[USER_WITH_NAME], list[USER_WITH_ID], 'list[a_User]', 'list[b_User]', id='list'),
+        pytest.param(USER_WITH_NAME | None, USER_WITH_ID | None, 'a_User | None', 'b_User | None', id='optional'),
+    ],
+)
+def test_types_differing_only_in_a_nested_type_stay_two_types(user_a: Any, user_b: Any, field_a: str, field_b: str):
+    """The two `Box`es have the same field text, so comparing that text merged them. The nesting takes three passes."""
+    box_a = _model('Box', order=_model('Order', user=user_a))
+    box_b = _model('Box', order=_model('Order', user=user_b))
+    assert _catalog(_signature('a', box=box_a), _signature('b', box=box_b)) == (
+        'class a_Box(TypedDict):\n    order: a_Order\n\n'
+        f'class a_Order(TypedDict):\n    user: {field_a}\n\n'
+        'class a_User(TypedDict):\n    name: str\n\n'
+        'class b_Box(TypedDict):\n    order: b_Order\n\n'
+        f'class b_Order(TypedDict):\n    user: {field_b}\n\n'
+        'class b_User(TypedDict):\n    id: int\n\n'
+        'def a(*, box: a_Box) -> Any:\n    ...\n\n'
+        'def b(*, box: b_Box) -> Any:\n    ...'
+    )
+
+
+def test_types_differing_only_in_a_required_flag_stay_two_types():
+    optional_name: dict[str, Any] = {'name': (str, 'x')}
+    optional_user = create_model('User', **optional_name)
+    assert _catalog(_signature('a', user=USER_WITH_NAME), _signature('b', user=optional_user)) == snapshot("""\
+class a_User(TypedDict):
+    name: str
+
+class b_User(TypedDict):
+    name: NotRequired[str]
+
+def a(*, user: a_User) -> Any:
+    ...
+
+def b(*, user: b_User) -> Any:
+    ...\
+""")
+
+
+def test_param_and_return_types_differing_only_in_a_nested_type_stay_two_types():
+    """Merging the two `Wrap`s would leave the return type's `User` defined but unused."""
+    wrap_a, wrap_b = _model('Wrap', user=USER_WITH_NAME), _model('Wrap', user=USER_WITH_ID)
+    assert _catalog(_signature('t', returns=wrap_b, wrap=wrap_a)) == snapshot("""\
+class t_User(TypedDict):
+    name: str
+
+class t_Wrap(TypedDict):
+    user: t_User
+
+class t_User_2(TypedDict):
+    id: int
+
+class t_Wrap_2(TypedDict):
+    user: t_User_2
+
+def t(*, wrap: t_Wrap) -> t_Wrap_2:
+    ...\
+""")
+    assert _catalog(_signature('t', returns=wrap_a, wrap=wrap_a)) == snapshot("""\
+class User(TypedDict):
+    name: str
+
+class Wrap(TypedDict):
+    user: User
+
+def t(*, wrap: Wrap) -> Wrap:
+    ...\
+""")
+
+
+def test_recursive_types_compare_by_what_is_in_the_cycle():
+    def node(value: Any) -> type[BaseModel]:
+        fields: dict[str, Any] = {'value': (value, ...), 'next': ('Node | None', None)}
+        recursive = create_model('Node', **fields)
+        recursive.model_rebuild(_types_namespace={'Node': recursive})
+        return recursive
+
+    same = _catalog(_signature('a', node=node(str), other=Any), _signature('b', node=node(str), other=Any))
+    assert same == snapshot("""\
+class Node(TypedDict):
+    value: str
+    next: NotRequired[Node | None]
+
+def a(*, node: Node, other: Any) -> Any:
+    ...
+
+def b(*, node: Node, other: Any) -> Any:
+    ...\
+""")
+    different = _catalog(_signature('a', node=node(str)), _signature('b', node=node(int)))
+    assert different == snapshot("""\
+class a_Node(TypedDict):
+    value: str
+    next: NotRequired[a_Node | None]
+
+class b_Node(TypedDict):
+    value: int
+    next: NotRequired[b_Node | None]
+
+def a(*, node: a_Node) -> Any:
+    ...
+
+def b(*, node: b_Node) -> Any:
+    ...\
+""")
+
+
+def test_generated_name_skips_a_real_type_name():
+    """`a_User` is a real type, so the `User` of tool `a` becomes `a_User_2`."""
+    signatures = (
+        _signature('a', user=USER_WITH_NAME, real=_model('a_User', z=str)),
+        _signature('b', user=USER_WITH_ID),
+    )
+    assert _catalog(*signatures) == snapshot("""\
+class a_User_2(TypedDict):
+    name: str
+
+class a_User(TypedDict):
+    z: str
+
+class b_User(TypedDict):
+    id: int
+
+def a(*, user: a_User_2, real: a_User) -> Any:
+    ...
+
+def b(*, user: b_User) -> Any:
+    ...\
+""")
+
+
+def test_resolving_again_replaces_the_names_of_the_last_set():
+    """A catalog gets rebuilt when its tools change, reusing their signatures."""
+    item_a, item_c = _model('Item', a=str), _model('Item', c=str)
+    a = _signature('a', user=USER_WITH_NAME, item=item_a)
+    b, c = _signature('b', user=USER_WITH_ID), _signature('c', item=item_c)
+    _catalog(a, b)
+    assert _catalog(a, c) == snapshot("""\
+class a_Item(TypedDict):
+    a: str
+
+class User(TypedDict):
+    name: str
+
+class c_Item(TypedDict):
+    c: str
+
+def a(*, user: User, item: a_Item) -> Any:
+    ...
+
+def c(*, item: c_Item) -> Any:
+    ...\
+""")
+
+
+def test_resolved_name_is_not_part_of_the_type():
+    """Comparing or printing a type gives the same result before and after it is named."""
+    signatures = [_signature('a', user=USER_WITH_NAME), _signature('b', user=USER_WITH_ID)]
+    resolved = signatures[0].referenced_types[0]
+    plain = _signature('a', user=USER_WITH_NAME).referenced_types[0]
+    FunctionSignature.get_conflicting_type_names(signatures)
+    assert resolved == plain
+    assert repr(resolved) == repr(plain)
+
+
+def test_ref_that_does_not_resolve_keeps_rendering():
+    """Such a `$ref` leaves a type no signature lists, which unifying must still handle."""
+    schema = {'type': 'object', 'properties': {'x': {'$ref': '#/definitions/U'}}, 'required': ['x']}
+    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+    assert _catalog(signature) == 'def a(*, x: U) -> Any:\n    ...'
+
+
+def _render_module(td: ToolDefinition) -> str:
+    """Render a tool's type definitions and signature as one module, the way code mode presents them."""
+    sig = td.function_signature
+    conflicting = FunctionSignature.get_conflicting_type_names([sig])
+    return '\n\n'.join(
+        [
+            *FunctionSignature.render_type_definitions([sig], conflicting),
+            td.render_signature('...', conflicting_type_names=conflicting),
+        ]
+    )
+
+
+def test_property_names_that_are_not_python_identifiers_render_as_valid_python():
+    """Keyword and non-identifier property names, common in MCP and OpenAPI tools, still render as valid Python.
+
+    A parameter takes a sanitized name, since code passes it as a keyword argument. An object field keeps its
+    schema name, since code builds the object as a `dict`, so its type uses the functional `TypedDict` syntax.
+    """
+    td = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'from': {'type': 'string', 'description': 'The sender.'},
+                'user-id': {'type': 'string'},
+                'filter': {
+                    'type': 'object',
+                    'title': 'Filter',
+                    'description': 'Narrows the search.\n\nAll fields combine.',
+                    'properties': {
+                        '@type': {'type': 'string', 'description': 'The kind of record.'},
+                        'from': {'type': 'integer'},
+                    },
+                    'required': ['@type'],
+                },
+                'page[size]': {'type': 'integer', 'default': 10},
+            },
+            'required': ['from', 'user-id', 'filter'],
+        },
+    )
+    rendered = _render_module(td)
+    assert rendered == snapshot('''\
+# Narrows the search.
+#
+# All fields combine.
+Filter = TypedDict('Filter', {
+    # The kind of record.
+    '@type': str,
+    'from': NotRequired[int],
+})
+
+def search(*, from_: str, user_id: str, filter: Filter, page_size_: int = 10) -> Any:
+    """
+    Args:
+        from_: The sender.
+        filter: Narrows the search.
+
+            All fields combine.
+    """
+    ...\
+''')
+    ast.parse(rendered)
+    assert {name: param.name for name, param in td.function_signature.params.items()} == snapshot(
+        {'from': 'from_', 'user-id': 'user_id', 'filter': 'filter', 'page[size]': 'page_size_'}
+    )
+
+
+def test_sanitized_parameter_names_do_not_collide():
+    """A sanitized name another parameter already has gets a number; names that are already valid never change."""
+    sig = FunctionSignature.from_schema(
+        name='lookup',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'user-id': {'type': 'string'},
+                'user_id': {'type': 'string'},
+                'user.id': {'type': 'string'},
+                'user_id_2': {'type': 'string'},
+                '2fa': {'type': 'string'},
+                'class': {'type': 'string'},
+                '': {'type': 'string'},
+            },
+            'required': ['user-id', 'user_id', 'user.id', 'user_id_2', '2fa', 'class', ''],
+        },
+    )
+    assert {name: param.name for name, param in sig.params.items()} == snapshot(
+        {
+            'user-id': 'user_id_3',
+            'user_id': 'user_id',
+            'user.id': 'user_id_4',
+            'user_id_2': 'user_id_2',
+            '2fa': '_2fa',
+            'class': 'class_',
+            '': '_',
+        }
+    )
+    rendered = sig.render('...')
+    assert rendered == snapshot(
+        'def lookup(*, user_id_3: str, user_id: str, user_id_4: str, user_id_2: str, _2fa: str, class_: str, _: str) -> Any:\n    ...'
+    )
+    ast.parse(rendered)
+
+
+def test_functional_typed_dict_comment_stays_a_comment():
+    """A description rendered as a comment can't end the comment early or carry a null byte into the source."""
+    ts = TypeSignature(
+        name='Event',
+        fields={
+            'event-type': TypeFieldSignature(
+                name='event-type', type=SimpleTypeExpr('str'), required=True, description='Line one.\nLine two\0.'
+            ),
+        },
+    )
+    rendered = ts.render_definition()
+    assert rendered == snapshot("""\
+Event = TypedDict('Event', {
+    # Line one.
+    # Line two\\x00.
+    'event-type': str,
+})\
+""")
+    ast.parse(rendered)

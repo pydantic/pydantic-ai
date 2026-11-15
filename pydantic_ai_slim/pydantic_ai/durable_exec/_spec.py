@@ -49,9 +49,18 @@ class DurabilityEngineSpec:
             'dynamic': 'enter-never',
         }
     )
-    """Per-kind lifecycle profile (`enter-always` / `enter-outside-durable` / `enter-never`).
-    Forced explicit because two real bugs came from defaulted gates (#5477 requirement 3).
-    Restate opts function tools out of entry (`enter-never`)."""
+    """Per-kind lifecycle profile: who enters a wrapped toolset, and where.
+
+    - `enter-always`: the durable container enters it around the run.
+    - `enter-outside-durable`: only outside the durable container, where there are no durable units
+      to enter it; Temporal needs this because an activity may run in another process.
+    - `enter-never`: nothing enters it; Restate opts function tools out of entry this way.
+    - `enter-in-durable-unit`: the run holds one entered toolset and the first durable unit that
+      needs it enters it, so connecting is covered by the unit's retries and an `MCPToolset` keeps
+      one session (and its `cache_tools`) for the run. Only for engines whose units run in the
+      container's own process; a unit that can't reach what the run holds enters its own.
+
+    Forced explicit because two real bugs came from defaulted gates (#5477 requirement 3)."""
 
     tool_call_result_upgrade_lenient: bool = False
     """Decode tool results recorded before control-flow exceptions were wrapped as values.
@@ -76,6 +85,26 @@ class DurabilityEngineSpec:
 
     tool_config_key: str | None = None
     """Tool metadata key containing engine-specific durable configuration, if supported."""
+
+    cancellation_error_types: tuple[type[BaseException], ...] = ()
+    """Exceptions the engine aborts a run with when the durable container is cancelled, if not `asyncio.CancelledError`.
+
+    The run attaches its state to them as it does to an external `CancelledError`, so
+    [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can recover it.
+    """
+
+    accepts_cancellation_token: bool = False
+    """Whether a run inside the durable container may take a [`CancellationToken`][pydantic_ai.CancellationToken].
+
+    A token is a same-process handle, and firing it out of band would cancel the run at a point the
+    engine didn't record, breaking replay. Opt in only when the container's code runs on a
+    deterministic event loop that the engine's own message handlers (e.g. a Temporal signal) also run
+    on, so a token created in the container and fired from such a handler cancels the run at the same
+    point on replay. That loop must also reject delivery from any other thread or loop: its
+    `call_soon_threadsafe()` must raise `NotImplementedError`, as Temporal's workflow loop does, so a
+    token fired out of band raises a [`UserError`][pydantic_ai.exceptions.UserError] instead of
+    cancelling the run at an unrecorded point. An ordinary asyncio loop doesn't qualify.
+    """
 
     def __post_init__(self) -> None:
         errors: list[str] = []

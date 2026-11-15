@@ -1,3 +1,7 @@
+---
+description: "Add conditional branching to a pydantic-graph workflow with decision nodes, routing data on its type or value to the next step in the graph builder API."
+---
+
 # Decision Nodes
 
 Decision nodes enable conditional branching in your graph based on the type or value of data flowing through it.

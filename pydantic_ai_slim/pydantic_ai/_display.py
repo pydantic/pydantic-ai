@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import platform
 import re
+import shutil
 import sys
+import sysconfig
 from collections.abc import Sequence
+from functools import cache
 from importlib import metadata
 from itertools import zip_longest
+from pathlib import PurePath
 from textwrap import wrap
 from threading import Lock
-from typing import Protocol, cast, get_args
+from types import FrameType
+from typing import IO, Protocol, cast, get_args
 
 _banner_displayed = False
 _banner_lock = Lock()
@@ -51,27 +57,52 @@ floor, which only the vertex reaches.
 _LOGO_LINES = _LOGO.splitlines()
 _LOGO_WIDTH = max(map(len, _LOGO_LINES))
 _GUTTER = 2
-_TEXT_WIDTH = 100 - _LOGO_WIDTH - _GUTTER
-"""Wrap width for the text column, chosen so the whole banner fits in 100 columns."""
+_DEFAULT_WIDTH = 100
+"""Width the banner lays itself out in when there's no terminal to measure.
+
+A pipe has no width — a coding agent reading `stderr` back, or output on its way to a file — so
+rather than guess at one, the banner keeps the width it was designed to fit.
+"""
 _MAX_OUTPUT_TYPE_LENGTH = 40
 """How much of the output type's name the banner shows before cutting it off."""
 
 _INFO_SEPARATOR = ' • '
 _INFO_INDENT = '  '
+_LINK_CONTINUATION_INDENT = _INFO_INDENT + '  '
 
 # Everything the banner says, in the order it says it, so that the wording lives in one place rather
 # than spread through the functions that lay it out. Each is a sentence `textwrap` re-flows at render
-# time, so rewriting one doesn't mean re-flowing anything by hand.
+# time, with link-line continuations set apart as the value of the preceding text, so rewriting one
+# doesn't mean re-flowing anything by hand.
 _OBSERVABILITY_HEADING = 'observability: off — see every model and tool call live, with cost'
-_LOGFIRE_LINE = 'set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md'
+_LOGFIRE_PREFIX = 'set it up free with Pydantic Logfire:'
+_LOGFIRE_COMMAND = 'uvx logfire-cli wizard --task pydantic-ai'
+_LOGFIRE_URL = 'https://pydantic.dev/ai-setup.md'
+_LOGFIRE_LINES = tuple(f'{_LOGFIRE_PREFIX} {destination}' for destination in (_LOGFIRE_COMMAND, _LOGFIRE_URL))
 _OTEL_LINE = 'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel'
-"""The two paths, one link each.
+"""The two paths, one copyable command or link each, including the Logfire fallback.
 
-Both are written to fit `_TEXT_WIDTH` unbroken: a URL `textwrap` splits across lines stops being
-clickable in most terminals, which is the only reason either is in the banner. `test_display` holds
-that, so a reworded line or a wider logo can't quietly cost a link.
+The command is offered only when `uvx` is installed, since otherwise pasting it fails. The setup URL
+is kept as the fallback. Neither is ever broken across lines: a split command cannot be pasted and a
+split URL stops being clickable in most terminals. When one moves to a continuation line, its deeper
+indent keeps it attached to the sentence that introduces it. `_MIN_TEXT_WIDTH` is measured off every
+variant and that indent so that no width can wrap them, and `test_display` holds that at every width
+the banner is laid out for, so a reworded line or a wider logo can't quietly cost either one.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
+
+_MIN_TEXT_WIDTH = len(_LINK_CONTINUATION_INDENT) + max(
+    len(_LOGFIRE_COMMAND),
+    *(len(word) for line in (_OBSERVABILITY_HEADING, *_LOGFIRE_LINES, _OTEL_LINE, _HIDE_LINE) for word in line.split()),
+)
+"""Narrowest the text column can be and still hold the banner's own words whole.
+
+Measured off the copy rather than written down, so a longer command or URL raises the floor with it
+instead of quietly starting to wrap.
+"""
+
+_MIN_WIDTH_FOR_LOGO = _LOGO_WIDTH + _GUTTER + _MIN_TEXT_WIDTH
+"""Narrowest terminal with room for the logo beside the text, rather than no room for the text."""
 
 # Written as ANSI rather than with `rich`, which isn't a dependency of the library the banner ships
 # in. `clai` reads the codes back into its own console, so both paths colour the banner identically.
@@ -183,6 +214,73 @@ def _agent_signal_matches(signal: str) -> bool:
     return os.environ.get(name) == value if value else name in os.environ
 
 
+_OWN_PACKAGES = frozenset({'pydantic_ai', 'pydantic_graph'})
+"""Packages whose frames sit between whoever started a run and the code deciding about a banner."""
+
+_INSTALLED_PACKAGE_DIRS = frozenset({'site-packages', 'dist-packages'})
+
+_UI_ADAPTER_PACKAGE = 'pydantic_ai.ui.'
+
+_TASK_RUNNER_PACKAGES = frozenset({'anyio', 'trio'})
+"""Installed packages that start a task through a coroutine of their own, wrapping the one it runs."""
+
+_COROUTINE_FLAGS = inspect.CO_COROUTINE | inspect.CO_ITERABLE_COROUTINE | inspect.CO_ASYNC_GENERATOR
+
+
+def started_by_installed_package(frame: FrameType | None) -> bool:
+    """Whether the code that started an agent run is an installed package, rather than the user's own.
+
+    A library or platform built on Pydantic AI (an Airflow provider, a CLI installed with `uv tool`)
+    runs agents on its users' behalf, and its users didn't ask for our banner: it would land in their
+    logs or inside the tool's own UI. The user's own script, notebook or app runs from a source tree,
+    while an installed package runs from `site-packages`, so the first frame outside Pydantic AI and
+    the standard library says which of the two started the run.
+
+    Where a chain of coroutines ends in a frame that isn't one, an event loop is stepping a task, and
+    the frames below belong to whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever
+    started the run, unless Pydantic AI's own sync methods drive it. `anyio` and `trio` start a task
+    through a coroutine of their own, so their frames mark the same boundary. A run whose starter
+    lies past such a boundary is not attributed to a package: it keeps the banner, as before. So does
+    a run a UI adapter streams: the web framework pulling the stream is installed, but the app that
+    handed it the adapter's response is the user's.
+
+    Args:
+        frame: The frame to start looking outwards from, inside Pydantic AI.
+    """
+    stdlib_dirs = _stdlib_dirs()
+    below_event_loop = False
+    in_coroutine = False
+    while frame is not None:
+        is_coroutine = bool(frame.f_code.co_flags & _COROUTINE_FLAGS)
+        if in_coroutine and not is_coroutine:
+            below_event_loop = True
+        in_coroutine = is_coroutine
+        filename = frame.f_code.co_filename
+        module = frame.f_globals.get('__name__')
+        package = module.partition('.')[0] if isinstance(module, str) else None
+        if isinstance(module, str) and module.startswith(_UI_ADAPTER_PACKAGE):
+            return False
+        if package in _OWN_PACKAGES:
+            # `run_sync()` and friends drive the loop themselves, so their caller started the run.
+            below_event_loop = False
+        elif package in _TASK_RUNNER_PACKAGES:
+            below_event_loop = True
+        # Checked before the standard library, which a system Python's `site-packages` sits inside.
+        elif not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):
+            return not below_event_loop
+        elif not filename.startswith(stdlib_dirs):
+            return False
+        frame = frame.f_back
+    return False
+
+
+@cache
+def _stdlib_dirs() -> tuple[str, ...]:
+    """Where the standard library lives, whose frames (`asyncio`, `contextlib`) are passed over like ours."""
+    paths = sysconfig.get_paths()
+    return tuple(os.path.join(paths[key], '') for key in ('stdlib', 'platstdlib'))
+
+
 def _banner_suppressed() -> bool:
     """Whether the user or the environment has asked not to be shown the banner."""
     # Read from the package rather than kept here, so that setting `pydantic_ai.BANNER_ENABLED` is
@@ -222,7 +320,9 @@ def render_banner(
     tools: int | None,
     capabilities: int,
     observability: bool = True,
+    logfire_cli_available: bool = False,
     color: bool = True,
+    width: int | None = None,
 ) -> str:
     """Render the banner: what's running, what the agent is, and how to see what it does.
 
@@ -234,8 +334,12 @@ def render_banner(
             without connecting to something, which leaves the count out rather than understating it.
         capabilities: Number of capabilities registered on the agent.
         observability: Whether to include the pointer to setting up observability.
+        logfire_cli_available: Whether to suggest the `uvx` setup command instead of the setup URL.
         color: Whether to emit the ANSI colour codes that highlight the logo and the agent's identity.
+        width: Columns the banner has to lay itself out in, or `None` when the caller is writing
+            somewhere that has no width to report, such as a pipe.
     """
+    text_width, beside_logo = _columns(width)
     # What identifies the agent is highlighted; what it was given to work with is counted plainly.
     info = [('agent', name, True)] if name else []
     info.append(('model', model, True))
@@ -247,17 +351,33 @@ def render_banner(
         info.append(('tools', str(tools), False))
     info.append(('capabilities', str(capabilities), False))
 
-    # The versions carry no colour, so `textwrap` can be trusted to break them at a separator.
-    lines = [*wrap(_version_line(), width=_TEXT_WIDTH, subsequent_indent=_INFO_INDENT), '', *_info_lines(info)]
+    # The versions carry no colour, so unlike the details below them they can be left to `textwrap`.
+    lines = [*_wrapped(_version_line(), text_width), '', *_info_lines(info, text_width)]
     if observability:
         # Both halves of this are advice for someone who hasn't set observability up, so a session
         # that has stays out of it entirely rather than being told to do what it has already done.
-        lines += ['', *_observability_lines()]
+        lines += ['', *_observability_lines(text_width, logfire_cli_available=logfire_cli_available)]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
-        lines += ['', *_wrapped(_HIDE_LINE)]
+        lines += ['', *_wrapped(_HIDE_LINE, text_width)]
 
-    banner = _beside_logo(lines)
+    banner = _beside_logo(lines) if beside_logo else '\n'.join(line.rstrip() for line in lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
+
+
+def _columns(width: int | None) -> tuple[int, bool]:
+    """How wide the text column gets out of `width`, and whether the logo still fits beside it.
+
+    A terminal too narrow for both gives the room to the words: the logo is decoration, and keeping
+    it would push the text past the edge, where the terminal breaks the lines itself and drops the
+    remainder in column zero — right through the logo, which is what a fixed width does at any size
+    the user didn't happen to have.
+    """
+    width = width or _DEFAULT_WIDTH
+    if width >= _MIN_WIDTH_FOR_LOGO:
+        return width - _LOGO_WIDTH - _GUTTER, True
+    # Narrower than the words themselves, there's nothing left to give them, and the floor at least
+    # keeps the links whole for a terminal that reflows rather than truncates.
+    return max(width, _MIN_TEXT_WIDTH), False
 
 
 def display_agent_banner(
@@ -292,9 +412,11 @@ def display_agent_banner(
             output_type=output_type,
             tools=tools,
             capabilities=capabilities,
+            logfire_cli_available=shutil.which('uvx') is not None,
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
+            width=terminal_width(stderr),
         )
         # Written to the stream that was checked, rather than to whatever `sys.stderr` is by now.
         print(banner, file=stderr)
@@ -303,6 +425,32 @@ def display_agent_banner(
         # whose encoding can't take the logo (`LC_ALL=C`) raises here, as does a `stderr` that has
         # been closed or wrapped in something unusual.
         pass
+
+
+def terminal_width(stream: IO[str]) -> int | None:
+    """Columns `stream`'s terminal has to write in, or `None` when it isn't one or won't say.
+
+    Asked of the stream the banner is going to rather than of the process: `stdout` is often a pipe
+    while `stderr` is the terminal the user is reading. `COLUMNS` then overrides what the terminal
+    reports, as `shutil` and `rich` both read it. `clai` asks its console first, which knows the
+    same two things and a width it was handed, and falls through to here when it has no terminal —
+    so a `COLUMNS` the user exported is honoured whichever of the two shows the banner.
+    """
+    width: int | None = None
+    try:
+        width = os.get_terminal_size(stream.fileno()).columns
+    except Exception:
+        # Not a terminal, a stream with no `fileno()` at all, or one closed under us.
+        pass
+
+    columns = os.environ.get('COLUMNS', '')
+    # `isdecimal` rather than `isdigit`, which also accepts the likes of `²` — a width `int` then
+    # refuses, and the banner would be lost to the `except` that a failed measurement lands in
+    # rather than simply falling back to the width it was designed for.
+    if columns.isdecimal():
+        width = int(columns)
+    # A terminal that reports zero columns is one that doesn't know, not one with no room.
+    return width or None
 
 
 def _stderr_is_terminal() -> bool:
@@ -318,7 +466,7 @@ def _stderr_is_terminal() -> bool:
         return False
 
 
-def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
+def _info_lines(info: Sequence[tuple[str, str, bool]], text_width: int) -> list[str]:
     """Lay `(label, value, highlight)` details out over as many lines as they need.
 
     Packed here rather than by `textwrap`, which would count the colour codes as width and break
@@ -327,10 +475,10 @@ def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
     lines: list[str] = []
     width = 0
     for label, value, highlight in info:
-        value = _elided(value, _TEXT_WIDTH - len(_INFO_INDENT) - len(label) - len(': '))
+        value = _elided(value, text_width - len(_INFO_INDENT) - len(label) - len(': '))
         item = f'{label}: {value}'
         styled = f'{label}: {_colored(value, _HIGHLIGHT_COLOR)}' if highlight else item
-        if lines and width + len(_INFO_SEPARATOR) + len(item) <= _TEXT_WIDTH:
+        if lines and width + len(_INFO_SEPARATOR) + len(item) <= text_width:
             lines[-1] += _INFO_SEPARATOR + styled
             width += len(_INFO_SEPARATOR) + len(item)
         else:
@@ -399,25 +547,45 @@ def _version_line() -> str:
     return version + f' • Python {platform.python_version()}'
 
 
-def _wrapped(text: str, *, indented: bool = False) -> list[str]:
+def _wrapped(
+    text: str,
+    text_width: int,
+    *,
+    indented: bool = False,
+    unbreakable: str | None = None,
+    continuation_indent: str = _INFO_INDENT,
+) -> list[str]:
     """`text` re-flowed to the text column, continuing under its own indent rather than the label."""
-    return wrap(
+    if unbreakable is not None:
+        # NUL is not whitespace, so `textwrap` keeps the span together. Restore its spaces before
+        # returning text that could reach a terminal.
+        text = text.replace(unbreakable, unbreakable.replace(' ', '\0'))
+    lines = wrap(
         text,
-        width=_TEXT_WIDTH,
+        width=text_width,
         initial_indent=_INFO_INDENT if indented else '',
-        subsequent_indent=_INFO_INDENT,
+        subsequent_indent=continuation_indent,
         # Hyphens here are in URLs and flag names, which don't survive being broken across lines.
         break_on_hyphens=False,
     )
+    return [line.replace('\0', ' ') for line in lines]
 
 
-def _observability_lines() -> list[str]:
-    """How to see what the agent actually did, for someone who hasn't set that up yet."""
+def _observability_lines(text_width: int, *, logfire_cli_available: bool = False) -> list[str]:
+    """How to see what the agent did, falling back to a link when the `uvx` command would fail."""
+    logfire_destination = _LOGFIRE_COMMAND if logfire_cli_available else _LOGFIRE_URL
+    logfire_line = f'{_LOGFIRE_PREFIX} {logfire_destination}'
     return [
-        *_wrapped(_OBSERVABILITY_HEADING),
-        # One link each, so that whichever of the two the reader wants is a single thing to follow.
-        *_wrapped(_LOGFIRE_LINE, indented=True),
-        *_wrapped(_OTEL_LINE, indented=True),
+        *_wrapped(_OBSERVABILITY_HEADING, text_width),
+        # One copyable command or link each, so either path is a single thing to follow.
+        *_wrapped(
+            logfire_line,
+            text_width,
+            indented=True,
+            unbreakable=logfire_destination,
+            continuation_indent=_LINK_CONTINUATION_INDENT,
+        ),
+        *_wrapped(_OTEL_LINE, text_width, indented=True, continuation_indent=_LINK_CONTINUATION_INDENT),
     ]
 
 

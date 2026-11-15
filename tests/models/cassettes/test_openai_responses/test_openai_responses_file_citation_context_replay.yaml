@@ -1,0 +1,545 @@
+interactions:
+- request:
+    body: "--21d98f548eda745f63189169e4217d2e\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--21d98f548eda745f63189169e4217d2e\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"citation-source.txt\"\r\nContent-Type: text/plain\r\n\r\nThe return window is thirty
+      days from purchase.\r\n--21d98f548eda745f63189169e4217d2e--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '326'
+      content-type:
+      - multipart/form-data; boundary=21d98f548eda745f63189169e4217d2e
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/files
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '221'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '240'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      bytes: 47
+      created_at: 1787809812
+      expires_at: null
+      filename: citation-source.txt
+      id: file-Jv1tq3ibScfNHqvHfzpkX4
+      object: file
+      purpose: assistants
+      status: processed
+      status_details: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '35'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      openai-beta:
+      - assistants=v2
+    method: POST
+    parsed_body:
+      name: citation-context-replay
+    uri: https://api.openai.com/v1/vector_stores
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '375'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '427'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1787809814
+      description: null
+      expires_after: null
+      expires_at: null
+      file_counts:
+        cancelled: 0
+        completed: 0
+        failed: 0
+        in_progress: 0
+        total: 0
+      id: vs_6a8fd0164200819181a62bc431536e80
+      last_active_at: 1787809814
+      metadata: {}
+      name: citation-context-replay
+      object: vector_store
+      status: completed
+      usage_bytes: 0
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '42'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      openai-beta:
+      - assistants=v2
+    method: POST
+    parsed_body:
+      file_id: file-Jv1tq3ibScfNHqvHfzpkX4
+    uri: https://api.openai.com/v1/vector_stores/vs_6a8fd0164200819181a62bc431536e80/files
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '345'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '883'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      attributes: {}
+      chunking_strategy:
+        static:
+          chunk_overlap_tokens: 400
+          max_chunk_size_tokens: 800
+        type: static
+      created_at: 1787809816
+      id: file-Jv1tq3ibScfNHqvHfzpkX4
+      last_error: null
+      object: vector_store.file
+      status: in_progress
+      usage_bytes: 0
+      vector_store_id: vs_6a8fd0164200819181a62bc431536e80
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: According to the file, what is the return window? Answer in one sentence without naming the file.
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: file_search
+        vector_store_ids:
+        - vs_6a8fd0164200819181a62bc431536e80
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2100'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2875'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1787809822
+      created_at: 1787809819
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0790e000d91363bb006a8fd01bafdc87d18727affd53f85790
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      moderation: null
+      object: response
+      output:
+      - id: fs_0790e000d91363bb006a8fd01d031487d1898ce83e08b61ce7
+        queries:
+        - What is the return window?
+        results: null
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations:
+          - file_id: file-Jv1tq3ibScfNHqvHfzpkX4
+            filename: citation-source.txt
+            index: 46
+            type: file_citation
+          logprobs: []
+          text: The return window is thirty days from purchase.
+          type: output_text
+        id: msg_0790e000d91363bb006a8fd01e45e087d19a4bf0801cf58f9a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: null
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - filters: null
+        max_num_results: 20
+        ranking_options:
+          ranker: auto
+          score_threshold: 0.0
+        type: file_search
+        vector_store_ids:
+        - vs_6a8fd0164200819181a62bc431536e80
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 1333
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 38
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 1371
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '922'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: According to the file, what is the return window? Answer in one sentence without naming the file.
+        role: user
+      - id: fs_0790e000d91363bb006a8fd01d031487d1898ce83e08b61ce7
+        queries:
+        - What is the return window?
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations:
+          - file_id: file-Jv1tq3ibScfNHqvHfzpkX4
+            filename: citation-source.txt
+            index: 46
+            type: file_citation
+          text: The return window is thirty days from purchase.
+          type: output_text
+        id: msg_0790e000d91363bb006a8fd01e45e087d19a4bf0801cf58f9a
+        role: assistant
+        status: completed
+        type: message
+      - content: Do not search again. Based only on the structured file citation attached to the previous assistant message,
+          reply with the exact cited filename. If it is unavailable, reply exactly UNAVAILABLE.
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1583'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1988'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1787809824
+      created_at: 1787809823
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0790e000d91363bb006a8fd01f19b087d1ac04739e8886e87e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: UNAVAILABLE
+          type: output_text
+        id: msg_0790e000d91363bb006a8fd020de0487d189b84cf6979a2b97
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: null
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 181
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 3
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 184
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/files/file-Jv1tq3ibScfNHqvHfzpkX4
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '72'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '858'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: file-Jv1tq3ibScfNHqvHfzpkX4
+      object: file
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      openai-beta:
+      - assistants=v2
+    method: DELETE
+    uri: https://api.openai.com/v1/vector_stores/vs_6a8fd0164200819181a62bc431536e80
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '96'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1636'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: vs_6a8fd0164200819181a62bc431536e80
+      object: vector_store.deleted
+    status:
+      code: 200
+      message: OK
+version: 1
