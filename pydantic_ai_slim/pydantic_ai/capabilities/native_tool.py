@@ -61,8 +61,8 @@ class NativeTool(AbstractCapability[AgentDepsT]):
         - Explicit: `{NativeTool: {tool: {kind: web_search}}}`
 
         `kind` names a type in [`NATIVE_TOOL_TYPES`][pydantic_ai.native_tools.NATIVE_TOOL_TYPES] as it stands when the
-        spec loads, so a subclass defined after import loads too. A subclass that keeps a built-in `kind` replaces that
-        tool there, and its `kind` loads the subclass.
+        spec loads, so a subclass defined after import loads too. A subclass that keeps a built-in `kind` replaces the
+        built-in tool in the registry, so specs with that `kind` load the subclass.
         """
         adapter = _native_tool_adapter(tuple(NATIVE_TOOL_TYPES.values()))
         if tool is not None:
