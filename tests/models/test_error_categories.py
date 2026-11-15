@@ -9,7 +9,7 @@ Mock transports use `localhost` base URLs, which VCR ignores.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -64,7 +64,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.models.zai import ZaiModel
@@ -75,6 +76,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -123,6 +125,16 @@ def _openai(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+
+
+def _openai_responses(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 
 
 def _openrouter(handler: Handler) -> Model:
@@ -223,6 +235,14 @@ def _cohere(handler: Handler) -> Model:
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
 
 
+def _ollama(handler: Handler) -> Model:
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    return OllamaModel(
+        'gpt-oss:20b-cloud',
+        provider=OllamaProvider(base_url='http://localhost/v1', api_key='test', http_client=http_client),
+    )
+
+
 def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) -> Handler:
     def handler(request: Any) -> Any:
         response_class = httpx.Response if isinstance(request, httpx.Request) else httpx2.Response
@@ -257,6 +277,28 @@ def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
             raise error_class('failed', request=request)
         error_class2 = {'connect': httpx2.ConnectError, 'timeout': httpx2.ReadTimeout, 'pool': httpx2.PoolTimeout}[kind]
         raise error_class2('failed', request=request)
+
+    return handler
+
+
+class _ErrorBodyBreakingOff(httpx2.AsyncByteStream):
+    def __init__(self, kind: Literal['protocol', 'timeout']) -> None:
+        self.kind = kind
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": {"mess'
+        raise (httpx2.RemoteProtocolError if self.kind == 'protocol' else httpx2.ReadTimeout)('failed')
+
+
+def _error_body_breaking_off(kind: Literal['protocol', 'timeout']) -> Handler:
+    """A 503 whose body breaks off after its first chunk, as when a proxy cuts the connection.
+
+    For a streamed request, `openai` reads an error status's body outside the code that wraps transport errors in
+    `APIConnectionError`, so the raw `httpx2` error reaches the model.
+    """
+
+    def handler(request: Any) -> Any:
+        return httpx2.Response(503, headers={'content-type': 'application/json'}, stream=_ErrorBodyBreakingOff(kind))
 
     return handler
 
@@ -508,6 +550,38 @@ CASES = [
         handler=_sse_data({'error': {'message': 'Overloaded', 'type': 'overloaded'}}),
         categories=_OVERLOADED,
         attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': None, 'provider_error_type': 'overloaded'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-broken-off',
+        model=_openai,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-timeout',
+        model=_openai,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-broken-off',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-timeout',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
         stream=True,
     ),
     Case(
@@ -1125,6 +1199,23 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='ollama-cloud-context-window',
+        model=_ollama,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': 'prompt too long; exceeded max context length by 668997 tokens (ref: …)',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': None,
+                }
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
         id='openai-unavailable',
@@ -2154,6 +2245,7 @@ _TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
     _openrouter,
     _zai,
     _moonshotai,
+    _ollama,
     _anthropic,
     _anthropic_bedrock,
     _google,
