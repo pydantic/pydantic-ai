@@ -7,7 +7,7 @@ from typing import Literal, cast
 import httpx2
 
 from pydantic_ai import _model_errors
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.models._transport_errors import transport_error_message
@@ -35,26 +35,19 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
-            status = e.status if isinstance(e.status, str) else None
-            body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
-            error = ModelHTTPError.for_category(
-                _model_errors.google_status_category(status, e.message, body)
-                or _model_errors.http_status_category(status_code, e.message),
+            raise _model_errors.google_status_error(
+                model_name,
                 status_code=status_code,
-                model_name=model_name,
-                body=body,
+                status=e.status if isinstance(e.status, str) else None,
+                message=e.message,
+                body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                provider_error_code=status,
-            )
-            error.retry_after = _model_errors.google_retry_after(error)
-            raise error from e
+            ) from e
 
         raise
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        error = _model_errors.transport_status_error(model_name, e.response)
-        error.retry_after = _model_errors.google_retry_after(error)
-        raise error from e
+        raise _model_errors.google_transport_status_error(model_name, e.response) from e
     except httpx2.TransportError as e:
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
