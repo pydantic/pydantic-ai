@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from functools import cache
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -753,15 +753,15 @@ def _redact_mcp_instruction_parts(
     return redacted_parts
 
 
-@cache
+@lru_cache(maxsize=1)
 def _model_request_parameters_adapter(
     native_tool_types: tuple[type[AbstractNativeTool], ...],
 ) -> TypeAdapter[ModelRequestParameters]:
-    """Build the adapter once for each state of `NATIVE_TOOL_TYPES`, which `native_tool_types` snapshots.
+    """Build the adapter from `NATIVE_TOOL_TYPES`, whose current contents `native_tool_types` passes as the cache key.
 
     The parameters' native tools serialize through a union of the registered types. A type registers when its class
     is defined, which can be after the first request, and an adapter built before then can't serialize its instances
-    through their own schema.
+    through their own schema. The cache keeps only the adapter for the registry's current contents.
 
     A registered type pydantic can't build a schema for fails the whole build. The parameters then serialize by
     inference, as the `serialize_any` fallback does, without retrying the build on every request.
