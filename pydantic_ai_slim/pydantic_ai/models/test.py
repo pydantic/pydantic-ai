@@ -611,6 +611,8 @@ class _JsonSchemaTestData:
             if minimum == maximum:
                 return minimum
             span = maximum - minimum
+            # Only a schema without any exclusive key, even an ignored one, reaches its maximum. Letting exclusive
+            # ranges reach it too would change the values existing snapshots pin for them.
             if 'exclusiveMinimum' not in schema and 'exclusiveMaximum' not in schema and span > 0:
                 span += 1
             return minimum + self.seed % span
