@@ -481,7 +481,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
             capabilities: The capabilities to use instead of the agent's configured capabilities. When set,
-                capability-contributed instructions, tools, and native tools are not used.
+                these replace (not merge with) the agent's existing capabilities. To add to the existing
+                set, include them explicitly:
+                `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.

@@ -2533,20 +2533,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # override. Build it before resolving an overridden model so custom model IDs can
         # be preserved for that capability's async, deps-aware resolver. Explicit params take
         # precedence over spec values.
+        if not _utils.is_set(capabilities) and resolved is not None and resolved.capability is not None:
+            capabilities = resolved.capability.capabilities
+        override_capability: CombinedCapability[AgentDepsT] | None = None
         if _utils.is_set(capabilities):
             override_caps = wrap_capability_funcs(capabilities)
             _inject_auto_capabilities(override_caps)
             _reject_second_of_a_kind(override_caps)
-            override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
-                self
-            )
-        elif resolved is not None and resolved.capability is not None:
-            override_caps = list(resolved.capability.capabilities)
-            _inject_auto_capabilities(override_caps)
-            _reject_second_of_a_kind(override_caps)
             override_capability = CombinedCapability(override_caps).for_agent(self)
-        else:
-            override_capability = None
 
         # Apply spec values as defaults where explicit params are not set
         if resolved is not None:
