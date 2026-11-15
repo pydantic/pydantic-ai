@@ -44,7 +44,7 @@ jobs:
               // REST name includes custom run-name titles; identify the workflow by path.
               const events = {
                 '.github/workflows/bots.yml': ['pull_request_target'],
-                '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment']
+                '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment', 'pull_request_review_thread']
               };
               if (!events[run.path]?.includes(run.event) ||
                   run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {

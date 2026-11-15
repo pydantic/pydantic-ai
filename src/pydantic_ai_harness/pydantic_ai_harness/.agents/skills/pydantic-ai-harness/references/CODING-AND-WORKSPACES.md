@@ -44,10 +44,13 @@ except UserError as e:
   or a sandbox capability, or pass `workspace=` to `run()`.
 - Set the directory **on the workspace**: `LocalWorkspace('./repo')`. `Coder('dir')`, `Shell(cwd=)`,
   `FileSystem(cwd=)`, `Macroscope(cwd=)`, `RepoContext(workspace_dir=)` warn and are **ignored**.
-- `LocalWorkspace` needs a POSIX host (use WSL or a sandbox on Windows) and is not a sandbox.
+- `LocalWorkspace` needs a POSIX host and is not a sandbox.
   Commands inherit only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`; pass the rest with
   `LocalWorkspace('.', env={'GH_TOKEN': ...})`. Never pass `os.environ` (leaks LLM API keys to the
   model's commands). Under `uv run`, `python`/`pytest` resolve from the agent's venv via `PATH`.
+- On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
+  workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
+  `list_files` read the files when `rg` is missing.
 - **Harness files** (Shell job logs, sticky-`cd` state, tool-output spills) go in
   `.pydantic-ai-harness/` under the working directory, with a `.gitignore` of `*`. Spills are never
   pruned. `FileSystem` keeps that directory read-only.
@@ -137,6 +140,12 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
 
+### BenchmarkInstructions
+
+For benchmark runs, bind `BenchmarkInstructions()` next to `Coder()`: it adds the benchmark-only guidance
+(self-contained deliverables checked from a clean directory, using every field of the provided data)
+that `Coder`'s defaults leave out.
+
 ### Sharing a workspace across runs and agents
 
 ```python {test="skip" lint="skip"}
@@ -204,9 +213,9 @@ descendants; denied and read-only patterns ignore case), `read_only=False` (`Tru
 - Walkers skip dotfiles and dot-directories unless a path or pattern names one explicitly, and filter entries, not the root, by
   `allowed_patterns`. A read-only workspace gets only read tools.
 - Veto writes with `@agent.on_event(FileChangeRequestedEvent)` (not `FileChangeRequestEvent`) +
-  `event.cancel(reason)` (from `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
+  `event.cancel(reason)` (from `pydantic_ai_harness.file_system`); the event carries a unified `diff`.
 - Recognize the file tools by kind, never by name: each declares `tool_kind` `file_system.<tool>`
-  (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.filesystem`), and its calls
+  (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.file_system`), and its calls
   become typed parts (`isinstance(part, ReadFileCallPart)`; `part.typed_args` is `None` until the
   arguments validate). Only `read_file` has a typed return part (`ReadFileReturnPart`, successful
   returns only).

@@ -22,6 +22,8 @@ CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
 }
+# The douwebot prompt in `bots.yml` asks for this prefix on every optional finding.
+OPTIONAL_FINDING_PREFIX = 'Optional:'
 
 
 class ReviewUser(BaseModel):
@@ -64,6 +66,7 @@ class Review(BaseModel):
 class ReviewComment(BaseModel):
     """The parent review's marker identifies the head, else `original_commit_id`; `commit_id` can move on later pushes."""
 
+    id: int
     pull_request_review_id: int
     user: ReviewUser
     original_commit_id: str
@@ -91,6 +94,39 @@ class _Jobs(BaseModel):
     jobs: list[ReviewJob]
 
 
+class _CommentId(BaseModel):
+    databaseId: int
+
+
+class _ThreadComments(BaseModel):
+    nodes: list[_CommentId]
+
+
+class _Thread(BaseModel):
+    isResolved: bool
+    comments: _ThreadComments
+
+
+class _Threads(BaseModel):
+    nodes: list[_Thread]
+
+
+class _ThreadsPull(BaseModel):
+    reviewThreads: _Threads
+
+
+class _ThreadsRepository(BaseModel):
+    pullRequest: _ThreadsPull
+
+
+class _ThreadsData(BaseModel):
+    repository: _ThreadsRepository
+
+
+class _ThreadsPage(BaseModel):
+    data: _ThreadsData
+
+
 class _SizedFile(ChangedFile):
     additions: int = Field(ge=0)
     deletions: int = Field(ge=0)
@@ -108,6 +144,7 @@ class ReviewGitHub(Protocol):
     def size(self, pull: ReviewPullRequest) -> Size: ...
     def reviews(self) -> list[Review]: ...
     def review_comments(self) -> list[ReviewComment]: ...
+    def resolved_comment_ids(self) -> set[int]: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
 
@@ -117,6 +154,7 @@ def review_verdicts(
     pull: ReviewPullRequest,
     reviews: list[Review],
     comments: list[ReviewComment],
+    resolved: set[int],
 ) -> dict[ReviewGate, Verdict]:
     """Apply the size-dependent review bar to a live metadata snapshot."""
     verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict()}
@@ -133,7 +171,7 @@ def review_verdicts(
             )
         return verdicts
 
-    verdicts['douwebot'] = douwebot_approval(github, pull, reviews, comments)
+    verdicts['douwebot'] = douwebot_approval(github, pull, reviews, comments, resolved)
     return verdicts
 
 
@@ -142,11 +180,15 @@ def douwebot_approval(
     pull: ReviewPullRequest,
     reviews: list[Review],
     comments: list[ReviewComment],
+    resolved: set[int],
 ) -> Verdict:
     """Verify provenance and associate findings with their immutable review head.
 
     GitHub can move a review's and a comment's `commit_id` after a push. Use the parent's
     marker head, or `original_commit_id` when the parent is unavailable or unmarked.
+
+    An optional inline finding on a verified approval stops blocking once its review thread
+    is resolved, given by the thread root ids in `resolved`. Every other finding blocks.
     """
     verdict = Verdict()
     own_reviews: list[Review] = []
@@ -184,27 +226,43 @@ def douwebot_approval(
         if reviewed_head != pull.head.sha:
             continue
         if comment.pull_request_review_id in marked_ids:
-            verdict.failures.append('Douwebot has inline findings on this head, including resolved/optional ones.')
-        else:
-            # gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account.
-            if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+            if parent in own_reviews and settled_optional_finding(comment, parent, resolved):
                 continue
-            receipt = f'{parent.body if parent else ""}\n{comment.body}'
-            if any(
-                f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
-                or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
-                for workflow in (
-                    'pydantic/pydantic-ai/pydantic-ai-pr-review',
-                    # Retired, but an open PR's head can still carry its comments.
-                    'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
-                )
-            ):
+            verdict.failures.append('Douwebot has blocking or unresolved optional inline findings on this head.')
+        else:
+            if other_review_receipt(comment, parent):
                 continue
             verdict.failures.append(
                 'Cannot attribute an unmarked bot comment on this head; obtain a fresh review/head.'
             )
         break
     return verdict
+
+
+def other_review_receipt(comment: ReviewComment, parent: Review | None) -> bool:
+    """gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account."""
+    if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+        return True
+    receipt = f'{parent.body if parent else ""}\n{comment.body}'
+    return any(
+        f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
+        or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
+        for workflow in (
+            'pydantic/pydantic-ai/pydantic-ai-pr-review',
+            # Retired, but an open PR's head can still carry its comments.
+            'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
+        )
+    )
+
+
+def settled_optional_finding(comment: ReviewComment, parent: Review | None, resolved: set[int]) -> bool:
+    """An approval's optional finding stops blocking once its thread is resolved."""
+    return (
+        parent is not None
+        and parent.state == 'APPROVED'
+        and comment.body.startswith(OPTIONAL_FINDING_PREFIX)
+        and comment.id in resolved
+    )
 
 
 def review_order(review: Review) -> tuple[float, int]:
@@ -233,9 +291,15 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
             head = pull.head.sha
             reviews = github.reviews()
             comments = github.review_comments()
-            verdicts = review_verdicts(github, pull, reviews, comments)
-            # A push or relabel during the API reads must not publish an old snapshot.
-            if github.pull_request() == pull and github.reviews() == reviews and github.review_comments() == comments:
+            resolved = github.resolved_comment_ids()
+            verdicts = review_verdicts(github, pull, reviews, comments, resolved)
+            # A push, relabel or thread resolution during the API reads must not publish an old snapshot.
+            if (
+                github.pull_request() == pull
+                and github.reviews() == reviews
+                and github.review_comments() == comments
+                and github.resolved_comment_ids() == resolved
+            ):
                 break
         else:
             raise GateError('PR changed repeatedly while evaluating reviews; retry the gate.')
@@ -264,10 +328,29 @@ _SIZED_FILES = TypeAdapter(list[_SizedFile])
 _REVIEW_PAGES = TypeAdapter(list[list[Review]])
 _COMMENT_PAGES = TypeAdapter(list[list[ReviewComment]])
 _JOB_PAGES = TypeAdapter(list[_Jobs])
+_THREAD_PAGES = TypeAdapter(list[_ThreadsPage])
+# A douwebot finding always starts its own thread, so the first comment identifies it.
+_THREADS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes { isResolved comments(first: 1) { nodes { databaseId } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}
+"""
 
 
 class ReviewGhCli(GhCli):
     """Review metadata and commit statuses through the shared GitHub client."""
+
+    def __init__(self, repo: str, number: int) -> None:
+        super().__init__(repo, number)
+        self._owner, self._name = repo.split('/')
+        self._number = number
 
     def pull_request(self) -> ReviewPullRequest:
         """Read current PR metadata, never an event's stale labels/head."""
@@ -301,9 +384,34 @@ class ReviewGhCli(GhCli):
         return [review for page in pages for review in page]
 
     def review_comments(self) -> list[ReviewComment]:
-        """Read every inline comment; resolution does not make a finding clean."""
+        """Read every inline comment, resolved or not."""
         pages = _COMMENT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/comments?per_page=100'))
         return [comment for page in pages for comment in page]
+
+    def resolved_comment_ids(self) -> set[int]:
+        """Read the root comment id of every resolved review thread; REST does not expose resolution."""
+        pages = _THREAD_PAGES.validate_json(
+            self._api(
+                '--paginate',
+                '--slurp',
+                '-f',
+                f'owner={self._owner}',
+                '-f',
+                f'name={self._name}',
+                '-F',
+                f'number={self._number}',
+                '-f',
+                f'query={_THREADS_QUERY}',
+                'graphql',
+            )
+        )
+        return {
+            comment.databaseId
+            for page in pages
+            for thread in page.data.repository.pullRequest.reviewThreads.nodes
+            if thread.isResolved
+            for comment in thread.comments.nodes
+        }
 
     def verified_review_run(self, run_id: int, head: str) -> bool:
         """Only the trusted PR Bots publisher can supply a qualifying marker."""
