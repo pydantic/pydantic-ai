@@ -10,17 +10,19 @@ GENERATED=$(jq -j '.[] | .filename, "\u0000"' <<<"$FILES" |
     select(.[$i + 2] == "true" or .[$i + 2] == "set") | .[$i]]')
 FILES=$(jq --argjson generated "$GENERATED" 'map(select(.filename as $path | $generated | index($path) | not))' <<<"$FILES")
 
+# Generated: the root `uv.lock` and each `.yaml` cassette under a `cassettes/` directory below
+# the root, ending the path as the review-context gatherers do. Any other file there counts.
 CODE=$(jq '[.[] | select(
   (.filename | (startswith("tests/") or startswith("docs/") or endswith(".md")) | not) and
-  (.filename != "uv.lock") and (.filename | contains("/cassettes/") | not)
+  (.filename != "uv.lock") and (.filename | test("(?s)/cassettes/.*\\.yaml\\z") | not)
 ) | .additions + .deletions] | add // 0' <<<"$FILES")
 DOCS=$(jq '[.[] | select(
   (.filename | (startswith("docs/") or endswith(".md"))) and
-  (.filename != "uv.lock") and (.filename | contains("/cassettes/") | not)
+  (.filename != "uv.lock") and (.filename | test("(?s)/cassettes/.*\\.yaml\\z") | not)
 ) | .additions + .deletions] | add // 0' <<<"$FILES")
 TESTS=$(jq '[.[] | select(
   (.filename | startswith("tests/")) and (.filename | endswith(".md") | not) and
-  (.filename | contains("/cassettes/") | not)
+  (.filename | test("(?s)/cassettes/.*\\.yaml\\z") | not)
 ) | .additions + .deletions] | add // 0' <<<"$FILES")
 SCORE=$((CODE + DOCS / 2 + TESTS / 2))
 if [ "$SCORE" -le 100 ]; then

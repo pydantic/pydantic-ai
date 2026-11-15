@@ -126,10 +126,11 @@ class Conversation:
     Messages added to the end of a loaded conversation before a run, like a user's new turn, are
     carried through the run and saved with it. If a message before the index may have changed,
     because one was removed, inserted or replaced, or the conversation was serialized, `save`
-    compares the messages before the index with the last as many stored ones, and stores what
-    differs as a branch, so no message is dropped. A message changed in place isn't noticed, so
-    replace it with an edited copy instead. It's bookkeeping about what's stored, so two
-    conversations compare equal whatever it is.
+    compares the messages before the index with the last as many stored ones, or with the stored
+    ones a run cleaned into them, say by merging adjacent requests, and stores what differs as a
+    branch, so no message is dropped. A message changed in place isn't noticed, so replace it with
+    an edited copy instead. It's bookkeeping about what's stored, so two conversations compare
+    equal whatever it is.
     """
 
 

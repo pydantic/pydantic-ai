@@ -30,10 +30,12 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from anyio.from_thread import start_blocking_portal
+from pydantic_monty import MontyRefusedError
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -199,10 +201,7 @@ def _workflow_os(
     return _request_id.get()
 
 
-# Only the skipped relay test uses this model (#8824).
-def _remote_code_mode_model(
-    messages: list[ModelRequest | ModelResponse], info: AgentInfo
-) -> ModelResponse:  # pragma: lax no cover
+def _remote_code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that adds with a tool, sleeps, and reads the workflow's contextvar through `os_access`."""
     returns = [
         part
@@ -212,7 +211,7 @@ def _remote_code_mode_model(
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
     if returns:
-        return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
+        return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])  # pragma: lax no cover
     # The 31 s sleep is one second past the default allowance, so it is refused without waiting.
     code = (
         'import asyncio, datetime, os\ntotal = await add(a=3, b=4)\nawait asyncio.sleep(0.1)\n'
@@ -266,6 +265,28 @@ class RemoteCodeModeWorkflow:
         _request_id.set('req-42')  # pragma: no cover
         result = await remote_code_mode_agent.run(prompt)  # pragma: no cover
         return str(result.output)  # pragma: no cover
+
+
+@workflow.defn
+class RemoteCodeModeRefusalWorkflow:
+    """Return the original sandbox refusal without admitting a remote session."""
+
+    @workflow.run
+    async def run(self) -> str | None:
+        try:
+            result = await remote_code_mode_agent.run('Calculate 3 + 4')
+        except MontyRefusedError as error:
+            return error.cause
+        return str(result.output)  # pragma: no cover
+
+
+@workflow.defn
+class UncaughtRemoteCodeModeRefusalWorkflow:
+    """Let an uncaught sandbox refusal reach Temporal's workflow-task failure policy."""
+
+    @workflow.run
+    async def run(self) -> None:
+        await remote_code_mode_agent.run('Calculate 3 + 4')
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +437,91 @@ async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, l
     assert replay_result.replay_failure is None
 
 
+async def test_uncaught_remote_setup_error_fails_workflow_task(client: Client) -> None:
+    """Unclassified setup errors fail a task, not the workflow or a model retry, under Temporal's default policy."""
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('unauthenticated',))),
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[UncaughtRemoteCodeModeRefusalWorkflow],
+            plugins=[AgentPlugin(remote_code_mode_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            handle = await client.start_workflow(
+                UncaughtRemoteCodeModeRefusalWorkflow.run,
+                id='test_code_mode_temporal_uncaught_remote_setup',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+            try:
+                failed_task = await anext(
+                    event
+                    async for event in handle.fetch_history_events(wait_new_event=True)
+                    if event.HasField('workflow_task_failed_event_attributes')
+                )
+                failure = failed_task.workflow_task_failed_event_attributes.failure
+                assert failure.application_failure_info.type == 'MontyRefusedError'
+                assert 'UNAUTHENTICATED' in failure.message
+                assert (await handle.describe()).status == WorkflowExecutionStatus.RUNNING
+                history = await handle.fetch_history()
+                assert not any(event.HasField('workflow_execution_failed_event_attributes') for event in history.events)
+                assert sum(event.HasField('activity_task_scheduled_event_attributes') for event in history.events) == 1
+            finally:
+                await handle.terminate('test verified the workflow-task failure')
+
+
+async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Client) -> None:
+    """Network-dependent checkout backoff must not create a durable workflow timer.
+
+    The original run retries a capacity refusal before returning an authentication refusal.
+    Replay immediately encounters the authentication refusal, so recording the original backoff
+    as a workflow timer would make its command history nondeterministic. No session is admitted,
+    avoiding the remote execution bridge while exercising real gRPC refusals through CodeMode.
+    The relay uses its own event loop because Temporal debug mode runs workflows on the test loop.
+    """
+    workflow_id = 'test_code_mode_temporal_remote_checkout_backoff'
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(
+            serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('capacity', 'unauthenticated'))
+        ) as relay,
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[RemoteCodeModeRefusalWorkflow],
+            plugins=[AgentPlugin(remote_code_mode_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            output = await client.execute_workflow(
+                RemoteCodeModeRefusalWorkflow.run,
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+        assert output == 'unauthenticated'
+        assert len(relay.metadata) == 2
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(
+            serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('unauthenticated',))
+        ) as relay,
+    ):
+        replay_result = await Replayer(
+            workflows=[RemoteCodeModeRefusalWorkflow],
+            plugins=[PydanticAIPlugin()],
+            workflow_runner=_workflow_runner(),
+        ).replay_workflow(history)
+        assert replay_result.replay_failure is None
+        assert len(relay.metadata) == 1
+    assert not any(event.HasField('timer_started_event_attributes') for event in history.events)
+
+
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 @pytest.mark.usefixtures('temporal_monty_relay')
 async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> None:
@@ -424,7 +530,7 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
     Every Monty call inside a workflow goes through the blocking portal, so this covers that
     path for both bindings, including `os_access` seeing the workflow's contextvars, and a
     sandbox sleep becoming a durable timer rather than blocking the workflow, still capped by the
-    `max_duration_secs` allowance even though the execution-time limit is off in a workflow.
+    `max_duration_seconds` allowance even though the execution-time limit is off in a workflow.
     """
     workflow_id = 'test_code_mode_temporal_remote_1'
     async with Worker(

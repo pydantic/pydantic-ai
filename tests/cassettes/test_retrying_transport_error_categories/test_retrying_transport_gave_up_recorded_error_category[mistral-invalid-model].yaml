@@ -1,0 +1,58 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "172"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-smal-latest
+        messages:
+        - content: hello
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 400
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "148"
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a1dbc6-c337-70c0-a1a5-e213b9d45af7
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+    body:
+      type: json
+      content:
+        object: error
+        message: "Invalid model: mistral-smal-latest"
+        type: invalid_model
+        param: null
+        code: "1500"
+        raw_status_code: 400
+  recorded_at: 2026-11-14T20:36:39.003810+00:00
