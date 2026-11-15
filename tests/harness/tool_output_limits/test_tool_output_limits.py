@@ -62,6 +62,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     json_sketch,
     measure,
     strip_ansi,
+    text_size,
     to_bytes,
     to_text,
 )
@@ -157,6 +158,25 @@ class TestPayloadHelpers:
     def test_to_text_variants(self):
         assert to_text('hi') == 'hi'
         assert to_text({'a': 1}) == '{"a":1}'
+
+    def test_text_size(self):
+        assert text_size('') == 0
+        assert text_size('abc') == 3
+        assert text_size('é') == 2
+        assert text_size('中') == 3
+        assert text_size('😀') == 4
+        assert text_size('a\nb') == 3
+
+    def test_text_size_counts_lone_surrogates_instead_of_raising(self):
+        assert text_size('a \ud800') == 5
+
+    def test_text_size_agrees_with_encoding(self):
+        sample = 'plain ascii, café, 中文字, 👋🏽 emoji, and a \udfff at the end'
+        assert text_size(sample) == len(sample.encode('utf-8', errors='surrogatepass'))
+
+    def test_to_bytes_keeps_lone_surrogates(self):
+        """`surrogateescape` reads such bytes back, so `to_bytes` writes them back the same way."""
+        assert to_bytes('a \ud800') == b'a \xed\xa0\x80'
 
     def test_values_without_json_form_render_as_repr(self):
         """A `type` leaf must not abort the after-hook, which would lose the tool's output."""
@@ -521,6 +541,83 @@ class TestPassthrough:
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
         err = ValueError('boom')
         assert await _run(cap, err) is err
+
+
+# ---------------------------------------------------------------------------
+# Text that isn't valid UTF-8
+# ---------------------------------------------------------------------------
+
+# `'text \ud800'` as read from a file with `errors='surrogateescape'`, or built with `chr()`.
+_LONE_SURROGATE = 'text \ud800'
+
+
+class TestLoneSurrogate:
+    """A lone surrogate can't be encoded, and no action needs bytes until it spills."""
+
+    async def test_passthrough(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=0, action=Passthrough())])
+        assert await _run(cap, _LONE_SURROGATE) == _LONE_SURROGATE
+
+    async def test_truncate(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=0, action=Truncate(max_chars=1000))])
+        assert await _run(cap, _LONE_SURROGATE) == _LONE_SURROGATE
+
+    async def test_summarize(self):
+        seen: list[str] = []
+
+        def summarize(tool_name: str, text: str) -> str:
+            seen.append(text)
+            return 'summary'
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=0, action=Summarize(summarize=summarize))])
+        assert await _run(cap, _LONE_SURROGATE) == 'summary'
+        assert seen == [_LONE_SURROGATE]
+
+    async def test_summarize_that_raises_falls_back_to_passthrough(self):
+        def summarize(tool_name: str, text: str) -> str:
+            raise RuntimeError('no summary for you')
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=0, action=Summarize(summarize=summarize, then=Passthrough()))]
+        )
+        assert await _run(cap, _LONE_SURROGATE) == _LONE_SURROGATE
+
+    async def test_no_band_matches(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1000, action=Truncate(max_chars=2))])
+        assert await _run(cap, _LONE_SURROGATE) == _LONE_SURROGATE
+
+    async def test_spill_keeps_the_bytes(self, tmp_path: Path):
+        """Spilling does need the bytes, and keeps the surrogate as it was instead of failing."""
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=0, action=Spill())], store=store)
+        out = await _run(cap, 'abcdef \ud800')
+        assert isinstance(out, ToolReturn)
+        assert isinstance(out.return_value, str) and 'too large' in out.return_value
+        assert await store.read(out.metadata['overflow_handle']) == b'abcdef \xed\xa0\x80'
+
+    async def test_agent_run_with_passthrough(self):
+        """The example from #13531: the run finishes instead of raising `UnicodeEncodeError`."""
+        agent = Agent(
+            _surrogate_model(),
+            capabilities=[ToolOutputLimits(bands=[Band(over=0, action=Passthrough())])],
+        )
+
+        @agent.tool_plain
+        def payload() -> str:
+            return _LONE_SURROGATE
+
+        assert (await agent.run('go')).output == 'done'
+
+
+def _surrogate_model() -> FunctionModel:
+    """Calls `payload`, then answers `done` once it has the result."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='payload', args={}, tool_call_id='call')])
+
+    return FunctionModel(respond)
 
 
 # ---------------------------------------------------------------------------
@@ -1225,7 +1322,7 @@ class TestInternals:
         assert 'omitted' in _head_tail_preview('a' * 100, 10)
 
     def test_build_spill_preview_tokens_unit(self):
-        unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
+        unit = _Unit(binary=False, text='x' * 100, value='x' * 100, suffix='')
         assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 

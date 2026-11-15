@@ -48,6 +48,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     json_sketch,
     measure,
     strip_ansi,
+    text_size,
     to_bytes,
     to_text,
     truncate_text,
@@ -109,9 +110,31 @@ class _Unit:
 
     binary: bool
     text: str | None
-    data: bytes
     value: ToolReturnContent
     suffix: str
+    _data: bytes | None = field(default=None, repr=False)
+
+    @property
+    def data(self) -> bytes:
+        """The bytes this unit spills as.
+
+        Only the spilling path needs them, so they are made when asked for: encoding text up
+        front would fail on a string that isn't valid UTF-8 (a lone surrogate, say) even when
+        the selected action is `Passthrough` and no bytes are ever wanted.
+        """
+        if self._data is None:
+            assert self.text is not None, 'a binary unit carries its data up front'
+            self._data = to_bytes(self.text)
+        return self._data
+
+    @property
+    def data_size(self) -> int:
+        """`len(self.data)` without building the bytes."""
+        if self.binary:
+            assert self._data is not None
+            return len(self._data)
+        assert self.text is not None
+        return text_size(self.text)
 
 
 @dataclass
@@ -356,7 +379,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         else:
             value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
             new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
-            value_bytes = len(value_unit.data)
+            value_bytes = value_unit.data_size
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
         if new_value is None and content_text is None:
@@ -397,7 +420,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         reduced, handle = await self._reduce(ctx, call, bands, unit)
         if reduced is None:
             return None, None, 0
-        return [reduced, *files], handle, len(unit.data)
+        return [reduced, *files], handle, unit.data_size
 
     def _assemble(
         self,
@@ -435,7 +458,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
         if is_binary(value):
-            return _Unit(binary=True, text=None, data=to_bytes(value), value=value, suffix=suffix)
+            return _Unit(binary=True, text=None, value=value, suffix=suffix, _data=to_bytes(value))
         if self.serializer is not None and not isinstance(value, str):
             try:
                 text = _ensure_text(self.serializer(value))
@@ -452,7 +475,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             text = to_text(value)
         if self.strip_ansi:
             text = strip_ansi(text)
-        return _Unit(binary=False, text=text, data=text.encode('utf-8'), value=value, suffix=suffix)
+        return _Unit(binary=False, text=text, value=value, suffix=suffix)
 
     async def _reduce(
         self,
@@ -467,7 +490,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         when the unit was spilled.
         """
         size = (
-            len(unit.data)
+            unit.data_size
             if unit.binary
             else measure(unit.text or '', over_tokens=self.over_tokens, tokenizer=self.tokenizer)
         )
@@ -572,7 +595,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
         """
-        data = base64.b64decode(payload) if binary else payload.encode('utf-8')
+        data = base64.b64decode(payload) if binary else payload.encode('utf-8', errors='surrogatepass')
         try:
             return await self._store_for(ctx).write(key, data)
         except (UserError, WorkspaceReadOnlyError) as error:
@@ -772,8 +795,9 @@ def _with_handles(
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_description = f'{len(unit.data):,} bytes (binary)'
-        body = f'<{len(unit.data):,} bytes of binary data>'
+        binary_bytes = unit.data_size
+        size_description = f'{binary_bytes:,} bytes (binary)'
+        body = f'<{binary_bytes:,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''

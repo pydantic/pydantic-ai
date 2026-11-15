@@ -61,6 +61,31 @@ def _json(value: object, *, indent: int | None = None, fallback: Callable[[objec
         return to_json(value, indent=indent, fallback=fallback, bytes_mode='base64')
 
 
+def text_size(text: str) -> int:
+    """The number of bytes `text` takes as UTF-8, without encoding it.
+
+    Equal to `len(text.encode('utf-8'))` for ordinary text, but a lone surrogate -- what
+    `errors='surrogateescape'` leaves behind, or a `str` built from `chr()` -- can't be encoded
+    at all, and only the paths that really need the bytes should get the chance to fail. ASCII
+    is the common case and costs one `len`; anything else is checked one character at a time.
+    """
+    if text.isascii():
+        return len(text)
+    total = 0
+    for char in text:
+        codepoint = ord(char)
+        if codepoint < 0x80:
+            total += 1
+        elif codepoint < 0x800:
+            total += 2
+        elif codepoint < 0x10000:
+            # Includes the surrogates, which take three bytes in their `surrogatepass` form.
+            total += 3
+        else:
+            total += 4
+    return total
+
+
 def to_bytes(value: object) -> bytes:
     """Serialize any tool return value to the bytes that get spilled.
 
@@ -68,7 +93,7 @@ def to_bytes(value: object) -> bytes:
     JSON so the stored payload stays valid and grep-able.
     """
     if isinstance(value, str):
-        return value.encode('utf-8')
+        return value.encode('utf-8', errors='surrogatepass')
     if isinstance(value, memoryview):
         return value.tobytes()
     if isinstance(value, (bytes, bytearray)):
