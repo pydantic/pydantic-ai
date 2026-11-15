@@ -603,8 +603,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
 
-        # utf-8-sig decodes plain UTF-8 identically and strips a leading BOM
-        # (EF BB BF), which files saved by Notepad or PowerShell may carry.
         raw = Path(path).read_text(encoding='utf-8-sig')
         try:
             return cls.from_text(

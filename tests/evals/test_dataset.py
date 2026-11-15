@@ -1106,34 +1106,6 @@ def test_serialization_errors(tmp_path: Path):
     )
 
 
-@pytest.mark.parametrize('fmt', ['json', 'yaml'])
-def test_from_file_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 'yaml']):
-    """A UTF-8 BOM at the start of the file (as written by Notepad or PowerShell) is tolerated."""
-    data = {'name': 'bom_dataset', 'cases': [{'name': 'case1', 'inputs': 1}]}
-    raw = json.dumps(data) if fmt == 'json' else yaml.safe_dump(data)
-    path = tmp_path / f'test_cases.{fmt}'
-    path.write_text(raw, encoding='utf-8-sig')
-
-    dataset = Dataset[int, int, dict].from_file(path)
-
-    assert dataset.name == 'bom_dataset'
-    assert dataset.cases[0].inputs == 1
-
-
-@pytest.mark.parametrize('fmt', ['json', 'yaml'])
-def test_from_file_without_bom_is_unchanged(tmp_path: Path, fmt: Literal['json', 'yaml']):
-    """BOM-less files load exactly as before."""
-    data = {'name': 'no_bom_dataset', 'cases': [{'name': 'case1', 'inputs': 1}]}
-    raw = json.dumps(data) if fmt == 'json' else yaml.safe_dump(data)
-    path = tmp_path / f'test_cases.{fmt}'
-    path.write_text(raw, encoding='utf-8')
-
-    dataset = Dataset[int, int, dict].from_file(path)
-
-    assert dataset.name == 'no_bom_dataset'
-    assert dataset.cases[0].inputs == 1
-
-
 @pytest.fixture(
     params=[
         pytest.param((Dataset[None, str, str], Dataset[type(None), str, str], None, 'out', 'meta'), id='inputs'),
@@ -1185,6 +1157,17 @@ def test_from_file_schema_mismatch(tmp_path: Path):
 
     with pytest.raises(ValueError, match=r'test_cases\.yaml contains data that does not match the schema for Dataset'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_from_file_roundtrip_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 'yaml']):
+    """A dataset file re-saved with a UTF-8 byte order mark still loads."""
+    dataset = Dataset[int, int, None](name='bom', cases=[Case(name='café ✓ 日本', inputs=1, expected_output=1)])
+    path = tmp_path / f'bom.{fmt}'
+    dataset.to_file(path)
+    path.write_bytes(b'\xef\xbb\xbf' + path.read_bytes())
+
+    assert Dataset[int, int, None].from_file(path) == dataset
 
 
 async def test_from_text():
