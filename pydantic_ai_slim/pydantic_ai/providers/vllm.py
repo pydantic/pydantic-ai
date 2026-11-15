@@ -84,7 +84,7 @@ class VLLMProvider(_OpenAISDKProvider):
             and not bare_name.startswith(('qwen3-coder', 'qwen3.8'))
             and '-instruct' not in bare_name
         )
-        supports_thinking = supports_qwen3_thinking or bare_name.startswith(('gemma-4', 'deepseek-v4-'))
+        supports_thinking = supports_qwen3_thinking or bare_name.startswith('deepseek-v4-')
         thinking_profile = None
         if supports_thinking:
             thinking_profile = ModelProfile(
