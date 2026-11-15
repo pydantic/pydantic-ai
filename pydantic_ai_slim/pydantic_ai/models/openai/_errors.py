@@ -18,6 +18,7 @@ from ...messages import ModelResponse
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
 )
+from .._transport_errors import transport_error_message
 
 
 @contextmanager
@@ -50,6 +51,11 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gener
             headers=dict(e.response.headers),
             error_object=error,
         ) from e
+    except httpx2.TransportError as e:
+        # For a streamed request, `openai` reads the body of an error status outside its own transport error handling,
+        # so a connection that breaks off while sending that body surfaces as the raw `httpx2` error.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 def map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:

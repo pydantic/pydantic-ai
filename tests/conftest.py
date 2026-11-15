@@ -465,6 +465,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
     ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
+    # On Windows, `ntpath.relpath` makes each path absolute with `GetFullPathNameW`, which reads no disk for
+    # the absolute paths the file tools pass it.
+    ('os.path.abspath', 'pydantic_ai_harness/file_system/_toolset.py', '_relative'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
@@ -511,7 +514,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # A local workspace built with a relative `working_dir` resolves it against the current directory
     # once, at construction, which may happen in async code.
-    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai/workspaces/_host.py', '__init__'),
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),

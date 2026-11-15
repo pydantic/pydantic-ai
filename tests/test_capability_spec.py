@@ -46,6 +46,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
     WebFetch,
     WebSearch,
+    WindowsWorkspace,
     XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -123,6 +124,7 @@ def test_capability_types() -> None:
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'WindowsWorkspace': WindowsWorkspace,
             'XSearch': XSearch,
         }
     )
@@ -1848,6 +1850,18 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
+                'short_spec_WindowsWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'WindowsWorkspace': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Windowsworkspace',
+                        }
+                    },
+                    'required': ['WindowsWorkspace'],
+                    'title': 'short_spec_WindowsWorkspace',
+                    'type': 'object',
+                },
                 'spec_BatchModelRequests': {
                     'additionalProperties': False,
                     'properties': {'BatchModelRequests': {'$ref': '#/$defs/spec_params_BatchModelRequests'}},
@@ -1985,6 +1999,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
                     'required': ['WebFetch'],
                     'title': 'spec_WebFetch',
+                    'type': 'object',
+                },
+                'spec_WindowsWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {'WindowsWorkspace': {'$ref': '#/$defs/spec_params_WindowsWorkspace'}},
+                    'required': ['WindowsWorkspace'],
+                    'title': 'spec_WindowsWorkspace',
                     'type': 'object',
                 },
                 'spec_WebSearch': {
@@ -2431,6 +2452,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'$ref': '#/$defs/short_spec_WindowsWorkspace'},
+                                {'$ref': '#/$defs/spec_WindowsWorkspace'},
                                 {'const': 'XSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_XSearch'},
                             ]
@@ -2533,6 +2556,37 @@ def test_model_json_schema_with_capabilities():
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_WindowsWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'working_dir': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Working Dir',
+                        },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                        'path_authority': {
+                            'anyOf': [
+                                {
+                                    'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                    'type': 'object',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Path Authority',
+                        },
+                        'env': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Env',
+                        },
+                    },
+                    'required': ['working_dir'],
+                    'title': 'spec_params_WindowsWorkspace',
                     'type': 'object',
                 },
                 'spec_params_XSearch': {
@@ -2668,6 +2722,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'$ref': '#/$defs/short_spec_WindowsWorkspace'},
+                            {'$ref': '#/$defs/spec_WindowsWorkspace'},
                             {'const': 'XSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_XSearch'},
                         ]
