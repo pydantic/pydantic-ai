@@ -156,7 +156,8 @@ jobs:
       - name: Review with OpenCode
         run: |
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
-          python3 .github/scripts/run_pr_review_check.py
+          # A cancelled job signals only the step's entry process; `exec` makes that the runner, so it exports its span.
+          exec python3 .github/scripts/run_pr_review_check.py
         env:
           CHECK: ${{ matrix.check }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

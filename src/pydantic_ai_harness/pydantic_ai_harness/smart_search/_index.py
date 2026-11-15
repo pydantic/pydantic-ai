@@ -29,7 +29,7 @@ from pydantic_ai_harness.smart_search._chunks import (
     MAX_TOTAL_BYTES,
     MAX_TOTAL_LINES,
     Chunk,
-    LineTooLong,
+    LineTooLongError,
     list_files,
     read_or_error,
     source_chunks,
@@ -129,7 +129,7 @@ class SnippetIndex:
         file.lines = len(split_lines(text))
         try:
             chunks = source_chunks(text, path)
-        except LineTooLong as exc:
+        except LineTooLongError as exc:
             file.skipped = str(exc)
             return file
         for chunk in chunks:

@@ -13,7 +13,7 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.aoe import AoePlugin

@@ -6,7 +6,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Never, assert_never, cast, overload
 
@@ -104,6 +104,7 @@ from .. import (
 )
 from .._decode_errors import map_decode_errors
 from .._sdk_retries import with_max_retries
+from .._tool_call_ids import stored_tool_call_id
 from .._tool_choice import resolve_tool_choice
 from ._caching import (
     CACHE_SETTINGS_KEYS,
@@ -720,7 +721,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         )
         if choice.message.tool_calls is not None:
-            items.extend(self._process_tool_call(c) for c in choice.message.tool_calls)
+            items.extend(
+                self._process_tool_call(c, provider_response_id=response.id or None, timestamp=timestamp)
+                for c in choice.message.tool_calls
+            )
 
         if response.created:
             provider_details['timestamp'] = number_to_datetime(response.created)
@@ -751,14 +755,23 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return True
 
     def _process_tool_call(
-        self, tool_call: ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall
+        self,
+        tool_call: ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall,
+        *,
+        provider_response_id: str | None,
+        timestamp: datetime,
     ) -> ToolCallPart:
         if isinstance(tool_call, ChatCompletionMessageFunctionToolCall):
             part_provider_details = map_tool_call_provider_details(tool_call)
             part = ToolCallPart(
                 tool_call.function.name,
                 tool_call.function.arguments,
-                tool_call_id=tool_call.id,
+                tool_call_id=stored_tool_call_id(
+                    tool_call.id,
+                    response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                    provider_response_id=provider_response_id,
+                    timestamp=timestamp,
+                ),
                 provider_name=self.system if part_provider_details else None,
                 provider_details=part_provider_details,
             )
@@ -1195,6 +1208,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
+        messages = self._restore_response_scoped_tool_call_ids(messages)
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
