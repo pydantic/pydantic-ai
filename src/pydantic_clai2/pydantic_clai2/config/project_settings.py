@@ -1,12 +1,22 @@
 """Project-local settings: `.clai/settings.json`, found by walking up from the workspace to the git root."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
 
-from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, resolve_settings
+from pydantic_clai2.config import (
+    PERMISSION_MODES,
+    PERMISSIONS_SETTING,
+    SETTING_FIELDS,
+    SETTING_KEYS,
+    USER_ONLY_SETTINGS,
+    PluginSettings,
+    Settings,
+    resolve_settings,
+)
 from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookTable
+from pydantic_clai2.config.settings_store import SettingsStore, setting_json
 
 PROJECT_FILE = Path('.clai') / 'settings.json'
 """The file name, relative to any directory between the workspace and the git root."""
@@ -14,8 +24,24 @@ PROJECT_FILE = Path('.clai') / 'settings.json'
 _FILE: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _PLUGINS: TypeAdapter[list[PluginSettings]] = TypeAdapter(list[PluginSettings])
 _HOOKS: TypeAdapter[HookTable] = TypeAdapter(HookTable)
-_SET_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
-"""`Settings` field name to `/set` key, so the file uses the model's own names."""
+SAFE_PROJECT_KEYS = frozenset(key for key in SETTING_FIELDS if key.startswith('display.'))
+"""Keys a project file sets at once: how CLAI shows things, which cannot change what the agent may do or is told.
+
+Every other key a project file may set waits for `/project approve`: it grants permissions, adds
+instructions, picks the model or account, or configures how runs execute. A new key waits too unless
+it is added here. The exception is a `run.permissions` no wider than your own, which applies at once.
+"""
+
+
+def widens(key: str, value: JsonValue, *, saved: Settings) -> bool:
+    """Whether `value` for `key`, over your `saved` settings, could change what the agent may do or is told.
+
+    Only the `SAFE_PROJECT_KEYS` and a `run.permissions` no wider than your own cannot.
+    """
+    if key == PERMISSIONS_SETTING:
+        # Later modes ask for more, so one at or after yours cannot widen what the agent may do.
+        return PERMISSION_MODES.index(value) < PERMISSION_MODES.index(saved.permissions)
+    return key not in SAFE_PROJECT_KEYS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -24,7 +50,15 @@ class ProjectSettings:
 
     path: Path | None = None
     overrides: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    """Validated setting values by `/set` key, ready to layer over the user store."""
+    """Validated setting values by `/set` key, ready to layer over the user store.
+
+    The `SAFE_PROJECT_KEYS`, the values `/project approve` approved for this project's root, and a
+    `run.permissions` no wider than your own.
+    """
+    pending: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
+    """Validated values by `/set` key that are not applied: no approval for this root, or one of another value."""
+    approved: frozenset[str] = frozenset()
+    """The `/set` keys `/project approve` approved for this project's root with the value the file sets now."""
     plugins: tuple[PluginSettings, ...] = ()
     """Declarations from the file, every one disabled: the user approves each with `/plugins enable`.
 
@@ -33,6 +67,25 @@ class ProjectSettings:
     """
     unknown: tuple[str, ...] = ()
     """Keys the `Settings` model does not know; reported once at startup and ignored."""
+
+    @property
+    def root(self) -> Path | None:
+        """The folder holding `.clai`, which approvals are kept for; `None` without a file."""
+        return None if self.path is None else self.path.parent.parent
+
+    @property
+    def pending_instructions(self) -> str | None:
+        """The file's `instructions` while they wait for approval, which CLAI sends as the repository's, not yours."""
+        text = self.pending.get('run.instructions')
+        return text if isinstance(text, str) and text else None
+
+    @property
+    def pending_notice(self) -> str | None:
+        """The startup notice naming the `pending` keys, or `None` when every key applies."""
+        if not self.pending:
+            return None
+        names = ', '.join(SETTING_FIELDS[key] for key in self.pending)
+        return f'Project settings not applied until you approve them with /project approve in a CLAI session: {names}'
 
 
 def _present(path: Path) -> bool:
@@ -98,10 +151,37 @@ def _hooks(table: HookTable, *, root: Path) -> tuple[PluginSettings, ...]:
     return (PluginSettings(id=PROJECT_HOOKS, factory=HOOKS_FACTORY, enabled=False, settings=settings),)
 
 
-def load_project_settings(workspace: Path) -> ProjectSettings:
+def with_current_approvals(project: ProjectSettings, *, store: SettingsStore | None) -> ProjectSettings:
+    """`project` with its keys split again by what `store` approves now; the file is not read again.
+
+    Without a `store`, nothing is approved. Without a file, there is nothing to approve, so `project` stays as it is.
+    """
+    root = project.root
+    if root is None:
+        return project
+    rows = {} if store is None else store.approved_project_settings(root)
+    declared = {**project.overrides, **project.pending}
+    approved = frozenset(key for key, value in declared.items() if rows.get(key) == setting_json(value))
+    saved = None if store is None else store.load()
+    applied = {
+        key: value
+        for key, value in declared.items()
+        if key in approved or key in SAFE_PROJECT_KEYS or (saved is not None and not widens(key, value, saved=saved))
+    }
+    return replace(
+        project,
+        overrides=applied,
+        pending={key: value for key, value in declared.items() if key not in applied},
+        approved=approved,
+    )
+
+
+def load_project_settings(workspace: Path, *, store: SettingsStore | None = None) -> ProjectSettings:
     """Read and validate the project file for `workspace`.
 
     An unreadable file or a bad value fails startup with the path in the message; an unknown key does not.
+    A key outside `SAFE_PROJECT_KEYS` applies only with the value `store` approved for the project's
+    root, or as a `run.permissions` no wider than `store` holds; without a `store`, none does.
     """
     path = find_project_file(workspace)
     if path is None:
@@ -114,17 +194,18 @@ def load_project_settings(workspace: Path) -> ProjectSettings:
             raise ValueError(
                 f'declare hooks with the `hooks` key, not as a plugin ({PROJECT_HOOKS} or {HOOKS_FACTORY})'
             )
-        for name in ('repo_context_walk_up_root', 'repo_context_autoload_symlink_roots', 'worktree_remove_commands'):
+        for name in sorted(USER_ONLY_SETTINGS):
             if name in raw:
                 raise ValueError(f'`{name}` is user-only and cannot be set in a project file')
-        overrides = {_SET_KEYS[name]: value for name, value in raw.items() if name in _SET_KEYS}
+        overrides = {SETTING_KEYS[name]: value for name, value in raw.items() if name in SETTING_KEYS}
         resolve_settings(overrides)
     except (OSError, ValueError) as exc:
         raise ValueError(f'{path}: {exc}') from exc
     root = path.parent.parent
-    return ProjectSettings(
+    project = ProjectSettings(
         path=path,
-        overrides=overrides,
+        pending=overrides,
         plugins=(*(_unapproved(plugin, root=root) for plugin in plugins), *_hooks(hooks, root=root)),
-        unknown=tuple(sorted(raw.keys() - _SET_KEYS.keys())),
+        unknown=tuple(sorted(raw.keys() - SETTING_KEYS.keys())),
     )
+    return with_current_approvals(project, store=store)

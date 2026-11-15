@@ -631,6 +631,15 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def _replays_instruction_changes(self) -> bool:
+        """Whether a reconnect's replayed history carries the instruction changes the session sent. `True` by default.
+
+        `False` for a connection that delivers them somewhere other than the conversation, and starts a new
+        connection with them itself.
+        """
+        return True
+
+    @property
     def _prunes_tool_calls(self) -> bool:
         """Whether this connection deletes tool rounds that are over (see `_prune_tool_calls`). `False` by default."""
         return False

@@ -199,6 +199,21 @@ async def test_add_git_plugin_lifecycle(tmp_path: Path, repository: Path, entryp
     await restarted.loader.close('exit')
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires creating a directory symlink without special privileges')
+async def test_add_git_plugin_under_a_symlinked_plugins_folder(tmp_path: Path, repository: Path) -> None:
+    """The checkout path is saved resolved, and still counts as inside a plugins folder reached through a symlink."""
+    (tmp_path / 'real-plugins').mkdir()
+    (tmp_path / 'plugins').symlink_to(tmp_path / 'real-plugins')
+    harness = Harness(tmp_path)
+    assert (await harness.loader.command(['add', repository.as_uri()])).startswith('Added and loaded demo_plugin.')
+    await harness.loader.close('exit')
+
+    fresh = Harness(tmp_path)
+    await fresh.loader.load_all()
+    assert await fresh.commands.execute_async('/git_hello') == 'Hello from Git'
+    await fresh.loader.close('exit')
+
+
 async def test_remove_git_plugin_with_a_missing_entrypoint(tmp_path: Path, repository: Path) -> None:
     harness = Harness(tmp_path)
     await harness.loader.command(['add', repository.as_uri()])
@@ -268,7 +283,7 @@ async def test_module_without_id_does_not_start_a_git_install(tmp_path: Path, so
 
 def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    with pytest.raises(ValueError, match=r'only inside a CLAI session: /plugins add GIT_URL'):
+    with pytest.raises(ValueError, match=r'Run `/plugins add https://example.com/plugin.git` in a CLAI session'):
         plugins_command(harness.store, ['add', 'https://example.com/plugin.git'])
     assert harness.store.plugins() == []
     assert not (harness.store.plugins_dir / '_git').exists()
@@ -326,6 +341,8 @@ async def test_add_usage_mentions_git_urls(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match='Usage: /plugins add GIT_URL'):
         await harness.loader.command(['add'])
+    with pytest.raises(ValueError, match=r'Usage: plugins list\|add ID MODULE\[:ATTR\] \[JSON\]'):
+        await harness.loader.command(['add', 'one', 'module:Factory', '{}', 'extra'])
     assert harness.store.plugins() == []
 
 
@@ -410,7 +427,8 @@ async def test_interrupted_clone_is_cleaned_up(tmp_path: Path, monkeypatch: pyte
 
     async def interrupted_clone(url: str, destination: Path) -> tuple[int, bytes]:
         assert url == 'https://example.com/plugin.git'
-        (destination / '__init__.py').write_text('raise AssertionError("Not installed yet")')
+        entry = destination / '__init__.py'
+        await anyio.to_thread.run_sync(entry.write_text, 'raise AssertionError("Not installed yet")')
         assert harness.loader.entries() == []
         cloning.set()
         if cancel:
@@ -443,7 +461,7 @@ async def test_plugin_created_while_cloning_is_preserved(
         if origin == 'saved':
             other.save_plugin(existing)
         else:
-            harness.write('demo_plugin')
+            await anyio.to_thread.run_sync(harness.write, 'demo_plugin')
         return result
 
     monkeypatch.setattr('pydantic_clai2.plugins.git.clone_repository', concurrent_clone)

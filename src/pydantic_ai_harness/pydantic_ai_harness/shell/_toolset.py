@@ -21,7 +21,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError
+from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutError
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
@@ -112,17 +112,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
 
-        if self._allowed_commands and self._denied_commands:
-            raise ValueError('Specify allowed_commands or denied_commands, not both.')
-        if max_output_chars <= 0:
-            raise ValueError('max_output_chars must be a positive integer.')
-        if unknown := sorted(set(self._tools) - set(SHELL_TOOL_NAMES)):
-            raise ValueError(f'Unknown shell tools: {", ".join(unknown)}. Available: {", ".join(SHELL_TOOL_NAMES)}.')
-        if PERSISTENT_TOOL_NAME in self._tools and not 0 < default_timeout <= MAX_FOREGROUND_WAIT:
-            raise ValueError(
-                f'default_timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds '
-                'for the shell tool.'
-            )
+        self._check_tool_options()
 
         command_metadata = {'code_arg_name': 'command', 'code_arg_language': 'shell'}
         registrations: dict[str, Callable[..., Awaitable[str]]] = {
@@ -140,6 +130,19 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 if name in ('run_command', PERSISTENT_TOOL_NAME):
                     metadata['temporal'] = {'start_to_close_timeout': timedelta(seconds=MAX_FOREGROUND_WAIT + 30)}
                 self.add_function(registrations[name], name=name, metadata=metadata or None)
+
+    def _check_tool_options(self) -> None:
+        if self._allowed_commands and self._denied_commands:
+            raise ValueError('Specify allowed_commands or denied_commands, not both.')
+        if self._max_output_chars <= 0:
+            raise ValueError('max_output_chars must be a positive integer.')
+        if unknown := sorted(set(self._tools) - set(SHELL_TOOL_NAMES)):
+            raise ValueError(f'Unknown shell tools: {", ".join(unknown)}. Available: {", ".join(SHELL_TOOL_NAMES)}.')
+        if PERSISTENT_TOOL_NAME in self._tools and not 0 < self._default_timeout <= MAX_FOREGROUND_WAIT:
+            raise ValueError(
+                f'default_timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds '
+                'for the shell tool.'
+            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh instance per run when `persist_cwd` tracks a cwd, so each run has its own.
@@ -216,18 +219,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _cwd_for(self, ctx: RunContext[AgentDepsT]) -> str:
         """The absolute workspace directory the next `run_command` or `start_command` command starts in."""
         state: str | None = None
-        recorded: str | None = None
+        recorded: str | None
         if self._persist_cwd and ctx.run_id is not None:
             state = await self._cwd_state_path(ctx)
-            try:
-                recorded = (await ctx.workspace.read_bytes(state)).decode('utf-8')
-            except FileNotFoundError:
-                if self._cwd is not None and self._cwd_run_id == ctx.run_id:
-                    # This worker saw a saved cwd for this run; a missing file now is lost state.
-                    self._cwd = None
-                    raise ModelRetry('The saved working directory was lost; now in the workspace working directory.')
-            except UnicodeDecodeError:
-                pass
+            recorded = await self._read_cwd_state(ctx, state)
         else:
             recorded = self._cwd
         if recorded is not None:
@@ -243,6 +238,19 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'The previous directory was removed; now in {await ctx.workspace.working_dir()}.')
             return recorded
         return await ctx.workspace.working_dir()
+
+    async def _read_cwd_state(self, ctx: RunContext[AgentDepsT], state: str) -> str | None:
+        """The directory the run's state file at `state` holds, or `None` when it holds none."""
+        try:
+            return (await ctx.workspace.read_bytes(state)).decode('utf-8')
+        except FileNotFoundError:
+            if self._cwd is not None and self._cwd_run_id == ctx.run_id:
+                # This worker saw a saved cwd for this run; a missing file now is lost state.
+                self._cwd = None
+                raise ModelRetry('The saved working directory was lost; now in the workspace working directory.')
+        except UnicodeDecodeError:
+            pass
+        return None
 
     async def _cwd_state_path(self, ctx: RunContext[AgentDepsT]) -> str:
         # A run ID can contain path separators; hash it rather than letting it choose a filename.
@@ -295,8 +303,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             # \udc80-\udcff range as the raw bytes it round-trips from. Encoding
             # as plain UTF-8 here would reject commands the OS runs happily.
             os.fsencode(command)
-        except UnicodeEncodeError as e:
-            raise ModelRetry('The command contains characters that cannot be encoded for the operating system.') from e
+        except UnicodeEncodeError as exc:
+            raise ModelRetry(
+                'The command contains characters that cannot be encoded for the operating system.'
+            ) from exc
 
         if not self._allow_interactive and is_interactive_command(command):
             raise PermissionError(f'Interactive commands are not allowed. Command: {command!r}')
@@ -398,8 +408,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                     env=self._resolve_env(),
                     timeout=timeout,
                 )
-            except WorkspaceTimeoutError as e:
-                return _labelled(e.stdout, e.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
+            except WorkspaceTimeoutError as exc:
+                return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
 
             output = _labelled(result.stdout, result.stderr, empty='(no output)')
             exit_code = result.exit_code
@@ -543,11 +553,17 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 _, exit_code = await job.status()
 
         stdout, stderr = await self._read_bg_output(job)
-        await job.cleanup()
-
         parts = [_labelled(stdout, stderr, empty='(no output)'), '[stopped]']
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
+        try:
+            await job.cleanup()
+        # Before `PermissionError`: a read-only workspace's `WorkspaceReadOnlyError` is one too.
+        except WorkspaceError:
+            raise
+        except PermissionError:
+            # The wrapper makes only the job directory writable again, not a jobs directory the command made read-only.
+            parts.append('[job directory not removed: permission denied]')
         return '\n'.join(parts)
 
 

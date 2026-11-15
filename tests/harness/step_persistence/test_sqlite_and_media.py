@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import logging
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.media import DiskMediaStore, SqliteMediaStore
+from pydantic_ai_harness.media import FileMediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -372,15 +373,45 @@ class TestSqliteWritersShareTheDatabase:
         await SqliteMediaStore(database=tmp_path / 'runs.db').put(b'blob')
         assert timeouts == [30, 30]
 
+    async def test_a_connection_whose_wal_switch_fails_is_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A new database another writer holds locked can't switch to WAL, and the connection opened for it is closed.
+
+        Left open, it would be garbage-collected later, as an unclosed-database `ResourceWarning` in whatever test is
+        running then.
+        """
+        database = tmp_path / 'runs.db'
+        opened: list[sqlite3.Connection] = []
+        connect = sqlite3.connect
+
+        def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            connection = connect(*args, **{**kwargs, 'timeout': 0, 'check_same_thread': False})
+            opened.append(connection)
+            return connection
+
+        with closing(connect(database, isolation_level=None)) as writer:
+            writer.execute('CREATE TABLE unrelated (x)')
+            writer.execute('BEGIN IMMEDIATE')
+            monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                await SqliteStepStore(database=database, media_store=None).register_run(RunRecord(run_id='r1'))
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                await SqliteMediaStore(database=database).put(b'blob')
+        assert len(opened) == 2
+        for connection in opened:
+            with pytest.raises(sqlite3.ProgrammingError, match='closed database'):
+                connection.execute('SELECT 1')
+
 
 # ---------------------------------------------------------------------------
-# Media integration: FileStepStore + DiskMediaStore (default)
+# Media integration: FileStepStore + FileMediaStore (default)
 # ---------------------------------------------------------------------------
 
 
 class TestFileStepStoreMedia:
     async def test_large_binary_externalized_to_media_dir(self, tmp_path: Path) -> None:
-        """Default FileStepStore wires a `DiskMediaStore(<root>/media/)`.
+        """Default FileStepStore wires a `FileMediaStore(<root>/media/)`.
 
         Large `BinaryContent` payloads end up as `<root>/media/<sha256>.bin`,
         not inlined in the snapshot JSON.
@@ -453,7 +484,7 @@ class TestFileStepStoreMedia:
         custom_root = tmp_path / 'shared-media'
         store = FileStepStore(
             tmp_path / 'runs',
-            media_store=DiskMediaStore(custom_root),
+            media_store=FileMediaStore(custom_root),
         )
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
@@ -528,7 +559,7 @@ class TestSqliteStepStoreMedia:
     async def test_external_media_store_override(self, tmp_path: Path) -> None:
         """SqliteStepStore can be paired with a non-sqlite media store (e.g. disk)."""
         disk = tmp_path / 'media'
-        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=DiskMediaStore(disk))
+        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=FileMediaStore(disk))
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_sample_messages_with_media(70_000))
@@ -726,7 +757,7 @@ class TestSqliteRowDefenses:
 class TestMediaStoreResolution:
     def test_file_store_auto_creates_disk_media_store(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs')
-        assert isinstance(store._media_store, DiskMediaStore)  # type: ignore[reportPrivateUsage]
+        assert isinstance(store._media_store, FileMediaStore)  # type: ignore[reportPrivateUsage]
 
     def test_file_store_none_disables_media(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_store=None)

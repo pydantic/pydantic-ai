@@ -1,11 +1,11 @@
 """Storage backends for the `Planning` capability.
 
 A `PlanStore` is an async CRUD interface over an ordered list of plan steps. The
-default `InMemoryPlanStore` keeps them in process memory (matching planning's
-original ephemeral behaviour); `SqlitePlanStore` persists them to a local SQLite
-file. `PostgresPlanStore` (in `_postgres.py`) covers a server database over a
-caller-owned pool. Their deprecated `event_emitter` parameters preserve callback delivery for
-applications migrating to typed events from `Planning` tool runs.
+default `InMemoryPlanStore` keeps them in process memory; `SqlitePlanStore`
+persists them to a local SQLite file. `PostgresPlanStore` (in `_postgres.py`) and
+`RedisPlanStore` (in `_redis.py`) work over a caller-owned client. Their deprecated
+`event_emitter` parameters preserve callback delivery for applications migrating to
+typed events from `Planning` tool runs.
 """
 
 from __future__ import annotations

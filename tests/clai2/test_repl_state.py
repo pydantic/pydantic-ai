@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
@@ -324,8 +325,8 @@ class TestReplStates:
         with caplog.at_level(logging.WARNING):
             await blocked.save(own, b'state')
             assert await unreadable.load(own) is None
-            unreadable.delete(SESSION_ID)
-            states.copy(source=SESSION_ID, target=FORK_ID)
+            await anyio.to_thread.run_sync(unreadable.delete, SESSION_ID)
+            await anyio.to_thread.run_sync(lambda: states.copy(source=SESSION_ID, target=FORK_ID))
 
         assert 'Could not save the REPL state' in caplog.text
         assert 'Could not read the saved REPL state' in caplog.text

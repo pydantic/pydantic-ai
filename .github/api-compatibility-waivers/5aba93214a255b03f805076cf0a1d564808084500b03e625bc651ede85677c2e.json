@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 0.x: `pydantic_ai_harness.tool_output_limits.LocalFileStore` is renamed to `LocalFileOverflowStore` (#11321); the old name still imports through the module `__getattr__`, with a `HarnessDeprecationWarning`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13401"
+}
