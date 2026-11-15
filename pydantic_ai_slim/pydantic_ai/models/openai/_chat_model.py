@@ -539,7 +539,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             and profile.get('openai_chat_function_tools_require_reasoning_off', False)
             and reasoning_active(profile, model_settings, model_request_parameters)
         ):
-            remedy = ', or disable reasoning with `thinking=False`' if supports_reasoning_effort_none(profile) else ''
+            remedy = ''
+            if supports_reasoning_effort_none(profile):
+                # An explicit `openai_reasoning_effort` wins over `thinking`, so `thinking=False` alone wouldn't help.
+                remedy = (
+                    ", or set `openai_reasoning_effort='none'`"
+                    if model_settings.get('openai_reasoning_effort') is not None
+                    else ', or disable reasoning with `thinking=False`'
+                )
             raise ModelRequestRejectedError(
                 self.model_name,
                 f'OpenAI rejects function tools while reasoning is enabled on {self.model_name!r} over Chat '

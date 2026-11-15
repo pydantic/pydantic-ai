@@ -2725,6 +2725,30 @@ async def test_chat_completions_function_tools_reasoning_error_remedy_copy_per_i
     assert ('thinking=False' in str(exc_info.value)) == thinking_false_remedy
 
 
+async def test_chat_completions_function_tools_explicit_effort_error_names_effort_none(
+    allow_model_requests: None,
+) -> None:
+    """With an explicit `openai_reasoning_effort`, which wins over `thinking`, the error names `'none'` for it instead.
+
+    A unit test: the guard fires before any request, so there is nothing to record.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='unused', role='assistant')))
+    m = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
+        await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low', thinking=False))
+
+    assert str(exc_info.value) == snapshot(
+        "OpenAI rejects function tools while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or set `openai_reasoning_effort='none'` instead."
+    )
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
 @pytest.mark.parametrize(
     'model_name, thinking_false_escapes',
     [
