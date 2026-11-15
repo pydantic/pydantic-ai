@@ -355,11 +355,11 @@ class MontyExecutor:
         # still pierce it.
         with anyio.CancelScope(shield=True):
             outcomes = await asyncio.gather(*cancelled, return_exceptions=True)
-        # A call the snippet never awaited must still end the feed with a `reraise` error,
-        # but not in place of a cancellation or another exit that is not an `Exception`.
-        fatal = next((outcome for outcome in outcomes if isinstance(outcome, self.reraise)), None)
-        if fatal is not None and (failure is None or isinstance(failure, Exception)):
-            raise fatal
+            # A call the snippet never awaited must still end the feed with a `reraise` error,
+            # but not in place of a cancellation or another exit that is not an `Exception`.
+            fatal = next((outcome for outcome in outcomes if isinstance(outcome, self.reraise)), None)
+            if fatal is not None and (failure is None or isinstance(failure, Exception)):
+                raise fatal
 
     async def _handle_function(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
         """Dispatch (or defer) a single external function call."""

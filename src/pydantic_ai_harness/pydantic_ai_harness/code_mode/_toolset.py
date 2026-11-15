@@ -207,6 +207,16 @@ def in_durable_execution(ctx: RunContext[object]) -> bool:
     )
 
 
+def _replay_safe_limits(configured: ResourceLimits, *, replayed: bool) -> ResourceLimits:
+    """`configured` without the elapsed-time limit when `run_code` executes in code a durable engine replays.
+
+    An elapsed timer may make the original run and replay take different branches, so they call tools in
+    another order. Inside a Temporal workflow `replayed` also covers the deprecated `TemporalAgent`, which
+    has no durability capability.
+    """
+    return configured | {'max_feed_duration_secs': None} if replayed else configured
+
+
 def _nondeterminism_error_types(ctx: RunContext[object]) -> tuple[type[BaseException], ...]:
     """The errors the run's durable engine fails a diverged replay with, which must not reach the sandbox."""
     return tuple(
@@ -1360,9 +1370,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         in_workflow = in_temporal_workflow()
         configured = _resolve_resource_limits(self.resource_limits)
-        # `run_code` executes in workflow code and every durable engine replays it. An elapsed timer may
-        # make the original run and replay take different branches, so they call tools in another order.
-        limits = configured | {'max_feed_duration_secs': None} if in_durable_execution(ctx) else configured
+        limits = _replay_safe_limits(configured, replayed=in_workflow or in_durable_execution(ctx))
         reraise = _nondeterminism_error_types(ctx)
         if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
             # The type checker would reject the names the restored state defines.
