@@ -612,6 +612,39 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected_budget'),
+    [
+        pytest.param('gemini-2.5-flash-lite', 512, id='flash-lite'),
+        pytest.param('gemini-2.5-pro', 128, id='pro'),
+    ],
+)
+async def test_google_model_minimal_thinking_budget_uses_model_minimum(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    expected_budget: int,
+):
+    """`minimal` resolves to each model's smallest accepted `thinking_budget` (#11366).
+
+    `gemini-2.5-flash-lite` rejects anything below 512 with a 400, while the other Gemini 2.5 models
+    accept 128.
+    """
+    model = GoogleModel(model_name, provider=google_provider)
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Hello')], role='model'))],
+        response_id='1',
+        model_version=model_name,
+    )
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    await Agent(model=model, model_settings=ModelSettings(thinking='minimal')).run('Hello')
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs['config']['thinking_config']['thinking_budget'] == expected_budget
+
+
 async def test_google_model_gla_labels_reach_the_sdk(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):

@@ -609,6 +609,22 @@ _GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
 See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
 
+_GEMINI_2_5_FLASH_LITE_MIN_THINKING_BUDGET = 512
+"""The smallest `thinking_budget` `gemini-2.5-flash-lite` accepts when thinking is on.
+
+It rejects 128 with `The thinking budget 128 is invalid. Please choose a value between 512 and 24576.`,
+so `minimal` needs a higher floor there than on the other Gemini 2.5 models.
+See https://github.com/pydantic/pydantic-ai/issues/11366.
+"""
+
+
+def _min_thinking_budget(model_name: str) -> int:
+    """The smallest `thinking_budget` `model_name` accepts while thinking."""
+    if 'gemini-2.5-flash-lite' in model_name:
+        return _GEMINI_2_5_FLASH_LITE_MIN_THINKING_BUDGET
+    return _GEMINI_2_5_PRO_MIN_THINKING_BUDGET
+
+
 _GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
     level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
 }
@@ -1247,7 +1263,9 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
                 'max': 24576,
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(
+                include_thoughts=True, thinking_budget=max(budget_map[thinking], _min_thinking_budget(self._model_name))
+            )
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
