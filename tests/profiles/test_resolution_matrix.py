@@ -3879,7 +3879,7 @@ def test_deepseek_v4_point_release_thinks_on_every_route(provider_name: str, mod
 
 
 def test_deepseek_v4_hyphenated_point_release_spelling():
-    """Mistral lists V4.1 Flash as `deepseek-v4-1-flash-1017`, which the DeepSeek family profile reads as V4."""
+    """Pins existing behavior: Mistral's V4.1 spelling `deepseek-v4-1-flash-1017` already starts with `deepseek-v4-`."""
     profile = deepseek_model_profile('deepseek-v4-1-flash-1017')
     assert profile is not None
     assert profile.get('supports_thinking') is True
