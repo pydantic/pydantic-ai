@@ -18,6 +18,7 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client
+    from opentelemetry.sdk.trace import TracerProvider
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -216,6 +217,45 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert request.headers['Authorization'] == 'Bearer second'
 
 
+@pytest.mark.vcr(ignore_hosts=['*'])
+@pytest.mark.parametrize('provider_name', ['openai', 'google-cloud', 'anthropic'])
+async def test_gateway_hook_only_changes_requests_to_the_gateway(
+    provider_name: Literal['openai', 'google-cloud', 'anthropic'],
+):
+    # Not a cassette test: a caller's client can also send requests to other hosts, and follow a Gateway redirect
+    # to one, which cassette playback of Gateway traffic would never exercise. `ignore_hosts` lets the requests
+    # reach the mock transport instead of the module's cassette.
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if request.url.path == '/proxy/redirect':
+            return httpx2.Response(307, headers={'Location': 'https://elsewhere.example.com/landing'})
+        return httpx2.Response(200)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler), follow_redirects=True) as http_client:
+        gateway_provider(provider_name, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+        with TracerProvider().get_tracer(__name__).start_as_current_span('caller'):
+            await http_client.get('https://example.com/data')
+            await http_client.get('http://gateway.pydantic.dev/proxy')
+            await http_client.get('https://gateway.pydantic.dev:8443/proxy')
+            await http_client.get('https://GATEWAY.pydantic.dev:443/proxy/openai/models')
+            await http_client.get(f'{GATEWAY_BASE_URL}/redirect')
+
+    # The redirect keeps the Gateway request's `traceparent` because HTTPX copies every header onto a
+    # redirect except `Authorization`, which it drops when the scheme, host or port changes.
+    assert [(str(r.url), r.headers.get('Authorization'), 'traceparent' in r.headers) for r in requests] == snapshot(
+        [
+            ('https://example.com/data', None, False),
+            ('http://gateway.pydantic.dev/proxy', None, False),
+            ('https://gateway.pydantic.dev:8443/proxy', None, False),
+            ('https://gateway.pydantic.dev/proxy/openai/models', 'Bearer gw-key', True),
+            ('https://gateway.pydantic.dev/proxy/redirect', 'Bearer gw-key', True),
+            ('https://elsewhere.example.com/landing', None, True),
+        ]
+    )
+
+
 @pytest.mark.parametrize('provider_name', ['openai', 'google-cloud'])
 async def test_gateway_provider_hooks_a_caller_owned_legacy_http_client(
     provider_name: Literal['openai', 'google-cloud'],
@@ -392,7 +432,8 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
     """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
     cost is the genai-prices estimate."""
-    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
+    # HTTPS because botocore 1.44+ refuses to send a Bearer token to a plain-HTTP endpoint.
+    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='https://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
 

@@ -1,0 +1,539 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "601"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Call `save` once, with `text` set to 80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1, separated by newlines. Do not write the lines as text. After the tool returns, reply `OK`."
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: save
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          type: function
+          description: Save the text.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "17110"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0da8ae7f0a012536006aebb457e63887d1917942a4f1125f12
+        object: response
+        created_at: 1793832023
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793832040
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_0da8ae7f0a012536006aebb458e48087d1aa8f63006338d242
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq67RowAmdu8WAUmoIA-XuYzcNGne-sTfPoF4K_yYMsl62j4DqWbr5PujaHs7M-UtFKt-lEh__VU6LhMJoZ1QDnUV76-oHPusCEnwdblro87dHd0TAbjwi-g06rpj5YAbkjStFC-F2VcpH6d9EpTMGHjAK6fUHybLgUFBCv_YKgj7UDi8UQbvZNuicUPvN6wpNNYoSWl9vW9n12jyebfWTuRWHC5q6VP1WZc3GDOGp8pIOOF8f2upg4I9wfjgBrvQSp8B1tdpcPEjY-xjLl37WrzkLMj0_jJk_rLsYfAe0UU6Uf1i43SRvHIqPPY2O8VHefejjcLbbjwpM8UvZ0Fh1dXBn1lZfn_SNaV02NViFIYjPpQCr2E_rLSHCkSF_BzAXehRgKYyVkO411R6CL0PZBQWQDmx6wSMBDIWZpnd5TzYWaazXQNCe_QZlkklhJ6UHAKHvmSH_euopde34HzPO7exFpT-1TnZqfy5muoUD5DanIO6JOc-0J7rsNOzTeA2rtqn3MUwzCP0cimCfIApFUnvUCOe3Swvi_FI-HkerNC3laqz8OIyYRMEroNJj8pNHd3ehhgFKcHr3osm6Sc-MxZBA23Bnj2JZ6VxAdDIz42F-GgRcVRtjd5bneKtV_3NGLQ4VkE0iVBOW_A4kIjzRP3haVkasfRFdRS4KTJ2IkpuA2fylefZOdextqVSVwJBKbqw89CDChGjIMWoaL1rxsA8lQq8L_EsPXvUAKmbN_WRhrNpbVzGD0X6nEK3dhw1xEHPtZbsuiw7vSoPfGJBaxl9lFber7me15dOgDBUlUYSsDfoBuCPNfJmwyaoiM2z1I1KwAk-2W9QEjvgkFtj6fcukw9zuP4x7haFQ9KeLRF4Yv9DbOG34vBTexjg5LSevVxZg0pZDuvhgK4Pmjr47RgPmAjQ4UhJE0TBFXI7cEQhwb8UN159BpM7DKkiOm3u9Qs0A5yaHCrvRzlAPIsPz0Iu7XQZJrM7ONvCrEZ8SwilLDSzfMBY_5A1ASiS63CHZAkoAzub4KbWblmv6SsbJIbGQKaZ8BhMoQ977SzEEHPK7S660mnfRO4ujevM3dq9KG5o-OYb4zcRBVjMPNyytioZa2AUlqW6wP7MwJZmlcC4hHHlvyHvCeoY9SBe8N_HY8TuZEjc3vuHmEm8gMjhdYG5rgTBFLp3g8G2H45Q-J3Sza9Jfvcx27qb9Aj6y8u-xbTWNAHjVPOgsUcBBcp6yHveVDjpHUtluwdzuE_4PEmVqKTIPwMIZ0UBDlaF9WWvFFLcCGhRv53HhRXRgRfpUVNO_0BzZ_p-Yx5ZEgqLbke7NAGKBh7xoqB10WxrfX4LIJw1ywL0hW4BfBTwBSqrQGKVg-hmSJmgHm5DoRYvTyTW3jlrHywJoDH5poVYNu3ENHe_lYMyI6SmDnmDsBbDnzCwdatNiuBwqjmRtSz1zJb8IM2EZnbClW0kFPtLyuzHtcumu8GiCzmQaLLObulw87aDqBcFlVrjJmREWunmShSBqTsNPQLM7296xJS3kpMBUPEaTxE7CYTCwCpisnAPoMnCFjPGhBGI9FlcnO6gIAnmRQG3uJTljFGZ6OXezMhiBI3kMLI41mFjCqCJnBOhP3Npxnf6NxcpO5UxwjilxTPeXPdQdQGnGt-ko1nniejnqrhEoHJdP9rU3ruYXsua-BwXzLFKDXUigX9fSiXRpoM1UcCfc009BWft6AcWjl27yZ5ydu6mZj_Ooyue7gx_iIqYOFeb6ENCIZEW5CaXyDO0FCEQx9qxzR3v-YmAmGz5QpX3jt3JhHgtM3w200GJltRvg4g==
+          summary: []
+        - id: fc_0da8ae7f0a012536006aebb45963c087d1a1849160207b72e3
+          type: function_call
+          status: completed
+          arguments: "{\"text\":\"LINE 1: velvet orchard brisk lantern meadow silver whisper copper\\nLINE 2: tumble basket amber quiet feather marble ripple forest\\nLINE 3: cedar pocket gentle thunder violet pebble sunny drift\\nLINE 4: candle rabbit mellow river button hazy cotton sparkle\\nLINE 5: walnut breeze tiny castle lemon velvet compass meadow\\nLINE 6: pepper window glossy autumn kitten ribbon humble planet\\nLINE 7: sleepy magnet coral picnic ladder golden whisper tulip\\nLINE 8: fiddle ocean butter crisp lantern daisy velvet rocket\\nLINE 9: marble comet tender honey ripple cabin silver branch\\nLINE 10: violet pocket meadow brisk walnut sunny feather harbor\\nLINE 11: copper drizzle rabbit candle forest lemon mellow pebble\\nLINE 12: basket tulip gentle amber sparkle river velvet button\\nLINE 13: cotton planet whisper cedar hazy ladder golden breeze\\nLINE 14: compass kitten autumn marble quiet orchard ribbon thunder\\nLINE 15: sunny castle pepper meadow drift candle glossy feather\\nLINE 16: rabbit silver ripple walnut tulip window mellow coral\\nLINE 17: lantern honey branch picnic velvet tiny ocean magnet\\nLINE 18: daisy brisk harbor copper pebble kitten amber sleepy\\nLINE 19: lemon fiddle sparkle gentle planet basket meadow drizzle\\nLINE 20: ribbon forest quiet button candle marble violet tumble\\nLINE 21: feather hazy river walnut whisper sunny cedar pocket\\nLINE 22: golden tulip breeze compass rabbit glossy orchard pepper\\nLINE 23: mellow coral lantern thunder cotton picnic silver comet\\nLINE 24: amber ladder velvet honey pebble autumn window brisk\\nLINE 25: kitten meadow candle ripple basket ocean gentle magnet\\nLINE 26: branch sunny marble daisy whisper walnut castle copper\\nLINE 27: planet button sleepy lemon fiddle forest velvet hazy\\nLINE 28: orchard feather river tulip brisk ribbon pocket glossy\\nLINE 29: drizzle compass amber rabbit sparkle cedar picnic mellow\\nLINE 30: thunder cotton silver pebble lantern quiet magnet sunny\\nLINE 31: velvet honey basket coral window branch gentle walnut\\nLINE 32: autumn candle meadow comet ripple lemon golden kitten\\nLINE 33: hazy tulip pepper ocean marble whisper ladder daisy\\nLINE 34: pocket sleepy cedar breeze rabbit copper fiddle forest\\nLINE 35: glossy planet amber picnic feather velvet button river\\nLINE 36: castle mellow magnet sunny orchard ribbon thunder pebble\\nLINE 37: silver drizzle kitten walnut gentle lantern coral basket\\nLINE 38: ripple daisy quiet honey compass meadow violet branch\\nLINE 39: lemon feather brisk candle cotton ocean sleepy tulip\\nLINE 40: marble rabbit golden pocket breeze pepper forest amber\\nLINE 41: whisper ladder velvet comet picnic walnut sunny copper\\nLINE 42: button cedar thunder mellow kitten sparkle river hazy\\nLINE 43: orchard magnet tulip silver candle drizzle pebble gentle\\nLINE 44: basket coral window lemon feather autumn brisk planet\\nLINE 45: fiddle meadow rabbit quiet honey velvet castle ripple\\nLINE 46: sunny copper daisy walnut lantern pocket amber glossy\\nLINE 47: breeze kitten forest marble button whisper cotton comet\\nLINE 48: pepper river sleepy tulip cedar golden picnic ladder\\nLINE 49: velvet hazy compass branch mellow ocean candle rabbit\\nLINE 50: thunder lemon sparkle basket silver meadow walnut ribbon\\nLINE 51: gentle pebble amber kitten drizzle pocket forest daisy\\nLINE 52: cotton sunny magnet tulip whisper coral cedar window\\nLINE 53: orchard brisk candle marble ladder honey velvet planet\\nLINE 54: ripple rabbit copper picnic sleepy feather button autumn\\nLINE 55: golden breeze meadow pepper quiet comet walnut lantern\\nLINE 56: violet basket river hazy kitten branch glossy lemon\\nLINE 57: pocket daisy thunder velvet silver orchard mellow magnet\\nLINE 58: cedar ribbon sunny forest amber tulip candle pebble\\nLINE 59: ocean feather brisk walnut sparkle rabbit cotton compass\\nLINE 60: kitten drizzle marble gentle window pepper meadow honey\\nLINE 61: ladder coral velvet button picnic sleepy copper branch\\nLINE 62: tulip amber forest whisper lemon sunny comet basket\\nLINE 63: mellow pebble candle rabbit golden magnet hazy river\\nLINE 64: walnut orchard silver breeze daisy pocket thunder cotton\\nLINE 65: compass velvet kitten autumn sparkle meadow pepper ribbon\\nLINE 66: honey brisk lantern cedar quiet marble tulip glossy\\nLINE 67: rabbit planet drizzle amber window feather picnic sunny\\nLINE 68: copper button forest daisy mellow ocean walnut ladder\\nLINE 69: sleepy coral meadow velvet branch lemon magnet thunder\\nLINE 70: pebble tulip whisper basket gentle kitten silver breeze\\nLINE 71: candle hazy orchard ribbon comet pepper cotton amber\\nLINE 72: golden river pocket walnut sunny daisy fiddle velvet\\nLINE 73: marble ladder brisk honey forest tulip copper sparkle\\nLINE 74: meadow kitten quiet thunder ribbon cedar basket lemon\\nLINE 75: ocean amber feather magnet glossy rabbit picnic branch\\nLINE 76: velvet pepper sunny pebble window orchard mellow cotton\\nLINE 77: daisy copper tulip forest drizzle button silver gentle\\nLINE 78: walnut comet ladder candle hazy river kitten whisper\\nLINE 79: basket breeze planet rabbit amber meadow thunder pocket\\nLINE 80: ribbon sleepy honey marble cedar sparkle ocean golden\"}"
+          call_id: call_mnLlqo7yZzZgOs6tfixKbeE3
+          name: save
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Save the text.
+          name: save
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 97
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 1142
+          output_tokens_details:
+            reasoning_tokens: 34
+          total_tokens: 1239
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T22:40:40.998103+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "8167"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Call `save` once, with `text` set to 80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1, separated by newlines. Do not write the lines as text. After the tool returns, reply `OK`."
+        - id: rs_0da8ae7f0a012536006aebb458e48087d1aa8f63006338d242
+          summary: []
+          encrypted_content: >-
+            gAAAAABq67RowAmdu8WAUmoIA-XuYzcNGne-sTfPoF4K_yYMsl62j4DqWbr5PujaHs7M-UtFKt-lEh__VU6LhMJoZ1QDnUV76-oHPusCEnwdblro87dHd0TAbjwi-g06rpj5YAbkjStFC-F2VcpH6d9EpTMGHjAK6fUHybLgUFBCv_YKgj7UDi8UQbvZNuicUPvN6wpNNYoSWl9vW9n12jyebfWTuRWHC5q6VP1WZc3GDOGp8pIOOF8f2upg4I9wfjgBrvQSp8B1tdpcPEjY-xjLl37WrzkLMj0_jJk_rLsYfAe0UU6Uf1i43SRvHIqPPY2O8VHefejjcLbbjwpM8UvZ0Fh1dXBn1lZfn_SNaV02NViFIYjPpQCr2E_rLSHCkSF_BzAXehRgKYyVkO411R6CL0PZBQWQDmx6wSMBDIWZpnd5TzYWaazXQNCe_QZlkklhJ6UHAKHvmSH_euopde34HzPO7exFpT-1TnZqfy5muoUD5DanIO6JOc-0J7rsNOzTeA2rtqn3MUwzCP0cimCfIApFUnvUCOe3Swvi_FI-HkerNC3laqz8OIyYRMEroNJj8pNHd3ehhgFKcHr3osm6Sc-MxZBA23Bnj2JZ6VxAdDIz42F-GgRcVRtjd5bneKtV_3NGLQ4VkE0iVBOW_A4kIjzRP3haVkasfRFdRS4KTJ2IkpuA2fylefZOdextqVSVwJBKbqw89CDChGjIMWoaL1rxsA8lQq8L_EsPXvUAKmbN_WRhrNpbVzGD0X6nEK3dhw1xEHPtZbsuiw7vSoPfGJBaxl9lFber7me15dOgDBUlUYSsDfoBuCPNfJmwyaoiM2z1I1KwAk-2W9QEjvgkFtj6fcukw9zuP4x7haFQ9KeLRF4Yv9DbOG34vBTexjg5LSevVxZg0pZDuvhgK4Pmjr47RgPmAjQ4UhJE0TBFXI7cEQhwb8UN159BpM7DKkiOm3u9Qs0A5yaHCrvRzlAPIsPz0Iu7XQZJrM7ONvCrEZ8SwilLDSzfMBY_5A1ASiS63CHZAkoAzub4KbWblmv6SsbJIbGQKaZ8BhMoQ977SzEEHPK7S660mnfRO4ujevM3dq9KG5o-OYb4zcRBVjMPNyytioZa2AUlqW6wP7MwJZmlcC4hHHlvyHvCeoY9SBe8N_HY8TuZEjc3vuHmEm8gMjhdYG5rgTBFLp3g8G2H45Q-J3Sza9Jfvcx27qb9Aj6y8u-xbTWNAHjVPOgsUcBBcp6yHveVDjpHUtluwdzuE_4PEmVqKTIPwMIZ0UBDlaF9WWvFFLcCGhRv53HhRXRgRfpUVNO_0BzZ_p-Yx5ZEgqLbke7NAGKBh7xoqB10WxrfX4LIJw1ywL0hW4BfBTwBSqrQGKVg-hmSJmgHm5DoRYvTyTW3jlrHywJoDH5poVYNu3ENHe_lYMyI6SmDnmDsBbDnzCwdatNiuBwqjmRtSz1zJb8IM2EZnbClW0kFPtLyuzHtcumu8GiCzmQaLLObulw87aDqBcFlVrjJmREWunmShSBqTsNPQLM7296xJS3kpMBUPEaTxE7CYTCwCpisnAPoMnCFjPGhBGI9FlcnO6gIAnmRQG3uJTljFGZ6OXezMhiBI3kMLI41mFjCqCJnBOhP3Npxnf6NxcpO5UxwjilxTPeXPdQdQGnGt-ko1nniejnqrhEoHJdP9rU3ruYXsua-BwXzLFKDXUigX9fSiXRpoM1UcCfc009BWft6AcWjl27yZ5ydu6mZj_Ooyue7gx_iIqYOFeb6ENCIZEW5CaXyDO0FCEQx9qxzR3v-YmAmGz5QpX3jt3JhHgtM3w200GJltRvg4g==
+          type: reasoning
+        - name: save
+          arguments: "{\"text\":\"LINE 1: velvet orchard brisk lantern meadow silver whisper copper\\nLINE 2: tumble basket amber quiet feather marble ripple forest\\nLINE 3: cedar pocket gentle thunder violet pebble sunny drift\\nLINE 4: candle rabbit mellow river button hazy cotton sparkle\\nLINE 5: walnut breeze tiny castle lemon velvet compass meadow\\nLINE 6: pepper window glossy autumn kitten ribbon humble planet\\nLINE 7: sleepy magnet coral picnic ladder golden whisper tulip\\nLINE 8: fiddle ocean butter crisp lantern daisy velvet rocket\\nLINE 9: marble comet tender honey ripple cabin silver branch\\nLINE 10: violet pocket meadow brisk walnut sunny feather harbor\\nLINE 11: copper drizzle rabbit candle forest lemon mellow pebble\\nLINE 12: basket tulip gentle amber sparkle river velvet button\\nLINE 13: cotton planet whisper cedar hazy ladder golden breeze\\nLINE 14: compass kitten autumn marble quiet orchard ribbon thunder\\nLINE 15: sunny castle pepper meadow drift candle glossy feather\\nLINE 16: rabbit silver ripple walnut tulip window mellow coral\\nLINE 17: lantern honey branch picnic velvet tiny ocean magnet\\nLINE 18: daisy brisk harbor copper pebble kitten amber sleepy\\nLINE 19: lemon fiddle sparkle gentle planet basket meadow drizzle\\nLINE 20: ribbon forest quiet button candle marble violet tumble\\nLINE 21: feather hazy river walnut whisper sunny cedar pocket\\nLINE 22: golden tulip breeze compass rabbit glossy orchard pepper\\nLINE 23: mellow coral lantern thunder cotton picnic silver comet\\nLINE 24: amber ladder velvet honey pebble autumn window brisk\\nLINE 25: kitten meadow candle ripple basket ocean gentle magnet\\nLINE 26: branch sunny marble daisy whisper walnut castle copper\\nLINE 27: planet button sleepy lemon fiddle forest velvet hazy\\nLINE 28: orchard feather river tulip brisk ribbon pocket glossy\\nLINE 29: drizzle compass amber rabbit sparkle cedar picnic mellow\\nLINE 30: thunder cotton silver pebble lantern quiet magnet sunny\\nLINE 31: velvet honey basket coral window branch gentle walnut\\nLINE 32: autumn candle meadow comet ripple lemon golden kitten\\nLINE 33: hazy tulip pepper ocean marble whisper ladder daisy\\nLINE 34: pocket sleepy cedar breeze rabbit copper fiddle forest\\nLINE 35: glossy planet amber picnic feather velvet button river\\nLINE 36: castle mellow magnet sunny orchard ribbon thunder pebble\\nLINE 37: silver drizzle kitten walnut gentle lantern coral basket\\nLINE 38: ripple daisy quiet honey compass meadow violet branch\\nLINE 39: lemon feather brisk candle cotton ocean sleepy tulip\\nLINE 40: marble rabbit golden pocket breeze pepper forest amber\\nLINE 41: whisper ladder velvet comet picnic walnut sunny copper\\nLINE 42: button cedar thunder mellow kitten sparkle river hazy\\nLINE 43: orchard magnet tulip silver candle drizzle pebble gentle\\nLINE 44: basket coral window lemon feather autumn brisk planet\\nLINE 45: fiddle meadow rabbit quiet honey velvet castle ripple\\nLINE 46: sunny copper daisy walnut lantern pocket amber glossy\\nLINE 47: breeze kitten forest marble button whisper cotton comet\\nLINE 48: pepper river sleepy tulip cedar golden picnic ladder\\nLINE 49: velvet hazy compass branch mellow ocean candle rabbit\\nLINE 50: thunder lemon sparkle basket silver meadow walnut ribbon\\nLINE 51: gentle pebble amber kitten drizzle pocket forest daisy\\nLINE 52: cotton sunny magnet tulip whisper coral cedar window\\nLINE 53: orchard brisk candle marble ladder honey velvet planet\\nLINE 54: ripple rabbit copper picnic sleepy feather button autumn\\nLINE 55: golden breeze meadow pepper quiet comet walnut lantern\\nLINE 56: violet basket river hazy kitten branch glossy lemon\\nLINE 57: pocket daisy thunder velvet silver orchard mellow magnet\\nLINE 58: cedar ribbon sunny forest amber tulip candle pebble\\nLINE 59: ocean feather brisk walnut sparkle rabbit cotton compass\\nLINE 60: kitten drizzle marble gentle window pepper meadow honey\\nLINE 61: ladder coral velvet button picnic sleepy copper branch\\nLINE 62: tulip amber forest whisper lemon sunny comet basket\\nLINE 63: mellow pebble candle rabbit golden magnet hazy river\\nLINE 64: walnut orchard silver breeze daisy pocket thunder cotton\\nLINE 65: compass velvet kitten autumn sparkle meadow pepper ribbon\\nLINE 66: honey brisk lantern cedar quiet marble tulip glossy\\nLINE 67: rabbit planet drizzle amber window feather picnic sunny\\nLINE 68: copper button forest daisy mellow ocean walnut ladder\\nLINE 69: sleepy coral meadow velvet branch lemon magnet thunder\\nLINE 70: pebble tulip whisper basket gentle kitten silver breeze\\nLINE 71: candle hazy orchard ribbon comet pepper cotton amber\\nLINE 72: golden river pocket walnut sunny daisy fiddle velvet\\nLINE 73: marble ladder brisk honey forest tulip copper sparkle\\nLINE 74: meadow kitten quiet thunder ribbon cedar basket lemon\\nLINE 75: ocean amber feather magnet glossy rabbit picnic branch\\nLINE 76: velvet pepper sunny pebble window orchard mellow cotton\\nLINE 77: daisy copper tulip forest drizzle button silver gentle\\nLINE 78: walnut comet ladder candle hazy river kitten whisper\\nLINE 79: basket breeze planet rabbit amber meadow thunder pocket\\nLINE 80: ribbon sleepy honey marble cedar sparkle ocean golden\"}"
+          call_id: call_mnLlqo7yZzZgOs6tfixKbeE3
+          type: function_call
+          id: fc_0da8ae7f0a012536006aebb45963c087d1a1849160207b72e3
+        - type: function_call_output
+          call_id: call_mnLlqo7yZzZgOs6tfixKbeE3
+          output: saved
+        prompt_cache_options:
+          comparison_response_id: resp_0da8ae7f0a012536006aebb457e63887d1917942a4f1125f12
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: save
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          type: function
+          description: Save the text.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "796"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0da8ae7f0a012536006aebb4691b7c87d194eef2aece7128ea
+        object: response
+        created_at: 1793832041
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793832041
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: msg_0da8ae7f0a012536006aebb469a6ec87d1a55240f4ac709627
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: OK
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_0da8ae7f0a012536006aebb457e63887d1917942a4f1125f12
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Save the text.
+          name: save
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 1250
+          input_tokens_details:
+            cache_write_tokens: 1247
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 1255
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T22:40:41.934920+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3558"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Call `save` once, with `text` set to 80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1, separated by newlines. Do not write the lines as text. After the tool returns, reply `OK`."
+        - id: rs_0da8ae7f0a012536006aebb458e48087d1aa8f63006338d242
+          summary: []
+          encrypted_content: >-
+            gAAAAABq67RowAmdu8WAUmoIA-XuYzcNGne-sTfPoF4K_yYMsl62j4DqWbr5PujaHs7M-UtFKt-lEh__VU6LhMJoZ1QDnUV76-oHPusCEnwdblro87dHd0TAbjwi-g06rpj5YAbkjStFC-F2VcpH6d9EpTMGHjAK6fUHybLgUFBCv_YKgj7UDi8UQbvZNuicUPvN6wpNNYoSWl9vW9n12jyebfWTuRWHC5q6VP1WZc3GDOGp8pIOOF8f2upg4I9wfjgBrvQSp8B1tdpcPEjY-xjLl37WrzkLMj0_jJk_rLsYfAe0UU6Uf1i43SRvHIqPPY2O8VHefejjcLbbjwpM8UvZ0Fh1dXBn1lZfn_SNaV02NViFIYjPpQCr2E_rLSHCkSF_BzAXehRgKYyVkO411R6CL0PZBQWQDmx6wSMBDIWZpnd5TzYWaazXQNCe_QZlkklhJ6UHAKHvmSH_euopde34HzPO7exFpT-1TnZqfy5muoUD5DanIO6JOc-0J7rsNOzTeA2rtqn3MUwzCP0cimCfIApFUnvUCOe3Swvi_FI-HkerNC3laqz8OIyYRMEroNJj8pNHd3ehhgFKcHr3osm6Sc-MxZBA23Bnj2JZ6VxAdDIz42F-GgRcVRtjd5bneKtV_3NGLQ4VkE0iVBOW_A4kIjzRP3haVkasfRFdRS4KTJ2IkpuA2fylefZOdextqVSVwJBKbqw89CDChGjIMWoaL1rxsA8lQq8L_EsPXvUAKmbN_WRhrNpbVzGD0X6nEK3dhw1xEHPtZbsuiw7vSoPfGJBaxl9lFber7me15dOgDBUlUYSsDfoBuCPNfJmwyaoiM2z1I1KwAk-2W9QEjvgkFtj6fcukw9zuP4x7haFQ9KeLRF4Yv9DbOG34vBTexjg5LSevVxZg0pZDuvhgK4Pmjr47RgPmAjQ4UhJE0TBFXI7cEQhwb8UN159BpM7DKkiOm3u9Qs0A5yaHCrvRzlAPIsPz0Iu7XQZJrM7ONvCrEZ8SwilLDSzfMBY_5A1ASiS63CHZAkoAzub4KbWblmv6SsbJIbGQKaZ8BhMoQ977SzEEHPK7S660mnfRO4ujevM3dq9KG5o-OYb4zcRBVjMPNyytioZa2AUlqW6wP7MwJZmlcC4hHHlvyHvCeoY9SBe8N_HY8TuZEjc3vuHmEm8gMjhdYG5rgTBFLp3g8G2H45Q-J3Sza9Jfvcx27qb9Aj6y8u-xbTWNAHjVPOgsUcBBcp6yHveVDjpHUtluwdzuE_4PEmVqKTIPwMIZ0UBDlaF9WWvFFLcCGhRv53HhRXRgRfpUVNO_0BzZ_p-Yx5ZEgqLbke7NAGKBh7xoqB10WxrfX4LIJw1ywL0hW4BfBTwBSqrQGKVg-hmSJmgHm5DoRYvTyTW3jlrHywJoDH5poVYNu3ENHe_lYMyI6SmDnmDsBbDnzCwdatNiuBwqjmRtSz1zJb8IM2EZnbClW0kFPtLyuzHtcumu8GiCzmQaLLObulw87aDqBcFlVrjJmREWunmShSBqTsNPQLM7296xJS3kpMBUPEaTxE7CYTCwCpisnAPoMnCFjPGhBGI9FlcnO6gIAnmRQG3uJTljFGZ6OXezMhiBI3kMLI41mFjCqCJnBOhP3Npxnf6NxcpO5UxwjilxTPeXPdQdQGnGt-ko1nniejnqrhEoHJdP9rU3ruYXsua-BwXzLFKDXUigX9fSiXRpoM1UcCfc009BWft6AcWjl27yZ5ydu6mZj_Ooyue7gx_iIqYOFeb6ENCIZEW5CaXyDO0FCEQx9qxzR3v-YmAmGz5QpX3jt3JhHgtM3w200GJltRvg4g==
+          type: reasoning
+        - name: save
+          arguments: "{\"_clamped\":\"{\\\"text\\\":\\\"LINE 1: velvet orchard brisk lantern meadow silver whisper copper\\\\nLINE 2: tumble basket am\\n[clamped: removed 4981 of 5181 characters]\\nrabbit amber meadow thunder pocket\\\\nLINE 80: ribbon sleepy honey marble cedar sparkle ocean golden\\\"}\"}"
+          call_id: call_mnLlqo7yZzZgOs6tfixKbeE3
+          type: function_call
+        - type: function_call_output
+          call_id: call_mnLlqo7yZzZgOs6tfixKbeE3
+          output: saved
+        - role: assistant
+          id: msg_0da8ae7f0a012536006aebb469a6ec87d1a55240f4ac709627
+          content:
+          - text: OK
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        - role: user
+          content: >-
+            Look at your earlier output as it appears in this conversation, including any
+            tool call arguments. Reply with only the largest N such that `LINE N:` is visible
+            consecutively from 1, with no gap.
+        prompt_cache_options:
+          comparison_response_id: resp_0da8ae7f0a012536006aebb4691b7c87d194eef2aece7128ea
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: save
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          type: function
+          description: Save the text.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "3040"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0da8ae7f0a012536006aebb46a056887d1adc33a489cc01d84
+        object: response
+        created_at: 1793832042
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793832044
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_0da8ae7f0a012536006aebb46ad56887d1a9ddaaed355e5eaf
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq67RtGEzvomK_anCd_PivRhxVJbAXAf58E24iMsLxIACm4rY_K3Kn6-09ioC7zaqdCmaf12WLq2AmK0ZBuCja2pyAzv7Iz8eGOZDcl1qLOMOXzBJXjxQfqwBqjw7KOfuCqtz8PCMssiTnvGt-5UXXEXTsaXIGnqeIUbAf0Y8d8ComqELP9XP-CGstzUYr0JGulEVf3ARW6tykJHDaesy6boLVzEU6JqurJ4DVlRiyJBE4RAmff-tQ9eLuXQVRmScAMD2Y3wbtpZvf3kTzgkhaGKxvpFYakr6NCX4ounkWoPmBG3Zn8RdLSGVreKu_3IkkfgJs9QJkIKuyy1wG4_RCMN2W7Lddi8QOL5YmP4ico53GI7EuGw9_HQX4Imb-_SSypu4ENPMEJqelCve5sZ1cA9sGMPV1cJ7fS9QgAMhvOYqG8o7HObVBJSd_THEJ0ur36oWm9M_hXivyW8xrBmdlmK5cw5SZYUXiJ3PqvMzlvGWb8UFMg5Qdd3lUUCN6-u6m9dnsGc3AcfognOutaj2p4EVFvaRifh8cI6LkUUu8_B2kH319ql_c-zu1y3_-yd5QfxtEr9dS9ekcxwlbJLeCC1-S9O_9s_vUbmAY1yBE6c9mEedlkbhhH3SBA9GiqZwipjLsaa68UdVIPqyhitFjOJS3qytW9J0AEDWAAjdPcxz80BCYkLqvYtqWzC4uz3srkAdhVp3xPQ1waf9Ey1FSUkHQjHwJfeqSi1AG_lrLwvQlYnkyIRWJJ0GfFdlULbzMunkc0W1L8ij-Zil7fP9ziCTVvUVUIdfe3Ze4sZTcY-hvaLW4OGBQ58W9h0SiX-myREWjwTDyYU4Ug_xHj2I-EgdKlNpoAQvsmV3NT8o15gshmMAil11uOLdFd05FjIaoWUwhvPRuCop1qWbdTRZnzLpuH9HDMkrRKh52It7JzOMR-RWbK_joKL14GS1CMv10YQzIGkRAe-0vOjBTkeuuLlOhl4N1pbltO7mrogbUbcK50GK_3hnIKGVFJAvkwB1RACUoeAdFF-Lh7bWvnfiBJCaRlFBjJfOifU1czfYRzc1Ur-zX8RNW6_mVOb4dWbgEHycuhu9xNUYAkaJJnwPout4ND99G9TLxpYDU71fGr7n4aE6BTWYd8iBMcm6jZSFcPCian-E1ewg_iRbsuqtRzbDRnl1lKVWp3DyUhV8QRqNm8HyF_LOGkTyhTsDbuvTVaj4OTV8N8bncvf3DJSP87-3oHJsOMG151LWNRTgEkAba5nlM1lXjy4-4QKIFS5YTm5FHRLHEqYIRfje52kbXIz5h9_UvzIsdED8OP1fO4feSeSCC_QX7NYGl4OA3MbjAQeA2wCbeUBk1VkQG7TNZ_jmdXcgNpDA5fhtRLindX8S_fbfcCaQW-4Egm4LxFVi0z6DB8-GnbitYR5T159Ww6lzQbu2T0HaFHRNG0JXoWGR6VOOyCDhh436HAi3IWEuKzLAsGlbIZ6xFZZiSdmUA6-7nJjzQRJCwRmRyPAE-EKpv0SMuo3imLZCC0xYOI9SF8rnCZdIHjvObJ8Fqk3Y96dukJpa3WQRKvSpER0gBcaw26wFnyPGsw_7NNIKYOb7RZxr-kQGZSbPptEhAV5gcCknhsXhHC4zcJv8liQEJy5jQA4bT6tU-U_2J3DEMmv5yA8wLVPMyv4C_ZKX9rXEJ0xHMFQt8nMieGMsak_TvBmzyfj3Q4oHdAsp98N_f6nXiwB5p2T9FmiTCw56Y6LFKXmPhRt1f5mY4lvG2dk8PAXXBWh2rdh14tjvRFk1BDvZcLJ7EfRg8bkfzaDWoCA0G6SHvZvYuKxuvFF0gA_A00Exso2JvbIxUOktI67h8lTkHgOhZFR_GL5GdZwhExYYLytjEyAUp77UxP7ggNQAao6buhbSsZ7_Ct-Xn8JjzGIJLz7PSyLSMMePdEo9ljzdPTW1kfAPHRUxCDenA3CvMnpShVSIvbP5ImtAv8XQc7rDOeTyfj3zg5Rxdoj1pxI7MVc6ZUE8BhEwRG4y7Be8_39nnbwHqsXt6NVK49Qns81Sq8nrEpMsGBn7L3jthodG0G4x82zATmtcnP8mYBm1Ig-CjI7xfHCR22iCFSniOp2fA8Qb1KGUv8C7HTh7y-7mkNyEtuWPCNJG0YmGlcY7fcSvg8Dz7qfPRiXpj6DbJhkodd7lAaikyfv5KW0m5Y-amLtCfEMjhJpwK9pft5xhGkjKWBllwVYbLN8uNi_6skO5Ejgl0vSGNaSLXlTJLucMKXQOBSIHLmjl6hILedPy_dAXtmlD9Ca1Whfs5TIcd_IwuvQetmLLMa29ipdTk92CppXbxwpwRykORWZHxFadvewPiwjzVUfQorlkIy178Otf_IIoBm9SVtBMe5uYvFvssrK0YZdf_MSYX9N1GTHv4sKTrBTZI80EIozPmtRSJG0wFcnp9Tb0QLOqzIfh8Z54v78lGXIFJteO9q8ik3MPxmIMa-FmLeByeBMN9ZywEE1G0D7OhxLMblxp8tDJ1QrPn6kS0Lt2VFlFABcPEbMr9T0fnMYF6OIiZodOr0gFVplNgRRK9y22wsrHEAtaAFZ3cE9mwrwj9NCYJREqGpKUZ9_pN7ZoNNc9kF_MkJc5T_Prx_QupNf4hgVaPHTcZJhd7WqAIzzA13pSMUsrlnLUswxnnY4YxH3i7S5QeXzRNkegzlJTMZ9vgOSM1fSqxiFsoe17s9JLp7DWXH62bzCw_Uhx22xEceM4ZY29fuV50qWn6hcv94sHsEIzNCeP8eaHxklFDbQx793MvG3dAENgBxPzmzEBiUyxg-W5S49yzvRQL2MmUOFlx_VJqkpeF7oYDuhKJBa5JaT-ikrCwAkqBEALy3Lj0L_IpYhkZV-3BMX3b0mXkWVVwSwIl-4Oco0SWme8VoD1W16WJtNEKv_5c5dX05HdMB1u-JJH0JTjBTqVC5gA3i4fYMBaMm3bBorrBKaJ2poqmkoz86B76R4B14kHkrGdlxrgJfo8aC5q8GK2gOFyjExdwPUgoIUEOvsqiIl-FMjZ4mM4bcGX9BRviKuzFln8IRfVoRTlzjGlMcMK8-SRCnojBVoR7mXvhZvXMNczyrRQtgcc4mLBdj4BJz01ocaBvYvkf6TihHdypV9K9MmYj8eJDU3UIl0GAs-v7m1TriuVlz1KA-OUkHW6OkNVukO_daIS8HuK8_8bhZSMA6KuSrv3aqw-NDqnxU8Ghx74ZxW9q_j5rLTi32BoV6lf9AkY3r6YHPO5MiCKddw4VcC853aqRNNGJC3n9HN5i-inrtDR7ca9_DwbgOo-ICIWqUkjeKzOzWPgZNfsSWTOkVv9Qf45ifENp62Q7JsU5Jb6EF3JP9zqj8p_t-a5DOPMyf-VBQDiabvzvVMBj-pe8cl-q0s5aKXoRGU2S2IT3xGSCylz8u6ctD3TaSRLXuTY6n7NSt32o3eFSpI77M1_KecGeoi2JENkXRcvZX0BKLzuYtkfIZgITgV7VOMak4lSS655OkWzClduK4aj5iN4Lx2DZSABHa4xhx1ugenP_YE0Sg1eoBK1X91vDE3UaAerV4aPFLSwZgfNv4Q7avHMgwwpGsrgt5Gnak_hsBCUSaLXFX4G0j3aLy8CJogxEM71-ZDPu_K1Vw9emWBEu8UJ6BJnTbPbVhVB9QUeHhuCOPKOKxfsMCm4dSMHVoecm2M0PIl5DoEYvnPUr5j7wCAI_jCo__PtZ3vKTTdGOh1sFFg1FpVw2DBAXOa7bJdi98tAv0TqI5jbA1-94k-B-DAFCJgTjv3rF8T8kFT7SwgHssGxCfN3AF2aq4HoT9uCElICb6XyCpFURVfKOGX7t-bfbgrp0vMjaTuE1VpC3pfVuwGZgbA==
+          summary: []
+        - id: msg_0da8ae7f0a012536006aebb46cc70887d1b241eeb8262d7827
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "2"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: unavailable
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_0da8ae7f0a012536006aebb4691b7c87d194eef2aece7128ea
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Save the text.
+          name: save
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 276
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 219
+          output_tokens_details:
+            reasoning_tokens: 212
+          total_tokens: 495
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T22:40:45.093974+00:00

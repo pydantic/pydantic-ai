@@ -4,6 +4,7 @@ A capability routes a tool's I/O through a `durable_operation` so that durable e
 the result instead of repeating the I/O on recovery. What a durable operation records is what it
 returns, and a `ModelRetry` is raised, so an operation that can ask the model to retry returns a
 `RetryRequest` instead, and the tool raises it again with `raise_retry`.
+To carry more control-flow exceptions than `ModelRetry`, see `guardrails._shared.record_verdict`.
 """
 
 from __future__ import annotations

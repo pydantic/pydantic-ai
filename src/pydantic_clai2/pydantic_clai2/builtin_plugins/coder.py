@@ -30,10 +30,10 @@ from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.skills import SkillDefinition, Skills
-from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, TaskControl
 from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
 from pydantic_clai2.builtin_plugins.coder_skills import edit_skills
 from pydantic_clai2.commands import Command
@@ -42,6 +42,7 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime.session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.tasks import REVIEW_AGENT_NAME, review_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
@@ -84,6 +85,8 @@ class DelegateModel(BaseModel):
         from pydantic_clai2.models.model_settings import ModelSettingsForm
 
         ModelSettingsForm.model_validate(value)
+        if built := {'base_url', 'api_key'} & value.keys():
+            raise ValueError(f'Set {" and ".join(sorted(built))} in /model settings, where the model is built with it.')
         return value
 
     @model_serializer(mode='plain')
@@ -460,7 +463,11 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
                         'Review the code or changes described in the task. '
                         'Return actionable findings with file paths.'
                     ),
-                    capabilities=[FileSystem[object](read_only=True), RepoContext[object](expose_inventory_tool=False)],
+                    capabilities=[
+                        FileSystem[object](read_only=True),
+                        RepoContext[object](walk_up='repo_root'),
+                        NON_STRICT_SCHEMAS,
+                    ],
                 )
                 agents.append(SubAgent(reviewer, read_only=True, resumable=False, can_ask_questions=False))
             models: dict[str, ModelOption] = {

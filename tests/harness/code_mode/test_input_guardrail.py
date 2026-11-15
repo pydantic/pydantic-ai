@@ -393,7 +393,11 @@ class TestCodeModeInputGuardrail:
             FunctionModel(respond),
             name='guarded',
             deps_type=type(None),
-            capabilities=[CodeMode[None](), InputGuardrail[None](guard=guard, parallel=True), RecordingDurability()],
+            capabilities=[
+                CodeMode[None](),
+                InputGuardrail[None](guard=guard, parallel=True, id='guard'),
+                RecordingDurability(),
+            ],
         )
         agent.tool_plain(run.ping)
 

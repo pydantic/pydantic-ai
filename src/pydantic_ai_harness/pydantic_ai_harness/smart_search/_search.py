@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -12,7 +13,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.smart_search._chunks import Chunk, searchable_root, split_lines
 from pydantic_ai_harness.smart_search._index import SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_search._judge import JudgeModel, judge, judgment_allowance
+from pydantic_ai_harness.smart_search._judge import judgment_allowance
 from pydantic_ai_harness.smart_search._retrieve import terms
 
 MAX_QUERY_CHARS = 2000
@@ -25,6 +26,9 @@ _NO_ROOM = (
     '`smart_search` has no requests left to judge with: each judged snippet counts as one request against '
     "the run's `request_limit`. Use regular search instead."
 )
+Judge = Callable[[RunContext[Any], str, list[Chunk]], Awaitable[list[float | None]]]
+"""Scores each chunk's relevance to a query, or `None` for a chunk the request budget left unjudged."""
+
 _TEST_PATH = re.compile(r'(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|[._-](test|spec)\.[^/]+$|_test\.py$')
 
 
@@ -153,7 +157,7 @@ def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartSearchM
 
 async def search_code(
     ctx: RunContext[Any],
-    model: JudgeModel,
+    judge: Judge,
     query: str,
     directory: str,
     *,
@@ -162,10 +166,9 @@ async def search_code(
     limit: int = 5,
     candidates: int = DEFAULT_CANDIDATES,
     threshold: float,
-    concurrency: int,
     span: Span,
 ) -> SmartSearchResult:
-    """Find the snippets under `directory` that `model` judges relevant to `query`, recording the indexing on `span`."""
+    """Find the snippets under `directory` that `judge` scores relevant to `query`, recording the indexing on `span`."""
     query = query.strip()
     if not query or len(query) > MAX_QUERY_CHARS:
         raise ModelRetry(f'Query must contain 1-{MAX_QUERY_CHARS} characters.')
@@ -180,7 +183,7 @@ async def search_code(
     selected = await read_snippets(workspace, root, directory, found.hits)
     # The shortlist is ranked, so a search over its share of the request budget judges the best-ranked snippets.
     to_judge = selected[:allowance]
-    scores = await judge(ctx, model, query, to_judge, concurrency=concurrency) if to_judge else []
+    scores = await judge(ctx, query, to_judge) if to_judge else []
     judged = [_Scored(c, s) for c, s in zip(to_judge, scores) if s is not None]
     coverage = SmartSearchCoverage(
         files=found.files,

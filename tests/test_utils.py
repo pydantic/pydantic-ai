@@ -10,11 +10,12 @@ import itertools
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+import warnings
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
@@ -46,6 +47,7 @@ from pydantic_ai.models.test import TestModel
 from ._inline_snapshot import snapshot
 from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
+from .realtime.simulation._loop import SimulatedLoop
 
 READINESS_WAIT_TIMEOUT = 5
 
@@ -122,7 +124,7 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         assert groups == expected
 
 
-async def test_group_by_temporal_first_window_starts_on_first_item():
+def test_group_by_temporal_first_window_starts_on_first_item(monkeypatch: pytest.MonkeyPatch):
     """The debounce window must start when the first item arrives, not when iteration begins.
 
     Regression test for #5946. A slow first item — e.g. the latency before a model's first
@@ -130,6 +132,10 @@ async def test_group_by_temporal_first_window_starts_on_first_item():
     elapsed before the item arrived and it was emitted in a group of its own. Here the first
     item is delayed well past the window, yet must still group with a second item that arrives
     within the window of the first: correct output is `[[1, 2]]`, the bug produced `[[1], [2]]`.
+
+    The test moves a virtual clock itself, and the window reads it, so the items arrive exactly when it
+    says. On the real clock, a busy runner (a GC pass, the coverage tracer, a descheduled CPU) can hold the
+    producer up past the window and split the group just as the bug did.
     """
     interval = 0.05
 
@@ -139,9 +145,19 @@ async def test_group_by_temporal_first_window_starts_on_first_item():
         await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
         yield 2
 
-    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
-        groups: list[list[int]] = [g async for g in groups_iter]
-        assert groups == [[1, 2]]
+    async def collect() -> list[list[int]]:
+        async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+            return [g async for g in groups_iter]
+
+    with contextlib.closing(SimulatedLoop()) as loop:
+        monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=loop.time))
+        groups = loop.create_task(collect())
+        loop.run_until_idle()
+        loop.advance_clock(interval * 3)
+        loop.run_until_idle()
+        loop.advance_clock(interval / 5)
+        loop.run_until_idle()
+        assert groups.result() == [[1, 2]]
 
 
 def test_check_object_json_schema():
@@ -1533,3 +1549,33 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     with pytest.raises(ValueError, match='boom') as exc_info:
         awaiter.result()
     assert exc_info.value.__context__ is None
+
+
+def _run_sync() -> None:
+    Agent(TestModel()).run_sync('hello')
+
+
+def _run_stream_sync() -> None:
+    with Agent(TestModel()).run_stream_sync('hello') as result:
+        result.get_output()
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.parametrize(
+    'entry_point',
+    [
+        pytest.param(_run_sync, id='run_sync'),
+        pytest.param(_run_stream_sync, id='run_stream_sync'),
+    ],
+)
+def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
+    fresh_event_loop_policy: None, entry_point: Callable[[], None]
+):
+    """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
+
+    The warning fires when the policy has never had a loop set, as in a fresh interpreter's main thread, which the
+    `fresh_event_loop_policy` fixture recreates.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        entry_point()

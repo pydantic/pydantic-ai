@@ -90,18 +90,6 @@ def make_contribution(
     return InstructionContribution(source=source, source_id=source_id, parts=(resolved_part,))
 
 
-def framework_appended_toolset_sources(toolset: AbstractToolset[AgentDepsT]) -> set[ToolsetInstructionSource]:
-    """The instruction sources of the toolsets under `toolset` whose blocks append by the framework's choice."""
-    sources: set[ToolsetInstructionSource] = set()
-
-    def visit(leaf: AbstractToolset[AgentDepsT]) -> None:
-        if leaf._appends_instructions_by_default and leaf.id is not None:  # pyright: ignore[reportPrivateUsage]
-            sources.add(ToolsetInstructionSource(leaf.id))
-
-    toolset.apply(visit)
-    return sources
-
-
 async def collect_toolset_instructions(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> list[InstructionPart]:

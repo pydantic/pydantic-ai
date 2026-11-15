@@ -13,7 +13,7 @@ def error_message(error: BaseException) -> str:
     """
     from pydantic_ai.exceptions import ModelRateLimitError
     from pydantic_ai.providers.openai_codex import CredentialsRefreshError
-    from pydantic_clai2.models._retry_after import retry_after_message
+    from pydantic_clai2.models.retry_after import retry_after_message
 
     if isinstance(error, BaseExceptionGroup):
         group = cast('BaseExceptionGroup[BaseException]', error)
@@ -28,9 +28,8 @@ def error_message(error: BaseException) -> str:
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, ModelRateLimitError):
-            if (message := retry_after_message(error=current)) is not None:
-                return message
+        if isinstance(current, ModelRateLimitError) and (message := retry_after_message(error=current)) is not None:
+            return message
         if isinstance(current, CredentialsRefreshError):
             return (
                 # The error does not say which account failed, so point to every way back in.

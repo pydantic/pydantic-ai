@@ -34,6 +34,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -44,11 +45,7 @@ from pydantic_ai.tools import (
     matches_tool_selector,
 )
 from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
-from pydantic_ai_harness._background_completion import (
-    escape_tool_result_body,
-    make_background_completion,
-    tool_result_tags,
-)
+from pydantic_ai_harness._background_completion import make_background_completion, tool_result_tags
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -69,7 +66,9 @@ _RUN_IN_BACKGROUND_SCHEMA = {
     'description': 'Set to true to keep working and get the result later as a follow-up message.',
 }
 
-_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar('_backgrounded_call', default=None)
+_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar(
+    'pydantic_ai_harness.background_tools.backgrounded_call', default=None
+)
 """The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
 
 
@@ -140,7 +139,7 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
             content = error.tool_retry.content
         else:
             content = error.tool_failed.content
-        message = escape_tool_result_body(content) if isinstance(content, str) and content else type(error).__name__
+        message = neutralize_tags(content) if isinstance(content, str) and content else type(error).__name__
     open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
     return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
 
@@ -159,9 +158,10 @@ def _format_background_result(
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
     # The frame's attributes name the call the "running in background" reply announced, so the result needs no
     # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
-    # to add for the model.
+    # to add for the model. The output's files sit between the frame's tags as separate content, so the text is
+    # escaped on its own instead of going through `wrap()`.
     open_tag, close_tag = tool_result_tags(tool_name, task_id)
-    completion_text = f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
+    completion_text = f'{open_tag}\n{neutralize_tags(return_part.model_response_str())}'
     files = return_part.files
     if not files:
         completion_text = f'{completion_text}\n{close_tag}'
@@ -367,27 +367,27 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 _backgrounded_call.set(call)
                 try:
                     result = await handler(args)
-                except ToolRetryError as e:
+                except ToolRetryError as exc:
                     # Core charged the tool body's `ModelRetry` to the issuing step, whose count the next step may
                     # already have carried over. `_settle` charges it on delivery instead, so it counts exactly once.
                     assert ctx.tool_manager is not None  # Set for every tool call.
                     ctx.tool_manager.failed_tools.discard(tool_name)
-                    outcome = failure(e, retry=e)
-                except (ModelRetry, ValidationError) as e:
+                    outcome = failure(exc, retry=exc)
+                except (ModelRetry, ValidationError) as exc:
                     # Raised by an execute hook such as `before_tool_execute`. Core counts it outside
                     # `wrap_tool_execute`, so `_settle` does.
-                    outcome = failure(e, retry=e)
-                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as e:
-                    outcome = failure(e)
-                except anyio.get_cancelled_exc_class() as e:
+                    outcome = failure(exc, retry=exc)
+                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as exc:
+                    outcome = failure(exc)
+                except anyio.get_cancelled_exc_class() as exc:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
                     await anyio.lowlevel.checkpoint_if_cancelled()
-                    outcome = e
-                except BaseException as e:
+                    outcome = exc
+                except BaseException as exc:
                     # Unexpected failures, including an exhausted retry budget, end the run as they
                     # would for a sequential tool.
-                    outcome = e
+                    outcome = exc
                 else:
                     outcome = _Completion(
                         tool_name,

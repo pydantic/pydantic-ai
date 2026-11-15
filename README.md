@@ -51,7 +51,7 @@ from pydantic_ai.capabilities import WebSearch
 from pydantic_ai_harness import Advisor, Coder
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     capabilities=[
         Coder(),  # files, shell, repo context, sub-agents, context management
         WebSearch(),  # look up docs and error messages on the web
@@ -73,7 +73,7 @@ capabilities = [
 Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-1
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-2
 ```
 
 **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -152,7 +152,7 @@ class ResearchWorkflow(PydanticAIWorkflow):
         return result.output
 ```
 
-[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Airflow, Absurd, and pgtask](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
+[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Airflow, Absurd, pgtask, and Azure Durable Task](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
 
 Saving, resuming, and forking a run need no engine: [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) from Pydantic AI Harness snapshots every settled step to a store you choose, the way a checkpointer does (see [Persistence](https://pydantic.dev/docs/ai/core-concepts/persistence/)). The engine is for recovering a run that crashes partway through a step.
 
@@ -238,7 +238,7 @@ That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation
 
 - **[Every interface](https://pydantic.dev/docs/ai/overview/interfaces/).** One agent definition runs as a [CLI](https://pydantic.dev/docs/ai/integrations/cli/), a [built-in web chat](https://pydantic.dev/docs/ai/guides/web/), or [realtime speech](https://pydantic.dev/docs/ai/realtime/overview/) (OpenAI Realtime, Gemini Live, Azure, xAI Grok Voice); [UI event streams](https://pydantic.dev/docs/ai/integrations/ui/overview/) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** [Durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on eight engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Airflow, Absurd, and pgtask, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** [Durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on nine engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Airflow, Absurd, pgtask, and Azure Durable Task, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
 
 - **Coming from another framework?** The [comparisons](https://pydantic.dev/docs/ai/comparisons/overview/) show where Pydantic AI differs from LangChain, Google ADK, Microsoft Agent Framework, the Claude Agent SDK and the other frameworks people ask us about, and the [migration skills](https://pydantic.dev/docs/ai/comparisons/migrate-from-other-frameworks/) let your coding agent port an existing application over.
 

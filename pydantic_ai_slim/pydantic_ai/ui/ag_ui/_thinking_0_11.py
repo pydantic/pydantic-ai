@@ -65,7 +65,7 @@ async def handle_thinking_end(
 ) -> AsyncIterator[BaseEvent]:
     assert self._reasoning_message_id is not None
     message_id = self._reasoning_message_id
-    encrypted = thinking_encrypted_metadata(part)
+    encrypted = thinking_encrypted_metadata(part, canonical_system=self._canonical_system_for(part.provider_name))
 
     if not self._reasoning_started and not encrypted:
         self._reasoning_message_id = None

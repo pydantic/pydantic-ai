@@ -324,7 +324,7 @@ async def _remove(boxes: _Runtime, name: str) -> None:
         await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
 
 
-class _StaleHandle(Exception):
+class _StaleHandleError(Exception):
     """The box's handle was stopped before a command started on it."""
 
 
@@ -524,12 +524,9 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     result = await self._exec(
                         box, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT
                     )
-                except _StaleHandle as error:
+                except _StaleHandleError as error:
                     raise WorkspaceUnavailableError(f'The BoxLite box {name!r} was stopped while starting.') from error
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'Could not create working_dir {self._working_dir!r} in BoxLite box {name}: {result.stderr}'
-                    )
+                _check_working_dir_created(result, self._working_dir, name)
             self._box = box
             return box
 
@@ -564,14 +561,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             return await self._exec(
                 await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
             )
-        except _StaleHandle:
+        except _StaleHandleError:
             # `stop()` invalidates every handle to a box for good, but a new one boots it again. The
             # command never started, so it starts on the new handle.
             self._box = None
             box = await self.get_sandbox()
             try:
                 return await self._exec(box, argv, env=env, working_dir=self._working_dir, timeout=timeout)
-            except _StaleHandle as error:
+            except _StaleHandleError as error:
                 raise WorkspaceUnavailableError(f'The BoxLite box {_key(box)!r} was stopped while starting.') from error
 
     async def _exec(
@@ -627,7 +624,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             )
         except boxlite.BoxliteError as error:
             if isinstance(error, boxlite.StoppedError):
-                raise _StaleHandle from error
+                raise _StaleHandleError from error
             if 'spawn_failed' in str(error):
                 raise WorkspaceError(
                     f'Could not start the command in BoxLite box {_key(box)}: {error}. '
@@ -684,6 +681,11 @@ async def _boot(box: _Box) -> None:
     except boxlite.ConfigError as error:
         # Raised for a host that can't run boxes at all, such as one where BoxLite can't jail its engine.
         raise WorkspaceUnavailableError(f'This host cannot run a BoxLite box: {error}') from error
+
+
+def _check_working_dir_created(result: CommandResult, working_dir: str, name: str) -> None:
+    if result.exit_code != 0:
+        raise WorkspaceError(f'Could not create working_dir {working_dir!r} in BoxLite box {name}: {result.stderr}')
 
 
 def _gone_message(name: str) -> str:

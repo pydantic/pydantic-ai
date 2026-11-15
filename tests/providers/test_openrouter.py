@@ -3,7 +3,6 @@ from copy import deepcopy
 from typing import Literal
 
 import pytest
-from pydantic import BaseModel
 from pytest_mock import MockerFixture
 from typing_extensions import TypeAliasType
 
@@ -29,20 +28,12 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
-    from openai.types.chat import ChatCompletion
-    from openai.types.chat.chat_completion import Choice
-    from openai.types.chat.chat_completion_message import ChatCompletionMessage
-    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
 
     from pydantic_ai.models.openrouter import OpenRouterModel
-    from pydantic_ai.output import ToolOutput
     from pydantic_ai.providers.openrouter import (
         OpenRouterProvider,
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.settings import ModelSettings, ThinkingLevel
-
-    from ..models.mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -314,10 +305,6 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
         ('google/gemini-2.5-flash', True),
         ('openai/gpt-5-mini', True),
         ('unknown/model', True),
-        # Qwen and Muse reject a forced `tool_choice` outright, `reasoning` sent or not, so the
-        # with-thinking flag stays permissive for them; the plain flag handles those routes instead.
-        ('qwen/qwen3.8-flash', True),
-        ('meta/muse-spark', True),
     ],
 )
 def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:
@@ -326,126 +313,6 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     profile = provider.model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_forced_tool_choice_with_thinking') is expected
-
-
-@pytest.mark.parametrize(
-    'model_name',
-    [
-        pytest.param('qwen/qwen3.8-flash', id='qwen-flash'),
-        pytest.param('qwen/qwen3.8-2.4t-a95b', id='qwen-a95b-thinking-always'),
-        pytest.param('meta/muse-spark', id='muse'),
-    ],
-)
-def test_openrouter_model_profile_tool_forcing_flags_qwen_muse(model_name: str) -> None:
-    """Qwen and Muse routes reject a forced `tool_choice` outright, `reasoning` sent or not."""
-    provider = OpenRouterProvider(api_key='api-key')
-    profile = provider.model_profile(model_name)
-    assert profile is not None
-    assert profile.get('supports_forced_tool_choice') is False
-    # The with-thinking flag stays permissive for the family; the plain flag makes it unreachable.
-    assert profile.get('supports_forced_tool_choice_with_thinking') is True
-
-
-class CityLocation(BaseModel):
-    city: str
-
-
-def _qwen_muse_tool_call_completion() -> ChatCompletion:
-    """A `final_result` output-tool call, with the `provider` field OpenRouter responses always carry."""
-    return ChatCompletion.model_construct(
-        id='123',
-        choices=[
-            Choice.model_construct(
-                finish_reason='tool_calls',
-                index=0,
-                native_finish_reason='tool_calls',
-                message=ChatCompletionMessage.model_construct(
-                    role='assistant',
-                    content=None,
-                    tool_calls=[
-                        ChatCompletionMessageToolCall(
-                            id='call-1',
-                            type='function',
-                            function=Function(name='final_result', arguments='{"city": "Mexico City"}'),
-                        )
-                    ],
-                ),
-            )
-        ],
-        created=1704067200,
-        model='test',
-        object='chat.completion',
-        provider='test',
-    )
-
-
-def get_weather(city: str) -> str:
-    return 'sunny'
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ('model_name', 'thinking'),
-    [
-        pytest.param('qwen/qwen3.8-flash', None, id='qwen-flash'),
-        pytest.param('qwen/qwen3.8-flash', 'low', id='qwen-flash-thinking'),
-        pytest.param('qwen/qwen3.8-2.4t-a95b', 'low', id='qwen-a95b-thinking-always'),
-        pytest.param('meta/muse-spark', None, id='muse'),
-    ],
-)
-async def test_openrouter_forced_tool_choice_falls_back_to_auto_on_qwen_and_muse_routes(
-    allow_model_requests: None, model_name: str, thinking: ThinkingLevel | None
-) -> None:
-    """Qwen and Muse routes 400 on a forced `tool_choice`, so the inferred output forcing falls back to `auto`."""
-    mock_client = MockOpenAI.create_mock(_qwen_muse_tool_call_completion())
-    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
-    agent = Agent(model, output_type=ToolOutput(CityLocation))
-
-    settings: ModelSettings | None = ModelSettings(thinking=thinking) if thinking is not None else None
-    result = await agent.run('hello', model_settings=settings)
-    assert result.output == CityLocation(city='Mexico City')
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['tool_choice'] == 'auto'
-    assert [tool['function']['name'] for tool in kwargs['tools']] == ['final_result']
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    'model_name',
-    [
-        pytest.param('qwen/qwen3.8-flash', id='qwen-flash'),
-        pytest.param('qwen/qwen3.8-2.4t-a95b', id='qwen-a95b-thinking-always'),
-        pytest.param('meta/muse-spark', id='muse'),
-    ],
-)
-async def test_openrouter_explicit_forced_tool_choice_raises_user_error_on_qwen_and_muse_routes(
-    allow_model_requests: None, model_name: str
-) -> None:
-    """Explicit forcing on those routes raises `UserError` instead of sending the 400ing request.
-
-    A static `tool_choice='required'` is caught by the agent-level guard before the model, so the forcing is
-    expressed as a list naming the output tool, which is what reaches the model-level check.
-    """
-    mock_client = MockOpenAI.create_mock(_qwen_muse_tool_call_completion())
-    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
-    agent = Agent(
-        model,
-        output_type=ToolOutput(CityLocation),
-        tools=[get_weather],
-        model_settings={'tool_choice': ['final_result']},
-    )
-
-    with pytest.raises(UserError) as capture:
-        await agent.run('hello')
-
-    expected_choice = ['final_result']
-    assert str(capture.value) == (
-        f'tool_choice={expected_choice!r} is not supported by model {model_name!r}. '
-        "This model does not support forcing tool use. Use `tool_choice='auto'` instead."
-    )
-    # The 400ing request never reaches the gateway.
-    assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:
@@ -600,6 +467,44 @@ def test_openrouter_google_resolves_contains_ref():
         'z-ai/glm-5.3',
         'z-ai/glm-5.3-flash',
         'google/gemini-3.5-flash:batch',
+        'aion-labs/aion-2.0',
+        'aion-labs/aion-3.0-mini',
+        'aion-labs/aion-3.5',
+        'liquid/lfm-2.5-2.6b',
+        'liquid/lfm-2.5-2.6b:free',
+        'liquid/lfm-2.5-24b-a2b',
+        'meta/muse-glimmer-30b',
+        'meta/muse-spark-1.1',
+        'meta/muse-spark-1.2-contributor',
+        'meta/muse-spark-1.3',
+        'meta/muse-spark-open',
+        'meta/muse-wonder',
+        'minimax/minimax-m2.5',
+        'minimax/minimax-m2.7',
+        'minimax/minimax-m3.1-flash',
+        'mistralai/mistral-large-4-0',
+        'openai/gpt-6.1-terra-pro',
+        'perplexity/sonar-deep-research',
+        'perplexity/sonar-pro-search',
+        'perplexity/sonar-reasoning-pro',
+        'recursive/flint-v1.0:free',
+        'reflection/beam-1.0-501b-a23b',
+        'rekaai/reka-flash-3',
+        'sakana/fugu-max',
+        'sakana/fugu-ultra',
+        'sakana/fugu-ultra-v2',
+        'stepfun/step-3.5-flash',
+        'stepfun/step-3.7-flash',
+        'stepfun/step-5-preview',
+        '~anthropic/claude-fable-latest',
+        '~anthropic/claude-opus-latest',
+        '~anthropic/claude-sonnet-latest',
+        '~google/gemini-flash-latest',
+        '~openai/gpt-astra-latest',
+        '~openai/gpt-sol-latest',
+        '~x-ai/grok-latest',
+        '~z-ai/glm-latest',
+        '~z-ai/glm-flash-latest',
     ],
 )
 def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
@@ -607,12 +512,20 @@ def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('thinking_always_enabled', False) is True
+    # Every route accepted `minimal` live, except Sonar Deep Research, which wasn't probed.
+    expected_floor = 'low' if model_name == 'perplexity/sonar-deep-research' else 'minimal'
+    assert profile.get('openrouter_lowest_reasoning_effort') == expected_floor
 
 
 @pytest.mark.parametrize(
     'model_name',
     [
         'anthropic/claude-sonnet-5',
+        '~anthropic/claude-haiku-latest',
+        'minimax/minimax-m1',
+        'minimax/minimax-m2-her',
+        'minimax/minimax-m3',
+        '~openai/gpt-luna-latest',
         'google/gemini-3.1-flash-lite',
         'moonshotai/kimi-k3',
         'openai/gpt-5.4',

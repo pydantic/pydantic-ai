@@ -276,6 +276,8 @@ export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
 export interface LiveEntry {
   id: string
   state: LiveState
+  /** It handles input or has some queued, a turn's `TurnEnd` hooks included: Edit and Retry are refused. */
+  busy: boolean
   title: string | null
   workspace: string
 }
@@ -386,6 +388,8 @@ export interface SessionEntry {
   archived: boolean
   /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
   openable: boolean
+  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for CLAI's own sessions. */
+  source: string | null
 }
 
 export interface Worktree {
