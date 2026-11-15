@@ -725,6 +725,8 @@ source = [
     ".",
     "/home/runner/work/pydantic-ai/pydantic-ai",
     "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai",
+    # The `test-windows-workspace` job.
+    "D:\\a\\pydantic-ai\\pydantic-ai",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
