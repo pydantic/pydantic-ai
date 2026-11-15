@@ -29,10 +29,7 @@ developer's model subscription. It is independent of any hosted review.
 
 ## Select the reviewer tier
 
-- In Claude Code, use an Opus reviewer.
-- In Codex, use the Terra-pinned `reviewer` agent.
-- Never use Fable or Sol for this review.
-- In other harnesses, use the normal reviewer selection.
+Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers).
 
 ## Decide whether to decompose the diff
 
@@ -74,6 +71,10 @@ review rubric independently of any named hosted reviewer:
   reproduce the defect on? Does the PR treat a recording or probe in which a surface accepts the
   change as evidence that the surface needs it?
 - Does it meet root and directory instructions, including public API and compatibility requirements?
+- When instructions change, does each policy have one owner in the section governing that action?
+  Flag conflicting, duplicated, or redundant clauses with the existing owner and the behavior to preserve.
+  Verify that a referenced owner is available, states the delegated rule, and loads before the action, including standalone entry points and distributed skills.
+  Preserve meaningful conditions, safeguards, executable commands, and loading boundaries; reject shorter wording that makes behavior ambiguous.
 - Does any behavior, design decision, or trade-off require an explicit human decision?
 - Review in priority order: public API, concepts and behavior, documentation, tests, code quality.
 - If a high-level problem may invalidate lower-level work, report it first and defer the lower-level
@@ -104,6 +105,13 @@ either harness: an allowlist bounds you, never your callee, which is why the bou
 subagent must be enforced by its agent definition. Read a large diff in chunks,
 core implementation before tests. Inspect changed cassettes when they are evidence for changed
 behavior; skip only unchanged or demonstrably irrelevant generated payloads.
+
+## The complexity check
+
+`scripts/check_complexity.py` is the cognitive complexity check. It fails a change that adds a function
+over the limit, takes a function over the limit, or makes a function already over the limit worse.
+Do not run it: pre-commit runs it on every commit, and CI runs it on the pull request.
+`agent_docs/complexity.md` maps each failure to its fix.
 
 ## Return the review locally
 

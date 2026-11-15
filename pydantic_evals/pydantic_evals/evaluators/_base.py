@@ -62,10 +62,15 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             A JSON-serializable representation of this evaluator as an EvaluatorSpec.
         """
         return to_jsonable_python(
-            self.as_spec(),
+            self._serialization_spec(),
             context=info.context,
             serialize_unknown=True,
         )
+
+    def _serialization_spec(self) -> EvaluatorSpec:
+        # Pydantic always calls the serializer of the declared field type (e.g. `Evaluator`), never a subclass's own
+        # `model_serializer`, so this is where a subclass that can't be serialized raises.
+        return self.as_spec()
 
     def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()
@@ -74,12 +79,11 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         if len(raw_arguments) == 0:
             arguments = None
         elif len(raw_arguments) == 1:
-            # Only use the compact tuple form if the single non-default field is the first
-            # dataclass field, since the tuple form passes the value as the first positional arg.
-            first_field_name = fields(self)[0].name
+            # The compact tuple form passes the value as the first positional argument.
+            first_field = fields(self)[0]
             key = next(iter(raw_arguments))
             value = raw_arguments[key]
-            if key == first_field_name and not serializes_as_string_keyed_dict(value):
+            if key == first_field.name and not first_field.kw_only and not serializes_as_string_keyed_dict(value):
                 arguments = (value,)
             else:
                 arguments = raw_arguments

@@ -211,17 +211,17 @@ class ExaGetContentsTool:
         Returns:
             The content of each URL.
         """
-        response = await self.client.get_contents(urls, text=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        response = await self.client.get_contents(urls, text=True)
 
         return [
             ExaContentResult(
-                url=result.url,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                title=result.title or '',  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                text=result.text or '',  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                author=result.author,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                published_date=result.published_date,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                url=result.url,
+                title=result.title or '',
+                text=result.text or '',
+                author=result.author,
+                published_date=result.published_date,
             )
-            for result in response.results  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            for result in response.results
         ]
 
 

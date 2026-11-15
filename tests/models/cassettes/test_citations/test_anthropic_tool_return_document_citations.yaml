@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -34,7 +34,7 @@ interactions:
             type: document
             citations:
               enabled: true
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: false
         tool_choice:
           type: auto
@@ -54,10 +54,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=945
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-dd3cd036ac5daf95526a0bfeca572c11-fc30bb0b7160de4e-01
+      - 00-5e6f3d5304971e8ab5a871adefdab103-6c056c5d3eb52f4f-01
       transfer-encoding:
       - chunked
       vary:
@@ -65,13 +67,13 @@ interactions:
     body:
       type: json
       content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011Cfh2CiqP44ZbYpjbzAKug
+        model: claude-sonnet-5-5
+        id: msg_011CgPLJaMZtjMLf1tnJXeua
         type: message
         role: assistant
         content:
         - type: tool_use
-          id: toolu_01JPBgF1cJqWc6dTzw2iSPFj
+          id: toolu_01QzebkLSxdbqbDTLTWrH6BC
           name: read_shipping_policy
           input: {}
           caller:
@@ -81,17 +83,20 @@ interactions:
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 1119
+          input_tokens: 1272
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 38
+          output_tokens: 31
+          output_tokens_details:
+            thinking_tokens: 0
           service_tier: standard
-          inference_geo: not_available
+          inference_geo: global
+          speed: standard
         diagnostics: null
-  recorded_at: 2026-10-04T10:14:58.457968+00:00
+  recorded_at: 2026-10-25T17:16:06.223003+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -99,7 +104,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -128,13 +133,13 @@ interactions:
               enabled: true
         - role: assistant
           content:
-          - id: toolu_01JPBgF1cJqWc6dTzw2iSPFj
+          - id: toolu_01QzebkLSxdbqbDTLTWrH6BC
             type: tool_use
             name: read_shipping_policy
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01JPBgF1cJqWc6dTzw2iSPFj
+          - tool_use_id: toolu_01QzebkLSxdbqbDTLTWrH6BC
             type: tool_result
             content:
             - source:
@@ -145,7 +150,7 @@ interactions:
               citations:
                 enabled: true
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: false
         tool_choice:
           type: auto
@@ -165,10 +170,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=761
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a5be662c28bc36f4999a741098b53730-4a138a2fd2d12204-01
+      - 00-d87a9aafeca4eb7f21b0291ac54dc0ec-3f81a649006856ea-01
       transfer-encoding:
       - chunked
       vary:
@@ -176,8 +183,8 @@ interactions:
     body:
       type: json
       content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011Cfh2CsGPjwqQifCsTMtZU
+        model: claude-sonnet-5-5
+        id: msg_011CgPLJex8dTQKb3r5kZBZG
         type: message
         role: assistant
         content:
@@ -206,14 +213,17 @@ interactions:
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 1230
+          input_tokens: 1374
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 51
+          output_tokens: 63
+          output_tokens_details:
+            thinking_tokens: 0
           service_tier: standard
-          inference_geo: not_available
+          inference_geo: global
+          speed: standard
         diagnostics: null
-  recorded_at: 2026-10-04T10:15:00.707283+00:00
+  recorded_at: 2026-10-25T17:16:07.201300+00:00

@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -25,7 +25,7 @@ interactions:
           content:
           - text: What is the USD/EUR exchange rate?
             type: text
-        model: claude-sonnet-4-6
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
@@ -57,10 +57,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=114
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-37ffbd5f27e3941c172489d707f7b0a9-81a889df1fd7db19-01
+      - 00-e3acd0e6a70206933abfff664073246c-261996af89e25d3d-01
       transfer-encoding:
       - chunked
       vary:
@@ -69,87 +71,66 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3hz3KaBxGt32WdYZBH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":716,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHyGtpZRf6gipd8y4zL","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":690,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01C3y2N4foDvLSJbfH1vXcdW","name":"tool_search_tool_bm25","input":{}}          }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me look"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" up the current"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": \"get"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" USD/EUR exchange rate for you"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_exchan"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ge_rate"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}         }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew","name":"tool_search_tool_bm25","input":{}} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"get"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" exchan"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ge rate"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}     }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_01C3y2N4foDvLSJbfH1vXcdW","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"get_exchange_rate"}]}}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1   }
+        data: {"type":"content_block_stop","index":1          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"get_exchange_rate"}]}}            }
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01Y5oovSeo2iVs55xQaUJZSH","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"pair\""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":": \"USD/"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"EUR\"}"}}
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2    }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_018qDZ7AA4TdK7dxax9Z13YG","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"pair\""}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":": \"USD/"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"EUR\"}"}         }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":3 }
+        data: {"type":"content_block_stop","index":2         }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1595,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":133,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}        }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1552,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":120,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}    }
 
         event: message_stop
         data: {"type":"message_stop"           }
 
-  recorded_at: 2026-09-29T16:29:24.845997+00:00
+  recorded_at: 2026-10-25T16:45:31.487674+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -157,11 +138,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1358"
+      - "1275"
       content-type:
       - application/json
       host:
@@ -177,34 +158,32 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: Let me look up the current USD/EUR exchange rate for you!
-            type: text
-          - id: srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew
+          - id: srvtoolu_01C3y2N4foDvLSJbfH1vXcdW
             type: server_tool_use
             name: tool_search_tool_bm25
             input:
-              query: get exchange rate
-          - tool_use_id: srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew
+              query: get_exchange_rate
+          - tool_use_id: srvtoolu_01C3y2N4foDvLSJbfH1vXcdW
             type: tool_search_tool_result
             content:
               type: tool_search_tool_search_result
               tool_references:
               - tool_name: get_exchange_rate
                 type: tool_reference
-          - id: toolu_018qDZ7AA4TdK7dxax9Z13YG
+          - id: toolu_01Y5oovSeo2iVs55xQaUJZSH
             type: tool_use
             name: get_exchange_rate
             input:
               pair: USD/EUR
         - role: user
           content:
-          - tool_use_id: toolu_018qDZ7AA4TdK7dxax9Z13YG
+          - tool_use_id: toolu_01Y5oovSeo2iVs55xQaUJZSH
             type: tool_result
             content:
             - text: "USD/EUR: 0.92"
               type: text
             is_error: false
-        model: claude-sonnet-4-6
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
@@ -236,10 +215,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=102
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-e98c46ce960d6d9bb830b5a6eda2168a-7ebd0e0ecbeb3225-01
+      - 00-9d5c050c66bf45dce374f5e7b1d711c4-9ae78b8da79b64db-01
       transfer-encoding:
       - chunked
       vary:
@@ -248,102 +229,42 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3iLwRKqcmA4w2W3n1n","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":956,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}           }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHyQdei6zzsgXAYJRS3","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":936,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":41,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The USD/EUR ex"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current **"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"change rate is **"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"USD/EUR exchange rate is "}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"0.92**. That means "}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"0.92**,"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 US dollar bu"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" meaning that **"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ys about 0.92 eu"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 US"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Dollar"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"USD) is equal"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to 0.92 "}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Euros ("}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"EUR)**"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". In"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" other words, the"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Euro"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is slightly"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stronger than the US Dollar at"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" this time"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n\nWould"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you like to"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" know any"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" other exchange rates or need"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" help with a"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currency"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" conversion"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"?"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ros."}              }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0             }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":956,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":76}       }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":936,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":41,"output_tokens_details":{"thinking_tokens":0}}         }
 
         event: message_stop
-        data: {"type":"message_stop"     }
+        data: {"type":"message_stop" }
 
-  recorded_at: 2026-09-29T16:29:28.679040+00:00
+  recorded_at: 2026-10-25T16:45:32.491177+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -351,11 +272,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1904"
+      - "1614"
       content-type:
       - application/json
       host:
@@ -363,19 +284,19 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.4
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
         - role: user
           content: What is the USD/EUR exchange rate?
-        - role: assistant
-          content: Let me look up the current USD/EUR exchange rate for you!
         - type: tool_search_call
           execution: client
           arguments:
             queries:
-            - get exchange rate
-          call_id: srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew
+            - get_exchange_rate
+          call_id: srvtoolu_01C3y2N4foDvLSJbfH1vXcdW
           status: completed
         - type: tool_search_output
           execution: client
@@ -393,28 +314,25 @@ interactions:
             description: Look up the exchange rate for a currency pair.
             strict: true
             defer_loading: true
-          call_id: srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew
+          call_id: srvtoolu_01C3y2N4foDvLSJbfH1vXcdW
           status: completed
         - name: get_exchange_rate
-          arguments: "{\"pair\": \"USD/EUR\"}"
-          call_id: toolu_018qDZ7AA4TdK7dxax9Z13YG
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: toolu_01Y5oovSeo2iVs55xQaUJZSH
           type: function_call
           namespace: get_exchange_rate
         - type: function_call_output
-          call_id: toolu_018qDZ7AA4TdK7dxax9Z13YG
+          call_id: toolu_01Y5oovSeo2iVs55xQaUJZSH
           output: "USD/EUR: 0.92"
         - role: assistant
-          content: |-
-            The current **USD/EUR exchange rate is 0.92**, meaning that **1 US Dollar (USD) is equal to 0.92 Euros (EUR)**. In other words, the Euro is slightly stronger than the US Dollar at this time.
-
-            Would you like to know any other exchange rates or need help with a currency conversion?
+          content: >-
+            The USD/EUR exchange rate is **0.92**. That means 1 US dollar buys about 0.92
+            euros.
         - role: user
           content: Now call get_exchange_rate for GBP/USD without searching again.
         instructions: Always use get_exchange_rate to answer exchange-rate questions.
-        model: gpt-5.4
         reasoning:
           context: all_turns
-        stream: false
         tool_choice: auto
         tools:
         - type: tool_search
@@ -435,7 +353,7 @@ interactions:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -445,7 +363,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1190"
+      - "956"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -455,16 +373,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_043720c40323c826006abbe768e18c87d1bf3f80eee9b008fd
+        id: resp_05d1707007d19678006ade322e478087d2b4a5d7598abf120a
         object: response
-        created_at: 1790699368
+        created_at: 1792946734
         status: completed
-        access_programs:
-          cyber: daybreak_blue
+        access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1790699369
+        completed_at: 1792946735
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
@@ -474,21 +391,11 @@ interactions:
         model: gpt-5.4-2026-03-05
         moderation: null
         output:
-        - id: msg_043720c40323c826006abbe769912c87d193e8894b5e663be1
-          type: message
-          status: completed
-          content:
-          - type: output_text
-            annotations: []
-            logprobs: []
-            text: Checking GBP/USD now.
-          phase: commentary
-          role: assistant
-        - id: fc_043720c40323c826006abbe769ae2c87d199c622f8859b0dd5
+        - id: fc_05d1707007d19678006ade322f076487d295a9b072d43b9fb0
           type: function_call
           status: completed
           arguments: "{\"pair\":\"GBP/USD\"}"
-          call_id: call_U95wbWPAPa82cMrWk2IAfF5B
+          call_id: call_e2mXoqHSbomKqSJVB3XZAz3K
           name: get_exchange_rate
           namespace: get_exchange_rate
         parallel_tool_calls: true
@@ -548,17 +455,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 740
+          input_tokens: 677
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
-          output_tokens: 33
+          output_tokens: 21
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 773
+          total_tokens: 698
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T16:29:30.128370+00:00
+  recorded_at: 2026-10-25T16:45:35.293133+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -566,11 +473,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2452"
+      - "1937"
       content-type:
       - application/json
       host:
@@ -578,19 +485,19 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.4
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
         - role: user
           content: What is the USD/EUR exchange rate?
-        - role: assistant
-          content: Let me look up the current USD/EUR exchange rate for you!
         - type: tool_search_call
           execution: client
           arguments:
             queries:
-            - get exchange rate
-          call_id: srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew
+            - get_exchange_rate
+          call_id: srvtoolu_01C3y2N4foDvLSJbfH1vXcdW
           status: completed
         - type: tool_search_output
           execution: client
@@ -608,46 +515,34 @@ interactions:
             description: Look up the exchange rate for a currency pair.
             strict: true
             defer_loading: true
-          call_id: srvtoolu_01R4vho1Zyy5F5NHPLcEA7ew
+          call_id: srvtoolu_01C3y2N4foDvLSJbfH1vXcdW
           status: completed
         - name: get_exchange_rate
-          arguments: "{\"pair\": \"USD/EUR\"}"
-          call_id: toolu_018qDZ7AA4TdK7dxax9Z13YG
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: toolu_01Y5oovSeo2iVs55xQaUJZSH
           type: function_call
           namespace: get_exchange_rate
         - type: function_call_output
-          call_id: toolu_018qDZ7AA4TdK7dxax9Z13YG
+          call_id: toolu_01Y5oovSeo2iVs55xQaUJZSH
           output: "USD/EUR: 0.92"
         - role: assistant
-          content: |-
-            The current **USD/EUR exchange rate is 0.92**, meaning that **1 US Dollar (USD) is equal to 0.92 Euros (EUR)**. In other words, the Euro is slightly stronger than the US Dollar at this time.
-
-            Would you like to know any other exchange rates or need help with a currency conversion?
+          content: >-
+            The USD/EUR exchange rate is **0.92**. That means 1 US dollar buys about 0.92
+            euros.
         - role: user
           content: Now call get_exchange_rate for GBP/USD without searching again.
-        - role: assistant
-          id: msg_043720c40323c826006abbe769912c87d193e8894b5e663be1
-          content:
-          - text: Checking GBP/USD now.
-            type: output_text
-            annotations: []
-          type: message
-          status: completed
-          phase: commentary
         - name: get_exchange_rate
           arguments: "{\"pair\":\"GBP/USD\"}"
-          call_id: call_U95wbWPAPa82cMrWk2IAfF5B
+          call_id: call_e2mXoqHSbomKqSJVB3XZAz3K
           type: function_call
-          id: fc_043720c40323c826006abbe769ae2c87d199c622f8859b0dd5
+          id: fc_05d1707007d19678006ade322f076487d295a9b072d43b9fb0
           namespace: get_exchange_rate
         - type: function_call_output
-          call_id: call_U95wbWPAPa82cMrWk2IAfF5B
+          call_id: call_e2mXoqHSbomKqSJVB3XZAz3K
           output: "GBP/USD: 0.92"
         instructions: Always use get_exchange_rate to answer exchange-rate questions.
-        model: gpt-5.4
         reasoning:
           context: all_turns
-        stream: false
         tool_choice: auto
         tools:
         - type: tool_search
@@ -668,7 +563,7 @@ interactions:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -678,7 +573,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "2942"
+      - "1042"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -688,16 +583,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_043720c40323c826006abbe76a41b087d1adaed8d6bee6eca5
+        id: resp_05d1707007d19678006ade322f794087d296d42625e0788b8a
         object: response
-        created_at: 1790699370
+        created_at: 1792946735
         status: completed
-        access_programs:
-          cyber: daybreak_blue
+        access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1790699372
+        completed_at: 1792946736
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
@@ -707,14 +601,14 @@ interactions:
         model: gpt-5.4-2026-03-05
         moderation: null
         output:
-        - id: msg_043720c40323c826006abbe76cbaf887d18ebe23dc66e1e5bc
+        - id: msg_05d1707007d19678006ade32303d4c87d2a92b7aface927a37
           type: message
           status: completed
           content:
           - type: output_text
             annotations: []
             logprobs: []
-            text: "**GBP/USD is 0.92.**"
+            text: GBP/USD is **0.92**.
           phase: final_answer
           role: assistant
         parallel_tool_calls: true
@@ -774,14 +668,14 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 794
+          input_tokens: 719
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
-          output_tokens: 14
+          output_tokens: 13
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 808
+          total_tokens: 732
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T16:29:33.260682+00:00
+  recorded_at: 2026-10-25T16:45:36.551937+00:00

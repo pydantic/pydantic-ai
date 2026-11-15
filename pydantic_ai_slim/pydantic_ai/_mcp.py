@@ -150,7 +150,15 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                             isError=part.outcome in messages.ERROR_OUTCOMES,
                         )
                     )
-                elif isinstance(part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart)):
+                elif isinstance(
+                    part,
+                    (
+                        messages.SpeechPart,
+                        messages.ToolAvailabilityDeltaPart,
+                        messages.CapabilityLoadDeltaPart,
+                        messages.ModelSettingsDeltaPart,
+                    ),
+                ):
                     # These parts are not currently sent to MCP sampling.
                     continue
                 elif isinstance(part, _UnpreparedPart):  # pragma: no cover
@@ -162,7 +170,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 sampling_msgs.insert(request_start, mcp_types.SamplingMessage(role='user', content=tool_results))
         else:
             add_msg('assistant', _map_response_history(pai_message))
-    return ''.join(system_prompt), sampling_msgs
+    return '\n\n'.join(system_prompt), sampling_msgs
 
 
 def _map_user_prompt(part: messages.UserPromptPart) -> Iterator[mcp_types.TextContent | mcp_types.ImageContent]:

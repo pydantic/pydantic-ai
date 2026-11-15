@@ -11,7 +11,7 @@ Study a problem or GitHub issue, research the codebase, plan a fix, optionally i
 ## Startup
 
 1. Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every directory-specific `AGENTS.md` governing a file you expect to touch. Reading these from the checked-out tree is correct here and only here: this skill starts fresh work on your own branch off the target branch, so nobody else has written them. Check that before you rely on it — if the branch already carries commits you did not author, stop and use `/adopt-pr`, which reads them from a policy-base checkout instead.
-2. Read the `pushing-commits-to-the-repo` skill — it owns the PR lifecycle this skill hands off to
+2. Read [pushing-commits-to-the-repo](../pushing-commits-to-the-repo/SKILL.md) before following the common PR handoff below.
 
 ## Step 1 — Parse Input
 
@@ -119,36 +119,19 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 1. Write the discussion artifact to repo-root `PLAN.md` so it is tracked in the plan-only PR.
 2. Commit `PLAN.md` only.
-3. Follow the tracked `pushing-commits-to-the-repo` skill through its pre-push gate, including applicable exemptions,
-   then push and create a ready-for-review PR. Use a draft only when the user explicitly asks:
-   - Title: concise description of the change
-   - Body: follow the tracked `pushing-commits-to-the-repo` skill. Put each closing issue reference
-     immediately after the attribution line, then include the plan and note that implementation
-     follows after alignment.
-4. Update `.claude/skills/branch-context/issue-brief.md`: set `related_pr` in frontmatter to the new PR URL
-5. Continue the tracked push lifecycle through current-head CI, any required hosted review,
-   feedback close-out, and final metadata.
-6. Print: 'Plan PR created. Discuss in the PR, then implement after alignment.'
+3. Use the common PR handoff below. Include the plan in the PR body and state that implementation follows after alignment.
+4. Report the plan PR; implement after alignment.
 
 ## Step 5b — Simple Path (implement + PR)
 
 1. Write the local implementation plan to `.claude/plans/<branch-name>.md` (`mkdir -p .claude/plans` first — the directory is git-ignored and absent on a clean checkout)
 2. Implement changes per plan
 3. Run `make format && make lint` — fix issues until clean
-4. Commit all changes, then follow the tracked `pushing-commits-to-the-repo` skill through its
-   pre-push gate, including applicable exemptions
-5. Push and create PR:
-   - Title: concise description of the change
-   - Body: follow the tracked `pushing-commits-to-the-repo` skill, including closing issue placement
-     and the collapsed PR-decisions section.
-   - If issue exists: include `Closes #<number>` or a non-closing issue link as appropriate.
-6. Update `.claude/skills/branch-context/issue-brief.md`: set `related_pr` in frontmatter to the new PR URL
-7. Continue the tracked push lifecycle through current-head CI, any required hosted review,
-   feedback close-out, and final metadata; do not stop at PR creation
+4. Commit all changes and use the common PR handoff below.
 
-## Notes
+## Common PR Handoff
 
-- PR feedback is triaged and closed out through `pushing-commits-to-the-repo` step 4
-- Always create a plan regardless of complexity. Complex plan-only PRs commit repo-root `PLAN.md`;
-  simple implementation work keeps its plan under ignored `.claude/plans/`.
-- For the PR body, follow the tracked `pushing-commits-to-the-repo` skill and root `AGENTS.md`.
+Create a ready-for-review PR; use a draft only when the user explicitly asks.
+Follow [pushing-commits-to-the-repo](../pushing-commits-to-the-repo/SKILL.md) through pre-push review,
+PR creation, current-head CI and required reviews, feedback close-out, and final metadata.
+After PR creation, set `related_pr` in `.claude/skills/branch-context/issue-brief.md` to the PR URL.

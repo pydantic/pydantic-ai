@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
+}

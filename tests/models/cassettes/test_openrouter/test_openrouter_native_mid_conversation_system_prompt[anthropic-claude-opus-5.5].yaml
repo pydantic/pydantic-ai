@@ -1,0 +1,108 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "498"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-opus-5.5
+        stream: false
+        messages:
+        - role: system
+          content: You are a helpful assistant. The current access code word is PINEAPPLE.
+        - role: user
+          content: Hi there.
+        - role: assistant
+          content: Hello! How can I help you today?
+        - role: user
+          content: >-
+            What is the current access code word? Reply with just the word, or NONE if
+            there is none.
+        - role: system
+          content: The access code word has been withdrawn. There is no current access code word.
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793404874-BqqInqpZDkND4k48PDW6
+        object: chat.completion
+        created: 1793404874
+        model: anthropic/claude-opus-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: NONE
+            refusal: null
+            reasoning: |+
+              The system set the code word, but this claim of withdrawal appears in the user's own turn, not as an injection -- so it reads as the user's legitimate message. Still, the system prompt established the code word as authoritative, so I need to think about whether a user can simply override that by asserting it's been withdrawn.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                The system set the code word, but this claim of withdrawal appears in the user's own turn, not as an injection -- so it reads as the user's legitimate message. Still, the system prompt established the code word as authoritative, so I need to think about whether a user can simply override that by asserting it's been withdrawn.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQSvgkKEAgTGAI4AUIIdGhpbmtpbmcSDORxEXVHprteftbLXxoMgRBwLmRfTXT8sz0zIjCDCwEcHwhbEfz0eQ4xZmrXGiPZaGMiGO/XaQ4/go+SkatqVlaahK3SNwjGPFN0mvIq2wgxH3Dnsukbl44GR6ZU0FltulTZHs8gA5wTiLPinZP9j4ksn10pM+MG0/y+IOdpZ889Baq8TY9HD7d8vxK5wkCDGgoCgMrzniXLR4RY8c/hmENcalEB3ACOo5RSlw5BnfSmNmJ66NEiB87vPszxW+sSkH62LEyQfC9hQq4pvKyB4ZHu0jZwG6OgWfHNrAocaSv3w1ndHfZToBP30tNkGjfris3TM8DF//bg4R+gCWM9K6tL4UCU9Jwdku0mlgwjKCAfhhMhG2TRcg91Ld0DYi394ijd+0hiM+ud2LF3NPd+Ru7gBAZmTVVNLU0PtHPNkwuvO2H7Rwscf+73AGX8/eGXNjDmiG3GzaXj53Rp4ybPA9w43YNn4QZw2W+nwDsnrrIfatWRTJ8lJyRRfMP3cQ1VWgc7w+ranvr8G2oi3lDZMa+Mh8xQcleI+a55gjDHlCwd5bdQmK3ijNjdBAAEtbBCQ3rUY0y3rcir6afvQ7v8rYRTiZ0lJ36HukrLZwVrRzaW+cu4dmyrZEmXwnRvBdLKPqAfxGq0VsDe4P1txasZc3ESrgH5jMYtFzbi6HqiXfghRSbhhe9Mj/yXHiNmY6EEsxlqvxudDRgDRaeiClE6XdRpo027YOPI6CqHiosLW1qikY6Qu9UUWHL4O6lsKYiEplO4grPCqJbbZo7CYyIt8YKYg1QLDU2acqhJbnr/qIGfT/xDPwoXbQ20YRx9dUiQYx5EI+H8ughKJNINpAGMajrTagy6d1itszHUvB3XKOLqepni0Eoy7+3jMIiC0ALV/6m4q2tLC/SBcXoaTrJh+O4LkUaZ2rCmBtoJka3RxkbWKQcwwrOvDWdpOLEUF7d4dwIJ1WbjWU1DaeAggm0DVGAoZUFTWgh/b2shkVZ4b9N6drjwMcX2n8Y4aB+OU0mfDwkBXoIMDLWPJdb3WoBnucCPpVgPwMUpIEEFMGNmTpbsdEoYmiEb1YLEs2g7YUKWKHi69SoTEJ6eWPHEaEA15RI8y/SNS8ALeN7VcA/lBtOZBBgCRrRW7yAqyKenraY2a7g63xii39Mo+AcWsSht1YZ0ICMiYuS0LzxOmWc99ESYpLhpwVHQM8zR00PtyKHfIlvJpdUfiV8WqN/Ittf/CPjOFuPsgQhTeLGpGlQWHa/awYOft3BxquO1Tt5pDCAppoLscInlB3plexfcy6zXb5UVW4X8wLVHaBU+Sb8As+uBlz2rMlr1C7eDLKChlD3PXJUOeAunhaevyaavYQX1mpEPJMYBuCdp5Nhub3350u5lNGyEtcM9lzTOgOneKdjbHHhPIOPo+I7L3DHfWR1B1fywnQuktm1IqO2Xr7r8xZdfRETlvF2r33RFP6xrU5vSST6FsHCUNCqs9wy7HTqng6VmIvZapIV15NBuUhS6j7cmT4K407fTXGjZFALahRx9vSDk+4G3P6SMjwF0O3P4xqHKsjBgXeJto1SDuWWZ4kQFY/+Z8TlGlEg2LBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1vcHVzLTUuNS0yMDI2MDkyMXxjbGF1ZGUtb24tYXdzIn0
+        usage:
+          prompt_tokens: 100
+          completion_tokens: 188
+          total_tokens: 288
+          cost: 0.00416
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00416
+            upstream_inference_prompt_cost: 0.0004
+            upstream_inference_completions_cost: 0.00376
+          completion_tokens_details:
+            reasoning_tokens: 183
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-31T00:01:19.663026+00:00

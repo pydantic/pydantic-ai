@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from pydantic_handlebars import HandlebarsParseError
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionDeltaPart, ModelMessage, ModelRequest, ModelResponse, TextPart
@@ -193,6 +194,60 @@ def test_id_is_derived_from_the_prompt_name() -> None:
     assert ManagedPrompt('derived_explicit', default=DEFAULT, id='support').id == 'support'
 
 
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([ManagedPrompt])['$defs']
+
+    assert set(definitions['spec_params_ManagedPrompt']['properties']) == {
+        'name',
+        'default',
+        'label',
+        'targeting_key',
+        'attributes',
+        'render_template',
+        'id',
+        'description',
+        'defer_loading',
+    }
+    assert definitions['spec_params_ManagedPrompt']['required'] == ['name']
+
+
+def test_loads_from_agent_spec() -> None:
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'ManagedPrompt': {'name': 'minimal', 'default': DEFAULT}},
+                {
+                    'ManagedPrompt': {
+                        'name': 'long_form',
+                        'default': DEFAULT,
+                        'label': 'production',
+                        'targeting_key': 'user-1',
+                        'attributes': {'plan': 'pro'},
+                        'render_template': True,
+                        'description': 'Support prompt',
+                        'logfire_instance': logfire.DEFAULT_LOGFIRE_INSTANCE,
+                    }
+                },
+            ],
+        },
+        custom_capability_types=[ManagedPrompt],
+    )
+
+    minimal, long = [c for c in agent.root_capability.capabilities if isinstance(c, ManagedPrompt)]
+    assert (minimal.id, minimal.label, minimal.render_template) == ('managed-prompt-minimal', None, False)
+    assert (long.id, long.default, long.label, long.targeting_key, long.attributes, long.render_template) == (
+        'managed-prompt-long_form',
+        DEFAULT,
+        'production',
+        'user-1',
+        {'plan': 'pro'},
+        True,
+    )
+    assert long.description == 'Support prompt'
+    assert long.logfire_instance is logfire.DEFAULT_LOGFIRE_INSTANCE
+
+
 def test_two_with_the_same_name_raise_when_the_agent_is_built() -> None:
     with pytest.raises(UserError, match="Capability id 'managed-prompt-twice' is used by multiple capabilities"):
         Agent(
@@ -337,11 +392,7 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
-                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
-                    'helpful assistant.\\n</context>\\nA later <context> element with '
-                    'the same id replaces the earlier one and stays in effect until '
-                    'replaced again."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<pyai:context id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a helpful assistant.\\n</pyai:context>\\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 2,
@@ -377,11 +428,7 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
-                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
-                    'helpful assistant.\\n</context>\\nA later <context> element with '
-                    'the same id replaces the earlier one and stays in effect until '
-                    'replaced again."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<pyai:context id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a helpful assistant.\\n</pyai:context>\\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 52,
                     'gen_ai.usage.output_tokens': 6,
@@ -402,11 +449,7 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'gen_ai.aggregated_usage.input_tokens': 103,
                     'gen_ai.aggregated_usage.output_tokens': 8,
                     'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
-                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
-                    'helpful assistant.\\n</context>\\nA later <context> element with '
-                    'the same id replaces the earlier one and stays in effect until '
-                    'replaced again."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<pyai:context id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a helpful assistant.\\n</pyai:context>\\nA later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
                 },
             },

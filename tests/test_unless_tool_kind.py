@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from pydantic_ai import Agent, RunContext, Tool, ToolKind
 from pydantic_ai.capabilities import PrefixTools, Toolset
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKindLike, ToolReturnPart
@@ -15,6 +17,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition, ToolPrepareFunc
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 FILE_READ = ToolKind('test_unless_tool_kind', 'file_read')
 NOTES_READ = ToolKind('test_unless_tool_kind', 'notes_read')
@@ -239,6 +242,7 @@ def test_tool_name_for_kind_without_a_tool_manager():
     assert ctx.tool_name_for_kind(FILE_READ) is None
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_instructions_see_the_current_steps_tools():
     """Instruction functions get the tool manager prepared for their own step, not the previous one's."""
 

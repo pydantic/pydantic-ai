@@ -46,7 +46,7 @@ from pydantic_clai2.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
@@ -134,15 +134,15 @@ class OrdinalAuth(Generic[DepsT]):
         match await to_thread.run_sync(source, self.settings.sign_in):
             case KeyReference() as reference:
                 token = await to_thread.run_sync(partial(resolve_key, token=reference))
-                return Ordinal[DepsT](auth=token, include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, auth=token, include_instructions=instructions)
             case 'environment':
                 # Harness reads the variable when it connects and fails closed when it is unset.
-                return Ordinal[DepsT](include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, include_instructions=instructions)
             case 'browser':
                 # Each run builds its own client from the stored tokens, so a sign-out reaches the next run.
                 if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
                     return None
-                return Ordinal[DepsT](client=SIGN_IN.client(), include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, client=SIGN_IN.client(), include_instructions=instructions)
             case 'none':  # pragma: no branch -- the cases cover every `source` result.
                 raise UserError(f'Ordinal has no /keys entry. {SETUP}')
 

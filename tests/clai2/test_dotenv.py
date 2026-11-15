@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import pydantic_clai2.cli._cli
+import pydantic_clai2.cli.cli
 from pydantic_clai2.__main__ import main
 from pydantic_clai2.ui.rendering.splash import Splash
 
@@ -46,7 +46,7 @@ def test_startup_loads_nearest_dotenv(
         assert 'CLAI_DOTENV_PARENT_ONLY' not in os.environ
 
     monkeypatch.setattr(Splash, 'start', start)
-    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
+    monkeypatch.setattr(pydantic_clai2.cli.cli, 'run', run)
     main()
     expected = 'from dotenv' if existing is None else existing
     assert observed == [expected, expected]
@@ -97,7 +97,7 @@ def test_startup_without_dotenv_values(
     def run(*, splash: Splash | None = None) -> None:
         observed.append(os.getenv('CLAI_DOTENV_TEST'))
 
-    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
+    monkeypatch.setattr(pydantic_clai2.cli.cli, 'run', run)
     main()
     assert observed == [None]
     stderr = capsys.readouterr().err

@@ -43,19 +43,21 @@ MAX_TOKENS_CASES = {
     # Thinks by default, and adaptive thinking has no budget.
     'default-thinking': MaxTokensCase('claude-opus-5', {}, None, 128_000, streamed=True),
     'unified-adaptive': MaxTokensCase(
-        'claude-sonnet-4-6', {'thinking': 'high'}, {'type': 'adaptive'}, 128_000, streamed=True
+        'claude-sonnet-5-5', {'thinking': 'high'}, {'type': 'adaptive'}, 128_000, streamed=True
     ),
     'unified-extended': MaxTokensCase(
         'claude-sonnet-4-5', {'thinking': 'high'}, {'type': 'enabled', 'budget_tokens': 16384}, 64_000, streamed=True
     ),
     # With a custom timeout the SDK doesn't require streaming, so `AnthropicModel` streams the default itself.
-    'custom-timeout': MaxTokensCase('claude-sonnet-4-5', {'timeout': 120}, None, 64_000, streamed=True),
+    'custom-timeout': MaxTokensCase('claude-sonnet-5-5', {'timeout': 120}, None, 128_000, streamed=True),
     'explicit-max-tokens': MaxTokensCase(
         'claude-sonnet-4-5',
         {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 4096}, 'max_tokens': 15000},
         {'type': 'enabled', 'budget_tokens': 4096},
         15000,
     ),
+    # Anthropic rejects a `max_tokens` above the model's maximum output with a 400, so it's lowered to the maximum.
+    'explicit-above-maximum': MaxTokensCase('claude-haiku-4-5', {'max_tokens': 100_000}, None, 64_000, streamed=True),
 }
 
 
@@ -70,7 +72,7 @@ async def test_default_max_tokens(
 
     Anthropic requires `max_tokens` and counts thinking toward it, including the adaptive thinking current models do
     by default. The SDK refuses a non-streaming request above about 21,000 tokens, so `run()` streams it instead. An
-    explicit `max_tokens` is sent as is.
+    explicit `max_tokens` is sent as is, up to the model's maximum output.
     """
     agent = Agent(anthropic_model(case.model_name, capture=True))
     result = await agent.run('What is 17 * 23? Answer with just the number.', model_settings=case.model_settings)
@@ -119,3 +121,36 @@ async def test_default_max_tokens_without_a_known_safe_maximum(
     await agent.run('What is 17 * 23?', model_settings=model_settings)
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['max_tokens'] == max_tokens
+
+
+@pytest.mark.parametrize(
+    ('model_settings', 'default_headers'),
+    [
+        pytest.param({'anthropic_betas': ['output-300k-2026-03-24']}, {}, id='anthropic_betas'),
+        pytest.param(
+            {'extra_headers': {'anthropic-beta': 'files-api-2025-04-14, output-300k-2026-03-24'}}, {}, id='header'
+        ),
+        pytest.param({'extra_headers': {'Anthropic-Beta': 'output-300k-2026-03-24'}}, {}, id='header-capitalized'),
+        pytest.param({'extra_headers': {'ANTHROPIC-BETA': 'output-300k-2026-03-24'}}, {}, id='header-uppercase'),
+        pytest.param({}, {'anthropic-beta': 'output-300k-2026-03-24'}, id='client-default-header'),
+    ],
+)
+async def test_max_tokens_is_left_alone_with_an_output_extending_beta(
+    allow_model_requests: None, model_settings: AnthropicModelSettings, default_headers: dict[str, str]
+) -> None:
+    """A beta like `output-300k-2026-03-24`, for Message Batches, raises the maximum output, so it isn't capped.
+
+    That holds wherever the request gets the beta from: the setting, its `anthropic-beta` header in any spelling, or
+    the client's `default_headers`. A mock, since the beta is documented for Message Batches only, so it checks the
+    request this builds rather than one the Messages API answers.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='391', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    mock_client.default_headers.update(default_headers)
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('What is 17 * 23?', model_settings={**model_settings, 'max_tokens': 300_000})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 300_000
+    assert 'output-300k-2026-03-24' in kwargs['betas']

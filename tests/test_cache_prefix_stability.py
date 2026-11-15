@@ -251,8 +251,10 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
     roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
     """A real Anthropic thinking block (with its signature) re-sends with an identical request body after a round-trip."""
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     generator = Agent(model, model_settings=settings)
     history = (await generator.run('Briefly: what is 17 * 23? Think first.')).all_messages()
 
@@ -277,8 +279,10 @@ async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
 ):
     """AG-UI < 0.1.11 has no reasoning carrier, so dump drops the `ThinkingPart` and the re-sent
     prefix changes. Documents the protocol-version limitation (verified, not a defect to fix)."""
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     generator = Agent(model, model_settings=settings)
     history = (await generator.run('Briefly: what is 17 * 23? Think first.')).all_messages()
 
@@ -466,6 +470,12 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
             ],
             '0.1.11',
             id='retry',
+            marks=pytest.mark.skipif(
+                not ag_ui_reasoning_successful(),
+                # Before 0.1.11 the installed SDK has no `encrypted_value`, so the feedback reloads as plain user
+                # text without the frame marker its fence was sent with (`dump_messages` warns about this).
+                reason='ag-ui-protocol < 0.1.11 (no `encrypted_value` carrier)',
+            ),
         ),
     ],
 )

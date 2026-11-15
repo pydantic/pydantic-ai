@@ -219,6 +219,7 @@ Hello! 👋 How can I help you today?\
             ],
             usage=RequestUsage(input_tokens=4, output_tokens=197, cost=Decimal('0.001391')),
             model_name='deepseek-ai/DeepSeek-R1',
+            model_id='huggingface:deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
             provider_url='https://router.huggingface.co/together',
@@ -277,6 +278,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                 ],
                 usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -432,6 +434,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
+                model_id='huggingface:hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -469,6 +472,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
+                model_id='huggingface:hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -498,6 +502,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
+                model_id='huggingface:hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -627,6 +632,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 ],
                 usage=RequestUsage(input_tokens=269, output_tokens=27, cost=Decimal('0.00008750')),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
+                model_id='huggingface:Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/nebius',
@@ -899,6 +905,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
                 ],
                 usage=RequestUsage(input_tokens=16, output_tokens=216, cost=Decimal('0.001560')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -994,6 +1001,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 parts=[TextPart(content='invalid-response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
+                model_id='huggingface:test-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -1022,6 +1030,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 parts=[TextPart(content='final-response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
+                model_id='huggingface:test-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -1047,9 +1056,9 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
             'role': 'user',
             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Response is invalid
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
         }
     )
@@ -1169,10 +1178,10 @@ async def test_image_tool_return_is_forwarded_as_user_message():
                     {
                         'type': 'text',
                         'image_url': None,
-                        'text': '<tool_result tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
+                        'text': '<pyai:tool_result tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
                     },
                     {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
-                    {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
+                    {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -1203,6 +1212,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=995, cost=Decimal('0.006995')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1246,6 +1256,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 ],
                 usage=RequestUsage(input_tokens=32, output_tokens=1425, cost=Decimal('0.010071')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1297,6 +1308,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=955, cost=Decimal('0.006715')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1318,6 +1330,7 @@ def reasoning_chunk(text: str, finish_reason: FinishReason | None = None) -> Cha
 
 
 async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None):
+    """No recorded Hugging Face response carries `reasoning`, so a mock client returns `message.reasoning`."""
     mock_client = MockHuggingFace.create_mock(
         completion_message(
             ChatCompletionOutputMessage(content='42', reasoning='I computed it', role='assistant'),
@@ -1333,6 +1346,7 @@ async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None
 
 
 async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests: None):
+    """No recorded Hugging Face response carries `reasoning`, so a mock client streams `delta.reasoning`."""
     stream = [reasoning_chunk('I computed it'), text_chunk('42', finish_reason='stop')]
     mock_client = MockHuggingFace.create_stream_mock(stream)
     m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -1356,6 +1370,7 @@ async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests:
 
 
 async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model_requests: None):
+    """No recorded Hugging Face response carries `reasoning`, so a mock client returns it next to `<think>` tags in `content`."""
     mock_client = MockHuggingFace.create_mock(
         completion_message(
             ChatCompletionOutputMessage(content='<think>hmm</think>42', reasoning='I computed it', role='assistant'),
@@ -1375,6 +1390,7 @@ async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model
 
 
 async def test_hf_model_reasoning_field_thinking_part_round_trip(allow_model_requests: None):
+    """No recorded Hugging Face response carries `reasoning`, so a mock client returns it and captures the next request."""
     mock_client = MockHuggingFace.create_mock(
         [
             completion_message(

@@ -6,9 +6,9 @@ exception while every message after the call is a user turn containing only conc
 results, where the native result is still in flight. That exception is what makes the bug survivable
 long enough to store: the turn is accepted once, and a later non-result message makes replay fail.
 
-Measured on `claude-sonnet-4-5` — the same history is accepted while every turn after the call
+Measured on `claude-sonnet-5-5` — the same history is accepted while every turn after the call
 carries nothing but tool results, and rejected as soon as a turn with any other content follows, with
-no reasoning involved. Pairing is decided on the blocks actually built, so a result that never
+no thinking blocks in the history. Pairing is decided on the blocks actually built, so a result that never
 arrived and a result whose part didn't render both leave the call unpaired and both drop.
 """
 
@@ -731,7 +731,7 @@ async def test_in_flight_tool_search_call_is_answered_in_the_next_response(
     (https://github.com/anthropics/anthropic-sdk-python/issues/1325) and delivers it at the start of
     the next response, as long as the request still carries the call. Dropping the call made the
     model search again (https://github.com/pydantic/pydantic-ai/issues/10966). Recorded on the direct
-    API, the legacy Bedrock InvokeModel API and Claude Platform on AWS, which all accept the shape.
+    API, the legacy Bedrock InvokeModel API and the Bedrock Messages API, which all accept the shape.
     """
     if transport == 'bedrock':
         client = request.getfixturevalue('anthropic_bedrock_client')
@@ -792,7 +792,7 @@ async def test_unpaired_native_tool_call_history_is_accepted(
     200 is the assertion. The body read off the wire pins that the call is what went missing and the
     rest of the turn survived.
     """
-    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    model: AnthropicModel = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(model)
 
     @agent.tool_plain
@@ -841,7 +841,11 @@ async def test_unpaired_native_tool_call_history_is_accepted(
         ]
     )
     assert result.output == snapshot(
-        "Yes, longer duration means more interest-rate risk because the bond's price will be more sensitive to changes in interest rates."
+        """\
+Yes, a longer duration means a bond's price is more sensitive to interest-rate changes, so it carries more interest-rate risk.
+
+I also need to correct my last reply. I couldn't look up the 10-year Treasury duration because I don't have a tool for that, and I should have said so instead of only giving the sum. As a rough guide, a 10-year Treasury's modified duration is usually about 8 to 9 years, but check a current source for the exact figure.\
+"""
     )
 
 
@@ -871,7 +875,7 @@ async def test_in_flight_mcp_call_history_is_accepted(
     conversation is what was measured as rejected for `mcp_tool_use`. This records the other side for
     the same block type, so keeping it rests on a 200 rather than on the `server_tool_use` result.
     """
-    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    model: AnthropicModel = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(model, capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))])
 
     @agent.tool_plain
@@ -931,19 +935,11 @@ async def test_in_flight_mcp_call_history_is_accepted(
         ]
     )
     assert result.output == snapshot("""\
-I apologize, but I need to clarify: I don't have access to financial data tools to look up the 10-year Treasury duration. The tools I have available are for GitHub repository documentation and basic arithmetic.
+2 + 2 = 4.
 
-However, I can provide the addition you requested: **2 + 2 = 4**
+I couldn't look up the 10-year Treasury duration. My only lookup tool is DeepWiki, which answers questions about GitHub repositories, and it has no market data. I should have said so before calling it. Instead I ran a query about an unrelated repo (pydantic-ai), and that result has nothing to do with your question, so please ignore it.
 
-If you need information about the 10-year Treasury duration, I'd recommend checking financial data sources like:
-- Bloomberg
-- Treasury.gov
-- Financial news websites (WSJ, Reuters, etc.)
-- Your brokerage platform
-
-For reference, the duration of a 10-year Treasury bond is typically close to, but slightly less than, 10 years (often around 8-9 years depending on the coupon rate and current yields), as duration measures the weighted average time to receive cash flows.
-
-Is there anything else I can help you with?\
+From general knowledge, a 10-year Treasury note has a modified duration of about 8 to 9 years. That's a rough figure. The exact number depends on the coupon and the current yield. For a par bond yielding about 4%, Macaulay duration is roughly 8.2 years. For current figures, check a source like Bloomberg or the iShares fact sheet for the IEF ETF.\
 """)
 
 
@@ -959,7 +955,7 @@ async def test_in_flight_native_tool_call_history_is_accepted(
     resume, whose whole point is to continue it, and the payload still goes out unpaired — so the
     recorded 200 is the assertion, with the body read off the wire pinning that the call survived.
     """
-    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    model: AnthropicModel = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
 
     @agent.tool_plain
@@ -1018,7 +1014,9 @@ async def test_in_flight_native_tool_call_history_is_accepted(
         ]
     )
     assert result.output == snapshot("""\
-Based on the search results, the 10-year Treasury note has a modified duration of approximately 7.7 years (as of September 2026 data). \n\
+**10-year Treasury duration:** One source, a Treasury yield and duration tracker, lists the current 10-year note with a modified duration of 7.8 years and a DV01 of $781 per $1MM, at a yield of 4.96%. That site says its durations are indicative. It calculates them using discount rates derived from the Treasury par yield curve itself.
 
-Also, 2 + 2 = **4**.\
+The figure depends on the specific note, its coupon and its yield. A CME paper from 2020 showed a 10-year note (1½% Feb 2030) with a modified duration of 9.198 years at a 0.87% yield. Duration is longer when yields and coupons are lower. A 10-year Treasury today typically falls around 7–8 years.
+
+**2 + 2 = 4**\
 """)

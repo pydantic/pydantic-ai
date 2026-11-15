@@ -53,15 +53,22 @@ class CassettePrefixViolation:
     later_block: str
 
 
+def moves_cache_prefix(node: pytest.Item) -> bool:
+    """Whether `node` is marked `moves_cache_prefix`, failing the test if the marker gives no reason."""
+    if (marker := node.get_closest_marker('moves_cache_prefix')) is None:
+        return False
+    reason = marker.kwargs.get('reason')
+    if not (isinstance(reason, str) and reason.strip()):
+        pytest.fail(
+            '@pytest.mark.moves_cache_prefix requires reason=... (a non-empty string) explaining why '
+            'this test deliberately moves the cache prefix'
+        )
+    return True
+
+
 def check_cache_prefix_stability(node: pytest.Item, cassette: Path | Cassette) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
-    if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
-        reason = marker.kwargs.get('reason')
-        if not (isinstance(reason, str) and reason.strip()):
-            pytest.fail(
-                '@pytest.mark.moves_cache_prefix requires reason=... (a non-empty string) explaining why '
-                'this test deliberately moves the cache prefix'
-            )
+    if moves_cache_prefix(node):
         return
 
     violations = list(iter_cassette_prefix_violations(cassette))

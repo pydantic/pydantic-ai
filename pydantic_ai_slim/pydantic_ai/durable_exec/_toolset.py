@@ -6,16 +6,28 @@ import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    Self,
+    TypeAlias,
+    assert_never,
+    cast,
+)
 
 import anyio
-from pydantic import Discriminator, Tag, ValidationError
+from pydantic import Discriminator, Field, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import (
@@ -27,15 +39,19 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
+from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent, _RecordsContentFiles  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._operation import ToolsetCallToolParams
+
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
+
+    from ._spec import DurabilityEngineSpec
 
 DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
@@ -76,9 +92,15 @@ def _serializable_validation_input(value: Any) -> Any:
         return {'type': f'{type(value).__module__}.{type(value).__qualname__}', 'repr': representation}
 
 
-def live_validation_context(ctx: RunContext[Any]) -> Any:
-    """Return the run's live validation context for in-process durable units."""
-    return object.__getattribute__(ctx, 'validation_context')
+def unit_validation_context(ctx: RunContext[Any]) -> Any:
+    """The validation context to validate tool arguments with inside a durable unit.
+
+    A context rebuilt without an agent (a toolset used on its own, outside an agent) has no
+    `validation_context` setting to rebuild from, so its arguments validate without one.
+    """
+    if ctx.agent is None and 'validation_context' not in ctx.__dict__:
+        return None
+    return ctx.validation_context
 
 
 def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> ValidationContextResolver:
@@ -266,7 +288,6 @@ async def call_dynamic_tool(
     ctx: RunContext[AgentDepsT],
     *,
     tool_def: ToolDefinition | None = None,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> Any:
     """Resolve a dynamic toolset, re-validate the tool args, and call the tool.
 
@@ -277,7 +298,7 @@ async def call_dynamic_tool(
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         tool_ctx = without_tool_name_path(ctx)
-        args = tool.args_validator.validate_python(tool_args, context=validation_context(tool_ctx))
+        args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(tool_ctx))
         return await run_toolset.call_tool(name, args, tool_ctx, tool)
 
 
@@ -288,24 +309,21 @@ async def validate_dynamic_tool_args(
     ctx: RunContext[AgentDepsT],
     *,
     tool_def: ToolDefinition | None = None,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Resolve a dynamic toolset and validate arguments against its real tool."""
     async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
-        await validate_tool_args(tool, tool_args, without_tool_name_path(ctx), validation_context=validation_context)
+        await validate_tool_args(tool, tool_args, without_tool_name_path(ctx))
 
 
 async def validate_tool_args(
     tool: ToolsetTool[AgentDepsT],
     tool_args: dict[str, Any],
     ctx: RunContext[AgentDepsT],
-    *,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Schema-validate arguments and run the tool's validator inside a durable unit."""
-    args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+    args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(ctx))
     await run_args_validator(tool, args, ctx)
 
 
@@ -333,6 +351,10 @@ class _ApprovalRequired:
 class _CallDeferred:
     metadata: dict[str, Any] | None = None
     _: KW_ONLY
+    # Left out of the payload unless it is a question, so plain deferrals journal as they did before it existed.
+    call_kind: Annotated[Literal['external', 'question'], Field(exclude_if=lambda kind: kind == 'external')] = (
+        'external'
+    )
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
@@ -390,8 +412,10 @@ _ToolReturnResult = Annotated[
 
 
 @dataclass
-class _ToolReturn:
+class _ToolReturn(_RecordsContentFiles):
     """Legacy wire shape retained for decoding in-flight durable executions."""
+
+    _content_field: ClassVar[str] = 'result'
 
     result: _ToolReturnResult
     _: KW_ONLY
@@ -399,10 +423,12 @@ class _ToolReturn:
 
 
 @dataclass
-class _ToolContentResult:
+class _ToolContentResult(_RecordsContentFiles):
     # Emitted only when a user dict's `kind` collides with `'tool-return'`. Workers predating this
     # variant cannot decode it, but those payloads already failed to round-trip there; ordinary
     # results deliberately retain the legacy `tool_return` shape for rolling upgrades.
+    _content_field: ClassVar[str] = 'result'
+
     result: ToolReturnContent
     _: KW_ONLY
     kind: Literal['tool_content_result'] = 'tool_content_result'
@@ -419,6 +445,12 @@ CallToolResult = Annotated[
     | _RunCancelled,
     Discriminator('kind'),
 ]
+"""The recorded result of a tool call operation, with control-flow signals (`ApprovalRequired`,
+`CallDeferred`, `ModelRetry`, `ToolFailed`, validation errors) carried as data.
+
+Pass it to your codec as the result type. Don't construct or match on its variants, which are
+private. Payloads journaled by earlier versions stay loadable.
+"""
 
 
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
@@ -430,7 +462,7 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     except ApprovalRequired as exc:
         return _ApprovalRequired(metadata=exc.metadata)
     except CallDeferred as exc:
-        return _CallDeferred(metadata=exc.metadata)
+        return _CallDeferred(metadata=exc.metadata, call_kind=exc.kind)
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
@@ -458,7 +490,7 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     if isinstance(result, _ApprovalRequired):
         raise ApprovalRequired(metadata=result.metadata)
     if isinstance(result, _CallDeferred):
-        raise CallDeferred(metadata=result.metadata)
+        raise CallDeferred(metadata=result.metadata, kind=result.call_kind)
     if isinstance(result, _ValidationError):
         raise ValidationError.from_exception_data(
             result.title,
@@ -486,20 +518,40 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     assert_never(result)
 
 
-class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+async def revalidate_function_call(
+    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, engine_spec: DurabilityEngineSpec
+) -> ToolsetCallToolParams:
+    """Rebuild a function tool call whose arguments crossed a durable boundary as JSON.
 
-    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
-    across the activity boundary (Temporal) without re-running the code, so messages enqueued
-    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    Looks the tool up in `toolset` when it wasn't transported, then validates the arguments
+    against its schema with the context's validation context, so the tool receives the same
+    Python values it would in-process.
     """
+    tool = params.tool
+    if tool is None:
+        try:
+            tool = (await toolset.get_tools(params.ctx))[params.name]
+        except KeyError as exc:
+            raise UserError(
+                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
+                f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
+            ) from exc
+    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
+    return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
-    def __init__(self, message: str):
-        super().__init__()
-        self._message = message
 
-    def append(self, pending: PendingMessage) -> None:
-        raise UserError(self._message)
+def revalidate_function_args(
+    toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
+) -> dict[str, Any]:
+    """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (
+        isinstance(tool, FunctionToolsetTool)
+        and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
+        # Only the source's own validator produced arguments in the shape `revalidate` expects.
+        and tool.args_validator is source.function_schema.validator
+    ):
+        return source.function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
 
 
 @dataclass
@@ -512,26 +564,13 @@ class DispatchSnapshots:
     `__dataclass_fields__` alone, so those contexts add these fields to that set whenever the
     payload carried them. Otherwise each copy made inside a durable unit, such as a tool's
     `prepare` context, would lose them. The fields are `repr=False` because `RunContext.__repr__`
-    walks the same instance fields: without it, every reconstructed context would print all three sets.
+    walks the same instance fields: without it, every reconstructed context would print all four snapshots.
     """
 
     available_tool_names: set[str] = field(repr=False)
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
-
-
-def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
-    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
-
-    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
-    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
-    raises the same explanation with its own vocabulary.
-    """
-    return (
-        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
-        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
-        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
-    )
+    _tool_names_by_kind: dict[str, str] = field(repr=False)
 
 
 class CancelGuard(RunCancellation):
@@ -573,7 +612,7 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     """
     return replace(
         ctx,
-        pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        pending_messages=EnqueueGuard(unit_noun, container_noun),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 
@@ -661,6 +700,11 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
     @property
     def id(self) -> str | None:
         return self.wrapped.id
+
+    @property
+    def _explicit_id(self) -> str | None:
+        # Forwarded with `id`, so a derived one stays derived through the wrapper.
+        return self.wrapped._explicit_id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # Its units (Temporal activities) resolve tools on the registered toolset, which a per-run

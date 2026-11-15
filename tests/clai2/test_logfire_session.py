@@ -32,7 +32,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session, current_session_id
+from pydantic_clai2.runtime.session import Session, current_session_id
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -198,7 +198,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
         await shell.loader.load_all()
         first_id = shell.session.summary.id
         assert (await shell.run_turn(TurnStart(text='first'), headless=True)).outcome == 'completed'
-        child = shell.fork_session(None, [])
+        child = await shell.fork_session(None, [])
         await child.prompt('fork')
         await shell.session.clear()
         second_id = shell.session.summary.id

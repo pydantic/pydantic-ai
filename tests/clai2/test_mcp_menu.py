@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+import anyio
 import pytest
 from fastmcp.client.auth.oauth import TokenStorageAdapter
 from mcp.shared.auth import OAuthToken
@@ -21,8 +22,8 @@ from pydantic_clai2.mcp import (
     TokenStore,
     servers_menu,
 )
-from pydantic_clai2.mcp._runtime import ServerEntry, State
-from pydantic_clai2.mcp._settings import Servers
+from pydantic_clai2.mcp.runtime import ServerEntry, State
+from pydantic_clai2.mcp.settings import Servers
 from pydantic_clai2.plugins.menus import FieldRow, Option, SettingsMenu
 from tests.clai2.conftest import stored_accounts
 from tests.clai2.dialog_script import Answer, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
@@ -143,7 +144,7 @@ async def test_manage_starts_stops_and_shows_a_server(tmp_path: Path, monkeypatc
     async def listed(name: str) -> list[str]:
         return [f'{name}_ping']
 
-    command.servers.log('local', 'started with 1 tools')
+    await anyio.to_thread.run_sync(command.servers.log, 'local', 'started with 1 tools')
     monkeypatch.setattr(command.servers, 'list_tools', listed)
     dialogs = ScriptedDialogs([Pick(value='tools'), Pick(value='back'), Pick(value='logs'), Back(), Back()])
     assert await manage(dialogs) == []
@@ -242,7 +243,8 @@ class EditedWhileOpen(ScriptedDialogs):
     async def choose(
         self, *, title: str, options: Sequence[Option], current: str | None = None, description: str = ''
     ) -> str | None:
-        self._path.write_text(json.dumps({'servers': {'team': {'type': 'stdio', 'command': 'other'}}}))
+        text = json.dumps({'servers': {'team': {'type': 'stdio', 'command': 'other'}}})
+        await anyio.to_thread.run_sync(self._path.write_text, text)
         return await super().choose(title=title, options=options, current=current, description=description)
 
 

@@ -34,13 +34,13 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 _ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS = ('temperature', 'top_p')
 """What `anthropic_disallows_sampling_settings` means, expressed in OpenAI-shaped setting names.
 
-The flag marks the models that reject sampling settings, and `models/anthropic.py` drops
+The flag marks the models that reject sampling settings, and `models/anthropic/` drops
 `temperature`, `top_p` and `top_k` for them — `top_k` has no OpenAI-shaped equivalent, so two names
 remain. Deliberately not `profiles.openai.SAMPLING_PARAMS`, which is a wider tuple carrying a
 different rationale (incompatible with OpenAI reasoning) and which reaches `openai_logprobs` and
@@ -126,7 +126,7 @@ def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None
     return overlay
 
 
-class GitHubCopilotProvider(_OpenAICompatibleProvider):
+class GitHubCopilotProvider(_OpenAISDKProvider):
     """Provider for [GitHub Copilot](https://docs.github.com/en/copilot).
 
     Routes requests through Copilot's OpenAI-compatible Chat Completions API at

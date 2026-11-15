@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "381"
+      - "460"
       content-type:
       - application/json
       host:
@@ -19,20 +19,22 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Briefly mention 1 event that happened today in history?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: Be very concise.
+          text: >-
+            Be very concise. Before using any tool, write one short sentence saying what
+            you will look up.
         tools:
         - name: web_search
-          type: web_search_20250305
+          type: web_search_20260209
           max_uses: null
           allowed_domains: null
           blocked_domains: null
@@ -48,10 +50,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=133
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f86f165061b945b15388baf58bd8d534-c61f28d00520b4a8-01
+      - 00-4b3fb7c113a79c02da22c564376e90f2-96f4fd89724fef17-01
       transfer-encoding:
       - chunked
       vary:
@@ -60,102 +64,315 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYE13pvay9wqvJdP4L6b","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2232,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}      }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFQVxyRmcds71DJ1uEE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":6010,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01JxhZwN8E97Vp56enQ3fvBZ","name":"web_search","input":{}}}
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": \"Sep"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tember "}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"29 hist"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ory eve"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nts\"}"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS+gUKEAgTGAI4AUIIdGhpbmtpbmcSDPaWLH6GrtugFxzNcBoMZLheLo57HCqBDx0gIjD69c/11oyTiHpEKlz0QnpH6PSI1tEa/4UrlVzngGNBRlIsQ9+QjYjwJsWY5SBF7CEqlwWfNjNelCERdZ49Yu5I3JFvj8BEvYemxwF9g/r623FJaD4l8nibJpbeJcNXvle2hoK6VZkjCr/yq6ST7MLwy3X1651L+WcZR36Xp8nJBRYFJR0eMCMZRHZEIMHphwYtm0bc8kdwFJHnh29gS3jz0znPYbZ84UOa4lwUCIUNgbt3uqFO1gspHib8RwR96KNPdYCRXacuV7qveLVRcaknyvMNo4seaHx+NLON4QidSx6lnxRpNNtEZNAgRbvX1foKds8jr2/0MBTgNrQqLJJxqWLpm4KEAZ0a+ekV4rVF/3h4NV4bP2RcJFK260lyCEE8+zE4QDEmUc9bobvqAoaDsK6kYSDie19crhprOSNvpfsZ8eEqOHNgVxKJmCkFiD0KW0AEhcQN0mI7yLagNn4ZHPRFrwRLMOkqsT8bv4LAZ1pF+bymTqLoyGJhzuT7h7M3oGJ8ONrU1TeqYmOByUfQjQtEUKlbIRVlBCjLO9LWNcmL7nrUYGei0uc3adkpbtcppWsjzEV05P2ADxlm4BBOi2Da6bllOQL8FNUhVGtRyeTK9LMuiY0Rb5nM9qcpQLpMI8UV7A2RPRKmNxw99G1tgt+ynM/FoQcQPjF+9TAjlM0UPP518y8w2lnF/vaeByBJDm+H9jPgoV767rxnil2MAkC5d5NrozvmVtJqvEDMuJwEf9DDlD9Ybk2bW7buHOPtiPJTrpVPRFIjRHqiRhLmT9eGOJGx/U9UCyNaFHonGtGConkNzMzeNZ/vX7fhtv9pQ8ERF29UufxGRu537w5b5XrZkbFLx/K8TJK/b5jtJXyJovrOyxnSI3tY4XIFT/KXvsP+gK6+QpZevtnGSmvq9YDhr+lp0MTlDQJC2UARwVNfeuuNxLkTKkMYAQ=="}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
+        data: {"type":"content_block_stop","index":0             }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01JxhZwN8E97Vp56enQ3fvBZ","content":[{"type":"web_search_result","title":"On This Day in History","url":"https://www.timeanddate.com/on-this-day/september/29","encrypted_content":"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","page_age":"1461 days ago"},{"type":"web_search_result","title":"What Happened on September 29","url":"https://www.history.com/this-day-in-history/september-29","encrypted_content":"Ep4KCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNIhOkgoImQxIaCfNBoMOcfeY4MCUp8X//xjIjCTAIoEfjmFMpZNzkuSnxa8RojC5AZxn48jLKNXyjO0mW1LJ1odx7HraqO7WPXpp/kqoQkhFfpnouFSEsFnRH7ZdytoL261bt5Ykg6646kz/I7798mCS3yDqnQX37q/SSn6Mv3RdoVhdx9mwtM3X4qMdN2Y7UQ9YyZG+i/WWAVF1OHl+bKZoxggOusYCDek8Obf5QZ2xHk7o27Q+SQJC54HdyTW8NVMMvjrFG4jNpPGhwiB/BGjV2XfxiA3Ftc/+6Dc/knOQ0Co6kcBzYCMrRp+2I4tu/YR+ifI9EGlVvyFR9EI5KZepmb+C1w/03IW3vva4zsI61VGxwLoRIW9RPQ5QfATvy/8k/fLJ2kmLhdbrApzTdKSu6q2k9EL9htYSdB3abDjUntRDaZ8otkRe0AEKo8XsTRD85VtKYeGuVFa2Z86XNrBKHBxahLK52rabOlNRowAW1sdjQc5hybi7UVMG2q9Np6/Y9flNO8/P03in+U3rY8bppacctkrWKAkkE0Iyjk2PPy+iYwyBsNcitIWHpjozNUw8Jb8F4tTzw1aEuj2fSQyssVWnLLLeVSlrK9nflF1l/P24e4jmbDdac4M5ra9e345fiDIhV5YSiFNr1gmhY5owq1MJzyDWV9z0VYez4yCDQlzvZCge+H0y0ofFUZkf78oYng4EW6zWXt00uJodNuiPwjrYWHHx0wgQLs8ILFs+fNeLE1jal1UM/CS2+XMRhf8zyTV1jLqtntL4Jw90DQ85aTsZjxdvVnTP7Jd6+BPcIi/5faPyJzPHPi/as25B3Pz3oPZHsrFXqeNSd0s6YDgF1j1KGDTsrxsLkHw0FQ0cCmObs4lgTKx8xdoAcNDkPpmjX4YuT5jNUdzf4xt4z8olTBw0QW2f91NyQ/PQArSpTLn9OmkGtmWwADlwcui2tGgMAkh6BSP7Mx+sinf+u3RL4MyOR/GsaSfvA+sm5yukR+jLb4BGV3t3047GWkue7GxExEE0Sswq5FgZTA3kW/pWpMURjQU1TbS9026c/oObVKwEN8zzhQMMYY+b6KuncS2k/dLbtCl88UIQRY20xWRSZprRf0s1szjocgQznzXS9hO3JY4pRZwnnPDe2H/tywL7LZYpjGnru3r/m4qrXkJwsnfDuOz/ClDXo1Ed1hO1J8iaDERPc6p50EoTNXP0D1l1P6Olhe8vnrErdBbqVyNwOdPyZGnhauBDcqgmpCXI7ZCprRstrk4l7rbq5YAenaPsxDELeaLaB3pWbHiKx2ExYRb/tnibJkBwuBctnc+Dvj25mmW80L2CqQquvgsELNnVqKYI6fIWvSIZN7OEMbB37+eodZCr9PJpp2CPo5HbAJgg8QnanpDR+IhPQ/d/AP7SM0FMj5amgAusZByk7mmoLNsa7ChyqFk1uteHOVwgExDfRKxLkA0WIK+P3G6OB6TzbRsrCznHD30teCv5VT83bxqnOXexsKDtG6ZGbMO0i/cQiR/COTmbv6Ok5epAWmfbGKMC5nw0vzlS5WLGBfd+5pHEJfhFO39PDPd/TG8tGSIvjAMwa+rtTMoJ48SGCbhCqFJnA0PQyF37p1vguM2CRtidGoCFPxykWAlhmaowQpCHde7F4zN5RAXdVQUYju1D2YqdYWLJHUZFJzwf/0YAw==","page_age":"5235 days ago"},{"type":"web_search_result","title":"On This Day - What Happened on September 29","url":"https://www.britannica.com/on-this-day/September-29","encrypted_content":"EukHCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJ4AQkXk3sfxe0q/RBoMfsPMCl1Fc4eXc1/wIjAs70smH+Xgm602xEblovsY8NlDDVHkkNLDyF9PCpCysYcNThSM8cnP10pHBdtvuX4q7AaoTWPVU6ocvUtfP8AuQJwXFLa/E8Hf1XCw39vj1r7rrnXaXPsBmyhzClVnNMWKeo2UZKXdjgQXoVCBwaRABoWn/2P4ZzuMsmhXOCRMexvNfzO24b+Qabvd+b/DJvWnCBxNdinz0zs1lmUR5ILDKMIJVAu6b0uVOfYaBBCB1xOVkqb+ESe5rmfTrD3vakCJkuT2iV7rcPKIHy8GLwNM+v8K8eww6017+0jOgRwioJASbL8fVto3oY/KHrzE4C7YaZPT6+Uxkc3vHHpbaeGSfrHpmxm5O8KZAS01Y4/xglq16LWH8ICFJLnVQXo7+luAsWAv48hy+1N9Wv4xypbmaRtlme5OMU9C0+P9srT0pt3kKyQWkLNMrUSOftrL/GHIp7eF9npcp0EVczEN41UHr5278m3EFqR95m6TppH6Bn10B9gIdfYqjJLlJ0PQPHljSdV6Pf9Y5PN6gY47JKJhH7cZCmZWh2QXQsdnqqUoHivoCs8OPptsoSHQqCR1f0QGkZdFjBOU66vXHB8My/9q5xvqVvCwJYGoteGxH7EvalCEtzTlswS0VTVB0Cu0Ab+ZqD8xL07fKGopmR5UG6Rxe4u92oaf4zb+vXFR/OCXvB6RDcAg8+5xxpYEJG8zu/g5opQQMUGD+aojaIRCF1TIMxvEfNvHrSGArbvH3Fe99PwSXg1BGj3tAq0f4muqmk3D+m/+/DoHyWUnQnbVm2x9gsGzNu6pMVcUyHb+U543NrscYBo/+HF11QXsYFOb3Y1UutE66jelK0heOmXizj1hE0JmC2UUxYNiId5BO5Gm3KU8zQbHxDq46meBcGAmUI7+GWAWvT3v7joc92ObtJG/WhiDsNUJbB7ugNdw2P1LEmtgHcmvHEt1MN75vk5nWCWyHK+z/mjxDqxzTvyZSh7+neShntbCYhlYKY+lFiXBWfSowH62bO9Y5BxX5m0NCKTXmIQiO52jzoaa4A2sePaHOEL6frtpuSgEVU4SODenbEO1tlLZlj8hDuo+JlIyKfEGC9GzHYhbvIxhDKouk0YsB5yzEL4FYJgA/n7ndRRsSdYC38vyolIsgB4oEaKOlXtvgBQ9E85pM9Q1Et7RiKWt760jIKGejeOMJurIn0lrne+8c2fnbkNhjQW6fPqCusSk8zzldxTdYpco0sfzCxoYAw==","page_age":null},{"type":"web_search_result","title":"Making History Come Alive this day in history September 29th","url":"https://makinghistorycomealive.substack.com/p/making-history-come-alive-this-day-f4a","encrypted_content":"EokHCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMX7MIPHfUoAJFzbGhoMWzflteMgggUSCQHUIjDMNx95CCK/VMsZqNqmP7+aenREfCrbOG23PQT/TZ4QT69N35rCqm3P1/gat2fDJI8qjAYRmZ5YGI2/hY2qkgixhFUN8K59eB6QpU0D0NWArFt+mOURd8vZy1ln4wmLBdYaw0Zij2eml5NJ0ZwTUsFelKCexz0wy8aCQY6f+H1ufji0ALwBq+dyAkxeHNnqswSRYFH9bCZMWS4tVNYNDw94bG6NqvgDW173/SnMkwsQUndXo2sQbj8rVHx/F4Pjp/9ldkChMxsZtv72ANF0RrqKN0yF6LeIuAWmgo+39PJpsCZINrvl6jtlI/h9fHsL8CLEQful6dD5aY3gJlOmpppowleMP9SrfFuwmkaj0x7ZvduzyeE9g0vqRZKt1jsjaihTGMdpk5NXQ4IAAiCqzalEasRcnxkZzUzZK0DO6QV7WQBgHggjnwoWexjB7baZoPrF0vqDZsB+5L3KQWL9opvVHNQsZnY3o6WpG7/83F3n6b7ffiVnbSRwXzMZWKxH64hZfs0VCtebfzeFFZyRyixB0rxWlTasYCXjTqYDrpfl188jbakeKuxFSVIFbz/x+Ncc7mdFqDHNLtidJkfTGQQl/D8MKZ4zMpljLX5Cdp8n9w+1yzQjanhPU+8RYnu11LETrzQxNaSkhohVzNFOaeBNqJNmhz2Hl5c52TAvh+KG1xKUOzBjbnxQQq1hpKFkk4fQhoAabulDi300+05RuS+Pyi2Av2/8F9LZJpbPUdWzpDNJ56GQ3ev75UcDUOgDO/8jJx/7qj13GDQUqc34Rvbigy3n8/TAvUcMrce0L36NuD6Z/02o8bm7z2WRgEXEenTKtCeGIMJJNjgrOLWpSfu49t64oXFZsZMaUuTJKLiJ8bSNnryyNZF3e+CLrvMKFep1v+cgTDO/mjbVJUl3r4cxKNT4cpkAOsoEcCo5fcNnlbk0vqjCqelMIn3WAsvYU0YOfKHm8+4VKdQ0CyQU7Ox35kMPf/MasWQk0WvptwZUXfFJdY2akwLamN6xUmn4HfTAoWWMb6x0xokm2DJOsqd1gJJ4xMgBd+sNapj6apGltqQzCu3LfSZ8zAj6Xj2+KcY9VBWuoKqMfMP+K1mW2j0YAw==","page_age":"0 days ago"},{"type":"web_search_result","title":"The way it was: Today in history - September 29","url":"https://www.cbsnews.com/pictures/today-in-history-throwback-thursday-september-29/","encrypted_content":"EroKCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIFbQf5PeBwIjI8s6hoMAgqpICLIOD0bUgAFIjBca5HjwzUnRttGfZxqLh2e1rJcVdFaq6kT7UmD/Qgc2c2WfaIiZNXl+9r9ahwVplQqvQlw1LwEnAQ9qk3k/RCy+MDJO9Mu/16U7ESde8TJBOABovHKvVIqn+vzXfyqW/COyWWX77WqGtMr3xO4aWhhX+Kjui1nleg3QDugBFYtq3Aru1eBnB5f3zNlXZGLX/ARn4H1WxDNVmYU0/Aq6MCbyqdYBYOPfc6k2xVCHtqm4mL7EM8tpPWjz2OGjtIjn9e93PnR+IvI0cFo/UM2OOcZ1wRaJu5JAerthIgsrUmy/sAoTI4s8ON8WUV43TWiMg0uYompJk5yUvXfx7hkCxfGgCJMTxGv7zZJyQZMq6kn1y386eiFWy34e8xxYsmTf+m88K8scwIqdIHMH/R6Df1r6ZdFUZ2KCT7j+KCa5K/YHU86cf0bRkAKA34lT5SiqyoQdR0h9Iee2QEqU+sB2gjsYU1fL5jpa24hqrVNmx1j6y0tmqL52LokF5pDSfR4oTFrz04dDrowXR8rKrqhiIrRH+gtcWMTdYQSOLSZl9iJ6HEIqPPX887rxXv9vxf2BzQoju7oMMvVQK9d8aa6gzcEZ6IBoNd9813iHEpD6GpjWjP6qOMWOCnqFdF+nF+e7GEV23VYe8a531oG0ktWmWVJMQPfXewhORw28OCVbGGf0bIKfJvdwPhw+ypB7e/4JoSgk09ZPoxs70xluXm3wcebHJBPbelYhXCD0M4mF/lLZDR8qU1cGxm9MKjn4UHahQ+ZsMGQOMKozNJHJqN/R5dWiUdk0buybiCXYtl9FbQL6puDmORXJ6NGc6rUAPjBDxRYJC2pFplbSglZsGtbsnS2xHJhlmfPvP2FH6fkP3h/pv70ozMD5DwcTfA4QtEwv+3SSSlA7S1Ygw7RO7V/2JSxGHB3S1iiqAuPVOrhhgLhZFQdJO4XT6vaJO3cQt6g6cJ/PCzJIYCrMQYq8QYs+ptw50W6k0RI65Kk0IuqwjJbNezpD9xb3+psTXkrzkpAYsCnKCQ53H57XnxaLJewPELzEAp2+F7FRb82a09hKfRxXkTMDgIsw1iHodHpapURQw3ADCtQq2MOWVHTVarzB29nykPs45CSQubidkehob2PVtBZ94d03DNOpeNT7pyQBADYnck4RxwyE7gQ1UFm1OQJ7vnyJSoiv+qq6CBKArpB+EA/PAM84RafeImWRy0YhsPi8dHhkitYSg7eMKJS/R/Z6J1nZrpxSIIUkrH2G34mGVCfJlpt6jid90GSubbBs+VsFtJ3QWHbyGxQJSyVha2iNYGhxHu8jpvEO8KKwA1ETP/PdAKCm2PJF+/ZZ4JUGlaqzeU7i1RbpUeb+AJQllIgE90NcFw7B/X1mX4kQB0QgCs+jAXYl4QQ2a2canvqMeOD2d9Ose/vSF3kFn5UX7hEsOObnspARIM6YOdEfxYaO20y8G375XDtMyJApmL2ZJtuB7WFo1RN1xYn7wgYG4MdRhECWi685W5OjYj6eUFP5h4zVLLGmvSQvnjVtCZ+DmQzkq/tSMarMApMWaItV76QfhflkNRtfc+CTUvLcbb5CHSTzPCjPTJjnQnZ6wlhUP4Id8gYzXZagRKDbgOFuj1aaQBNMZzMPuRTjnZZ+84mX9FA0IMhLB7gA+6uDZYyK88fXHcLKEw+u7WaR7j6cQujGAM=","page_age":"3620 days ago"},{"type":"web_search_result","title":"Today in History - September 29","url":"https://www.loc.gov/item/today-in-history/september-29/","encrypted_content":"EpwFCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNal1E4FYSGUM9YrQhoMP6jX166loZYEqp21IjCQvH/YaiQmMwKVSu2qAtcQhdOCIMuQPlno9EI21fgJTI33SBpLc9LdCn2wHSxxSA8qnwQn8v85f2DDsxS2pbMIQQupdUaYCI0t3pNMaiLprCWEZXQsa+WcDEq261eyQ4KdgxAh9XbzBm4zAJCSaN01bbL35phLi/ruraY6o5/vtpvGf2TdVxkIsa9Xsb3I55Qeh4ru2ybGEnvvR2ZZWYHh3mwHSawjHVB4313P2Fg5LddAveHi24XSoZk370gZRm7vC5LlZfZh9GR5b77B+HiYJM8NN6JGSCj4ypJ2D8R7Q56qbuvSMTLrY4nRJiYWkRIlH5VFfa3xumCphjPjyNbWaPJ/LnE6Z81DbE9hFrZLaiZD+2o8z3KgLj/UTnipgOQc9Ldfrc27JSRz3OXO006DpeawL+lP1E4d5r13d4ljjleT/11wm8WMbEtPXGq5l9Wf4XRXzwLASfy3/leuv95YFSsllmoxknDCOXo7sZ0cqCsbpJxd0VJmKrzIk8Fde0aE//D7ZQexWzQydLzf4jXLaxsrpDMONIgef5oUSVpAuB5jmOgphYAJY03Pex4uWfEYdkdAtTLRrtU5KhX/BtHJItD/9KORa77UwHKgM+vjuii87GF3XYSE2f5KXgn9hwgNbk5hXom2iZYlWf2jiyLPx5UhL9ddUGbJRi+Gzh6OJDxNP8fUxeudmAKfQuJHdSlPMMnpAv8zIUUlm8uJ1DfUsaaNbOusGLbtE68RidZ9xJPbhAZJN+TNtnh1Mus2a2mkoJQPxYs0g3bQMQfUmHKxD/8YAw==","page_age":"2922 days ago"},{"type":"web_search_result","title":"September 29 - Naval History and Heritage Command","url":"https://www.history.navy.mil/today-in-history/september-29.html","encrypted_content":"EoAFCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDG6fP8eh8ndeqh3mhRoMm36vUpnzn6TlotvRIjBMuxTkq+kTUCnkgoeMJPeAmqCzqJHowY/GU6VdvoxI2fu7k+dbIEzyPNNKyqt88lcqgwSSem4c+GvFipiQj25KYQpKaz9jmMcQ8Tkkmxm6giO/BuaBfm8O8qcrFX5qrBWkI/zJwScpsAdcmyXMJjmo074vOS3SDRJ65OxKCb9IuLbQ/fRX78WDFTY3JqXADVFfPKz6tcQbd5XKO3CalxQ8WDv+6dhQM9TMCuQ8xFzRETgMyu4Xi6tz3HDRpTKpHxJnABwkjqh3XAY7C24UrZEezRG3WoRk9gIKVRh28w612KlzhIfI0lxtq5RPEEXUWkR8kXMN3iOzU6IBfAMOV215+xgKGu5ehHEVCLT+xCPu4Or1P8IMEslBi0J8yTj30bHo6YMQQFgdBBtjh/o5j+QqGU+TjX5i5D5hUJjCcAw/WeeskmCcVUo6TvCSNkFjqswBdzKSfuPe/O5bpepzyhUKgawMA/xsP0LshZYUfNT8qYiNZ6gG4AuZrXC3NYart3ym0FQRnL/zU+03s90mxBvANknOkYr0wX/l3Xa6tpNl59q57ci8MnnxljI/ppJF4yJhtLzAGUb/asNFVHmDbpVP3mOYQnJ2U4rZ28IOsn8GAQWVYvnq0tuRrBzqJIe2Chuw+o1iLU8ksvCtq9EoGPG7fCUS04BmbrZDwH5bUK71g+/g994QdMnAZlTlol09n5RStndM7kGxip/o5fDDH4gfJnj+E/TjKRJ4kxYVmZmVzhw+HmsIORgD","page_age":null},{"type":"web_search_result","title":"Today in History: September 29","url":"https://historynet.com/today-in-history/september-29/","encrypted_content":"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","page_age":"3625 days ago"},{"type":"web_search_result","title":"September 29: Facts & Historical Events On This Day - The Fact Site","url":"https://www.thefactsite.com/day/september-29/","encrypted_content":"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","page_age":"333 days ago"},{"type":"web_search_result","title":"September 29 Holidays and Observances, Events, History, Recipe & More!","url":"https://www.holidays-and-observances.com/september-29.html","encrypted_content":"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","page_age":"360 days ago"}],"caller":{"type":"direct"}}        }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ll check today"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s date first."}    }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1          }
+        data: {"type":"content_block_stop","index":1    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"citations":[],"type":"text","text":""}    }
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01TEMPDnb6Z8BeXGKdG9pzgm","name":"bash_code_execution","input":{}}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"1954 – CERN established\n\nThe European Organization for Nuclear Research, popularly known as CERN, was established by 12 European governments.\n\n","url":"https://www.timeanddate.com/on-this-day/september/29","title":"On This Day in History","encrypted_index":"Eo8BCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJSZT2BqKSc1j1irhhoMwFxFtHBE8rbDcngpIjDaMhbctzCly75mrwK5YK9leI/KyzS025LQ+t3R2bglsFfVQDLBWc3NMCnpOSKXg80qE3aPvQn1ESTFlX7+juCYwspnkK0YBA=="}}    }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"On"}   }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comma"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" September 29, 1954"}               }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd\": \"d"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":","}     }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ate +\\\""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" C"} }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"%B %d, "}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ERN"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" (the European Organization for Nuclear Research)"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" was"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" established"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" by"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" "}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"12"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" European"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" governments"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"."}      }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"%Y\\\"\"}"}        }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2           }
+        data: {"type":"content_block_stop","index":2     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01TEMPDnb6Z8BeXGKdG9pzgm","content":{"type":"bash_code_execution_result","stdout":"October 25, 2026\n","stderr":"","return_code":0,"content":[]}}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"I'll search"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" for a"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" histor"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"ical event that"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" happened on October 25."}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"server_tool_use","id":"srvtoolu_015DCWyfMYQXvdT67wZ8zAWL","name":"code_execution","input":{}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"r = await web"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"_search({\\\"query\\\":"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":" \\\"this day"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":" in history October 25 "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"event"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\\\"})\\nfor x in r["}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":":4"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"]:\\n    print(x['"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"title'], x['url'])"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\\n    print(x['content'"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"][:500"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"].replace(\\\""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\\\\n\\\",\\\" \\\"))\\n    "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"print('--"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"')"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"server_tool_use","id":"srvtoolu_01CFrGk5akcdK5sqVRFoWvg2","name":"web_search","input":{"query":"this day in history October 25 event"},"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_015DCWyfMYQXvdT67wZ8zAWL"}}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01CFrGk5akcdK5sqVRFoWvg2","content":[{"type":"web_search_result","title":"Making History Come Alive this day in history October 25th","url":"https://makinghistorycomealive.substack.com/p/making-history-come-alive-this-day-54a","encrypted_content":"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","page_age":"0 days ago"},{"type":"web_search_result","title":"Today in History: October 25, Teapot Dome scandal conviction","url":"https://www.dailyadvance.com/news/national/today-in-history-october-25-teapot-dome-scandal-conviction/article_6829d1ef-d92f-5330-a281-887edbda2964.html","encrypted_content":"EpEICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDHAgrGBC9PfEvY6C4hoMg//G8GcQECJZUQcrIjBLK8iwOCg+56UQEb37mkCZcmmSpsTgyuntBHj57SNVotDiC79A3R4ua+z8Rf+UZdAqlAf3X71Pu2KRw/KwekqC4Vj/4zVuoFfyzQAnMGa7oVMSt3F+pbl3DS4xasRk9PPCHRAtYP9+bpV0lrgbGvyxJDAkEGkmHMcWDYwmyw7854/BouPWn2tShFm5QVA3gfHSO6iSzSqbp3c1m02NKKCYqFSGtTZI6it0K5IqT8QS0CJQ8vVhuRXDaGrAqTbk41FTy/qgatQRe6VxBv1mEMy7VukG5I1Dmg0LRW89ejyhBqqpCOaGNTahYeTTag0KcF7yEG7EslI7mclzh3aBeCYbg90GG/1u0FJEGUuq5603pvqcOrgRsaJhGiVWjvE99rA5t9mpWtRdkYQ1RSSbTPc89Aulz8aMcisKN2EJFbmdY4c+ZmNt/L/nPjhI2GatHg72Tfnm9idhAOUVsLUT2ZfLp5cEltafEpPZ73AJJnibKslQNqhNGNjrmHVMvffYg55YP/EeZ+wfBMNd0Ot5s9ulkHxVVygMFxW2j/r9wVeW41Uz0W6pbet+9ko+JJBAn8VznIQZ4Cr/U+TTFBeXXAdeugvUVkoDstwDXLH1BViKugHqgJgTJHN0dLfJuozoQlwJAaouydgjcPYD7sYcVSexcswdMtj5CyV84xv+RLY0OBf/3LYJnLtxdsQ88NZNiuGp19nQiJqkE5JRuYClFYHvgXXBpWEpXTvBIG0XU6rNAZ+i+CMrGnAF0cWW4MLz048Mw5+DzFbo2/kC1nF+2f6r1x1sM7f6cl9beXomyUmRCkRoDkCcRgpl/S6AQnCswrQwE5OJhh8y9GN3PFAF9Oz83z4tqsealRIjM/oPBg28TqT48UM1Ou+alb5OWeh3ObinHeIl6AXtODabCG3pUBaIYdAFQMK6BSlsb4W4K/Up4Gvr+w0UDMJ73EvSgloIaWDdv9fkA0k1hrsQsq4FLYEZ7IFRGgSSn0JcCwpyhWKH0C+QfoBsuSEmLhs+b04i8xR5DoWRpGQDmp0Jvy3CmTUCQiriFlXBLBJcxR98LkSTqao2/t34Y5hh8j8l9svOOLmHgM+hL8xnbog9j6iH14XXBOuUjcNGuFCG+bfM7X2b4zAdaoa+GWJ+0jmSckqhB7P8IerjB6oFUBL9Zo+jjmWDqZmW0wPCc+BnD6e8sTRE2BzNKh66PpqiQ54eWPAA8+50nYjnBDYrVFl1gcYpOaTriJ+XjgHmU31y/a4SBOZffLN2I7tYSBNQa42cWO4EJdSxPKfCqGSsGAM=","page_age":"0 days ago"},{"type":"web_search_result","title":"This Day in Hip-Hop and R&B History: October 25 - foxy99.com","url":"https://foxy99.com/2026/10/25/this-day-in-hip-hop-and-rb-history-october-25/","encrypted_content":"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","page_age":"0 days ago"},{"type":"web_search_result","title":"It happened today","url":"https://www.yellowad.co.uk/it-happened-today-this-day-in-history-october-25-8/","encrypted_content":"EskICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDJAvXN30/wSb+PXBLRoMGfScVdr2ms8HjBseIjAE+avQZR+l81q7dih9zWMcvAf8CXpF+IpnUvWemn9wYYKUF+DBSpT2m/jiDCiO67kqzAeSHuLv8uwojbamrqI/HwLBWsDktXBnjlUy6TZeSK+zHzXJrOKcp5RbxwbJDya5xP1zN4yclilJGHhbJ10feG69Grxmf036v4GmB4nZKkKbpEXLMUgF4dZpcId0CXyfIL3Y/5I1rr6c/4dsz0X45DSXMfWrmezFjRAKJVpQtHEi1fFQxXIvdeMR9jY+IAboy2o/CxyfiOF4lvLpEgi3E6uHul0NR3qp83fzRykjSFFAWY8Lk/z1HxCKorf9OXNKV/gdEGl4hX4qxMO6NxhPKevjcD0R/kPSwOHqlXeZKYT3qnsREavDHrfIXDrFKa+VO4nS8zFK/geEaWqDCX87r2SY6kwhPmzNi3eyQeHu4qnTKsp/YbvGuEvon177Ege/xsaHgrWgj5at1AQiICu6xZj03F2wgAFFbYO51W9pkhnCys1XKPi3a86CN2GlAIaZiQLK3WKEMmXYoMgpVD9rzMZ93FqpMw56AuerJaCIdozPC7Mm0zua+sSbiqkOXNmwx9+39QD49/MBBx44BPn7OLDbe04mYMy5qUGKxZDv1iSKGeDEcpPNxXo8IE3Gz3kkZy1fNWZYSYqinFmIpL65OleX6K5K655KS/qIQacY5REAw73P8HYv5F7w21qitaNB4+MeCu1/hRnKvas2J5QOg+LsaMXkxXgv7eh9y2HyBYAad+Ay8Zu1A9XX4yedbBoDz3Y4rSiZdE5CiRPkefqG5Zizf9Uz2sG0T8bNKICOcUyeBFYY6uwSEq2c0wd7Q/mazo/1VJnW2RaKq0pr6eIl2AZh9kecvBbcnFpqbTzSB2FqQWnO7lRyySRa8ZaywuCZmKzOBqcRZVJ3htYTWYYs6BYLTmxVWT2jN9iCpzIs2Mu815H5xD+hQFtBPHOjBbZUhfMGDlG6njKbIiNrq7gcPFkOf8o+fvhowk1zRw1Es0hN1Hl80KWqNruqSEVg5a5DBKMcnV5NEjoC2s+wKunTAFbRbP5Dttqy59Z8oJCw6RYZw4p2CZKFFo+YO688b3GrBHLazwp7A4g/cUapWCcM9E3M2JsuzmMTWH6mj22AAxm7vjXyRvi2uaUPw0uqz6srwa0b8qeebDn3RwA71Z2Dbj14BV7l0h36vFsj3OtS2crNW4ZTtq3HJ8RWP9B2A2VvN3bUAHKO6Ts8fvIspp8e7vo7dHjcNozB1bwwoSat7tP8tljyYb3VFMQRI7lCq6fyGpKOl4ZxUr4j0llt65MJuTKV//5J0N7LCgHGnFS1kV3awaiA7X7199vyfkP7eu99EcmcHfyo4rl3E5b4OO4YAw==","page_age":"0 days ago"},{"type":"web_search_result","title":"On This Day - events from British history : 25th October","url":"https://www.beautifulbritain.co.uk/htm/onthisday/October/u225.htm","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"History for October 25 - On-This-Day.com","url":"https://on-this-day.com/onthisday/thedays/alldays/oct25.htm","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"www.timeanddate.com","url":"https://www.timeanddate.com/on-this-day/october/25","encrypted_content":"Eu4ICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDIXXx1NIQRGUm7uxXRoMS+voWmmxQ/S07yoYIjBWhNV1qz5jLeNLjN/bdkNi3wxjrRwqm1Im1fYW7poHJgusr6yZnZq/TzsY0Q7UH4Aq8QcVReV+ja9R3PIQIqhfqX2b/lVZ4jq7U/d4HumAY3AiEHmNfgO/u8pOnEJ9uIgj3+VDApD9b0+KRn6wF+/J85B4OLZAnz4sWUUUuXsqiWx1C1NvGSt83zKhvT/RSTLG0ppOvCwYEbx4keLCFOiwkTl+qDW2FduUWifXq+3k+B7BEarCMTb/qqeA+QeuYbu7n/eHkZTxYzu0sGZA4L1BJcU5wXrDox3FRK01Qw6jpMmUM5ALfMXfrD6mEkCyM6rjOHdQDUzEG2F8ytlHb98kI1UcmQ6AaGrNeeiLKgfrpOK72eZckOkr8p+xssrRj8cdLWPu2Ln9o5NdlA3AYy9ixVS/Zu+RIBqKauGMSpCEKg+9DSoR+LchtEQmgI4mnzRBr3JeMBOMtbH+eGPj10CHn8WJAEtnqNb0Ttu0tl/Vk7sRe7EItY82F24kyxgkBTB1hdAUBYpq8/gW3+brkOZFJvyH01KzCxqYCRCTTo0a6QzBKKsvGrtybemW3wwUlShJ7xt1jF+sHeuwmIi8ASBIV/rzxAaaTm3OvaAcDR7SfFRxbVyYC0Z8mK4GVFZq2sll4N1mmVinpVCwPNRj33y9FUgDy2gBaBdxMDailHcUotaOpcUwPK471sN607qJQEBcQV9QO3n7isvVVvlgBLVvWM/YU36Jb0Iqb8y8LtcYtNmEU6okMLSX9qpZyOX02k0iBWfhCExIEvwl5swoRdi95D5ayfnxciSdGJRmWez6GGNSrx9X1ac5J8EXJjFycHQ3F0Gv/HLifXb7KaHjQPLaC55xL6zoF/abOjKRTVr6ZiVRCalqbUlxa+jy7RgP1snD91Ioh7wEbsEWoSiEyST/mOLDHacm7rRTaC52NXtEgHWjb3wvEv5UV8AuOYkqGOCSpbWA3/wAERp/FA3CrcjK4Tfv1teATHU2LinasBSD3pSiydiB/ZdwOS+7g+TDOfyl3LZDO3MQawKSCKwAz8h4E4MZ6dJK0oEnDFGuZIfqGEyeNvSBqQgeHaGmIRtnpJx4MAfGnGWUtxJTg8scGpZ3BQ6J+z7i0s4yKx4jso+9EKwp92c9x9qm+XYINHj9HEGbVw432q/lwbnmMK4Tg5wbEI+vkvgVcOaqKDnXmlQkzsSNLpZykhnTFLY+vOqpetCsFLhonReQrU1xqjyoXnmqoOZkJVN5CpFVXjwj2ImfQ3h+xHXVEVEVht/DjUrzYF7M+0jAXYjY0iudh9lyilSAGiLR3X52LulRhFjI9lfbZwB8V8VG3QsVLwdJv/UnC4NkIlDim98xfkneVqpivmR8xe+qLFlsD+0q5ZwudKWfIQxPAkLXJzbnFcGKIjBsSQ4m0Y+8GAM=","page_age":null},{"type":"web_search_result","title":"Week of Events","url":"https://engineering.wisc.edu/events/category/seminar/week/2025-10-20","encrypted_content":"EtQDCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDAshCnbCdOuTF1IV9BoM+09Zp1Vky5pOvPGgIjC/CdIEZ4A62Dor4SwKKkxrLrTyi16iGqniH+pazmJ0C6BcoDyQAZcVsfVbBLhhypIq1wIwnNiugA2sCC5Vzd4jcnCfuGFaXXVptN7xD6gq1517yfqn1RInX6M4OwSUoFLjkfp9nZ9WVkGdHNncHH8mJFhBjcROLjN96BWOysIwPlbpxM7WqMlxkpB/0/0MZPS7ppQS8b5DlBEycBb5QpTm0ct4VqowAEK3X/XgiuuHuYhivXu2KrDn+RVP6YQ5GiCP76XbsP01gASY0hlhvEpR9PJUOS9MWz73qCm1mSpzsynS+VIZwrqhQGQM27e65LLD/dlkgCCchlp94/4j6IwwTODD7GA4ZGR2Xa2PLECePMz5XxH8OZNue8vSbc2B5+IFUaN5tI0KciGOKdRxLvh/xHTorrpmGOWASkuAVC5+yD9v2+ao50UcPLKV8SymL+WU6Cl2UX9CUB29wFay/hCPW4B9BkhSEHoOl9SScmuqHZl69/+4CdwnDqvbMplQGECZoBdVBKXTXtn+GAM=","page_age":null},{"type":"web_search_result","title":"r3.ieee.org","url":"https://r3.ieee.org/ms/events/week/2025-10-21","encrypted_content":"EoYECioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDHNjHUCoL8c0AtddOBoMcm5weM/hiN8MYkHIIjASRTZnY2dLHWhrmgfnv13zboGBz5qUkSNrl8ENZ4kSZAADxG9h/l+j9MU4TUa4d9oqiQMtGm3fIo82B2t0OBo3dI9Ay6+KURDMtO3vI8a2a6bK66SdQHw5hVMaM3DEi1uyJbYrCZr8ltSzguzglIpHagRqFGnt5rNwOfMOc0FDMQlHAcsIvS8cX7tSvjhAP0Aee8/pU0zDycCIk4tH7OUSqhwwa7cmFAVvPWuNma1+xRZuTP53kgEM/pBIJUJ5D58auEv126dLhZAXgwTB+sDyv0dcYzXxIBl/pcu3nLJrWh3xwdWFlr7pprdmF1ZFUUf8XP1sPA10br6ivMyqZDH3Xzm72GNX76GyH7cPE7zfWYeH8N3kaTExAnaOqjUKIuLxIkSIaNDoWkIJXkjVqlslAfcuGXAbkqj0NpoM5M54feNoOJ2QsI4caIqHFDmCEWuPnZqwe7egkGhtOwXvccmGPyfsJPfgNfrMtoui0m+mgB934L7rLGubY7YS89gY66nIUFqvpLDxL1U6Uz1E6MsL6vXNmySJI4MYyAvwlwKfQ8alWRq+fTv4SUq76OnddLcqmejDhRI+5eiPXCIYAw==","page_age":null}],"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_015DCWyfMYQXvdT67wZ8zAWL"}}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_015DCWyfMYQXvdT67wZ8zAWL","content":{"type":"encrypted_code_execution_result","encrypted_stdout":"Eo4BCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDPvKEy05lesNkB68RhoMqBOwQjb2wgY8RNW3IjAD2Sn8jz0Gx2Jsphm9YPYBUZyGeSBEtO2S5vVhexoQjhAAMeOmcH/0C7BLF151WJIqEkwZiWSDafgykchFZpW7HQOgORgD","stderr":"Traceback (most recent call last):\n  File \"/usr/local/lib/python3.11/asyncio/runners.py\", line 190, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.11/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.11/asyncio/base_events.py\", line 654, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/tmp/srvtoolu_015DCWyfMYQXvdT67wZ8zAWL/cell.py\", line 10, in <module>\n    print(x['title'], x['url'])\n          ~^^^^^^^^^\nTypeError: string indices must be integers, not 'str'\n","return_code":1,"content":[]}}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":9,"content_block":{"type":"thinking","thinking":"","signature":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"thinking_delta","thinking":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"signature_delta","signature":"CAQS7gUKEAgTGAI4AUIIdGhpbmtpbmcSDC+5D8nKmADKgxCfjBoME6EQn2PxAk61lYDOIjBu0EJ9O2a93U+VZ11Nn+LEblWjYsTOEwcACSP0OWF64cpu8E31m6bIUurIczqrObcqiwW8+9ROsByFmlNyw8adaI0HjTq2egDcMGarfKESkIv+z7Cylw2cGFrq5Dw1kc2tkuelgG3IT/djXC4qcmW5d1i5SyleCtpyfkGxTUoWjXq++FqSja9lNKK6ClasJ0etvyMcp5LTgeKR1Zpnh5KGUgUYp3h+1eMgzkyT4eYm6bO8JZjXDM+RBTefZe4PTl/4jXfoEDYptpDtfnKxmwUUVWaU7vCro7ErpdlO5BlAa4KVEEiAx3Sy6migqjMHbYSR0Vo5yWtwIJNocbdF3BWRCdx+7r3WxNT3QTvshJIo3lELPR5zk91/c1ArIovI3ulrehxbjf0B6TQixT2A9kAxS79uk6s5Ji/A8tMyNIrZL9xWEqoC4jWXpsTcJTDZHyPDmiEOSr5d3g/MicaPF88GK5tmpjI5IlMMhTWJ2X8tqIa0kH4nNlO+naD0uFT7F21YSSd7o9TBAuRMkvZ/EK9sLcGTr8pQ30eHVTcuv/1m7eAr4YJtZu1/QLPCmaDJ4zsoOu7JONxh6RZg1lswx/rfbXlSHeIGXKxVu0uVxYr7ut5HhirGeKIqeAo+EspO8J8NCYNzrIYDazIZ00EvNkjcs3OD335MglyEiBQ5OF1efrp5/OlD9EG1UJyrKBCr+1jzPP3RkGtcRtefjJ/ZSIXRtSAuwQLqL6+bjz/Y+MIPjIfQzdB8ueovwuHfl+2ZB4KZp7q7epOLr6zP0KWQ2lvrcNX+ZMjKRMMxN5Ds7cRug9YsG8R+YbYMSLIULth2kuY+3EJ0rkLDtYzE4KkHKDpWv1nl1euHxgT8r0e8bAOBlPa9oRhLZspGmJSUH9/wuR5YCBiIMoE8dwr7vC2s4ZBTqKWIRQRGfNRVvlVvWg8YAQ=="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":9             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":10,"content_block":{"type":"server_tool_use","id":"srvtoolu_013ZjvXmMNnRnTwyGrom7Lac","name":"code_execution","input":{}}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"print(type(r), str("}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"input_json_delta","partial_json":"r)[:600"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"input_json_delta","partial_json":"])"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"input_json_delta","partial_json":"\"}"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":10      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":11,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_013ZjvXmMNnRnTwyGrom7Lac","content":{"type":"code_execution_result","stdout":"<class 'str'> [{\"type\": \"web_search_result\", \"title\": \"Making History Come Alive this day in history October 25th\", \"url\": \"https://makinghistorycomealive.substack.com/p/making-history-come-alive-this-day-54a\", \"content\": \"Post his tenure at Microsoft, Gates focused on philanthropy through the Bill and Melinda Gates Foundation, which addresses global health, education, and poverty issues. Cultural References - Literature and Poetry: - The famous poem \\\"The Charge ...\\n\\n# Making History Come Alive this day in history October 25th\\nOctober 25th is notable for several significant events throughout history acr\n","stderr":"","return_code":0,"content":[],"abort_reason":null}}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":11               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":12,"content_block":{"type":"server_tool_use","id":"srvtoolu_014RBrLpuMYG5dTrpiHFtB1U","name":"code_execution","input":{}}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"import json\\nr"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"=json.loads(r)"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"\\nfor x in r[:3"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"]:\\n    c=x['"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"content']\\n    i"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"=c.find('1"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"854')\\n    print(x['"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"url'], c[max(0"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":",i-200"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"):i+300]."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"replace(\\\"\\\\n\\\",\\\" \\\""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"))"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"input_json_delta","partial_json":"\"}"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":12}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":13,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_014RBrLpuMYG5dTrpiHFtB1U","content":{"type":"code_execution_result","stdout":"https://makinghistorycomealive.substack.com/p/making-history-come-alive-this-day-54a story October 25th October 25th is notable for several significant events throughout history across various fields, including military history, literature, and social movements.  Battle of Balaclava (1854): - Part of the Crimean War, the Battle of Balaclava was fought between British forces and the Russian army. While the battle is best known for the infamous \"Charge of the Light Brigade,\" it also featured the successful defense of the British positions.  The charge, which was a disastrous caval\nhttps://www.dailyadvance.com/news/national/today-in-history-october-25-teapot-dome-scandal-conviction/article_6829d1ef-d92f-5330-a281-887edbda2964.html Today in History: October 25, Teapot Dome scandal conviction. … 25, the 298th day of 2026. There are 67 days left in the year. On Oct. 25, 1929, former Secretary of the Interior Albert B. Fall was convicted of accepting bribes in exchange ...  # Today in History: October 25, Teapot Dome scandal con\nhttps://foxy99.com/2026/10/25/this-day-in-hip-hop-and-rb-history-october-25/ This Day in Hip-Hop and R&B History: October 25. GRAMMY winner Ciara, best known for her top 10 hits “Oh,” “Goodies,” and “1, 2 Step,” commemorates her birthday on Oct.  # This Day in Hip-Hop and R&B History: October 25 ##### Bianca Barratt GRAMMY winner Ciara, best known for her top 10 hits \"Oh,\" \n","stderr":"","return_code":0,"content":[],"abort_reason":null}}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":13              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":14,"content_block":{"type":"text","text":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":14,"delta":{"type":"text_delta","text":"On October 25, 1854"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":14,"delta":{"type":"text_delta","text":", "}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":14               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":15,"content_block":{"citations":[],"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":"the Battle of"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":" Balaclava, part"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":" of the Crimean War,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":" was fought between British and"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":" Russian forces"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":15            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":16,"content_block":{"type":"text","text":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":". It is"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":" best known for the"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":" Charge of the Light Br"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":"igade."} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":16      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":10098,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":106,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}       }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01JEQtdkNhKaaoA8wgS5LXaF","expires_at":"2026-10-25T17:12:03.211544Z"}},"usage":{"input_tokens":33437,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":554,"output_tokens_details":{"thinking_tokens":82},"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}     }
 
         event: message_stop
-        data: {"type":"message_stop"          }
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-09-29T18:44:24.519958+00:00
+  recorded_at: 2026-10-25T16:12:04.414464+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -163,11 +380,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "384"
+      - "463"
       content-type:
       - application/json
       host:
@@ -175,20 +392,22 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Briefly mention 1 event that happened tomorrow in history?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: Be very concise.
+          text: >-
+            Be very concise. Before using any tool, write one short sentence saying what
+            you will look up.
         tools:
         - name: web_search
-          type: web_search_20250305
+          type: web_search_20260209
           max_uses: null
           allowed_domains: null
           blocked_domains: null
@@ -204,10 +423,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=124
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7a326d626eae33629a509692fbcbbf29-a8c28c7ab414fd28-01
+      - 00-3b036f00474346b1da5adb83194eef61-35f75d86abbc8d83-01
       transfer-encoding:
       - chunked
       vary:
@@ -216,153 +437,138 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYE1TsHQ1kGcJFJKEaaM","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2232,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFRTXAxDz8HVAjNxmhD","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":6014,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I need"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to clar"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ify what"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you're asking."}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Today"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is September 29, 2026"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", so"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \""}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"tomorrow\" would be September 30,"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 2026,"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which is in"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the future. \n\nDid"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you mean:"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n1"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". An"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" event that happened"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on September 30th"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" history ("}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"past"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" years"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")?\n2. Or"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" something"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" else?\n\nIf you meant historical"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" events that"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" occurred"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on September 30th, here"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" one"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" notable"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" example"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":\n\n**September"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 30, 1938"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: The Munich"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Agreement was signed, allowing"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Nazi Germany to annex the Su"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"detenland region of Czechoslovakia"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" attempt to app"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ease Hitler"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" avoid war."}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS8gUKEAgTGAI4AUIIdGhpbmtpbmcSDBaSBr8GCQsjV1qyNxoMMmu/ZsM8LYx3wL4OIjCPOCFW4Ol+J6HLK4PN0fBGlHKZ0rUcVUiiLEC4SwDnM0SjZ+rfysCrns7/KD8LjNkqjwVm7cN5ZXUQbREJMOdJtzQRFcMG+2wL+K8I0YNmQTkNPaqPm6DKmBKJpWspzCyV+Si8ObA4B7W8CPCxaLhjv2Tz+swW2/uHu0inPWWzfmkOzDyex6rudtYEfS3tQPSdgMr89llIE4a3bsNFr+DFZkKDL9rYbM3h/1k+TYTuW6xaCaD8rgwLxu8/mVp9xfS4SgO1uzJV30ONuLk2PbcEeWMFAeKrYvtB6WRcZGB6cwEp/egIDO+IjIGXezPWuc14dvwk1diK5Xt9LT10F23N9WR8OuAme2nEz8soxvIWniS4BJi4n9fEu2mj9NeJSDggMLR3Sf3P9Ebx+4TZuGCK2/JqPEgcrQ/c2FUU6T3ctDb0742NTs+/R1nrSZB+AVZWM7vj3+jd0VB/hTS7UPbpItJh80IoMAiBrqMlP4wUWX7RWHrOl3D9LhRoU5tTxV4cVQ3T+5KCqB76HB5LZkToXS9rDZhPLZMNGWZEZd7xiiu2tqpCcWj28RffzSX1eEv3k8N06zMZiU9IPLXk2L9ikPwp9HjbUDcGSfjbg09xeNoBqAWzKUSuMnw6RMb37e8mti26ju7m4ulmd9oQ6ny1exMEwe1p0mcIIPpR3YwsGaalXlp452LEUzQcCIRDP283LalLs25VdvaKQC6nYyocoFMyykv7R1kI3gXyzOtdAxo/ftDGdiaYxODXMe2ZzD9TBvzg21AG1jPilYdH8L3ZxLqwSv60kzXEeGzTn2HYvWNr7FrMyEZ/IT+n/d3E5VXRrQIjO5lP4nlf6geKG5XochgNIzJ2nFcLzl6VBxfzGHM9cF12Pd3Ka1mfSkf9pMoAiEzNyvNznit4UqYtbN4nsYprCf6rCOpPfhbQ332VvPetGAE="}              }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'ll check the current"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" date in"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the sandbox so"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I can work"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" out what"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \"tomorrow\" is"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01Bc2J1razCwzoHZBFD2xr7W","name":"bash_code_execution","input":{}}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd\": \"d"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ate -d "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"tomorro"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"w \\\"+%B"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" %d, %Y"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"\"}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01Bc2J1razCwzoHZBFD2xr7W","content":{"type":"bash_code_execution_result","stdout":"October 26, 2026\n","stderr":"","return_code":0,"content":[]}}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"thinking","thinking":"","signature":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"thinking_delta","thinking":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"signature_delta","signature":"CAQSvAYKEAgTGAI4AUIIdGhpbmtpbmcSDAN/1ajLY81aOwDoQhoMuuCPiR2bt+Wjf+DWIjDA0VAr+ZH4FispdNY8RqMps7XTc0u6cu0XFxOKNStGxTqDiUXQ725ZfvbpMc/8q1Uq2QXlPrxgiDj433I2sI8r4NaXPnNKTAoogh8b/3KvKwXc64WNL0fNV0oKnZLA1zTj9ZhEXP4VRhQC8qaV/ZmnR6Rz42lFARjyhjaIXXrJoNm5PqN31Rg8XSGy6Rsge50RDcECYcvFRCMs3qK3TLbL4rEObobD9VdRPS0cQ1K36sBQrLUd04/8+T8mitE4GGfDqbf4bjZHf2Gmc/FOFUzY5Amjt/OpP2PpijZsYUUd4NZQI3dfYmv0UfLWqZgC9p8bZsSovfx6u39912a0mgmEuA+GFX60RBIgbaWFoscr9AVOni+h7K2jcIK+fY9JNMmEMHJn8chk8BiqQwL9NsJzathrH13W84HNnZd6yITiDfsUaivgkyWhFGk1YDPYGzNk1QZCZyhwq4V3Q407Q3MyxOngf7H5ziBqLusQVcySgKM3KnE3Ypp2qdkb68rGEIm8sQdMDP8+dIciQmAlmsdxz1xRZep7bQRmM1U+ugrBDZdcQf7XSttjGc1L/UNsHqqy8IKAFbEO6Mv4E7Kqq8TJfkYhvyDdgKdNxzZiYCgfxt8DAj0mkzS7Sf80S38tz9n62f59z7rJtEoMCWDOaXb3Qcc6nQcagFrJebzfAWKfq4FV8gcVu8YzHmndkHCsvWrqsq/C6qB+POAwW5hfq10KhR5Q5ouKd3DMHecTvHtKMe0mxXTJM33ulv/Fd31/bvCzLycx8vl7b0TjJioFOrJa9g6h8n+AlBSPhaY7POa5821n+d0AeLL1eWlFTL4WCeBb6im1yF4uNAbDxNlpwYFVsYljoPfRVRbPuZOEiUO8ebmP6L8HSadpoco8JQ79OLNK3CwGfOZdAALE2g9od1L9/gmmgAnjLja8eZOrtg6dKObiwlJ5CeZcypUgT2KW/pBVAUVh+HHLxISgtdhfGyX6RMGGXjHnwAiRg0VxCfAexDJ1uGZa0zZwCIefNf/dFiXHw9OakeSVQ7x33yUYAQ=="}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"Tomorrow is"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" October 26 by"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" the sandbox cl"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"ock. On October 26, "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"1881, the Gunf"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"ight at the O.K."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" Corral took place in Tomb"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"stone, Arizona."}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5    }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2232,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":138}              }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01PRpqNdzRSjpA2ZA5aZMeDF","expires_at":"2026-10-25T17:12:06.936917Z"}},"usage":{"input_tokens":12198,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":280,"output_tokens_details":{"thinking_tokens":122},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}             }
 
         event: message_stop
         data: {"type":"message_stop"   }
 
-  recorded_at: 2026-09-29T18:44:29.063697+00:00
+  recorded_at: 2026-10-25T16:12:08.134997+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -370,11 +576,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "385"
+      - "464"
       content-type:
       - application/json
       host:
@@ -382,20 +588,22 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Briefly mention 1 event that happened yesterday in history?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: Be very concise.
+          text: >-
+            Be very concise. Before using any tool, write one short sentence saying what
+            you will look up.
         tools:
         - name: web_search
-          type: web_search_20250305
+          type: web_search_20260209
           max_uses: null
           allowed_domains: null
           blocked_domains: null
@@ -411,10 +619,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=100
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ed40ddb8ed7e56480835dae1583cc41b-4cb533392e7b6a99-01
+      - 00-36b3ab1a73ee37782811fe316804de48-2178ddb5758d6104-01
       transfer-encoding:
       - chunked
       vary:
@@ -423,93 +633,156 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYE1jz9dKKwghr4JE93n","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2232,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFRjJS8cxyyW9dS9YUx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":6013,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01QVims6W7LiWSbe74xLEVc3","name":"web_search","input":{}}             }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": \"Sep"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tember "}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"28 hist"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ory eve"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nts\"}"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSzwUKEAgTGAI4AUIIdGhpbmtpbmcSDImMwkN4mPW1FCvexxoMeIltE5uJv/yikA4gIjBthk+B/nEun8JLLdEGf9HVouDRtWqJ+UG4T5XBZBgrjsAgTIeTBGy5bOw6FiJLylEq7AQHsZJoa3jvfHrVAEHlcg5pYN2pDugRjax6FaXWljlkBVoH7MutI/S8b4GJI+YLR5yGO9Gvq0jy7Vz67BwyyuE19KTApdASvifhV3C0fb2scic23No7UZaBzfHoSiubwLJ07v47xBPi5xmYd4kBo4SeorrWLMu6SGJMdvxVPqZzgMSslS0PVE1f6YD+n12KqzLNky/NuOxemIBNJkNhsTU3eZUvEy0h4UkrGPj0IIZNF9WOFZvzJIuhI+jWCvvvwLXErCqbFGx4QY0BtoUOChO2DGXefnZNan0NvqluEDVaX6Q/rHMq87XfwiEEuLGa5JPG0KBvoznYi0CO8QCqmECGoL3NgXcdnZWRTI+iWPSeKcFQouToPxHlcfjdRiJXetBgrqbupj2M1hKiTuNlo1AbZetGyQNPAValye37QIokw7yo2HFQO+l1i6qmpwNWX0IzWBLhRrDfbo9EH9C9dbiQr76ba5HzLx+TBCfuSpvLUC4K/KIU2cCDqVr4pTqfALqY4aaUV6/wV20TYbbaxfhkzJi6pBgmpryI8oiZ7iibudg1zSnY85567ByL80ITyRzDrkotfDwl8QXOeRHu+Rw8/savhlg64UVzBZuZAMZhyDgk6FWK3us5nTttzPHn9OFQoeG791jlXmWXpQWkaffZT6Nkr0E8CN5EsOoyT/w/kNv2Iz5VGM8LUhfILRtMMZ+BpY3TNOg2k1sb6GAu8jAJ6sYB6vNWio244wdrQgQwspPG4Ik9V62+CGQyXyogTpU7OKYlBjqKUl6l3rgUE1cUg26vp/FU1o3VssSUMRm5kw6UT1wdgFTDgRF4/BgB"}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
+        data: {"type":"content_block_stop","index":0     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01QVims6W7LiWSbe74xLEVc3","content":[{"type":"web_search_result","title":"What Happened on September 28","url":"https://www.history.com/this-day-in-history/september-28","encrypted_content":"EoEICioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFKPvSxIWqNTMHF7XBoMHFYngFayUpASm0ZLIjAt0fCgdartn+BHi3voIopRUb23jFvk7UFSo4A+kGd7pbjXMWjcdJRUNyNB4/Bs0qYqhAczBYDHt0NLhDCqzcKqkVOxRZ5NB6KAL3iiLFY6Vbjat7bItE+8EsLBaoaO33r9pGbDnC3tLqHMDfa5R2ymMjHtRNPFaChJiTaR5aopeHGlv2UDgiub38+1YB+Xvw1UjB6kpG3VqoJdNed9qcIzSOl5c1QnYUywJsKpy7Pv5i+cJ7STMPQrsyvg1bZxiYdda1nZ62afOMt/w9ISKT6s53FB2ZbpBZjhcnevrUJG7VuNVj9f9H0oDdkZcPdCL8lQB60BnVUDu7+flm5q8pCw269lqm2g27Lravq829mxndNfejraNFxIIalPEj0S8fUwU2rnwpuaDwr4jD6x2iBaFGPhHutj++p/QoUVekZq16/HYyvq5iZlR/rr4VGWlUxkVg/+9puiXaIcwVTXqvCAgEhu4XLJG1bAivTr7nUp+2nJtl/FHOxBm20+q4LlKot9JUPlTTCcPRh/WzenTDQ8WwB3ZtewyWI2av0oWDVhUlp0Ts8+9HRYN96Tgb8xckIOHUFxAqBvnlJtzVEWwc1cS5+JcC1HqDMHgGggc9CP84vmtTCV1E3TWla2r6qSaan4Px3GLVCOBmwGDcqT1BW6n15YSQ2B0whE1Mtax+HTGTZHxv9nI10xfbCdlCUPjaXQojbd0Hd6PsQkjy/EY/sIazPPn0TcTKZpdMSBVWtJ80ra2hFgw98FRQAUiW9etC9jZGhFkjhj3L056/804Y1eXX7gFuA3tvVTWHTgns8BEHfQrCX+gAdQ9BDVK+cwkDonQXLLxnFI4cNVu4q9gkwtS8kI4z2I5FyXdZzOJTMknoiWnWDmXGQ5YRP1ZJ0RqYGb29OEXx13hitFVwl2qJU48DkrV4Y0t7CjW8SemUENGl5NYRSVE0u/oz0My1TQY4J1WQGw05T+0WvOXVCBHb67d7SXv+K5ur/g8NSC412B4Gc62UcGIbT+CjHzmj8YhruiX4QM9WU/wkyHhZ+ylA6Hc5OIdGv7qd3mwEJXP20NL0YESJgp7Jbl7dxifD5qilXXG+gAjeWhkk2uXAEVdEevYbAXeCRXBSP2ArU3Q43KBwRqXklS38FwV1kkF3ePUPzIQ1n+sE+e0jPwUdxbRvEwB+cWI6Mw5Ql/Kkj40rziysu7jg9zH0YE0WPh37dQSmYmSyTxZ3JyULGHq3z+nS2s/PPVMSpo08oc40Wkcf5DmIemc4+oczsYAw==","page_age":"5235 days ago"},{"type":"web_search_result","title":"On This Day in History","url":"https://www.timeanddate.com/on-this-day/september/28","encrypted_content":"EvUICioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDA7oDvicPWAqFmmejhoMBZndHpWjzQlwQfC4IjD/6qddgOfgy7fN5BpCFCpUzPJaxoVXB1/Q39UGUZhj/gSWHOuEAlJALDrCudCixSQq+AeiFNzpm0kAzNfx6ghGe31ijiww1JDFtQ5jkC8T1RdFQ812mC8Ve4dEyB/aSobnDGEQ15ogmE61ZWtTqENFm85+VLnz0ddb42kEgg23p/lo44EoapYRkHBRWdk8R1EamX9LTckXIoKFN+DIeFV/BMLTPtLtSFGKziZIFD+eqxSgOzaBm9w0YQFnug1oOrjt6DJ7DoqxDlG8QFXvxM17dbdh8pX8ad5a4D0IsXlmcaw6qq+lR0npO5dfuSgWyDkpY8+NGa39SSqiPT9TaBt2iPTtMKPXQhjQNFqEe+47CiKK0+/iJarMWPviwW4yvhIpro9J24MBJvBjgr9JQfkALYRYT9VHAWnwACDzoasYh3wVf8SQ7EFhPVviO++OBtiaI35ROVcLPIpwGiz8W56LKdQ0nJSs/8plGXc2HJEU0yBusruB0/kWqS3Sv9340MJqfUf6X3xlLfZoFhyb14RwuIbfmE8WMwbMVVlVwB5qfqinH8Y9PgQXv9MCX9QHXWz77mFiLmkiCxD0bdC3oGjjjOhLQ7teHjzAgsg8hNflln7bHiO5qlGkU0cUa3CkJW0Ea6kjDAY3TmWsNoURJnjSDKmOiu9RystcMnASP1Oy/CXR0BNk4fOZZcNy72YkaFMug8mWGhtx0SfzBHP7+SNVkSwyc622AqB3LiMFB6lhv6g/bipCmU8bhRZep9qFjFkX+Yfnm6FRDZJ6kvTXTRs7U45lYn4l4l97e7mDe/mAEX7SxuIaN9PtLAeHKEq9t80GGsB+DjTuzI7KYAahgH/Ir3gL307YFv4dGYsveSA4exOFxGGx6t7z+M8S/sJNmKmq04t9I2RZLkUs18nf9+USXDMJDcBzhzlshF1N0yvi2xb4mgGX9+KWS8ohrGCLPskYV742ts8tnyx7fbUOw0a+1k5EyHIpYlXtPnLagZZ0IWs6L5grm+xedTkcgDBUi2antRiMLFmy+0oBYkR1JYKIJBoPDCpeCv/k1njWd2s6YWWXWxB2TDcbTbE7VN+C6AIcXnZikApjUVg33Ck5yW2D6Q2j2tSGtPh1lhjhp3PY054TBP/ERW5zj/1puiraVMbkiNknlpRmpNnVUcK7YrIBEpcosv/ZIpONCfELz+Q7eO/5+Ysga9bnoUNuMC9QfyNmm1vaJEM7opTNqL+EoQkW3/SJH9WjilyqEGH5qqzMzr2D7BOwmo6k+PYnFS0G3NLUgwH3bECEFehuowGzBLzxn4RR8YqU7Crp2FNG7mYysMu1fnBGgTPRVheGBqyp02qQPEfQ0CqkQCEoYMCUmRVHOATew5BEj1Bx261Hyj0AHuA3itIxs70BiXUv11L2SLDpXC/AUmCPxCbUkRgD","page_age":null},{"type":"web_search_result","title":"On This Day - What Happened on September 28","url":"https://www.britannica.com/on-this-day/September-28","encrypted_content":"ErAJCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLIYwMayhzWPCUHQGRoMkDvEaARONrAmfTZgIjCfPQ6vbqhVuVhtVhX6xMMp3qx3w+RYRPCZUdGY1I9QLjr+0JcDzYNxGK+hiUfcNEEqswjofiNRRGzA08M/ifpdbatCxsQwCQltTya1l5VpzOcYTYjCKnE3u09gu40vJDDJCXVy64KTR8e74KI3sSgTfSIW5777q/PcsolwpRdIPEFldFpj0adR84TNOmqkhPL2lUL/RRM4UIXKUJtLOqVTUgh5sRpQFsGnqNfJ3zXWYDsN21ijdB70XVNWoobEQt24PW7zFeLpfT57VMqTYfYAmnerNOrgHPD6QRwMa7ZG44r2sZHb/D8I9gVaaKHuWKcBdGZ6ctGiPwIznjpzU+dQpqoJ8YDkA7pVUAXIQHfNrKH3t0ONsPG1CzCO/cX9TXXpND9sy0zgGUpihhlqICGFpfBvX6OmEskuc+QyPy2mVwU2t7ELybWi2rW8qGhzX2Gt6vYh1YRKOUaTQXC1FxW85R6TUwL3qpcWsCfdzjvHQfd08KjXDwaA58AJ/370hvjMJyuYwxOM0BnY+HGw3A6Vt4kP32Q301vyGQRBYfL1HGhaxFEB8mr+070/jTXa8LNDAUv8+4Np1Plus7bEK6MdRAgkL2p7cIC8zXmIHVodUO4qWmT/XLIlaGkCFWfhl8WmNqsZ64yrMDQuMVOd200gN//vxBScPfs3nK1OUdSHc8eOLQY00Vx0Gca6so86BfLdWw/RJvh74DpZGU41ksn3vyVsxZIbovLK1v7DDcZwzBAMeLtiPx8mBIO0pka8bPEnPj/Gl57ZaWDwa10zmNTYv3GNrxHu2SpEYDZxA4vYBWufS5nr0nWm9pV8aKgm7PRHDytyPVvtpuKvYArBw6ABSY2gr4+8vCTSZ4iFcL5m7GNe+rJWqUFeG83JyKJGwBiOM2rAHjvKbc9Z6ELLAHN327LZh7JWebCD8GAQdMla2fni4h8N/n+kf7VvuPAZ1YIhSjelVLVKIN67D5JF6O8Iop1gi4HMiVyOwtYbpx4gqOYdceRtmYdA0YMzm/es+V7YKlvIjCGmSl0+6wZVhtS8QfVG/f095/lvTIxyYSQf/dAC1PUL84DZRhhuYD0hRjiOzGGENaXekTJxhZMw/mnnD3VclYiOcc7nUNAn+gt0L+FOxzgGWshW89JTDh3a7vF0UudWgxxMuPQPIDjdJbAO6Hv9cbM+e7Oe/iAFF/L48Oaq5yiRmk/lPQL/KD/ypJOeDyQFT2d+TtPE1t/22coBoS5l9Dt0ZfiG5p9nsEWLsJ4QnURIMeDWPWfRFXs8XpmX2ZcJPdr6GbyBQcFaCyI5o8PcFZLWvz8LPANltdLUKaQxNU+D6OdBDEnSHutyBXuk2BcpiJ4J2UOSj28ZEILrxNgaVU4cNe9Yn7x5tzmiiylGLs7FpXiRF/xixm8pYEW0LOdMXG0teiR/3TyAnbnoLvuBkS43GcF8i5xIgxCdUagVbUTNuMoOxatZIaU4PlcTazHLio7VyOjYGNnvFnzvlX72eK45GAM=","page_age":"1 days ago"},{"type":"web_search_result","title":"Today in History - September 28","url":"https://www.loc.gov/item/today-in-history/september-28/","encrypted_content":"EskECioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKeaYh/wBbnqTIp4bhoMZK5g1JjjZizJXdwMIjBTp9oBWN0FR7dlYWUEIB2rzCJCLaIzMwh3/llbIEovbN1XNRPGJkCfyLo2W6JLy8EqzAPctNqcR1tz95ZkofXhfhA3FVOu69G+cT7vOpXfOkU2vZZoIHJxH0PboY9igd1gEQx8+oNQ9YiXaEFdzZLLkxcFd0UG/vfG66iNFG3zeZJWpecb5XhRu+Ik5B96hl+czyiWmCu17UO9ATdjro4qrtsYew7G0HKh2aw4ox07+nQz5pIQ59ZrstRzPLogGbfDcU6KdI4ItTj3eEO4ZoNVq444Cg7eNxNVsUNO+Whwdss7bIs4XZ5PByx1yX9zY/xaL+vuhSFA9LKgoRodA2liRahDpHUGpiX+2dY8+qSAUuLLDXLGF6KZJk51It1Lk7S6QotqRBczJT0YPYRRwrv+2ZKcoNzeQ82XXlz5ABv23mCOVLO2tuC4XC8woM8YvB7c1siHq4KKhZ8jzaahUBFGrw6BzgcvuwqYhbqo8gMcLLYt23sZue7YrplFjAqQkcc5hKKAquvRhKgbxSyh5xgWucZSGn+0143CRb0mIMXqjPIfcNNy4rnGagbIsuZnjzyB9EQhXefFe0qzvRxBeHWOVvl0IzHeAZ6C5wwS2nOQib4pfqrS4wPwvYdbaZ00qG1szlyrfNpHQTPZ+4sb9wI6AxX2k+g53kK+qaU6GAZ2GAM=","page_age":"366 days ago"},{"type":"web_search_result","title":"September 28 - Naval History and Heritage Command","url":"https://www.history.navy.mil/today-in-history/september-28.html","encrypted_content":"EoAHCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDp5Ec+Mjm8avCvUARoMgaN4Yx2Pbeq1wXxUIjCVLbz27eEW3OsT9ro8VDGAcPzyL5COYt7VzFQaUHZgFSeYZOc59cBuP2ea/ufMxecqgwaIPba4yo9Dij1ehJvv62NnQsG/+InXuZJIzW8LkukKjOjlSvCDW4u95UL8ubTGorgU2X/DvX/l4sq0cSWnxHZYiuUXXXO/FQVjzBFnGSh+/lyW2qlaPMmBAhr6si0lurYvS08v1g6SIGrhjQH7yKWv5rH8E27KLHWOYaY0IdENGLqmJ0ZEut6iGpkxM1hM0r6w+0PO78/4RFEi7NXPLhc0bL1fQAE/VUhmdsx3U/OhWDvYa8Q2OMdFComkaAF4z/EdinRMBtzCEESXw/3R6AiNWUNjVtmT2P8YObbJeud3hT26iJTDe4eYXGD+CueXRG1dmUdQlwTKkmmejgkxKoXtVsDJgts4egVmSP3QG6COqbsLxdWMCw4cA3uTHNxqxS01cZW0vGoLH/BUVsdmY+9tsUQTpXrnrcB7ND5IkHlzOL1+TyZE9cQ/tiV7Gham5uxBBVo+q2e5g0rVKUzaIjZAcE5X+XqSmxkCnC2k1/HvpJSIreIGFwsweincXstSqjB3S+jymK91Y2Be4R1H3bwQ1wf/T1VG7MTIpYcFg1N7W6zw8I7H3s6b72J02IJPIGeVJvjqQsEQjKoglAUEEqud2HnHxAbF3PC4mil9n11foTfXqVrIVscAh7Y9v2UO1bD26wNv69N27aveSwmsweCPr9w5CBh3rIkwQIjtK3mIhU0KggKUoJTwt4u6XVVGzdV0LggWATOmpC7KNLAGTIEuhCObczGiUZRpic0/Va44lwo24xGPPukAhYznYHOLdAzLG3w8IRNte0wI95XLcpU+HQEloSrHqkfFw+M2phLd2rFDYrpBaEWWjdUMuiGh4hazW5C0yrPjtrxVlYClbjI2/rH6cnq1CqWrH9GqcdpbL/XvWygO99RZDTD6RVG4Twif9T0zRtGLfuQLftjfnBI5Z92t7mUa7S7bxQnBUin+rkj/FH9G2wZxnr9vj2k67mDkqxhO1TNPijynPIMF55d/GG3MNy85NVmO8Gv1mRHu3kHckolHERZwsrpKyX9fTFjXuisYAw==","page_age":null},{"type":"web_search_result","title":"Today in History: September 28","url":"https://historynet.com/today-in-history/september-28/","encrypted_content":"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","page_age":"3286 days ago"},{"type":"web_search_result","title":"September 28: Facts & Historical Events On This Day - The Fact Site","url":"https://www.thefactsite.com/day/september-28/","encrypted_content":"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","page_age":"333 days ago"},{"type":"web_search_result","title":"What Happened on September 28 Major News events That occurred 28th ...","url":"https://www.thepeoplehistory.com/september28th.html","encrypted_content":"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","page_age":"2192 days ago"},{"type":"web_search_result","title":"September 28 in History: Around the World by Air, Penicillin & ...","url":"https://scottwintersblog.com/september-28/","encrypted_content":"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","page_age":"1 days ago"},{"type":"web_search_result","title":"History for September 28 - On-This-Day.com","url":"https://on-this-day.com/onthisday/thedays/alldays/sep28.htm","encrypted_content":"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","page_age":null}],"caller":{"type":"direct"}}              }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll check"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" current date first."}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1              }
+        data: {"type":"content_block_stop","index":1    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}     }
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01QSRuA8Mpo6wiy9BFuz3wjf","name":"bash_code_execution","input":{}}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"On"}               }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" September 28, 1928"}               }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":", "}       }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd\": \"d"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ate -d "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"yesterd"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ay \\\"+%"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"B %d, %"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"Y\\\"\"}"}        }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2             }
+        data: {"type":"content_block_stop","index":2     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"citations":[],"type":"text","text":""}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"- 1928 Sir Alexander Fleming discovers penicillin when he notices a bacteria-killing mold growing in his laboratory; it remained for Howard Florey and...","url":"https://historynet.com/today-in-history/september-28/","title":"Today in History: September 28","encrypted_index":"EpABCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBuhHLrFMT6FKMhPyBoMuOITjxZPwf/G13pyIjD/LMN/aeVAszuvcxls6KPyQHK9tpPdllF3q84/DqwO2B4PLh6J4CKjOjv2eaJB4SgqFG8E90xsi4v1+yTXqNq4Q+CWb9FmGAQ="}}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Alexander Fleming discovered penic"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"illin when he noticed a bacteria-"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"killing mold growing in his laboratory"} }
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01QSRuA8Mpo6wiy9BFuz3wjf","content":{"type":"bash_code_execution_result","stdout":"October 24, 2026\n","stderr":"","return_code":0,"content":[]}}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":3             }
+        data: {"type":"content_block_stop","index":3       }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}            }
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"thinking","thinking":"","signature":""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"."}       }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"thinking_delta","thinking":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"signature_delta","signature":"CAQSuAYKEAgTGAI4AUIIdGhpbmtpbmcSDI41aWjG8H77JIJZIBoMThOflwl6WmsGVfATIjB2VyJ+VQ+a7wW3bsDgkzq1q3ed75CsBFR77+sGRgkJeVIkBJbe9+tMkuJXK6j9/Ssq1QUNjIiulVX9CcWyVQst/DrD7UWwj/G50ggBKdKTYdLB/PR/b0ep5bVtCJtpBoAXIt6uTSAYDQv31T5T7Yh8HDw2jvuBw41fkI7DlQtqFHtoxJTXUtrkTU3kLhXt1jYp7haO4SHjHkiyni+OiDRjnScaz6j68QfvaulLUDcmKNv4escPcmbUApEGsVdr7pL5/MUK1qH2Fta6dL4dj9oO1ZDsiBoWjK8FWXml2AVC9GPckYMgo2GFbwr4lhA4VU1+kJPvY2GhbDdihCm6nZIjzy0pDDH0Df1LdZ54+GoQNtYi9JLa/xMrlG7JFrhqz+0JGIP4sNf+vP8IjA/M0hTqC9rXBq29Q1SZPMxJT1wDY4yPC3qevGkhbKHSGyRW4AL3HBbbuiJgMshy6dUIAK58z49U4IMiZhoePc6F7Obo3OsJOrZJZqmN8S/eVvDGNheLA0VLV0oBSxTUQ2pqwyK8Q7M4kMrwJFn9VRUKtRCtniPHPhhAFGyFXNsQC/gJ2w7d0rKKJABR++34XHZUH/SGfar5j361bt9dmzbjq6xmA73XgRnF75HVCNXPY0w5KVNjEZJboMY6SNnEHfhr1hQsTh0gcWrpbCJXmv5afjf4u84SybqufetjdNJojxLyOx04ICkPE+obU+K1W+IyLRXRb3lTRy0wFyN4EowMHESROtVwa0Zfxa7dxPqI0rUFaUARaEHyXBl1VG0LmCutPncKT+Ybkx9fpMlDmOj2WUHMGO1wkW78fgspSHG56WjRSAhAPerusluDg5TmJv45yXuxiURtHcM/0YzNxnZPGw+u7w+yJ/26i8b0t2UVFYnkQcQ9CkiX2TmN21RS4wZu/i+y5pvZ16617w/KP0MsTcJRj7ACW46RFsdIhkYJFbOKJzENsLwDgR8F67wrg6qe+O06Csct/MC0jGRJ8RR/SPxkERfesq3w6OkbCgRzOd1C3UzEv86boWbrOBgB"}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":4      }
+        data: {"type":"content_block_stop","index":4        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"On"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" October 24, 1945,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" the United Nations Charter"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" came into force after en"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"ough member"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" states ratified it. That is"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" why October"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" 24 is celebrated"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" as United Nations Day."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"\n\nThis"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" is from"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" memory, not"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" a search. The date com"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"es from the sandbox cl"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"ock, so"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" it"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" may not"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" match your local"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" date."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5     }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":11002,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":107,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01T9rZbNDPbJ825Wc7UfScWS","expires_at":"2026-10-25T17:12:10.601561Z"}},"usage":{"input_tokens":12166,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":264,"output_tokens_details":{"thinking_tokens":101},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}   }
 
         event: message_stop
-        data: {"type":"message_stop"         }
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-09-29T18:44:33.258059+00:00
+  recorded_at: 2026-10-25T16:12:12.055401+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -517,11 +790,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "398"
+      - "477"
       content-type:
       - application/json
       host:
@@ -529,20 +802,22 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Briefly mention 1 event that happened the day after tomorrow in history?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: Be very concise.
+          text: >-
+            Be very concise. Before using any tool, write one short sentence saying what
+            you will look up.
         tools:
         - name: web_search
-          type: web_search_20250305
+          type: web_search_20260209
           max_uses: null
           allowed_domains: null
           blocked_domains: null
@@ -558,10 +833,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=95
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-6669e33389df87494e7706dbe2c0f871-7b9dcfe59595128c-01
+      - 00-508814d56c9944d33793c7670076bd19-9acb9b54886b102a-01
       transfer-encoding:
       - chunked
       vary:
@@ -570,120 +847,135 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYE23w9Q7DWzuBBZkyKT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2235,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFS2321vLTUa5q5djcu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":6017,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}    }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" need"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to search for historical"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" events that occurred on"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" October"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 1st ("}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"the day after tomorrow from"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" today,"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" September"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 29"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 2026"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")."}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSzwUKEAgTGAI4AUIIdGhpbmtpbmcSDBArbVha+3yNdrp9WhoMO0vdVABENQIEMI+TIjBqN6mMbKdPVKyQqClB1aZtXwLCauvmpVayIOZn/Pcaol6FCZeLirSFNk4BE8tTsBIq7ASVOulG8fiiqa7EdX2ovZZKrGorS3YS9FwzJ77kh9IXWude06GlOtGsJ+2BXtTG+YlANan41seYTTdnSSbxMie5S8V4oSXoYrEG21J6H3mUB8vhfRpwY2skBGj5WbE6FgUCa2yAZZqXHsbT7C/X2K9b9bgsJFZ90jHKGi2kpIu4UIPIGwD6jZn7NhlmYhzIX0N30T9UW5N/76tyOgh38phaMRV1RDIDtu03x0X1X/EwcYFEMopk+PCkIo6sIe+xLKkdq2xPP5jhEAU5W1y34t5f1iI9LxQ5N5+6tJTdJNsan4lbv26e/8/M4mc1gvvbQtvJk6/zuraniemXwiPUtT+wmeS/8cXfAySxfrq06DulL7j7LTsVB7CUU+eShzZCMJffZSfZy2DJZArS7XlHG4XAZFaWFXZAmaI7JBR+la8jbg6+S8PvRU7hj5GGLJ/TGrO5TrED9+DYRVRYu+6aVv5eKkrTJ+/4ehC0UP5JkFj1P6jF5UC8roGD49jAC9SsttPGMFILfNKF2Yb3kViPhU35gznSp+y0KZjHBNRT4DmH5oRBlJnyhkvnyefA6u+lBgRJn3Es2f7SXc1QoTTV2QK/94Rk6AHFPAwyOGxU9JcQ3PKeR4WeAyDmTA87bp1RztpEuAQIBNje26JzAB7eVn1orhnh7XrVytHnlsBy2McGrHLdBeDr1XDu7XkepSR+HbD20ojNATZc/8VlSAtYL4ifLdzjxI8PqRwBJkiudwGQqmcxWi8BicNAc+ciaNYffy38lHsbuyXs+IqCDVeLHer1BhkKzAovMo/2b28Oq+ZHCtaHOAjju4bcNvGozBgB"}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0  }
+        data: {"type":"content_block_stop","index":0     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01Tp1tddWUh86CqpAqSpY8Hb","name":"web_search","input":{}}    }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ll check today"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"Oct"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s date in"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ober 1 "}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"histori"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"cal eve"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nts\"}"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the sandbox first."}      }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1              }
+        data: {"type":"content_block_stop","index":1}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01Tp1tddWUh86CqpAqSpY8Hb","content":[{"type":"web_search_result","title":"The History Place - This Month in History: October","url":"https://www.historyplace.com/specials/calendar/october.htm","encrypted_content":"EukHCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFpF3rxtcj+XLLHRRhoM8dP8JQihqxsJPHQWIjC1kHxdLCPoLyNjN1nDuQF6YmX3ujRtNKmcF6TGPg7MPxe1e/ArdgpJDydc+fSGcSMq7AZcnX+9iBSjZwBzROFpfDXZKCLaX0DCwvqAbFQI2j7/a3VdYrCtOpc0hG9sjGDwKm5BWqLJcrNvsryZV8J9AHiBwrYny6WH7A1ybYNgoBLXaarI5mF9nc1yeGcQyrNm8gjlTqHqZKxTR5q74Fe0GIznmR763AYF44uzHgrBWse/j43dvZ/OAyDGjSKMyDdw3wLqFdhHpaOAUBIo/ONsZO6so+DzRDAO9ljAb46uZgYTD5YUJh69bZBpfNCJo6akWHSdkEL9XuljUXAVGDQ8RbxjUBr3pLCUupILHbbFws4pQj9Je7eogBWbQjoTdu+rDb+rQDTzcAIldE6SA32lACR3MOztPevZ+0BBqTjaLB7tzz7OU4sKJXoCpp4oaEmIYwSClMd2tmvIJKQo7z+e+0M1/GkburHFE1bx+AAnVJe94d0T/pQbSTsotUH5M1DZX/xZTasbhqD3lmRkjjGL29XoqxvAISJGYgggeNMYJps2iflYRl+VIuLQZe1seerqOlP+9VPTNTyql4buqsq+4xCCZNfFKnpTzMLb6EPdzZNebZ0K6+EpEXZQRLk8+LQslkxgJKMCmBvrU2dgvKD2+pHa9Dwo2G8oMGGCW70kfxEr1dFPvBTdSZjkF1ZKnnGjbL4VFkG1ZWpXLM7mhKolbOLM3RWvRUXtHY0SCFOK04rev0T1X3zO+fnF0pjwY4UkJIj6cM7ondneMO+y1yqzOLFbAfR+c7hC2CsZHda1wqor2JvYZY0udtM+nYkjR/2foZySLd3OqsoEwMm7SClIix39nRCz/tQAqBBX5/xIDMABEk1Ca8vqBayRWNxECWhjXQqx2Rr678KuVLWTyEC1FS08nsyK7IoITObk2ifv81v14Nq6IHIKmDpxrbrFcVRPhD1Uioh/IraURH4GfE8MaDvry9WBj1WirruPJZ6HQ5C5MmTiqkcSchf36CLQhYom3kynCoIHcD0YJNGTOeMykF/zwKpwDqEp/2zGlq72HHsg4FmDw03TfUs+mb1rn+gvUcb39K4f2UD8BkTA0gfAh6KoRRdfwGl2Aqj3Vw5udvwNGaHJfYgRU8cA+5Mj7S6cggvIXeL8tZHP+tNJmuwJDckNAgMzWVfwB8B29wgXNyt8ZqbyeWa2thVfT94lReUJ/SS2ygzK+QmnDcS0ewQYAw==","page_age":null},{"type":"web_search_result","title":"What Happened on October 1","url":"https://www.history.com/this-day-in-history/october-1","encrypted_content":"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","page_age":"5235 days ago"},{"type":"web_search_result","title":"Today in History: October 1","url":"https://historynet.com/today-in-history/october-01/","encrypted_content":"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","page_age":"3310 days ago"},{"type":"web_search_result","title":"On This Day - What Happened on October 1","url":"https://www.britannica.com/on-this-day/October-1","encrypted_content":"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","page_age":"1673 days ago"},{"type":"web_search_result","title":"This Day in History, October 1st: Notable Historical Events on ...","url":"https://baonghean.vn/en/ngay-nay-nam-xua-1-10-cac-su-kien-lich-su-noi-bat-trong-ngay-1-10-10281496.html","encrypted_content":"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","page_age":"729 days ago"},{"type":"web_search_result","title":"October 1: Facts & Historical Events On This Day - The Fact Site","url":"https://www.thefactsite.com/day/october-1/","encrypted_content":"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","page_age":"333 days ago"},{"type":"web_search_result","title":"This Day in History on October 1: People's Republic of China Founded","url":"https://www.riverbender.com/news/details/this-day-in-history-on-october-1-peoples-republic-of-china-founded-86761.cfm","encrypted_content":"EvYKCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDONFGCw51WkPF6Lk+BoMaBmhcfezWU2kDQtpIjBUk291sQmjxdMUIhSDz0XAigIqq/HLYC6CM+4S9r/WUt7mbmxAstRniZCJuFSt+pwq+Qma0foUzKZMC6l/T1Ti4NTEZIvk193nv3nRfzrYG9T/SR+x1KMxhoPQf2n9nRLPLxoA3nC/4BJ6c1e4l+8MLUCGcp1Rd2ZpShoqDeL80Smc4Ehgqxx/Swo18g9n5AqbJNXVMpBWds/ZK/9N+qCJMlAsh+xR1ywbDYleE5ayc6GvfHKALNM/eKIKNcslk/Xd7Oc/0CYzH/w5LAkOds6Gn1IwtPhSmMt34DOkKKCxBr/QKuUNY6GQP+kL+/S8dmjXCONkmOUVo56Tc+9Hxrmjin8nYgL/FteCw7ZSZ4DDvY4LrW3ACgu/lHiwCiMqpcEhCY8RTSnqAJAJoHBFwWGms6lV6CBNfWGQITaEvZSDKWI1qKxW4rTX6BBE7C+yFVRkbxIOT/xswZhc6ieRn/Q8bpq45YQcIFqpuxG72jdd0DYA3Clh2VTnBMuKB9AKFHG3HXP/xRZM/nQ+DKLyQk/P1UonmKecLhMhkAyHA6n9gog+XFO9LsUxYIWQFQ45uH0LIBMQAQKhFmSoMGhgW9yHUpJQQY7lKqdvE3uFDhUzMev5lZ+clygWvQYrLp3r05nVrSQuUKtsmBCmfMyqgNZ7dAfRtgAqeITKRRLTXunVqzZq8Cf8Tfp4SVu9Al0si5hzYMlvmaZI3LZt28Gk3TVWZb7CP3P1uizYUzrAtpqn6io9tvRwKM6b1GG2u7KGAWN+/YzVzAR1s9LvGdH5dxsug9bJr1fD749LFQ6vJNsI24re7cOppO4I+z4TlVjEY+wl2FpNZ/55Al1ApIsTC3p/PeHPFU4g0hud0atYxQsHgI96JFsP9i2yXo9ESSmtOv2G5Vh707WFPFge+lIMg44dDHs0rlK2tcIxt73/5OVRZPWGN0KIntGdrvZSoW9Sow9Xwisp0vjQkE2t/9dWfPW9WVDqddeKpDsK/DN12mf9KYMYWgUmBoz/u5p0EvtIrfpkGJdfirDFhARHylt3aogGen1vqbVdEI8YYG/cNLWh7eBK4Z6lhXGTlmcSE4rSU1Mt0Fc+vRNHb+ikydLOPi47Na7mS0Mk6BjJczgl8MQvG58BEY8BZXGuSd9w035NOire8OMeal1WVchzzSEYw9p0Bj+dKAlLRnHYDRMZmg/BFS+N1X+GK9qsQTZ3YrKn+u05JB/KS1bJDWUaVzrgH9sb8cKLfmRo4L6cUXus8uiLOXdzXupTQGoNs1ATWQjXe9TabUOfM9c5KRir8ALVxpxbhgo7lisLGzpdJuyl+dM/NFOm9RVJbtPcMHml7uY7dtuEYwx0smul63esQgipq+EZ4/vaKhoVRBDqpslZZyo171sKXbQchW1lg9HigH/GtoytVOsq6Gsz0hPZjFJKWtnCHlJKvOw60DNTpqellZPq9IfeNT+VbcHkV4agch1hNvlsxb2WOmZYK4/yZmEIwl/6AdGUMlKjY8rswC9xQv5UATaaAPvtM83k68LoEWG3zV6RiILlv0HNfBX3md5GVuAcbuC0OirBX+oNQ++U5YeBhjnYDLz2pGtrXjWXsO2VI1kvx9iiKWK58KeZj8gcodOnN7Y4OTjANMUJwIuofXXKSAaDz3z8Ol35X48p9VVkKYv9t0SQ16PmWnqXNsFspwm8jGUr9wpQBTn9G+z1P1H8Tzg4HbbrJep5xiC3As9A0mlwBFR/J3N7C5COX2HaIA6vFjXSjiK4HNuMrU33GAM=","page_age":"363 days ago"},{"type":"web_search_result","title":"This Day In History: What Happened On October 1st","url":"https://allthatsinteresting.com/today-in-history/october-1","encrypted_content":"Ep8JCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAYbocvOW12/vTuA4xoMRbj8KhKPcS+At9yiIjBCw44VGrlJv+k5wXxEWXcHBqC22V+ePtr1k3TB5sw7CHftRaVxCL1xAocVSEIb3NAqogji3Aac26wTlfr+VdHvrxY2DQjyioESS0cprEybKmEr+ULFZqUcnEzooSBMIIJ0qXaJsBclXnvAxh5FMByTx+Zf89As3q3DCOOy/33RDpp4wV5WmUx6tvkd1Nwpk1Vp1pP/+yxjyBXa7gvO2oeGQpupoq+PRB8yjCPVpYE0IlXTdsA6esuF4ljQAFdKQkbxdx13eiNxigh8AxOaRfdpzjKvzKqiaRFwSHlPp2NgPNPiUFh/G2ts5nTcThtRpWRoPVwzCor2u2srpKz4fhS+WUhZqxYtGZkajG9NMUGzcGPW7/6h+05DSxolV5A1qVmluliVJXPzyykt3Ir4StBoMcVV11pKYZ8muhKYOJz35Wdz3kTRv2cDHLBsvEv1WxblYGsul+6cE7an9lkHvNhr474Hdn+UHOCI+N+NDl0IWLnU3KA3JmV4to4ILzSNIIselgQkDkutgmTj8yFzNSma7n82QsiMa+aIUby2UknP5+KOqk07IQAQJCsy4FCtJugTozj/w73aTK/7hd3MTONt+t4PsPvFaf9lUWyqa1iaJLEcr3YVIDz0I8kyV3UDoRsINGXVThFcyS786lV47Sse90dcWEnR61i2rwwjJVEYSrVhc9HOjVzz2Im6a8WgX7IQEKctHIlptIiS+x2uX2TryY0EQIF3f5M5PLgSIMb58j380b0xPV9DDsr85Rx+s14q8JgixEgUnNwIKtvnYMk2oAJsbX9e2CA9EUFb0rgjE+H7W5AWtQ4vX/Wa5FZGDT7zmP1Mrx/6ZDSanaQTF0V81Rme3iroV6jYh48tyiMfzmMf6SsmOQQ0bTEojtqugqXrsPixSbO9pjjMw7rFeCxvyAF3Jn+ESa3D70F0whhBU0RKy8TbmHtQgVZfPcHuvNF/If3v+I+HrwFSAoovcLuVtggKHqCBo+K11qzZvmp7O+jxs2rr7ntFKjmJVB0XhZZYGAiaAKxvrnjbrNOXZN5V1uJloUHKYnyLQKt/F9y95fkHj5yX5P7a2TVl7DAjuHlQjurLhXYtO47a0WpV6Tg001Z2C85fmSgA5OdKbwnVZCmLnzjKIMYni4rnvGuSx4ZEI2YCzyCFbOkHzzdu/HXYHYl2WziAdA8JxGqUMA1hOxlGyxPJJpLcs8zVvn0CjWvlKE435InVCH8ZqyhiRGP8yn9FuZ0J8DMz+MHKhYLO/rbtikeDTudW0miylsxPGITplrL9WN5SPjmdgrLGkYc/+59PX+zcbHI5Dn2DCUO8nO/dnuIda80J+pEn8iJyoxkkbFxJtSryhsUUWUm8NegM8dHcM6Ah6qx099NEJowjMVsw5crl81tTI3DGxS5xNvIFAWKOv3VfvsM3p4cOoSFbJ0xYgRmkB/V8M32CQcV0xASMMPS4z+5sLkD5DDu5lWYlmDhdIBgD","page_age":"297 days ago"},{"type":"web_search_result","title":"October 1 - Naval History and Heritage Command","url":"https://www.history.navy.mil/today-in-history/october-1.html","encrypted_content":"Eq8HCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGf1UfUMCie5Yz+MDBoMH2pz+TOCrSArRDdzIjCWyf+DCuWkJQiw2hu3lvaqqwNTzYMKC1GRsRmIwck5vxei7jAUMadYLck1BGcaByMqsgaquXm+eRqL9hgLefipHk14cFI4cekdMPcxmbJxRkZeUhmxp/3ZEevvZzX3wSAdiLwY5yMA8t0DV5cDdaLmCfF+EcyxPpy7am1WazUZAXVSYweKtgtFVV5/AZU/SF0fmWOJnwV1RYCs557lv961eBpjdBueCl4tNj6esAhh23MiB/IXW692g9ex8ID1Fn5neXfMgPj0gAwbLhjA7kUK2bPVT1A/DUHmqygw89AQ05aaeNSyzDSHkipQDX+DxKPMG5t7wO7ug28tCCCHeR7VaT3skJXem/rM90/f6WfWDHgkeG6d/9UH66Ozqtgd3CwbezOVdu5HXqIhlUkE5Hx6+iQBy7owjAcfJJU7qFVBIEPehqjadVaJWIOxl0Ti6OOKsRWQek4VXPVjsiFAS70Phe6EqOHYMhZO2QGKqCam0sX0rgXZEjU19Pu5vV25o+cW2IqIWmPlOWNXV4qtcT2LGZcTyXKPXI4PS5g4m53AEXRVdslpwlLTm44poCZ38lUbgj3I/FXoiyyg0Ds0jn29QabrBGQiTJYtQ0TTNfKtDswQmLUN+3+lK6o5F8iFFNMhnu4Gp413Res8Xqg4H17W5K+uP+2cVlbyX2nL3a/wpK0D7rB9lwivmnUXc+fZd08pANKSOmhMeG4yQFq0ceA/hcCVkF/5vNlrSV0ZgQ08BAp6RrhG/qyYtPWVY20mJ47slX/ajxxrj+L2T+pzZX0py9+vBcRZzrzXguzMIS4HtjVb5LhdXmhw0A4TuRo6+1ZGCneFz035p79WmPRzEKNl92gRo9fR1UsQpa3VpQTnfRgZwhjqCIe9tjt0OrvH95Se/+1wdlyKYadY36GECkTgrPkLuUm9pTKZINkYWCPMNtWvN+1sYJ4lZVfIcr8FpECILh/qHQ9IsoJ6kuG7DzciHAiflHEmoEKbjEAROXwC+AoJvHTNWsEQvYNbBhMvDaJmP5MdbI+JMn3dAakZXNtxLoXHStpOfsFMumJeEEQEtsdS1Dwp8gUa+beHtis1hU3K5dXA5iqSeNiWjiGTnH6bySLCF16o91ZXiCMhEvcwDv5SgG6Jd33RR329+DlrTdl8lQQFPBgD","page_age":null},{"type":"web_search_result","title":"October 1929","url":"https://en.wikipedia.org/wiki/October_1929","encrypted_content":"EugGCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDG+mJini54DlaZrl4hoMfGEwtWh64bHwyQjAIjA+vmeZstCP1hQ0Z9BahmrzigaEqA3OnD40KVSioKtTe9peGMh963bjov625y67rQAq6wWuoVqfHFOGeqp9rW7X6vX7AKNOq6XnI+4FgN57eBzl7LO3/tariA/6DgM2wiqUTKfS1eR+4/v1SBlNouDuY0qvoIs0ScraQwoTX9Lk1nCuNgxyzSS+Rr21/1iOykJ2FaxRcREyIt5hYNoftAqPmO4Zeg7n7jIgJ/s6scWAt6mBhwHUQx2w2sD+4ZBvEwu9MOp1iGtuu9nUedYqbVH+044aPsmuxX29barVvmaOPZWigVZkxxMD77Az1cBSdr3uADovxwMPnbF0IRFDkBSb99XV2XlDYHk4b5/f1Ys6QXOm6JyogkG0J5Bfw+UrGHh/gFPjhWFaKR2CjFWLX3zQlDCOjFjyX3pm+QbAOnso47/nGw7wffEaZIXLmoOOBvGGesy62qoSYd9jpuEVpstSiXwcMNAMowZXYyKMWXLIrIjjwXQzZQFxgXRK4W9jUlzHQTLWTqAhm3ercQibUXYV3zP4jSQDBhpr9EHLqYFK/EJRCmatE3zW/tZY8MWFsLyovLRKArqdcBWQx8C0OJ0GJTxsEX1kPMnxdq2r17r1G1t8VVwl8b5e/bim479WMoEaXj3Sro8nDcgVvhE32yu7FuCh3cJgOJ/nbxtkH1Lh7WLGpyfliGAGWpP4SIySCoiyNUheTMdOofX9GtjraFK1dhoqSNwAunKdIiN6iCBFmGCNFqQVvNAEc4ziI/qQMe0IDYYV2tevglpCZlBbACV6fWYiYBfcuXLwwqreuUXmiwGL1LSEmIgMTRuJpnTlVBiHocbfjZBHzUwcKv07Dvp6XCgWtBBniu7gpekDFlHY1Z6+hgEq99oJWOYDLCEDV0QtgfF1m1rNiDZeotjXqVMlcoFpzSPvVm7QSejw2kQMrrnk/S9odLiefddw074ob9ZJcxX+zl81d8B9rVzi6fhT8fy0JsYtOSNhBfsYU/ntmwdUakI9XyQ4+kX9h5RpTAZf5qXqXEeMgl1w5LRExyPSX8Az58LiYJJU2hYZ7rAYAw==","page_age":null}],"caller":{"type":"direct"}} }
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01U7mXBeAn6qTiqFLzaCAXXh","name":"bash_code_execution","input":{}}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd\": \"d"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ate -d "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"+2 da"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ys\\\" \\\""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"+%B %d,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" %Y\\\"\"}"}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2               }
+        data: {"type":"content_block_stop","index":2 }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"citations":[],"type":"text","text":""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"October 1, 1949 - The People's Republic of China was founded with Mao Zedong as Chairman. ","url":"https://www.historyplace.com/specials/calendar/october.htm","title":"The History Place - This Month in History: October","encrypted_index":"Eo8BCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKQemFHh7sag5BSGZBoMknb+tiuD9kOYhRemIjC0tiyQamMALWL7qiTp/IJk4nH1My1Yret1YlyMJ5TpVIDKUyI8HUISb+W8/9sZwkIqE2zeXhCUK5qH0k95LxuE81jdfgUYBA=="}} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"On"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" October 1, 1949"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":", the People"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"'s Republic of China was founded with"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Mao Zedong as Chairman"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"."}              }
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01U7mXBeAn6qTiqFLzaCAXXh","content":{"type":"bash_code_execution_result","stdout":"October 27, 2026\n","stderr":"","return_code":0,"content":[]}}      }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":3               }
 
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"thinking","thinking":"","signature":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"thinking_delta","thinking":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"signature_delta","signature":"CAQSjAYKEAgTGAI4AUIIdGhpbmtpbmcSDCdUVK25zJwI/KEzrhoMP5tYq/Uo6GqgMnYdIjBAjCkqi6ko/WZIY8EBE6bGKOdO45LCGYivCddkydzLPEZ6FzW0+poYm7EEyUPYzQYqqQUuzm32/8655yAotp7/8xzvMwFnkeu5cQSxI1nQdbgHAvlC8k1viLGBdcyvYKwp74aCoVix7u36KS9hILBaeAwCKvmFjLDLPmZsjj6ztW9vb4lP8Jd4Fu2v6s1CHP4SJq3xHRMQj17LbfLX62NGOO+UV8Vd6BTQ9Lc65lcSndmtbharUa/Xfb6XzlI2OouPsxl8L6UctRqm4ejpubQ++la3G5Eztl8lDrmKI+6ru0QmYDxyrZfhl9LNNZefrRu5p6K1j98BOpOeGv4LwM309tzPw6m9agqxXj5o0E/0CtVnL9e+9W2QzYQ0bXvTdfXNyIFoC5xONNfOjWMhmX0nj9fQlB1eGZu06JtLLFQeDk4qsuFYhacoud+B9dqqksAbtSuyrs2TAHZ6d3jTC9/zoA6hv08Ti7k/OFtyJkyOMgiP73lzQ7vnI6dcCwhsWrApSM7/dmWk4WQN3qg8tyXSMs1C0kDNR4YErOnAtclnNZZYJJr60crZRh/MIMVGV6C6w505BXxmgzTiKvzxSkv/6xdFr9LXEzl8aO2nD7AcceFFYJ1WySCkHjjkL3af3cJ0GS0GxBjW1ILvty849+8+G6/A6WftKkipnvhVZI+THFLVSXORjHE6gDUePC8gTYGU8ITdSaH5fGPl8PleAZ8Mv0hxB3uZIq93AD9t7NcjXCg+6WXxv7pR27+Ge/yj/inj2kiYcWsYOeBxMeEwk20GuUVfmBDsbPQtUfRPkwcpPp5iUtfVYrzSmzoMuRae156mYgPC3dfAErsqY2IIID6J0YvQOHE5rLz7vMlz1rAp1b4/nWMaU5uZZ6Rre5sI1Li0BEQ0EquOm26J8hyDMa+1ctGA6718KHPW/rGnqvVyXgJJQN2wGqTwMLqyLXF6IVZ8/JKRwpYSzuWLJhkYAQ=="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"The day after t"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"omorrow is October 27"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":". On that"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" date in"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" 1904, the New York City"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" subway opened, with"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" service"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" running"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" from City"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":" Hall to "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"145"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"th Street."}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5}
+
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":11138,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":136,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}     }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01EYth1LVsdKoKMiSKmgN2Ar","expires_at":"2026-10-25T17:12:14.468678Z"}},"usage":{"input_tokens":12181,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":215,"output_tokens_details":{"thinking_tokens":82},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}  }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-09-29T18:44:37.605416+00:00
+  recorded_at: 2026-10-25T16:12:15.696487+00:00

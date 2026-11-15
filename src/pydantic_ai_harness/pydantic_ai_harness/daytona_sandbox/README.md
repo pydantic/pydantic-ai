@@ -6,21 +6,40 @@ Run your agent's commands and file edits in an isolated [Daytona](https://www.da
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Daytona Sandbox: your agent's commands run in a Daytona cloud sandbox
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. DaytonaSandbox's get_workspace hands the run a Daytona cloud sandbox as ctx.workspace over the Daytona API with DAYTONA_API_KEY. It stops when idle, destroy(ref) deletes it, and later runs reattach with the WorkspaceRef in the message history or result.workspace.ref, starting it if stopped.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        daytona["DaytonaSandbox()<br/>get_workspace hands<br/>the run the sandbox"]:::capability
+    end
+    sandbox["Daytona cloud sandbox<br/>stops when idle,<br/>deleted by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| daytona
+    ref -.->|"a later run reattaches,<br/>starting it if stopped"| daytona
+    daytona <-->|"Daytona API,<br/>DAYTONA_API_KEY"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[daytona,anthropic]"
+uv add "pydantic-ai-harness[coder,daytona,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[daytona,anthropic]"
+pip install "pydantic-ai-harness[coder,daytona,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -59,12 +78,12 @@ The follow-up run finds the sandbox in the message history and works in it, so t
 
 ## Choose the tools
 
-For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/) instead of `Coder`, or write your own tool that runs in the sandbox:
+For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../file_system/) instead of `Coder`, or write your own tool that runs in the sandbox:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Shell(), FileSystem()])
@@ -160,6 +179,8 @@ A failed run returns no result, so there is no ref to store. To delete its sandb
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -172,7 +193,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def delete_failed_run_sandbox(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await DaytonaSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the delete short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await DaytonaSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
