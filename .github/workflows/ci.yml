@@ -1748,6 +1748,53 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
+  # `WindowsWorkspaceBackend` and the PowerShell side of the harness's file and shell tools run only on
+  # Windows, and every other test job runs on Linux. Their coverage joins the rest in the `coverage` job.
+  test-windows-workspace:
+    name: test Windows workspace
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.windows-workspace
+      # See `test-clai2-clipboard`: no Git-sourced dependency is installed here.
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: windows-workspace
+
+      - run: mkdir .coverage
+
+      # `grep` and `list_files` run `rg`; the tests cover both its presence and its absence.
+      - run: choco install ripgrep --no-progress -y
+
+      - run: uv sync --only-dev
+
+      - name: run tests
+        run: uv run --package pydantic-clai2 coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --package pydantic-clai2 coverage combine
+
+      - name: store coverage files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-windows-workspace
+          path: .coverage
+          include-hidden-files: true
+
   test-clai2-web:
     name: test clai2 web UI
     needs: classify
@@ -2087,7 +2134,17 @@ jobs:
 
   coverage:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
+    needs:
+      [
+        classify,
+        test,
+        test-all-extras,
+        test-durable-exec,
+        test-lowest-versions,
+        test-fastmcp-4,
+        test-harness-browser-use,
+        test-windows-workspace,
+      ]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
     # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
     # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
@@ -2157,6 +2214,7 @@ jobs:
       - test-fastmcp-4
       - test-harness-browser-use
       - test-clai2-clipboard
+      - test-windows-workspace
       - test-clai2-web
       - harness-integration-changes
       - harness-localstack-integration
@@ -2187,12 +2245,12 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-windows-workspace,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
               && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
