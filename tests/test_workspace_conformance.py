@@ -48,7 +48,7 @@ def spawn_grace_beyond_any_stall(monkeypatch: pytest.MonkeyPatch) -> None:
     `TimeoutError: local workspace subprocess operation exceeded its grace period` instead. The grace runs in a
     shielded scope that no test timeout can cut short, so it is the hang guard's `READINESS_WAIT_TIMEOUT`, not longer.
     """
-    monkeypatch.setattr(local_module, '_SPAWN_GRACE', READINESS_WAIT_TIMEOUT)
+    monkeypatch.setattr(host_module, '_SPAWN_GRACE', READINESS_WAIT_TIMEOUT)
 
 
 def _local_destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:
