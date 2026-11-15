@@ -1550,19 +1550,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
-
-        # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
-        wire_thinking = _effective_thinking(merged, merged.get('anthropic_thinking') or OMIT)
-        if (
-            profile.get('anthropic_disallows_budget_thinking', False)
-            and not isinstance(wire_thinking, Omit)
-            and wire_thinking.get('type') == 'enabled'
-        ):
-            raise UserError(
-                f'{self.model_name!r} does not support '
-                "`anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`. "
-                "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
-            )
+        self._validate_budget_thinking(merged)
 
         # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
         # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
@@ -1596,6 +1584,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ):
             prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _validate_budget_thinking(self, model_settings: ModelSettings) -> None:
+        """Reject budget-based thinking on a model that requires adaptive thinking and returns a 400 for it.
+
+        Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+        """
+        if not self.profile.get('anthropic_disallows_budget_thinking', False):
+            return
+        thinking = _effective_thinking(model_settings, model_settings.get('anthropic_thinking') or OMIT)
+        if isinstance(thinking, Omit) or thinking.get('type') != 'enabled':
+            return
+        setting = (
+            "`extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`, which overrides `anthropic_thinking`"
+            if _extra_body_thinking(model_settings) is not None
+            else "`anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`"
+        )
+        raise UserError(
+            f'{self.model_name!r} does not support {setting}. '
+            "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+        )
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}

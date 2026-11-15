@@ -6961,15 +6961,23 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('output_config') is OMIT
 
 
+_TYPED_BUDGET_THINKING = "`anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`"
+_EXTRA_BODY_BUDGET_THINKING = (
+    "`extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`, which overrides `anthropic_thinking`"
+)
+
+
 @pytest.mark.parametrize(
-    'settings',
+    ('settings', 'rejected'),
     [
         pytest.param(
             AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+            _TYPED_BUDGET_THINKING,
             id='anthropic_thinking',
         ),
         pytest.param(
             AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
+            _EXTRA_BODY_BUDGET_THINKING,
             id='extra_body',
         ),
         pytest.param(
@@ -6977,13 +6985,14 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
                 anthropic_thinking={'type': 'adaptive'},
                 extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             ),
+            _EXTRA_BODY_BUDGET_THINKING,
             id='extra_body_over_adaptive',
         ),
     ],
 )
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5'])
 async def test_anthropic_opus_47_rejects_budget_thinking(
-    allow_model_requests: None, model_name: str, settings: AnthropicModelSettings
+    allow_model_requests: None, model_name: str, settings: AnthropicModelSettings, rejected: str
 ):
     """Claude Opus 4.7 and later reject budget-based thinking with a 400, so we raise before sending.
 
@@ -6997,8 +7006,12 @@ async def test_anthropic_opus_47_rejects_budget_thinking(
     )
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
 
-    with pytest.raises(UserError, match=f"'{model_name}' does not support"):
+    with pytest.raises(UserError) as exc_info:
         await Agent(m).run('What is 2+2?')
+    assert str(exc_info.value) == (
+        f"'{model_name}' does not support {rejected}. "
+        "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+    )
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
     # A caller's `extra_body` thinking is what reaches the wire, so it decides.
