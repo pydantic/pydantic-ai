@@ -326,7 +326,7 @@ _(This example is complete, it can be run "as is")_
 
 For text that changes during a run, such as state a tool updates, return a callable from `get_instructions()` that returns `InstructionPart(..., name=..., on_change='append')`, as in the [current page example](../agent.md#appending-instruction-changes), or build the capability on [`Capability`][pydantic_ai.capabilities.Capability] and register the function with [`@capability.instructions(name=..., on_change='append')`][pydantic_ai.capabilities.Capability.instructions].
 
-The agent collects each instruction a capability returns as a [`SourcedInstruction`][pydantic_ai.capabilities.SourcedInstruction], which keeps the instruction as returned along with the name and id it's addressed by. Annotate `get_instructions()` with [`AgentInstructions`][pydantic_ai.capabilities.AgentInstructions], and use `SourcedInstruction` only to read what was collected, for example in a test.
+Annotate `get_instructions()` with [`AgentInstructions`][pydantic_ai.capabilities.AgentInstructions]. The agent collects each instruction a capability returns as a [`SourcedInstruction`][pydantic_ai.capabilities.SourcedInstruction], which keeps the instruction as returned along with the name and id it's addressed by.
 
 ## Framing data in prompt text
 
