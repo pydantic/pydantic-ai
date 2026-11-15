@@ -769,8 +769,8 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI Decisions
     * Google Decisions
 
-    On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
-    Z.AI), the model's own derived keys overwrite yours when the keys collide.
+    On the models that build their own `extra_body` (Groq, and the OpenAI-derived Cerebras, OpenRouter,
+    Snowflake and Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
 
 

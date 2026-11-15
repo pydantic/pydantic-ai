@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
@@ -53,7 +53,6 @@ from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.profiles.groq import GroqModelProfile
-from pydantic_ai.settings import ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -61,7 +60,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_im
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq
+    from groq import APIConnectionError, APIError, APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -119,7 +118,6 @@ class MockGroq:
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     base_url: str = 'https://api.groq.com'
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     @cached_property
     def chat(self) -> Any:
@@ -138,9 +136,8 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **kwargs: Any
+        self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
-        self.chat_completion_kwargs.append(kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -6437,65 +6434,74 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
 
 
-def get_mock_chat_completion_kwargs(mock_client: AsyncGroq) -> list[dict[str, Any]]:
-    return cast(MockGroq, mock_client).chat_completion_kwargs
+@dataclass(frozen=True)
+class ServiceTierCase:
+    id: str
+    settings: GroqModelSettings
+    sent: dict[str, object]
+    """The request-body keys the tier merge writes, plus the user's own `extra_body` key."""
+    served_tier: str = 'on_demand'
 
 
-@pytest.mark.parametrize(
-    ('service_tier', 'expected'),
-    [
-        ('auto', 'auto'),
-        ('default', 'on_demand'),
-        ('flex', 'flex'),
-        ('priority', None),  # no Groq equivalent: the tier is omitted
-    ],
-)
-async def test_groq_unified_service_tier_mapped_values(
-    allow_model_requests: None,
-    service_tier: ServiceTier,
-    expected: str | None,
-) -> None:
-    """The unified `service_tier` is mapped onto Groq's tiers; `priority` has no Groq equivalent."""
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockGroq.create_mock(c)
-    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(model)
-
-    await agent.run('hello', model_settings=GroqModelSettings(service_tier=service_tier))
-
-    request = get_mock_chat_completion_kwargs(mock_client)[0]
-    if expected is None:
-        assert request['service_tier'] is NOT_GIVEN
-    else:
-        assert request['service_tier'] == expected
+SERVICE_TIER_CASES = [
+    ServiceTierCase(id='unified-auto', settings={'service_tier': 'auto'}, sent={'service_tier': 'auto'}),
+    ServiceTierCase(id='unified-default', settings={'service_tier': 'default'}, sent={'service_tier': 'on_demand'}),
+    ServiceTierCase(
+        id='unified-flex', settings={'service_tier': 'flex'}, sent={'service_tier': 'flex'}, served_tier='flex'
+    ),
+    ServiceTierCase(id='unified-priority-omitted', settings={'service_tier': 'priority'}, sent={}),
+    ServiceTierCase(
+        id='groq-performance', settings={'groq_service_tier': 'performance'}, sent={'service_tier': 'performance'}
+    ),
+    ServiceTierCase(
+        id='groq-wins-over-unified',
+        settings={'service_tier': 'flex', 'groq_service_tier': 'on_demand'},
+        sent={'service_tier': 'on_demand'},
+    ),
+    ServiceTierCase(
+        id='merged-with-extra-body-and-reasoning-effort',
+        settings={'service_tier': 'flex', 'groq_reasoning_effort': 'low', 'extra_body': {'user': 'u1'}},
+        sent={'service_tier': 'flex', 'reasoning_effort': 'low', 'user': 'u1'},
+        served_tier='flex',
+    ),
+]
 
 
-async def test_groq_service_tier_override_takes_precedence(allow_model_requests: None) -> None:
-    """`groq_service_tier` takes precedence over the unified `service_tier` mapping."""
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockGroq.create_mock(c)
-    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(model)
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in SERVICE_TIER_CASES])
+async def test_service_tier(allow_model_requests: None, case: ServiceTierCase) -> None:
+    """The tier rides in the request body, and the non-streamed response's tier lands in `provider_details`.
 
-    await agent.run(
-        'hello',
-        model_settings=GroqModelSettings(service_tier='flex', groq_service_tier='performance'),
-    )
+    A mock transport stands in for a cassette: no Groq key was available to record one, and the claim is the
+    outgoing request body, which the transport captures as sent.
+    https://github.com/pydantic/pydantic-ai/issues/12072
+    """
+    bodies: list[dict[str, object]] = []
 
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'performance'
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                'id': '123',
+                'object': 'chat.completion',
+                'created': 1704067200,
+                'model': 'llama-3.3-70b-versatile',
+                'choices': [
+                    {'index': 0, 'message': {'role': 'assistant', 'content': 'world'}, 'finish_reason': 'stop'}
+                ],
+                'service_tier': case.served_tier,
+            },
+        )
 
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AsyncGroq(api_key='test', base_url='http://localhost', max_retries=0, http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client)))
+        result = await agent.run('hello', model_settings=case.settings)
 
-async def test_groq_service_tier_comes_from_response(allow_model_requests: None) -> None:
-    """The non-streamed response's `service_tier` is surfaced in `provider_details`."""
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockGroq.create_mock(c.model_copy(update={'service_tier': 'on_demand'}))
-    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(model)
-
-    result = await agent.run('hello')
-
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'}
-    )
+    [body] = bodies
+    assert {key: body[key] for key in ('service_tier', 'reasoning_effort', 'user') if key in body} == case.sent
+    assert result.response.provider_details == {
+        'finish_reason': 'stop',
+        'timestamp': IsDatetime(),
+        'service_tier': case.served_tier,
+    }

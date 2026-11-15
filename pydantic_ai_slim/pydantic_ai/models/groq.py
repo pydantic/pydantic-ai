@@ -53,7 +53,7 @@ from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ServiceTier
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -207,23 +207,12 @@ class GroqModelSettings(ModelSettings, total=False):
     """
 
 
-def _resolve_service_tier(
-    model_settings: GroqModelSettings,
-) -> Literal['auto', 'on_demand', 'flex', 'performance'] | NotGiven:
-    """Resolve the tier to request: `groq_service_tier` takes precedence over the unified `service_tier`."""
-    groq_service_tier = model_settings.get('groq_service_tier')
-    if groq_service_tier is not None:
-        return groq_service_tier
-    # Unified `priority` is omitted: Groq's `performance` tier is enterprise-only, reachable
-    # only via `groq_service_tier` (not typed in the SDK's request literal, hence the cast).
-    unified_tier = model_settings.get('service_tier')
-    if unified_tier == 'auto':
-        return 'auto'
-    elif unified_tier == 'default':
-        return 'on_demand'
-    elif unified_tier == 'flex':
-        return 'flex'
-    return NOT_GIVEN
+# Unified `'priority'` is omitted: Groq's `'performance'` tier is enterprise-only, reachable only via `groq_service_tier`.
+_UNIFIED_TO_GROQ_SERVICE_TIER: dict[ServiceTier, Literal['auto', 'on_demand', 'flex']] = {
+    'auto': 'auto',
+    'default': 'on_demand',
+    'flex': 'flex',
+}
 
 
 @dataclass(init=False)
@@ -495,15 +484,24 @@ class GroqModel(Model[AsyncGroq]):
             'groq_supports_reasoning_disable', False
         )
 
-        extra_body = model_settings.get('extra_body')
+        # `reasoning_effort` isn't a named param in the Groq SDK, and the SDK's `service_tier` param lacks
+        # `'performance'` at our minimum SDK version, so both are passed via `extra_body`.
+        body_params: dict[str, object] = {}
         effort = self._reasoning_effort(model_settings, model_request_parameters, disable_via_effort)
         if effort is not None:
-            # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
+            body_params['reasoning_effort'] = effort
+        service_tier = model_settings.get('groq_service_tier')
+        if service_tier is None and (unified_service_tier := model_settings.get('service_tier')) is not None:
+            service_tier = _UNIFIED_TO_GROQ_SERVICE_TIER.get(unified_service_tier)
+        if service_tier is not None:
+            body_params['service_tier'] = service_tier
+        extra_body = model_settings.get('extra_body')
+        if body_params:
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
             merged_extra_body: dict[str, object] = {}
             if isinstance(extra_body, Mapping):
                 merged_extra_body.update(extra_body)  # pyright: ignore[reportUnknownArgumentType]
-            merged_extra_body['reasoning_effort'] = effort
+            merged_extra_body.update(body_params)
             extra_body = merged_extra_body
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
@@ -526,7 +524,6 @@ class GroqModel(Model[AsyncGroq]):
                 reasoning_format=self._translate_thinking(model_settings, model_request_parameters, disable_via_effort),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-                service_tier=cast(Any, _resolve_service_tier(model_settings)),
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 search_settings=search_settings,
@@ -589,7 +586,8 @@ class GroqModel(Model[AsyncGroq]):
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created)
-        if service_tier := getattr(response, 'service_tier', None):
+        # `ChatCompletion` declares no `service_tier` field at our minimum SDK version, so it arrives as an extra.
+        if isinstance(service_tier := getattr(response, 'service_tier', None), str):
             provider_details['service_tier'] = service_tier
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
