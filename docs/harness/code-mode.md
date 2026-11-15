@@ -265,8 +265,8 @@ When `CodeMode` runs under durable execution, such as a Temporal or DBOS workflo
 `max_duration_seconds`, including an explicit override. `run_code` is replayed in workflow code, so
 measuring elapsed time there could make replay choose a different path from the recorded workflow. The
 memory and suspension caps still apply. Put time-bounded work behind a durable step or activity instead.
-When a replay does diverge from the recorded workflow, the engine's error for it, such as DBOS's
-`DBOSUnexpectedStepError`, fails the run as it does for a direct tool call. A snippet cannot catch it.
+Under DBOS, a replay that diverges from the recorded steps fails the run with `DBOSUnexpectedStepError`, as
+it does for a direct tool call, even when the snippet catches exceptions.
 
 ## Concurrent tool calls
 

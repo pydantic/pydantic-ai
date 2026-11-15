@@ -225,7 +225,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except under durable execution. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution
@@ -233,8 +233,10 @@ CodeMode(
 `CodeMode` works next to `TemporalDurability()` (install `pydantic-ai-harness[codemode,temporal]`), but
 `run_code` executes in workflow code and is re-run on replay. Keep snippets deterministic: put external
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
-Inside a Temporal workflow `max_duration_seconds` is disabled (memory and suspension caps still apply) and a
-workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
+Under any durable engine `max_duration_seconds` is disabled (memory and suspension caps still apply), because
+an elapsed timer could make a replay take a different path. Inside a Temporal workflow a workflow task that does
+not yield within 2 seconds fails, so move heavy computation into a tool. Under DBOS, a replay that diverges from
+the recorded steps fails the run with `DBOSUnexpectedStepError`, even inside a snippet's `try`/`except`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

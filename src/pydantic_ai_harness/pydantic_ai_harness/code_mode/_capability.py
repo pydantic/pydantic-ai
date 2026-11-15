@@ -188,7 +188,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
     A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
-    Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
+    Under durable execution, only the transport deadline applies. Tools, mounts, `os_access`, and print
     output stay in your process.
     """
 
