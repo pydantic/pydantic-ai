@@ -75,7 +75,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.profiles.grok import GrokModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
@@ -105,6 +105,7 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.service_tier import service_tier_to_proto
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
@@ -1897,32 +1898,52 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
-async def test_service_tier_priority_and_default_forwarded(allow_model_requests: None):
-    """Test that 'default' and 'priority' service tiers are passed through to the xAI SDK."""
-    for service_tier in ('priority', 'default'):
-        response = create_response(content='test response')
-        mock_client = MockXai.create_mock([response])
-        m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-        agent = Agent(m, model_settings=ModelSettings(service_tier=service_tier))
-        await agent.run('Hello')
+@pytest.mark.parametrize(
+    'service_tier,expected',
+    [('default', 'default'), ('priority', 'priority'), ('auto', None), ('flex', None)],
+)
+async def test_xai_service_tier(allow_model_requests: None, service_tier: ServiceTier, expected: str | None):
+    """`default` and `priority` reach `chat.create`; `auto` and `flex` have no xAI tier and are omitted."""
+    mock_client = MockXai.create_mock([create_response(content='test response')])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(service_tier=service_tier))
 
-        # Check that the service tier was passed to the xAI SDK
-        kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-        assert kwargs['service_tier'] == service_tier
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs.get('service_tier') == expected
 
 
-async def test_service_tier_auto_and_flex_stay_unsupported(allow_model_requests: None):
-    """Test that 'auto' and 'flex' service tiers are silently dropped (no xAI gRPC equivalent)."""
-    for service_tier in ('auto', 'flex'):
-        response = create_response(content='test response')
-        mock_client = MockXai.create_mock([response])
-        m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-        agent = Agent(m, model_settings=ModelSettings(service_tier=service_tier))
-        await agent.run('Hello')
+@pytest.mark.parametrize('served_tier', ['default', 'priority'])
+async def test_xai_service_tier_provider_details(
+    allow_model_requests: None, served_tier: Literal['default', 'priority']
+):
+    """The tier xAI reports serving the response at lands in `provider_details`.
 
-        # The service tier has no xAI equivalent and is not forwarded to the SDK
-        kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-        assert 'service_tier' not in kwargs
+    A response with no tier set has no `provider_details`, as every other test here shows.
+    """
+    response = create_response(content='test response')
+    response.proto.service_tier = service_tier_to_proto(served_tier)
+    mock_client = MockXai.create_mock([response])
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    result = await agent.run('Hello')
+
+    assert message(result.all_messages(), ModelResponse, index=-1).provider_details == {'service_tier': served_tier}
+
+
+async def test_xai_stream_service_tier_provider_details(allow_model_requests: None):
+    """A streamed response records the tier xAI reports on the accumulated response."""
+    first_response, first_chunk = get_grok_text_chunk('Hello', finish_reason='')
+    final_response, final_chunk = get_grok_text_chunk(' world')
+    final_response.proto.service_tier = usage_pb2.SERVICE_TIER_PRIORITY
+    mock_client = MockXai.create_mock_stream([[(first_response, first_chunk), (final_response, final_chunk)]])
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    async with agent.run_stream('Hello') as result:
+        await result.get_output()
+
+    assert message(result.all_messages(), ModelResponse, index=-1).provider_details == {'service_tier': 'priority'}
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):

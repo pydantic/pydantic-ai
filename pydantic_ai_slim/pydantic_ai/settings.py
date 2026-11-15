@@ -111,12 +111,12 @@ Values:
 
 Per-provider mapping:
 
-| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud |
-|---|---|---|---|---|---|
-| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ |
-| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ |
-| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
-| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud | xAI |
+|---|---|---|---|---|---|---|
+| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ | _(omitted)_ |
+| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ | `'default'` |
+| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) | _(omitted)_ |
+| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) | `'priority'` |
 
 On Google Cloud the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
@@ -739,7 +739,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
     * Z.AI
     * Bedrock Mantle
-    * xAI (the gRPC API supports only `default` and `priority`; other values are dropped)
+    * xAI (`'default'` and `'priority'` only; `'auto'` and `'flex'` are omitted)
 
     The OpenAI-derived model classes send the OpenAI value unchanged, so the OpenAI column of the
     mapping table applies to them.
