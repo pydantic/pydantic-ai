@@ -599,12 +599,13 @@ class _JsonSchemaTestData:
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
-        # Each bound becomes the nearest integer inside it, so fractional bounds still generate integers.
-        minimum: int | None = None if (bound := schema.get('minimum')) is None else math.ceil(bound)
-        maximum: int | None = None if (bound := schema.get('maximum')) is None else math.floor(bound)
-        if (exc_min := schema.get('exclusiveMinimum')) is not None:
+        # Skip a missing or non-finite bound, and move each other bound to the nearest integer inside it,
+        # so fractional bounds still generate integers.
+        minimum: int | None = math.ceil(bound) if math.isfinite(bound := schema.get('minimum', math.inf)) else None
+        maximum: int | None = math.floor(bound) if math.isfinite(bound := schema.get('maximum', math.inf)) else None
+        if math.isfinite(exc_min := schema.get('exclusiveMinimum', math.inf)):
             minimum = self._tightest_bound(minimum, math.floor(exc_min) + 1, max)
-        if (exc_max := schema.get('exclusiveMaximum')) is not None:
+        if math.isfinite(exc_max := schema.get('exclusiveMaximum', math.inf)):
             maximum = self._tightest_bound(maximum, math.ceil(exc_max) - 1, min)
 
         if minimum is not None and maximum is not None:
