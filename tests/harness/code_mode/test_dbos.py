@@ -207,7 +207,7 @@ async def _lookup_v1() -> str:
 
 @DBOS.step(name='code_mode_lookup_v2')
 async def _lookup_v2() -> str:
-    return 'v2'
+    return 'v2'  # pragma: no cover -- DBOS fails the replay before running this step
 
 
 async def lookup() -> str:

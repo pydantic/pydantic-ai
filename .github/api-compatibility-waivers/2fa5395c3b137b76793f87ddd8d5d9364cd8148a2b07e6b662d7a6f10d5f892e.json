@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Not a compatibility impact: `DBOSDurability.engine_spec` sets the new `DurabilityEngineSpec.nondeterminism_error_types` field to `(DBOSUnexpectedStepError,)`; every existing field keeps its value. Griffe compares the expression text.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13527"
+}
