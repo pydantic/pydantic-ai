@@ -58,7 +58,9 @@ class ZaiProvider(_OpenAISDKProvider):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
-            ZaiModelProfile(zai_supports_tool_stream=model_name.lower().startswith(_TOOL_STREAM_MODEL_PREFIXES)),
+            ZaiModelProfile(zai_supports_tool_stream=True)
+            if model_name.lower().startswith(_TOOL_STREAM_MODEL_PREFIXES)
+            else None,
             OpenAIModelProfile(
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',

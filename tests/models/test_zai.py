@@ -668,7 +668,7 @@ async def test_zai_tool_stream_sent_on_streamed_run_with_function_tools(allow_mo
 
     @agent.tool_plain
     def weather(city: str) -> str:
-        return 'sunny'
+        return 'sunny'  # pragma: no cover
 
     async with agent.run_stream('What is the weather in Paris?') as result:
         assert await result.get_output() == 'Paris is sunny.'
@@ -685,7 +685,7 @@ async def test_zai_explicit_extra_body_tool_stream_preserved(allow_model_request
 
     @agent.tool_plain
     def weather(city: str) -> str:
-        return 'sunny'
+        return 'sunny'  # pragma: no cover
 
     async with agent.run_stream(
         'What is the weather in Paris?', model_settings=ModelSettings(extra_body={'tool_stream': False})
@@ -715,7 +715,7 @@ async def test_zai_tool_stream_absent_on_non_streamed_run(allow_model_requests: 
 
     @agent.tool_plain
     def weather(city: str) -> str:
-        return 'sunny'
+        return 'sunny'  # pragma: no cover
 
     result = await agent.run('What is the weather in Paris?')
     assert result.output == 'Paris is sunny.'
@@ -732,7 +732,7 @@ async def test_zai_tool_stream_absent_for_unflagged_model(allow_model_requests: 
 
     @agent.tool_plain
     def weather(city: str) -> str:
-        return 'sunny'
+        return 'sunny'  # pragma: no cover
 
     async with agent.run_stream('What is the weather in Paris?') as result:
         assert await result.get_output() == 'Paris is sunny.'

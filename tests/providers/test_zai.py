@@ -96,6 +96,8 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
     # glm-4.7 only supports thinking on/off, so no per-request reasoning effort.
     assert profile.get('zai_supports_reasoning_effort', False) is False
+    # GLM-4.6 and later stream tool call arguments when the request sets `tool_stream`.
+    assert profile.get('zai_supports_tool_stream') is True
 
     # GLM-5.2 additionally accepts a per-request reasoning effort level.
     profile_5_2 = provider.model_profile('glm-5.2')
@@ -135,6 +137,7 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_air.get('supports_thinking') is True
     assert profile_air.get('openai_chat_thinking_field') == 'reasoning_content'
     assert profile_air.get('openai_chat_send_back_thinking_parts') == 'field'
+    assert 'zai_supports_tool_stream' not in profile_air
 
     # Vision models support thinking too, per the Z.AI docs.
     profile_vision = provider.model_profile('glm-4.6v')

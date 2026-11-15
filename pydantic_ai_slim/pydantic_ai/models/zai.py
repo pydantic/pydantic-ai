@@ -178,6 +178,7 @@ class ZaiModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | ModelResponse: ...
 
+    @override
     async def _completions_create(
         self,
         messages: list[ModelMessage],
@@ -191,7 +192,7 @@ class ZaiModel(OpenAIChatModel):
             extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
             if 'tool_stream' not in extra_body:
                 extra_body['tool_stream'] = True
-            model_settings = cast(OpenAIChatModelSettings, {**model_settings, 'extra_body': extra_body})
+            model_settings = {**model_settings, 'extra_body': extra_body}
         return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
 
     @override
