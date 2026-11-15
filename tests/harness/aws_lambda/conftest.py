@@ -23,7 +23,7 @@ import pytest
 pytest.importorskip('aws_durable_execution_sdk_python')
 
 from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
-from aws_durable_execution_sdk_python.exceptions import CallbackError, SuspendExecution
+from aws_durable_execution_sdk_python.exceptions import CallbackError, NonDeterministicExecutionError, SuspendExecution
 from aws_durable_execution_sdk_python.serdes import deserialize as _deserialize, serialize as _serialize
 
 # The SDK's helpers are generic over an unbound TypeVar when no SerDes is supplied.
@@ -129,7 +129,10 @@ class FakeDurableContext:
             return None
         recorded = self.journal[index]
         if recorded.name != name:
-            raise AssertionError(f'replay divergence at operation {index}: recorded {recorded.name!r}, got {name!r}')
+            # SDK 2.0 and later check each replayed operation's name the same way.
+            raise NonDeterministicExecutionError(
+                f'replay divergence at operation {index}: recorded {recorded.name!r}, got {name!r}', step_id=str(index)
+            )
         self.operations.append(recorded)
         return recorded
 

@@ -235,8 +235,9 @@ CodeMode(
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
 Under any durable engine `max_duration_seconds` is disabled (memory and suspension caps still apply), because
 an elapsed timer could make a replay take a different path. Inside a Temporal workflow a workflow task that does
-not yield within 2 seconds fails, so move heavy computation into a tool. Under DBOS, a replay that diverges from
-the recorded steps fails the run with `DBOSUnexpectedStepError`, even inside a snippet's `try`/`except`.
+not yield within 2 seconds fails, so move heavy computation into a tool. A replay that diverges from the recorded
+steps fails the run, even inside a snippet's `try`/`except`: with `DBOSUnexpectedStepError` under DBOS and
+`NonDeterministicExecutionError` under AWS Lambda (SDK 2.0 and later).
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

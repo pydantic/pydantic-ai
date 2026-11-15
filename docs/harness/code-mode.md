@@ -264,9 +264,12 @@ the error inside the snippet does not prevent this.
 When `CodeMode` runs under durable execution, such as a Temporal or DBOS workflow, it disables
 `max_duration_seconds`, including an explicit override. `run_code` is replayed in workflow code, so
 measuring elapsed time there could make replay choose a different path from the recorded workflow. The
-memory and suspension caps still apply. Put time-bounded work behind a durable step or activity instead.
-Under DBOS, a replay that diverges from the recorded steps fails the run with `DBOSUnexpectedStepError`, as
-it does for a direct tool call, even when the snippet catches exceptions.
+memory and suspension caps still apply, but a loop that neither allocates nor calls a tool is bounded only by
+a remote pool's `request_timeout` or, inside Temporal, the 2-second workflow task limit. Put time-bounded work
+behind a durable step or activity instead.
+A replay that diverges from the recorded steps fails the run, as it does for a direct tool call, even when the
+snippet catches exceptions: with `DBOSUnexpectedStepError` under DBOS, and with `NonDeterministicExecutionError`
+under AWS Lambda (SDK 2.0 and later).
 
 ## Concurrent tool calls
 
