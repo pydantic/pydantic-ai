@@ -344,7 +344,11 @@ class MontyExecutor:
                 # shield holds for anyio-scope cancellation; a raw second `Task.cancel()` can
                 # still pierce it.
                 with anyio.CancelScope(shield=True):
-                    await asyncio.gather(*cancelled, return_exceptions=True)
+                    outcomes = await asyncio.gather(*cancelled, return_exceptions=True)
+                    # A call the snippet never awaited must still end the feed with a `reraise` error.
+                    fatal = next((outcome for outcome in outcomes if isinstance(outcome, self.reraise)), None)
+                    if fatal is not None:
+                        raise fatal
         return state
 
     async def _handle_function(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
