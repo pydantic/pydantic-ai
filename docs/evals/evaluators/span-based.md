@@ -167,6 +167,8 @@ from datetime import timedelta
 {'min_duration': 0.5, 'max_duration': 2.0}
 ```
 
+In a [dataset file](../how-to/dataset-serialization.md), a duration can also be an ISO-8601 string such as `PT5S`, which is how [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file] writes a `timedelta`.
+
 ### Logical Operators
 
 Combine conditions:
