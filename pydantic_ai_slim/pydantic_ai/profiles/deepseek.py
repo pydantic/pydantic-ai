@@ -4,7 +4,7 @@ import re
 
 from . import ModelProfile
 
-# DeepSeek ships V4 point releases under several spellings for the same models:
+# Hosts spell DeepSeek V4 point releases differently:
 # `deepseek-v4.1-flash`, `deepseek-v4p1-flash` and `deepseek-v4-1-flash` all denote V4.1. Normalizing version
 # spellings before matching (#12102) would leave only the `.` separator here.
 _DEEPSEEK_V4_PATTERN = re.compile(r'deepseek-v4(?:[.p-]\d+)?-')

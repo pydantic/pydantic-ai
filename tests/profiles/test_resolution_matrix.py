@@ -3867,6 +3867,7 @@ def test_forced_tool_choice_guard_agrees_across_routes(
         ('litellm', 'deepseek/deepseek-v4.1-flash-1017', True),
         ('ollama', 'deepseek-v4.1-flash:1017', True),
         ('fireworks', 'accounts/fireworks/models/deepseek-v4p1-flash', True),
+        ('crusoe', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
         ('together', 'deepseek-ai/DeepSeek-V3.2', False),
     ],
 )
