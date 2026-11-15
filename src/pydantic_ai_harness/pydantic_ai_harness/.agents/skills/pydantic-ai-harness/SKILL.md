@@ -197,7 +197,9 @@ network-backed ones. See [Testing and Debugging](./references/TESTING-AND-DEBUGG
 
 ## Task Routing Table
 
-Load the references for the capabilities the task uses; each is self-contained.
+Load the references for the capabilities the task uses; each is self-contained. When the task names a
+problem but not a capability, load the reference whose row covers the problem and pick from the
+need-to-capability table at its top.
 
 | I want to... | Reference |
 |---|---|
