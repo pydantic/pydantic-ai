@@ -3438,3 +3438,17 @@ def test_messages_builder_copies_parts_it_did_not_make():
     assert own_parts == [TextPart('a')]
     assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
     assert builder.last_modified(checkpoint, of_type=ModelResponse) is message
+
+
+def test_messages_builder_last_modified_returns_the_newest_match():
+    """When several messages of `of_type` were built since the checkpoint, the newest one wins.
+
+    A unit test: the adapters only expose the finished messages, not which one `last_modified` picked.
+    """
+    builder = MessagesBuilder()
+    checkpoint = builder.checkpoint()
+    builder.add(TextPart('first'))
+    builder.add(UserPromptPart('question'))
+    builder.add(TextPart('last'))
+
+    assert builder.last_modified(checkpoint, of_type=ModelResponse) is builder.messages[2]
