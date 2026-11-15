@@ -1779,7 +1779,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         parts = candidate.content.parts
         if not parts:
-            return  # pragma: no cover
+            return
 
         if not self._has_tool_invocations:
             self._has_tool_invocations = _has_native_tool_invocations(parts)
