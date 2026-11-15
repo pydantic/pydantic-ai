@@ -19,7 +19,7 @@ from anyio.to_thread import run_sync
 
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTask, DelegationTasks
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
 from pydantic_clai2.runtime.imported_history import Header
 from pydantic_clai2.ui import telemetry

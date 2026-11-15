@@ -167,6 +167,9 @@ class FakeMachine:
         )
         self._vm.processes.add(process)
         self.control.spawned.append(process)
+        # The command can run before this thread registers it, so a delete that did not see it kills it here.
+        if self._vm.state != 'running':  # pragma: lax no cover
+            _kill(process)
         events: queue.Queue[dict[str, object]] = queue.Queue()
         reporter = threading.Thread(target=self._report, args=(process, events), daemon=True)
         reporter.start()

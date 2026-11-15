@@ -1,0 +1,182 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://us.inference.heroku.com/available-models
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - us.inference.heroku.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache, no-store, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - "2161"
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      expires:
+      - "0"
+      pragma:
+      - no-cache
+      strict-transport-security:
+      - max-age=63072000
+    body:
+      type: json
+      content:
+      - model_id: amazon-rerank-1-0
+        type:
+        - text-to-score
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-4-5-haiku
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-4-5-sonnet
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-4-6-sonnet
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-fable-5-1
+        type:
+        - text-to-text
+        regions:
+        - us
+        state: active
+      - model_id: claude-haiku-5-5
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-opus-4-5
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-opus-4-6
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-opus-4-7
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-opus-4-8
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-opus-5-5
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: claude-sonnet-5-5
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: cohere-embed-multilingual
+        type:
+        - text-to-embedding
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: cohere-embed-v4
+        type:
+        - text-to-embedding
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: cohere-rerank-3-5
+        type:
+        - text-to-score
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: gpt-oss-120b
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: nova-2-lite
+        type:
+        - text-to-text
+        regions:
+        - us
+        state: active
+      - model_id: nova-lite
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: nova-pro
+        type:
+        - text-to-text
+        regions:
+        - eu
+        - us
+        state: active
+      - model_id: stable-image-core
+        type:
+        - text-to-image
+        regions:
+        - us
+        state: active
+      - model_id: stable-image-ultra
+        type:
+        - text-to-image
+        regions:
+        - us
+        state: active
+  recorded_at: 2026-11-07T18:56:11.979930+00:00

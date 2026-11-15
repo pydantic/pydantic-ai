@@ -29,8 +29,9 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
+from tests.conftest import without_admin_server
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -90,8 +91,8 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
         capabilities=[LocalWorkspace(root), cap, durability],
     )
 
-    @agent.on_event(FileChangeRequestEvent)
-    async def veto(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @agent.on_event(FileChangeRequestedEvent)
+    async def veto(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         if event.path.endswith('blocked.txt'):
             vetoes.append(event.path)
             event.cancel('denied')
@@ -132,8 +133,8 @@ async def test_dbos_workspace_capabilities(tmp_path: Path, capability: str) -> N
         return [str(p.content) for m in result.all_messages() for p in m.parts if p.part_kind == 'tool-return']
 
     DBOS(
-        config=DBOSConfig(
-            name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}', run_admin_server=False
+        config=without_admin_server(
+            DBOSConfig(name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}')
         )
     )
     DBOS.launch()

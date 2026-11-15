@@ -31,7 +31,7 @@ from pydantic_ai_harness import (
     Advisor,
     ApprovalReviewer,
     AskUser,
-    BubblewrapSandbox,
+    BubblewrappedWorkspace,
     CapabilityCreation,
     ClampOversizedMessages,
     ClearToolResults,
@@ -48,6 +48,7 @@ from pydantic_ai_harness import (
     ManagedPrompt,
     Ordinal,
     OutputGuardrail,
+    Peers,
     PostHog,
     Pylon,
     RelevanceCompaction,
@@ -71,10 +72,11 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTaskEvent,
     DelegationTasks,
@@ -301,7 +303,7 @@ FIXTURES: dict[str, Fixture] = {
     'Advisor': lambda _: Advisor(TestModel()),
     'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
     'AskUser': lambda _: AskUser(answerer=None),
-    'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
+    'BubblewrappedWorkspace': lambda tmp_path: BubblewrappedWorkspace(LocalWorkspace(tmp_path)),
     'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
@@ -430,6 +432,26 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
     ),
+    # A discovery the summary replaced is recorded again as a reveal right after it (#11493), so the tool stays
+    # callable without another search, and the requests after the compaction only append.
+    'SummarizingCompaction+ToolSearch': (
+        lambda _: [
+            SummarizingCompaction(TestModel(), max_messages=8, keep_messages=2),
+            ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        Scenario(
+            turns=(
+                Turn(calls=(('search_tools', {'queries': ['forecast']}),)),
+                Turn(calls=(('forecast', {'city': 'Paris'}),)),
+                Turn(text='Sunny in Paris.'),
+                # The second run's second request compacts, and the model then calls the tool it found in the first.
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(calls=(('forecast', {'city': 'Brest'}),)),
+                Turn(text='Sunny in Brest.'),
+            ),
+        ),
+    ),
     # The documented contrast: the catalog lives in `run_code`'s description.
     'CodeMode(dynamic_catalog=False)+ToolSearch': (
         lambda _: [CodeMode(dynamic_catalog=False), ToolSearch(strategy='keywords'), _deferred_forecast_and_tides()],
@@ -462,6 +484,18 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
+    ),
+    # Each run ends with a review round, which takes a turn of its own.
+    'RefineOutput': Scenario(
+        turns=(
+            Turn(calls=(('look_up', {'topic': 'weather'}),)),
+            Turn(calls=(('look_up', {'topic': 'news'}),)),
+            Turn(text='Here is the weather and the news.'),
+            Turn(text='Here is the weather and the news, checked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='Here is more, checked.'),
+        )
     ),
     'RepoContext': Scenario(
         state_calls=(
@@ -525,6 +559,15 @@ ALLOWED: dict[str, Allowed] = {
         )
     },
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
+    # The compaction, and on Chat Completions, which has no deferred-tool channel, the first run's reveal adding
+    # `forecast` to `tools` (docs/tools-advanced.md). The reveal recorded after the summary must move nothing more.
+    # Only Chat Completions needs the second move: Anthropic and OpenAI Responses move once, for the compaction,
+    # but `Allowed` can't vary `max_moves` by provider.
+    'SummarizingCompaction+ToolSearch': Allowed(
+        f'{_COMPACTION}; on Chat Completions a local reveal also adds the tool to `tools`, as documented',
+        (*_HISTORY, ('tools', 'tool:search_tools')),
+        max_moves=2,
+    ),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
@@ -685,7 +728,34 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
+_PEER_NOTE = 'The deploy finished.'
+
+
+def _peer_message(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A peer message that arrives between the runs enters the second run's history once, as peer data."""
+    network = InMemoryPeerNetwork()
+    inbox = LocalPeerInbox(path=tmp_path / 'inbox.json')
+    view = network.join(handle='self', inbox=inbox)
+    sender = network.join(handle='ops')
+
+    async def send() -> None:
+        (recipient,) = await sender.peers()
+        await sender.send(recipient.id, _PEER_NOTE, key='ops:1')
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [
+            part for message in result.history for part in getattr(message, 'parts', ()) if _PEER_NOTE in str(part)
+        ]
+        assert len(parts) == 1, f'expected the peer message in history once, found {len(parts)}'
+        assert read_peer_message(parts[0]) is not None, f'expected a peer message, found {parts[0]!r}'
+
+    return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
+
+
 CONVERSATIONS = {
+    'Peers': _peer_message,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})

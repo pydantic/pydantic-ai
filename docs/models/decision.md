@@ -10,11 +10,12 @@ A decision model answers typed questions about a text rather than writing text: 
 
 A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: with [`ModelFallback`](../capabilities/model-fallback.md), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
 
-Pydantic AI supports three decision model backends out of the box:
+Pydantic AI supports four decision model backends out of the box:
 
 - TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
 - Any other decision model behind the same `/v1/systemone` API as Jev, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM), [Laya](https://huggingface.co/convaiinnovations/laya), or the models [Ollama](system-one.md#ollama) runs locally, through [`SystemOneModel`](system-one.md), as `system-one:<model>`.
 - OpenAI's `gpt-6-luna` on its Decisions API, with image input support, through [`OpenAIDecisionsModel`](openai.md#decisions-api), as `openai-decisions:gpt-6-luna`.
+- Google's Gemini decision model on the Gemini API, with image input support, through [`GoogleDecisionsModel`](google.md#decisions-api), as `google-decisions:gemini-decision-1`.
 
 The examples on this page use Jev, and run on any other decision model by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
@@ -109,7 +110,7 @@ Every field is asked as one of a few kinds of question: a yes or no (`bool`), a 
 
 A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. An output type beside other [routes](#routes-which-thing-to-do), a [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it [escalates](#escalating-to-a-language-model) the step to the model behind it.
 
-A model can also cap how many options a pick-one or how many levels a rubric may have, through `decision_max_choice_options` and `decision_max_score_levels` in its [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile], which the provider sets for the model name, or a backend class's [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] where the profile leaves them out. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-field-type-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits), and the OpenAI Decisions API's on the [OpenAI page](openai.md#decisions-api).
+A model can also cap how many options a pick-one or how many levels a rubric may have, through `decision_max_choice_options` and `decision_max_score_levels` in its [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile], which the provider sets for the model name, or a backend class's [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] where the profile leaves them out. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-field-type-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits), the OpenAI Decisions API's on the [OpenAI page](openai.md#decisions-api), and the Gemini API's on the [Google page](google.md#decisions-api).
 
 ## A support desk, end to end
 
@@ -456,9 +457,10 @@ Each option goes by the name you gave the route:
 - a tool or an [output function](../output.md#output-functions) by the function's name;
 - an output type by its class name, an `Enum`'s included, or by the `name` you gave it with [`ToolOutput`][pydantic_ai.output.ToolOutput];
 - a `None` member of a union as `None`;
+- an [on-demand capability](#on-demand-capabilities) by its `id`;
 - a single output type with no class name of its own, such as a bare `bool` or `Literal`, as `output`.
 
-Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`.
+Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`. A capability that shares a tool's name becomes `refund (capability)` the same way.
 
 The route the model picks is the one that runs. The fields of every route the model can fill — a tool's arguments, a [union](#a-union-of-output-types) member's fields — ride along in the *same* request as the route question, so the answers the pick needs are already in hand when it comes back. Only the picked route's answers are read: the rest are about routes that were not taken, and reach neither the output nor `provider_details`. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone.
 
@@ -469,7 +471,7 @@ A route with even one field or argument the model cannot fill is still offered, 
 | a single output type or output function with arguments | its fields in the same request as the route question, or alone when nothing else is on offer | only the route is asked, and picking it escalates; with no route beside it that the model can take, a [`UserError`][pydantic_ai.exceptions.UserError] |
 | a member of a union of output types or output functions | its fields beside the route question, or, past the size cutoff below, in a second request once picked | picking it escalates |
 | a tool with arguments | its arguments beside the route question, or, past the size cutoff, in a second request once picked | picking it escalates |
-| an output function with no arguments, `None`, or a tool with no arguments | picked, and taken with nothing to fill | — |
+| an output function with no arguments, `None`, a tool with no arguments, or an [on-demand capability](#on-demand-capabilities) | picked, and taken with nothing to fill | — |
 
 Asking every route up front costs the questions of the routes not taken, so it is only done while they cost no more than the second request they save, which sends the state again, and while the request stays under about 16,000 tokens and the backend's per-request question cap. Past that, a route is picked first and filled after, in a second request carrying only its questions; a single output type beside tools is still asked up front when its fields fit beside the route question. Many routes with many fields, over a short text, is what tips it, as in the [support desk](#how-it-runs).
 
@@ -577,6 +579,69 @@ async def main():
 An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what the model weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves the model weighing the names alone like a `Literal` does.
 
 **Unsupported arguments: the model behind it.** A plain `str`, an unbounded number, or any other unsupported argument cannot be filled, so picking the tool [escalates](#escalating-to-a-language-model) the step.
+
+### On-demand capabilities
+
+An [on-demand capability](../capabilities/on-demand.md) is offered as a route of its own, under its `id` and described by its `description`, beside the tools and output types. Picking it loads it, on the pick alone: its instructions reach the next request in the history, and its tools are on offer from then on. A capability that is already active, loaded by the model or by your code with [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability], is not offered again, and loading one leaves the others on offer, so a turn that needs two can load both.
+
+A language model loads a capability by calling `load_capability` with the capability's `id`, and reads which ids there are from a catalog appended to the agent's instructions. A decision model cannot fill a free-form `id`, and the catalog would otherwise be framing on every question, fields included, repeating every capability's description whatever was being asked. So a decision model leaves the catalog out, along with the changes appended to it when a later run of the conversation adds a capability, and offers each capability as the route it is instead, reading them from the step's catalog on [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities]. What a language model is sent does not change:
+
+```python {title="decision_on_demand_capability.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+
+class Resolution(BaseModel):
+    """Close the conversation once the customer's question has been answered."""
+
+    resolved: bool = Field(description="Has the customer's question been answered?")
+
+
+refunds = Capability(
+    id='refunds',
+    description='Use for refund eligibility, refund status, or processing a refund.',
+    instructions='Confirm the order ID before issuing a refund.',
+    defer_loading=True,
+)
+
+
+@refunds.tool_plain
+def latest_refund() -> str:
+    """Look up the status of the customer's latest refund."""
+    return 'Refund of $40 issued on 2026-05-01.'
+
+
+shipping = Capability(
+    id='shipping',
+    description='Use for where an order is, delivery dates, and tracking.',
+    defer_loading=True,
+)
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=Resolution,
+    instructions='You are a customer support assistant for an online store.',
+    capabilities=[refunds, shipping],
+)
+result = agent.run_sync('Has the refund for my returned blender gone through?')
+print(result.output)
+#> resolved=True
+print(
+    [
+        part.tool_name
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+)
+#> ['load_capability', 'latest_refund', 'final_result']
+```
+
+The first request's route question offers `Resolution`, `refunds` and `shipping`. Once `refunds` has loaded, it offers `Resolution`, `shipping` and `latest_refund`, and once `latest_refund` has returned, `Resolution` and `shipping`. Every request here is a decision model request.
 
 ### A union of output types
 
@@ -1120,7 +1185,7 @@ async def main():
     too. Put the side effect in a function tool if it needs to pass this guard, or validate it inside the output
     function or action itself.
 
-The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later. Use the hook when the decision is made in-process, as it is here. Both see validated arguments; only the deferral can outlive the run.
+The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later. Use the hook when the decision is made in-process, as it is here. The hook sees the validated arguments, including any rewrite by a [tool validation hook](../hooks.md#tool-validation-hooks); the handler sees the arguments as the model sent them. Only the deferral can outlive the run.
 
 The call goes to the judge as JSON, so the text it judges reads as structured data, with the tool and its arguments named, rather than as a Python repr. Those arguments go to the decision model's backend before the verdict comes back, so a call is disclosed to a third party even when it is then refused. Send the judge what it needs to decide — the tool name and the fields that bear on safety — rather than the whole argument dict, when those arguments can carry credentials or customer data.
 
@@ -1204,7 +1269,7 @@ A decision model does not write text, and it only fills tool arguments that map 
 
 - The `output_type` must be made of the field types above, or be [handed off](#escalating-to-a-language-model) when it is picked from beside other routes: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-pick-then-fill) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to the model; supported arguments are [filled when it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick an `UnfillableRoute` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
-- OpenAI Decisions supports image input as described on the [OpenAI page](openai.md#decisions-api); other decision backends accept text only. Decision models do not support audio, video or documents in the prompt or history.
+- OpenAI Decisions and Google Decisions support image input as described on the [OpenAI](openai.md#decisions-api) and [Google](google.md#decisions-api) pages; other decision backends accept text only. Decision models do not support audio, video or documents in the prompt or history.
 - A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
 - No more options in one question than the backend's `max_choice_options`, where it sets one. A pick-one field counts its own options, and the route question counts every tool plus every output type, so on Jev 255 tools is already one too many once the output type is counted beside them.
 - The model needs something to ask. A run with no user text and no history has nothing to judge, and an `output_type` with no fields to fill — a lone argumentless output function — leaves no question to ask unless there is more than one route to pick between.

@@ -24,7 +24,27 @@ recovery from failed actions), and the tool returns a text result.
     each capability runs its own browser, so a session opened by one is not
     visible to the other.
 
-![The host model calls browse_web with one natural-language goal. BrowserUse hands it to a browser-use sub-agent, which by default runs on the host run's model. The sub-agent reads the page as indexed DOM elements and a screenshot, picks an action, and repeats for up to 50 steps in its own Chromium session, behind a domain allowlist. A judge call checks the result, and browse_web returns the final text or validated JSON to the host model, with any secrets replaced by placeholders.](../img/harness/browser-use.svg)
+```mermaid
+flowchart TB
+    accTitle: Browser Use: hand a web goal to a browsing sub-agent
+    accDescr: The model gives BrowserUse's browse_web(task) a goal and gets final text or JSON. The tool's browser-use sub-agent takes up to 50 steps, then one judge call, calling its model (the host run's by default) per step and acting on a Chromium session fresh per call. Chromium opens allowed sites on the web and refuses ones not in allowed_domains, IP addresses, localhost and file://.
+    model(["model"])
+    tool["BrowserUse()<br/>browse_web(task)"]:::capability
+    sub["browser-use sub-agent<br/>up to 50 steps,<br/>then one judge call"]:::capability
+    submodel(["sub-agent model<br/>the host run's model<br/>by default"])
+    chromium["Chromium session<br/>fresh per call"]:::external
+    web["allowed sites on the web"]:::external
+    refused["not in allowed_domains,<br/>IP addresses, localhost,<br/>file://"]:::blocked
+    model <-->|"goal, final text or JSON"| tool
+    tool <-->|"task, result"| sub
+    sub <-->|"one call per step"| submodel
+    sub <-->|"actions, page state"| chromium
+    chromium -->|"navigation"| web
+    chromium -.-x|"refused"| refused
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
