@@ -464,6 +464,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
     ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
+    # On Windows, `ntpath.relpath` makes each path absolute with `GetFullPathNameW`, which reads no disk for
+    # the absolute paths the file tools pass it.
+    ('os.path.abspath', 'pydantic_ai_harness/file_system/_toolset.py', '_relative'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
@@ -510,7 +513,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # A local workspace built with a relative `working_dir` resolves it against the current directory
     # once, at construction, which may happen in async code.
-    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai/workspaces/_host.py', '__init__'),
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),
@@ -1235,6 +1238,22 @@ def fail_function_model_prefix_violations(
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+def gave_up_on(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A mock transport handler raising what a retrying transport raises once it gave up on `handler`'s response.
+
+    That's the `HTTPStatusError` its `validate_response` raised for the error status, carrying the response, which
+    the provider SDK then never sees.
+    """
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
 
 
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:

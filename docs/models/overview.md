@@ -385,9 +385,11 @@ that it belongs to, if any. The exception exposes the
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
 surface headers, such as gRPC-based providers). Its
 [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is parsed from the `retry-after-ms` or
-`Retry-After` header, handling both the integer delta-seconds and HTTP-date formats, and
+`Retry-After` header, handling both the integer delta-seconds and HTTP-date formats, or, for a Google error without
+them, from the `RetryInfo` in its [body](google.md#http-retries), and
 [`provider_retry_hint`][pydantic_ai.exceptions.ModelHTTPError.provider_retry_hint] from the `x-should-retry` header
-that OpenAI and Anthropic send to say whether retrying may help.
+that OpenAI and Anthropic send to say whether retrying may help. A status a
+[retrying transport](../retries.md#error-handling) gave up on carries its body and headers too.
 
 When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
 [Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is
