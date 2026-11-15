@@ -260,6 +260,33 @@ def test_openai_profile_gate():
             id='anthropic',
         ),
         pytest.param(
+            'anthropic/claude-fable-5.2',
+            snapshot(
+                {
+                    'reasoning': {'effort': 'low', 'enabled': True},
+                    'messages': [
+                        {'role': 'user', 'content': 'Where is item 12?'},
+                        {
+                            'role': 'assistant',
+                            'content': 'Item 0012 is on shelf 12, bin 1 (revision 12, status verified).',
+                        },
+                        {
+                            'role': 'user',
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': 'And item 40?',
+                                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                                }
+                            ],
+                        },
+                        {'role': 'system', 'content': '', 'configuration_update': {'reasoning': {'effort': 'high'}}},
+                    ],
+                }
+            ),
+            id='anthropic-fable-5-2',
+        ),
+        pytest.param(
             'openai/gpt-6.1-sol',
             snapshot(
                 {
@@ -400,6 +427,7 @@ async def test_openrouter_falls_back_to_the_request_level_effort(
     ('model_name', 'supported'),
     [
         pytest.param('anthropic/claude-fable-5.1', True, id='fable-5-1'),
+        pytest.param('anthropic/claude-fable-5.2', True, id='fable-5-2'),
         pytest.param('anthropic/claude-opus-5', True, id='opus-5'),
         pytest.param('anthropic/claude-haiku-5.5', True, id='haiku-5-5'),
         pytest.param('anthropic/claude-fable-5', False, id='fable-5'),
@@ -569,6 +597,7 @@ def test_anthropic_falls_back_to_the_request_level_effort(settings: AnthropicMod
     [
         pytest.param('claude-opus-5-5', None, True, id='claude-api'),
         pytest.param('claude-fable-5-1', None, True, id='fable-5-1'),
+        pytest.param('claude-fable-5-2', None, True, id='fable-5-2'),
         pytest.param('claude-fable-5', None, False, id='fable-5'),
         pytest.param('claude-sonnet-5', None, False, id='sonnet-5'),
         pytest.param(

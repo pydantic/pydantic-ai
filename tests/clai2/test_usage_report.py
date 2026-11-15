@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
+from prompt_toolkit.utils import Event
 from rich.console import Console
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -198,6 +199,8 @@ async def test_shell_commands_and_footer(tmp_path: Path, monkeypatch: pytest.Mon
 
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             toolbar = kwargs['bottom_toolbar']
             assert callable(toolbar)
             self.toolbar: Callable[[], object] = toolbar

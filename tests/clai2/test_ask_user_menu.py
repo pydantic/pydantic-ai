@@ -31,17 +31,17 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
-from pydantic_ai_harness.subagents import DelegationTasks, SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import DelegationTasks, SubAgent, SubAgents
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.ask_user_menu import (
     AskUserPlugin,
-    QuestionMenu,
     TerminalAnswerer,
     render_answer,
 )
 from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallStartedEvent
 from pydantic_clai2.ui.menus.menu_worker import menu_key
+from pydantic_clai2.ui.menus.question_menu import QuestionMenu
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey
 from pydantic_clai2.ui.rendering import theme

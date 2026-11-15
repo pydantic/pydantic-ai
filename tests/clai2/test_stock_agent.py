@@ -258,23 +258,25 @@ async def test_plugins_get_their_settings_and_close_on_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
 ) -> None:
     log = tmp_path / 'lifecycle'
-    plugin = tmp_path / 'lifecycle.py'
+    plugin = tmp_path / 'lifecycle_probe.py'
     plugin.write_text(
         'from pathlib import Path\n'
         'from pydantic import BaseModel\n'
         'from pydantic_clai2.plugins import Plugin\n'
+        'def record(text, *, after=False):\n'
+        f'    log = Path({str(log)!r})\n'
+        "    log.write_text((log.read_text() + ':' if after else '') + text)\n"
         'class Options(BaseModel):\n'
         "    greeting: str = 'default'\n"
         "    target: str = 'default'\n"
         'class Lifecycle(Plugin[Options]):\n'
         '    async def on_session_start(self, event):\n'
-        f"        Path({str(log)!r}).write_text(self.settings.greeting + ' ' + self.settings.target)\n"
+        "        record(self.settings.greeting + ' ' + self.settings.target)\n"
         '    async def on_session_end(self, event):\n'
-        f'        p = Path({str(log)!r})\n'
-        "        p.write_text(p.read_text() + ':' + event.reason)\n"
+        '        record(event.reason, after=True)\n'
     )
     stock = PluginSettings(
-        id='compaction', factory='lifecycle', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
+        id='compaction', factory='lifecycle_probe', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
     )
     monkeypatch.setattr(app, 'STOCK_PLUGINS', (stock,))
     with pytest.raises(RuntimeError, match='host failed') if fail else nullcontext():

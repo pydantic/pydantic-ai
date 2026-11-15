@@ -320,8 +320,8 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
         pass
 
     monkeypatch.setattr(keyring, 'set_password', discard)
-    with pytest.raises(UserError, match='did not retain'):
-        await source.save_login(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
+    await source.save_login(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
+    assert await source.load() == OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test')
     monkeypatch.setattr(keyring, 'set_password', original_set)
     keyring.set_password('pydantic-clai2', 'openai-codex', 'not json')
     with pytest.raises(UserError, match='invalid'):

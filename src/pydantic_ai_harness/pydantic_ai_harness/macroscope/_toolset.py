@@ -208,13 +208,13 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         try:
             result = await ctx.workspace.run(['sh', '-c', _LAUNCHER, 'sh', *args], timeout=self._timeout)
         # Before `WorkspaceError`: a timeout keeps its partial output, other workspace failures are not retryable.
-        except WorkspaceTimeoutError as e:
-            review = parse_macroscope_stream(_combined_output(e.stdout, e.stderr).splitlines())
+        except WorkspaceTimeoutError as exc:
+            review = parse_macroscope_stream(_combined_output(exc.stdout, exc.stderr).splitlines())
             if review.review_id is None:
                 raise ModelRetry(f'The Macroscope review timed out after {self._timeout}s.') from None
             return _stopped_early(review, 'timed_out')
-        except WorkspaceError as e:
-            raise_tool_failure(e)
+        except WorkspaceError as exc:
+            raise_tool_failure(exc)
         output = _combined_output(result.stdout, result.stderr)
         review = parse_macroscope_stream(output.splitlines())
         if review.review_id is not None:

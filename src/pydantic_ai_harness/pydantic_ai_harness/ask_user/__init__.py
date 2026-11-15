@@ -15,6 +15,7 @@ from pydantic_ai_harness.ask_user._types import (
     ContextAnswerer,
     Question,
     QuestionOption,
+    TokenAnswerer,
     check_response,
 )
 
@@ -37,6 +38,7 @@ __all__ = [
     'QuestionOption',
     'TIMED_OUT',
     'TOOL_NAME',
+    'TokenAnswerer',
     'ask_user_result',
     'check_response',
 ]

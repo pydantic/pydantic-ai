@@ -7,6 +7,7 @@ import math
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
@@ -35,10 +36,13 @@ with try_import() as imports_successful:
         EvaluatorFailure,
         EvaluatorOutput,
         EvaluatorSpec,
+        HasMatchingSpan,
         LLMJudge,
+        MaxDuration,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.generation import generate_dataset
+    from pydantic_evals.otel.span_tree import SpanQuery
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
 
     BareNoneDatasetCase = tuple[
@@ -107,7 +111,6 @@ class TaskOutput(BaseModel):
     confidence: float = 1.0
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must replace a closed thread-current event loop.
 
@@ -127,7 +130,6 @@ def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abs
     assert not asyncio.all_tasks(replacement_loop)
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must create and install an event loop when the thread has none."""
     dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
@@ -2819,4 +2821,42 @@ async def test_task_timeout_recorded_on_spans(capfire: CaptureLogfire):
             'execute {task}': [('TimeoutError', 'Task timed out after 0.01s')],
             'case: {case_name}': [('TimeoutError', 'Task timed out after 0.01s')],
         }
+    )
+
+
+@needs_logfire
+@pytest.mark.parametrize('fmt', ['yaml', 'json'])
+def test_to_file_roundtrip_duration_evaluators(capfire: CaptureLogfire, tmp_path: Path, fmt: Literal['yaml', 'json']):
+    """Duration bounds still evaluate after `to_file` writes `timedelta` values as ISO-8601 strings."""
+    dataset_file = tmp_path / f'dataset.{fmt}'
+    dataset = Dataset[str, str, None](
+        name='durations',
+        cases=[Case(name='case', inputs='in', evaluators=(MaxDuration(seconds=timedelta(seconds=5)),))],
+        evaluators=[
+            MaxDuration(seconds=60.0),
+            HasMatchingSpan(
+                query=SpanQuery(name_equals='work span', min_duration=timedelta(0), max_duration=timedelta(hours=1)),
+                evaluation_name='bounded',
+            ),
+            HasMatchingSpan(
+                query=SpanQuery(
+                    name_equals='outer span',
+                    some_child_has=SpanQuery(name_equals='work span', max_duration=timedelta(0)),
+                ),
+                evaluation_name='nested_too_slow',
+            ),
+        ],
+    )
+    dataset.to_file(dataset_file)
+    serialized = dataset_file.read_text()
+    assert all(value in serialized for value in ('PT5S', 'PT0S', 'PT1H', '60.0'))
+
+    def run_task(inputs: str) -> str:
+        with logfire.span('outer span'), logfire.span('work span'):
+            return 'out'
+
+    case = Dataset[str, str, None].from_file(dataset_file).evaluate_sync(run_task, progress=False).cases[0]
+    assert case.evaluator_failures == []
+    assert {name: result.value for name, result in case.assertions.items()} == snapshot(
+        {'MaxDuration': True, 'MaxDuration_2': True, 'bounded': True, 'nested_too_slow': False}
     )

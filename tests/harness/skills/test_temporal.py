@@ -48,7 +48,7 @@ _RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules('coverage',
 WORK = Path(__file__).parent / 'temporal_workspace'
 
 
-_STATEMENT = re.compile(r'<context id="capability:reviewer">\n(.*)\n</context>', re.DOTALL)
+_STATEMENT = re.compile(r'<pyai:context id="capability:reviewer">\n(.*)\n</pyai:context>', re.DOTALL)
 
 
 def _load_reviewer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

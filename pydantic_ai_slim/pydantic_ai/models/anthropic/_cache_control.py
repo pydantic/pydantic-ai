@@ -35,6 +35,25 @@ def is_effort_entry(message: BetaMessageParam) -> bool:
     return 'output_config' in message
 
 
+def lasting_messages(anthropic_messages: list[BetaMessageParam]) -> tuple[list[BetaMessageParam], list[int]]:
+    """The messages that can carry the previous request's breakpoint, each with the count of the blocks it covers.
+
+    A request-scoped entry can't carry a breakpoint, so the previous request put its own before it: it's left out of
+    the candidates, its blocks counted with the message ahead of it.
+    """
+    lasting: list[BetaMessageParam] = []
+    block_counts: list[int] = []
+    for message in anthropic_messages:
+        content = message['content']
+        count = 1 if isinstance(content, str) else len(cast(list[BetaContentBlockParam], content))
+        if (message.get('clear_at') == 'next_user_message' or is_effort_entry(message)) and lasting:
+            block_counts[-1] += count
+        else:
+            lasting.append(message)
+            block_counts.append(count)
+    return lasting, block_counts
+
+
 def add_cache_control_param(params: list[BetaContentBlockParam], cache_control: BetaCacheControlEphemeralParam) -> None:
     """Attach an already-built `cache_control` to the last content block param.
 
