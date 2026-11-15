@@ -881,6 +881,27 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Refuse an `override(capabilities=...)` set without this bound copy, inside or outside a durable container.
+
+        Dropping it would run the agent without durability, and binding a copy again would register this
+        engine's durable units a second time. Checked wherever the override is entered, because DBOS and
+        Prefect carry an override entered outside a workflow or flow into it.
+        """
+        for capability in capabilities:
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if capability is self:
+                return
+        name = type(self).__name__
+        raise UserError(
+            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep the bound "
+            f'`{name}` the agent registered its durable {self.durable_unit_plural} with. The `{name}` you '
+            'constructed is not that one: the agent holds a bound copy. Build the list from '
+            '`agent.root_capability.capabilities`, for example '
+            '`agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band

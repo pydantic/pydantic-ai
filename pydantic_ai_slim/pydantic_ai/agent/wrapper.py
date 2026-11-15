@@ -484,6 +484,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 these replace (not merge with) the agent's existing capabilities. To add to the existing
                 set, include them explicitly:
                 `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
+                On an agent with a durability capability, build the list this way: a list without the bound
+                durability capability raises a `UserError`, and inside a durable workflow or flow, the
+                capabilities the list adds follow the rules for capabilities passed to a run.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.

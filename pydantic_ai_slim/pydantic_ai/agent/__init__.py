@@ -2500,6 +2500,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 these replace (not merge with) the agent's existing capabilities. To add to the existing
                 set, include them explicitly:
                 `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
+                On an agent with a durability capability, build the list this way: a list without the bound
+                durability capability raises a `UserError`, and inside a durable workflow or flow, the
+                capabilities the list adds follow the rules for capabilities passed to a run.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
@@ -2533,11 +2536,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # override. Build it before resolving an overridden model so custom model IDs can
         # be preserved for that capability's async, deps-aware resolver. Explicit params take
         # precedence over spec values.
-        if not _utils.is_set(capabilities) and resolved is not None and resolved.capability is not None:
-            capabilities = resolved.capability.capabilities
         override_capability: CombinedCapability[AgentDepsT] | None = None
         if _utils.is_set(capabilities):
-            override_caps = wrap_capability_funcs(capabilities)
+            override_capability = self._bind_override_capabilities(capabilities)
+        elif resolved is not None and resolved.capability is not None:
+            override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
             _reject_second_of_a_kind(override_caps)
             override_capability = CombinedCapability(override_caps).for_agent(self)
@@ -3573,6 +3576,46 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base = CombinedCapability([base, self._event_hooks])
         return base, override_cap is not None
 
+    def _bind_override_capabilities(
+        self, capabilities: Sequence[AgentCapability[AgentDepsT]]
+    ) -> CombinedCapability[AgentDepsT]:
+        """Build the root capability `override(capabilities=...)` installs, binding only what the agent hasn't bound.
+
+        Capabilities taken from `root_capability.capabilities` are bound to this agent already, so they pass
+        through: binding a durability capability again would register its durable units a second time. A
+        complexity helper for `override`.
+        """
+        override_caps = wrap_capability_funcs(capabilities)
+        _inject_auto_capabilities(override_caps)
+        _reject_second_of_a_kind(override_caps)
+        self._root_capability._validate_override_capabilities(  # pyright: ignore[reportPrivateUsage]
+            [leaf for capability in override_caps for leaf in leaf_capabilities(capability)]
+        )
+        configured = self._root_capability.capabilities
+        return CombinedCapability(
+            [
+                capability if any(capability is bound for bound in configured) else capability.for_agent(self)
+                for capability in override_caps
+            ]
+        )
+
+    def _override_added_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """The leaves an active capability override holds that the agent wasn't constructed with.
+
+        A durable engine registered nothing for them, so `_resolve_run_capabilities` validates them with the
+        run's own capabilities. Auto-injected infrastructure is left out. A complexity helper for
+        `_resolve_run_capabilities`.
+        """
+        override = self._override_root_capability.get()
+        if override is None:
+            return []
+        configured = {id(leaf) for leaf in leaf_capabilities(self._root_capability)}
+        return [
+            leaf
+            for leaf in leaf_capabilities(override.value)
+            if id(leaf) not in configured and not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES)
+        ]
+
     def _bind_run_capabilities(
         self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
     ) -> list[AbstractCapability[AgentDepsT]]:
@@ -3785,7 +3828,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _reject_second_of_a_kind(resolved_layers)
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+            [
+                *self._override_added_capabilities(),
+                *(capability for extra in resolved_extras for capability in leaf_capabilities(extra)),
+            ],
         )
         # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
         # each before anything reads it. Duplicates *within* a layer are one configuration stated

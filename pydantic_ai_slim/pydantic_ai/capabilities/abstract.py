@@ -568,6 +568,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
         """
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Validate the leaf capabilities `Agent.override(capabilities=...)` replaces the agent's own with.
+
+        Called on the agent's own capabilities, before anything in the replacement is bound. Private for the
+        same reason as `_validate_runtime_capabilities`.
+        """
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 

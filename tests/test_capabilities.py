@@ -4995,6 +4995,34 @@ async def test_override_capabilities_kwarg() -> None:
         assert 'extra instructions' in captured_instructions[-1]
 
 
+async def test_override_capabilities_binds_only_the_capabilities_it_adds() -> None:
+    """Capabilities the agent already bound pass through `override(capabilities=...)` without a second `for_agent`."""
+    bound_for: list[str] = []
+
+    @dataclass
+    class Binds(AbstractCapability[Any]):
+        label: str = ''
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            bound_for.append(self.label)
+            return replace(self)
+
+        def get_instructions(self) -> str:
+            return self.label
+
+    agent = Agent(TestModel(), capabilities=[Binds(label='configured', id='configured')])
+    assert bound_for == ['configured']
+    configured = agent.root_capability.capabilities
+
+    with agent.override(capabilities=[*configured, Binds(label='added', id='added')]):
+        assert bound_for == ['configured', 'added']
+        result = await agent.run('Hello')
+
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'configured\n\nadded'
+
+
 async def test_an_answer_given_during_the_run_passes_the_tools_result_hooks() -> None:
     """A question the tool raised itself, answered by a handler, passes `after_tool_execute` as the tool's own result would."""
     seen: list[Any] = []
