@@ -156,7 +156,7 @@ async def _destroy(backend: KubernetesSandboxBackend) -> None:
         await KubernetesSandbox(warm_pool=POOL).destroy(backend.ref)
 
 
-class TestClusterConformance(WorkspaceBackendSuite):
+class TestLiveKubernetesSandboxBackend(WorkspaceBackendSuite):
     """Every conformance rule, through the SDK, `kubectl port-forward` and the controller."""
 
     @pytest.fixture

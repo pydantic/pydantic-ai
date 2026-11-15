@@ -212,6 +212,18 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run through the pod's sandboxd, and file operations run as shell commands, so they see
     the same filesystem. The image needs `/bin/sh` and coreutils.
+
+    Args:
+        ref: Identity of an existing claim to attach to on first use, from a previous backend's `ref`.
+        warm_pool: The `SandboxWarmPool` a new claim is made from; required without `ref`.
+        namespace: Namespace of the warm pool and the claims made from it.
+        connection: How commands reach the pod's sandboxd: `'port-forward'` (a `kubectl port-forward`),
+            `'in-cluster-pod-ip'` or `'in-cluster-service'`, or an SDK sandboxd connection config.
+        sandbox_timeout: Seconds after which a new claim deletes itself, or `None` to keep it until
+            `KubernetesSandbox.destroy(ref)`.
+        working_dir: Absolute directory commands run in, created on a new claim; an attached claim must
+            already have it. `None` runs them in sandboxd's root directory.
+        env: Environment variables for every command, under each call's own `env`.
     """
 
     # File operations don't use sandboxd's file API: it serves only paths under its root and moves
@@ -232,6 +244,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             parse_ref(ref)
         elif warm_pool is None:
             raise ValueError('pass `warm_pool` to claim a new sandbox, or `ref` to attach to one')
+        if sandbox_timeout is not None and (type(sandbox_timeout) is not int or sandbox_timeout < 1):
+            raise ValueError(f'sandbox_timeout must be an integer of at least 1 or None, got {sandbox_timeout!r}')
         check_env_types(env)
         if problem := connection_problem(connection):
             raise ValueError(problem)
@@ -267,6 +281,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     @property
     def ref(self) -> WorkspaceRef | None:
+        """`WorkspaceRef(provider='kubernetes', id='<namespace>/<claim>')`, or `None` until a claim is made."""
         return self._ref
 
     async def working_dir(self) -> str:
@@ -382,7 +397,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                         (stdout if event.type == 'stdout' else stderr).extend(event.data)
                         if len(stdout) + len(stderr) > _MAX_OUTPUT_BYTES:
                             raise WorkspaceOutputLimitError(
-                                'Command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+                                'Kubernetes sandbox command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
                                 limit=_MAX_OUTPUT_BYTES,
                                 stdout=stdout[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
                                 stderr=stderr[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),

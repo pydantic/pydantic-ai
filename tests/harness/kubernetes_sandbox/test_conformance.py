@@ -8,18 +8,12 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 
-from ...conftest import try_import
-
-with try_import() as imports_successful:
-    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
-
-    from .fake_sandboxd import FakeCluster
-
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-harness[kubernetes] not installed')
+from .fake_sandboxd import FakeCluster
 
 
-class TestKubernetesSandboxConformance(WorkspaceBackendSuite):
+class TestFakeKubernetesSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     async def created(self, cluster: FakeCluster) -> AsyncIterator[list[KubernetesSandboxBackend]]:
         backends: list[KubernetesSandboxBackend] = []

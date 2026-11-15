@@ -74,6 +74,9 @@ def test_backend_arguments_are_checked_without_io() -> None:
         KubernetesSandboxBackend()
     with pytest.raises(TypeError, match='env keys and values must be strings'):
         KubernetesSandboxBackend(warm_pool='pool', env={'A': 1})  # type: ignore[dict-item]
+    for sandbox_timeout in (0, 1.5, True):
+        with pytest.raises(ValueError, match='sandbox_timeout must be an integer of at least 1 or None'):
+            KubernetesSandboxBackend(warm_pool='pool', sandbox_timeout=sandbox_timeout)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match='working_dir must be an absolute'):
         KubernetesSandboxBackend(warm_pool='pool', working_dir='relative')
     with pytest.raises(ValueError, match="connection must be one of 'port-forward'"):

@@ -6,6 +6,30 @@ Run your agent's commands and file edits in a sandbox pod on your own Kubernetes
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Kubernetes Sandbox: your agent's commands run in a sandbox pod on your cluster
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. Via ctx.workspace, KubernetesSandbox's get_workspace claims a pod from a SandboxWarmPool through the Kubernetes API with your kubeconfig, and runs commands through the pod's sandboxd over a kubectl port-forward or an in-cluster address. The claim deletes itself after sandbox_timeout or when destroy(ref) is called. A later run reattaches with the WorkspaceRef in the message history or result.workspace.ref.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        k8s["KubernetesSandbox()<br/>get_workspace claims<br/>a pod for the run"]:::capability
+    end
+    subgraph cluster["Your Kubernetes cluster"]
+        pool["SandboxWarmPool<br/>of ready pods"]
+        pod["sandbox pod running sandboxd<br/>deleted after sandbox_timeout<br/>or by destroy(ref)"]:::external
+    end
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| k8s
+    ref -.->|"a later run<br/>reattaches"| k8s
+    k8s -->|"claim, Kubernetes API,<br/>your kubeconfig"| pool
+    pool --> pod
+    k8s <-->|"commands, kubectl port-forward<br/>or in-cluster address"| pod
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Install
 
 uv:
@@ -224,6 +248,14 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
 
 `destroy(ref)` deletes the claim, and with it the pod; a claim that is already gone returns quietly.
 
+## How commands run
+
+Commands start through `/bin/sh` and file operations run as shell commands, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`).
+
+If a sandbox's pod is lost while its claim remains, for example when its node fails, agent-sandbox starts a new pod. Commands fail until it is ready, with an error durable execution retries. The new pod starts empty except for what the template keeps on a persistent volume; the template above uses `emptyDir`, so files are lost.
+
+The agent-sandbox SDK runs on asyncio only, so under Trio workspace operations and `destroy` raise `UserError`.
+
 ## Security model
 
 `KubernetesSandbox` makes one check of its own: it reattaches to and deletes only claims in its `namespace` named `pydantic-ai-` and 32 hex digits, the names it gives its claims. A ref from message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` that names any other claim raises `ValueError` before anything reaches the cluster. The name is not proof of origin, and a `KubernetesSandboxBackend(ref=...)` you build yourself attaches to any claim it names, so keep refs server-side.
@@ -296,12 +328,6 @@ Removing a capability while workflows using it are still running changes their r
 ## Telemetry
 
 `KubernetesSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Claiming a sandbox logs its ref at `INFO` (`Claimed Kubernetes sandbox <namespace>/<claim name>`) on the `pydantic_ai_harness.kubernetes_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
-
-## Limitations
-
-- Works on the asyncio event loop only; under Trio, workspace operations and `destroy` raise `UserError`.
-- Commands start through `/bin/sh` and file operations run as shell commands, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`).
-- If a sandbox's pod is lost while its claim remains, for example when its node fails, agent-sandbox starts a new pod. Commands fail until it is ready, with an error durable execution retries. The new pod starts empty except for what the template keeps on a persistent volume; the template above uses `emptyDir`, so files are lost.
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
