@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -3404,6 +3405,30 @@ async def test_rejection_message_names_the_normalized_media_type():
         )
 
     assert exc_info.value.detail == snapshot('Expected `Content-Type: application/json`, got text/plain')
+
+
+@pytest.mark.parametrize('speaker', ['user', 'assistant'])
+def test_messages_builder_routes_speech_parts(speaker: Literal['user', 'assistant']):
+    """The public builder routes speech by speaker, not by its shared part type."""
+    builder = MessagesBuilder()
+    first = SpeechPart(speaker=speaker, transcript='hello')
+    second = SpeechPart(speaker=speaker, transcript='again')
+    builder.add(first)
+    builder.add(second)
+
+    message_type = ModelRequest if speaker == 'user' else ModelResponse
+    assert len(builder.messages) == 1
+    assert isinstance(builder.messages[0], message_type)
+    assert builder.messages[0].parts == [first, second]
+
+    other_speaker = 'assistant' if speaker == 'user' else 'user'
+    reply = SpeechPart(speaker=other_speaker, transcript='reply')
+    builder.add(reply)
+
+    other_message_type = ModelResponse if speaker == 'user' else ModelRequest
+    assert len(builder.messages) == 2
+    assert isinstance(builder.messages[1], other_message_type)
+    assert builder.messages[1].parts == [reply]
 
 
 def test_messages_builder_extends_its_own_parts_in_place():

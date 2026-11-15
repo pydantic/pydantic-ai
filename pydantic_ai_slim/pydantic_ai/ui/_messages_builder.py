@@ -10,6 +10,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    SpeechPart,
 )
 
 _PartT = TypeVar('_PartT', bound=ModelRequestPart | ModelResponsePart)
@@ -53,6 +54,8 @@ class MessagesBuilder:
         if isinstance(part, CompactionPart):
             # A provider's compaction part belongs to its response; one no provider produced, to a request.
             to_request = part.provider_name is None and part.id is None and part.provider_details is None
+        elif isinstance(part, SpeechPart):
+            to_request = part.speaker == 'user'
         else:
             to_request = isinstance(part, get_union_args(ModelRequestPart))
         if to_request:
