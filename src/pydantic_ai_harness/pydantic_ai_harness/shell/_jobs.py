@@ -252,7 +252,7 @@ class Job:
         log_limit: int | None = None,
         job_id: str | None = None,
     ) -> Job:
-        directory = workspace.path.join(base, job_id or uuid.uuid4().hex)
+        directory = workspace.paths.join(base, job_id or uuid.uuid4().hex)
         launcher = cls._launcher(
             workspace,
             directory,
@@ -336,7 +336,7 @@ class Job:
     async def attach(cls, workspace: Workspace, directory: str, *, combined: bool) -> Job | None:
         """The job launched into `directory`, from its `handle` file, or `None` when there is none."""
         try:
-            handle = workspace.path.join(directory, 'handle')
+            handle = workspace.paths.join(directory, 'handle')
             fields = (await workspace.read_bytes(handle)).decode(errors='replace').split()
         except WorkspaceError:
             raise
@@ -350,26 +350,26 @@ class Job:
     @property
     def output_path(self) -> str:
         """The combined log, or stdout's log when the streams are kept apart."""
-        return self.workspace.path.join(self.directory, 'output.log' if self.combined else 'stdout.log')
+        return self.workspace.paths.join(self.directory, 'output.log' if self.combined else 'stdout.log')
 
     @property
     def stderr_path(self) -> str:
-        return self.workspace.path.join(self.directory, 'output.log' if self.combined else 'stderr.log')
+        return self.workspace.paths.join(self.directory, 'output.log' if self.combined else 'stderr.log')
 
     @property
     def status_path(self) -> str:
-        return self.workspace.path.join(self.directory, 'status.json')
+        return self.workspace.paths.join(self.directory, 'status.json')
 
     @property
     def clears_path(self) -> str:
         """A file one byte longer before and again after each time `max_log_bytes` empties one of the job's logs."""
-        return self.workspace.path.join(self.directory, 'log_clears')
+        return self.workspace.paths.join(self.directory, 'log_clears')
 
     @property
     def stop_command(self) -> str:
         """The command a model runs to stop the whole job."""
         if self.workspace.platform == 'windows':
-            return f'& {_powershell.literal(self.workspace.path.join(self.directory, "stop.ps1"))}'
+            return f'& {_powershell.literal(self.workspace.paths.join(self.directory, "stop.ps1"))}'
         return f'kill -- -{self.pgid}' if self.pgid is not None else f'kill {self.pid}'
 
     async def status_text(self) -> str | None:
@@ -483,7 +483,7 @@ class Job:
         """
         target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
-            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, self.workspace.path.join(self.directory, 'stop')],
+            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, self.workspace.paths.join(self.directory, 'stop')],
             timeout=CONTROL_TIMEOUT,
         )
         if result.exit_code == 0:

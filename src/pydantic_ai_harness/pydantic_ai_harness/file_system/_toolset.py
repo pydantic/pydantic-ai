@@ -231,7 +231,7 @@ class _Scope:
 
     @property
     def paths(self) -> WorkspacePaths:
-        return self.workspace.path
+        return self.workspace.paths
 
     def relative(self, path: str, start: str) -> str:
         """`path` relative to `start`, with `/` between its components whatever the workspace's separator."""
@@ -660,7 +660,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         facade = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
         if (bounds := self._bounds.get(facade)) is not None:
             return _Scope(facade, bounds, workspace)
-        paths = facade.path
+        paths = facade.paths
         cwd = paths.normpath(await facade.working_dir())
         if self._root_spelling is None:
             root = cwd = cwd if _is_filesystem_root(paths, cwd) else await facade.realpath(cwd)

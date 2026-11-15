@@ -454,7 +454,7 @@ class Workspace(WorkspaceBackend):
                 others: dict[str, Authority] = {
                     other: other_level for other, other_level in written.items() if other != key
                 }
-                sep = self.path.sep
+                sep = self.paths.sep
                 in_workspace = any(is_within(key, zone, sep=sep) for zone in (root, *others))
                 cap = layer_authority(key, (level, others), sep=sep) if in_workspace else key_level
                 resolved.append((real_key, lowest_authority((key_level, cap))))
@@ -484,7 +484,7 @@ class Workspace(WorkspaceBackend):
             layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
-        paths = self.path
+        paths = self.paths
         written = await self.resolve(path)
         target = await self.realpath(written)
         if not any(is_within(target, zone, sep=paths.sep) for zone in zones):
@@ -539,7 +539,7 @@ class Workspace(WorkspaceBackend):
         return backend.workspace_platform if isinstance(backend, SupportsPlatform) else 'posix'
 
     @property
-    def path(self) -> WorkspacePaths:
+    def paths(self) -> WorkspacePaths:
         """The path functions for this workspace's paths: `ntpath` on a `'windows'` workspace, else `posixpath`."""
         return ntpath if self.platform == 'windows' else posixpath
 
@@ -594,6 +594,11 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, SupportsRunInDirectory):
             directory = await self._start_dir(cwd, command, shell=shell)
             return await backend.run_in_directory(command, cwd=directory, shell=shell, env=env, timeout=timeout)
+        if self.platform == 'windows':
+            raise UserError(
+                "A `'windows'` workspace backend must implement `SupportsRunInDirectory` to run a command in a "
+                'directory: there is no `sh` to change directory with.'
+            )
         return await backend.run(
             await self._command_in(cwd, command, shell=shell), shell=shell, env=env, timeout=timeout
         )
@@ -627,7 +632,7 @@ class Workspace(WorkspaceBackend):
         Symlinks are not followed and `..` can escape `base`, so this confines nothing; use
         [`realpath`][pydantic_ai.workspaces.Workspace.realpath] to learn where a path actually leads.
         """
-        paths = self.path
+        paths = self.paths
         if base is not None and not self._is_absolute(base):
             raise ValueError(f'base must be an absolute path, got {base!r}')
         if self._is_absolute(path):
@@ -639,7 +644,7 @@ class Workspace(WorkspaceBackend):
 
         `\x` is relative to the working directory's drive there, which `ntpath.join` keeps.
         """
-        paths = self.path
+        paths = self.paths
         return paths.isabs(path) and (self.platform == 'posix' or paths.splitdrive(path)[0] != '')
 
     async def read_bytes(self, path: str) -> bytes:
@@ -682,7 +687,7 @@ class Workspace(WorkspaceBackend):
         [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses `..` as text, so
         `realpath(await ws.resolve(path))` names the file they open.
         """
-        paths = self.path
+        paths = self.paths
         if not self._is_absolute(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
             path = paths.join(await self.working_dir(), path)

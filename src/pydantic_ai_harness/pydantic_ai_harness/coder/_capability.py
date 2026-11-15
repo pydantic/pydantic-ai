@@ -188,10 +188,10 @@ class Coder(CombinedCapability[AgentDepsT]):
     """Autonomous coding with six tools, delegation, and context management, in the run's workspace.
 
     Files and commands go through `ctx.workspace`, and the project directory is
-    its working directory: attach `LocalWorkspace('.')` for a local checkout, or
-    a sandbox provider's capability for untrusted work, alongside `Coder()`, or
-    `WindowsWorkspace('.')` on Windows. A run without a workspace fails at its start.
-    Commands are unrestricted and can outlive runs.
+    its working directory: attach `LocalWorkspace('.')` (or `WindowsWorkspace('.')`
+    on Windows) for a local checkout, or a sandbox provider's capability for
+    untrusted work, alongside `Coder()`. A run without a workspace fails at its
+    start. Commands are unrestricted and can outlive runs.
 
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.

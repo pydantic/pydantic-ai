@@ -27,7 +27,7 @@ and `authority='user'` or `'none'` (or any `path_authority`) in `AuthorityWorksp
 the earlier one's settings carry over); give one a distinct `id` to keep both.
 `LocalWorkspace` needs POSIX; on Windows use `WindowsWorkspace(working_dir, ...)`, which takes the same options:
 commands run in PowerShell, paths are Windows paths, its ref is `WorkspaceRef(provider='windows', ...)`,
-and `ctx.workspace.platform` is `'windows'`, with `ctx.workspace.path` (`ntpath`) for joining its paths.
+and `ctx.workspace.platform` is `'windows'`, with `ctx.workspace.paths` (`ntpath`) for joining its paths.
 Its ref is `WorkspaceRef(provider='local', id=<absolute working_dir>)` from construction (the
 directory is not checked then; the first operation raises `WorkspaceUnavailableError` if it is
 missing), and the capability

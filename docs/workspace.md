@@ -816,7 +816,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[WindowsWorkspace('.')])
 A backend whose shell and paths are not POSIX says so with
 [`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform]; tools read it as
 [`Workspace.platform`][pydantic_ai.workspaces.Workspace.platform], and use
-[`Workspace.path`][pydantic_ai.workspaces.Workspace.path] (`posixpath` or `ntpath`) for its paths.
+[`Workspace.paths`][pydantic_ai.workspaces.Workspace.paths] (`posixpath` or `ntpath`) for its paths.
 The [conformance suite](#checking-a-backend) checks a `'windows'` backend's commands in PowerShell.
 
 ## Limits

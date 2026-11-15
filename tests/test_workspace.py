@@ -2117,11 +2117,11 @@ class FakeWindowsBackend:
 class TestWindowsPaths:
     async def test_a_backend_is_posix_unless_it_says_otherwise(self, tmp_path: Path) -> None:
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
-        assert (workspace.platform, workspace.path) == ('posix', posixpath)
+        assert (workspace.platform, workspace.paths) == ('posix', posixpath)
 
     async def test_paths_resolve_as_windows_paths(self) -> None:
         workspace = Workspace(Workspace(FakeWindowsBackend()))
-        assert (workspace.platform, workspace.path) == ('windows', ntpath)
+        assert (workspace.platform, workspace.paths) == ('windows', ntpath)
         assert await workspace.resolve('src/app.py') == 'C:\\project\\src\\app.py'
         assert await workspace.resolve('D:/data/../logs') == 'D:\\logs'
         # A path with a root but no drive is on the working directory's drive.
@@ -2150,6 +2150,16 @@ class TestWindowsPaths:
         workspace = Workspace(FakeWindowsBackend())
         assert await workspace.authority_of('src\\app.py') == 'operator'
         assert await workspace.authority_of('D:\\elsewhere') == 'none'
+
+    async def test_a_windows_backend_that_cannot_start_in_a_directory_fails_clearly(self) -> None:
+        """Without `SupportsRunInDirectory`, `Workspace.run` would send a `'windows'` backend an `sh` `cd`."""
+
+        class NoDirectoryBackend(FakeWindowsBackend):
+            run_in_directory = None  # pyright: ignore[reportAssignmentType]
+
+        workspace = Workspace(NoDirectoryBackend())
+        with pytest.raises(UserError, match='must implement `SupportsRunInDirectory`'):
+            await workspace.run(['rg'], cwd='src')
 
 
 def test_windows_workspace_needs_windows(tmp_path: Path) -> None:

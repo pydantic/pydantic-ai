@@ -211,7 +211,7 @@ async def metadata_dir(workspace: Workspace, name: str, *, temp_fallback: bool =
     `_temp_metadata_dir` instead. That runs a command, so only callers that already need commands
     pass it; the directory is outside the working directory, so `FileSystem` tools cannot read it.
     """
-    join = workspace.path.join
+    join = workspace.paths.join
     working_dir = await workspace.working_dir()
     root = join(working_dir, METADATA_DIR)
     directory = join(root, name)

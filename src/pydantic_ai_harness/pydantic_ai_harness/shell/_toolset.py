@@ -273,7 +273,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         # A run ID can contain path separators; hash it rather than letting it choose a filename.
         assert ctx.run_id is not None
         run_key = hashlib.sha256(ctx.run_id.encode('utf-8')).hexdigest()
-        return ctx.workspace.path.join(await self._jobs_base(ctx), 'run-state', run_key)
+        return ctx.workspace.paths.join(await self._jobs_base(ctx), 'run-state', run_key)
 
     async def clear_run_cwd(self, ctx: RunContext[AgentDepsT]) -> None:
         """Remove the run's saved directory once its agent run ends."""
@@ -293,7 +293,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         """The background command `command_id` names in the workspace, started by this run or an earlier one."""
         if not _COMMAND_ID.fullmatch(command_id):
             return None
-        directory = ctx.workspace.path.join(await self._jobs_base(ctx), command_id)
+        directory = ctx.workspace.paths.join(await self._jobs_base(ctx), command_id)
         return await Job.attach(ctx.workspace, directory, combined=False)
 
     def _first_denied_operator(self, command: str) -> str | None:
@@ -511,7 +511,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             log_limit=self._max_log_bytes,
             job_id=_job_id(ctx),
         )
-        return f'Started background command: {command!r}\nID: {ctx.workspace.path.basename(job.directory)}'
+        return f'Started background command: {command!r}\nID: {ctx.workspace.paths.basename(job.directory)}'
 
     async def _read_bg_output(self, job: Job) -> tuple[str, str]:
         """The retained tail of a background command's stdout and stderr logs."""
