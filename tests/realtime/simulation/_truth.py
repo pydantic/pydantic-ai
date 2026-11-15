@@ -95,10 +95,12 @@ class ToolCallTruth:
     call_id: str
     response: str
     name: str
-    seq: int = 0
+    seq: int
     """When the server made the call."""
     output_received: bool = False
     cancelled_by_server: bool = False
+    abandoned_by: str | None = None
+    """The response whose start made the server give up on the call before its result came in (Eleven Realtime)."""
     read: bool = False
     """Whether the client read the call (a cancelled response's calls can be dropped as stragglers)."""
     read_seq: int | None = None
@@ -166,8 +168,6 @@ class GroundTruth:
     """Those whose `input_audio_buffer.cleared` the client read."""
     speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
     """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
-    speech_reopened: set[str] = field(default_factory=set[str])
-    """xAI: spoken user turns its VAD heard stop, then start again under the same item before it committed them."""
     transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
     """When the client read each spoken user turn's completed transcript."""
     models_every_spoken_turn: bool = False

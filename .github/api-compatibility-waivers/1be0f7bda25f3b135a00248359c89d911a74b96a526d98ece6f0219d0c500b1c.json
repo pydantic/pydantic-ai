@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "False positive: `PylonPlugin.config` is built the same way; Griffe compares the expression text, which only renamed `PylonConfig` to `PylonSource`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+}

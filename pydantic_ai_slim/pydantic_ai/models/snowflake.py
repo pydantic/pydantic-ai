@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, Iterable
+from collections.abc import AsyncIterable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -10,7 +10,7 @@ from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _utils
-from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
+from ..messages import FinishReason, ModelResponse, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -23,13 +23,8 @@ try:
 
     from ..providers.snowflake import SnowflakeModelProfile
     from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
-    from .openai import (
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Snowflake model, '
@@ -39,38 +34,22 @@ except ImportError as _import_error:
 __all__ = ('SnowflakeModel', 'SnowflakeModelName', 'SnowflakeModelSettings', 'SnowflakeReasoning')
 
 LatestSnowflakeModelNames = Literal[
-    'claude-4-sonnet',
-    'claude-fable-5',
-    'claude-haiku-4-5',
-    'claude-opus-4-5',
-    'claude-opus-4-6',
-    'claude-opus-4-7',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
     'claude-opus-4-8',
-    'claude-opus-5',
-    'claude-sonnet-4-5',
     'claude-sonnet-4-6',
-    'claude-sonnet-5',
-    'deepseek-r1',
-    'llama3.1-405b',
-    'llama3.1-70b',
-    'llama3.1-8b',
+    'claude-haiku-4-5',
+    'openai-gpt-6-sol',
+    'openai-gpt-6.1-terra',
+    'openai-gpt-6-luna',
+    'openai-gpt-6-astra',
+    'openai-gpt-5.6-sol',
+    'openai-gpt-5.6-terra',
+    'openai-gpt-5.6-luna',
     'llama4-maverick',
-    'mistral-7b',
-    'mistral-large',
+    'llama3.3-70b',
+    'mistral-large3',
     'mistral-large2',
-    'openai-gpt-4.1',
-    'openai-gpt-5',
-    'openai-gpt-5-6-luna',
-    'openai-gpt-5-6-sol',
-    'openai-gpt-5-6-terra',
-    'openai-gpt-5-chat',
-    'openai-gpt-5-mini',
-    'openai-gpt-5-nano',
-    'openai-gpt-5.1',
-    'openai-gpt-5.2',
-    'openai-gpt-5.4',
-    'openai-gpt-5.5',
-    'snowflake-llama-3.3-70b',
 ]
 
 SnowflakeModelName = str | LatestSnowflakeModelNames
@@ -90,6 +69,7 @@ _REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high']] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 
 
@@ -130,7 +110,7 @@ class _SnowflakeChoice(chat_completion.Choice):
     message: _SnowflakeCompletionMessage  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-class _SnowflakeChatCompletion(_ChatCompletion):
+class _SnowflakeChatCompletion(LenientChatCompletion):
     choices: list[_SnowflakeChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -149,7 +129,7 @@ class _SnowflakeChunkChoice(chat_completion_chunk.Choice):
         return value or None
 
 
-class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
+class _SnowflakeChatCompletionChunk(LenientChatCompletionChunk):
     choices: list[_SnowflakeChunkChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -231,6 +211,13 @@ class SnowflakeModel(OpenAIChatModel):
         return super()._translate_thinking(model_settings, model_request_parameters)
 
     @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # On models that take the `reasoning` object, an explicit one replaces the unified mapping.
+        if self._resolved_profile.get('snowflake_supports_reasoning', False):
+            return ('snowflake_reasoning',) if 'snowflake_reasoning' in model_settings else ()
+        return super()._settings_overriding_thinking(model_settings)
+
+    @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _SnowflakeChatCompletion:
         # Cortex returns an empty `finish_reason` for Claude models, which would fail validation.
         for choice in response.choices:
@@ -254,6 +241,11 @@ class SnowflakeModel(OpenAIChatModel):
         else:
             return super()._process_thinking(message)
 
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        native = self.accepts_stateless_artifacts(message, part) and into_reasoning_detail(part)
+        return not native and super()._carries_thinking_in_user_turn(message, part)
+
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # pyright: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -268,7 +260,7 @@ class SnowflakeModel(OpenAIChatModel):
 
         @override
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
-            if item.provider_name == self._model.system and (reasoning_detail := into_reasoning_detail(item)):
+            if self.accepts_stateless_artifacts(item) and (reasoning_detail := into_reasoning_detail(item)):
                 self.reasoning_details.append(reasoning_detail.model_dump())
             else:
                 super()._map_response_thinking_part(item)

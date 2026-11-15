@@ -142,7 +142,8 @@ class ToolSearchTool(AbstractNativeTool):
     `strategy='custom'` on the native tool internally.
 
     * `None` (default): use the provider's default native search. On Anthropic this is
-      `bm25`; on OpenAI it is the server-executed `tool_search` tool.
+      `bm25` (`regex` on the legacy `AsyncAnthropicBedrock` client); on OpenAI it is the
+      server-executed `tool_search` tool.
     * `'bm25'` / `'regex'`: force a specific Anthropic native strategy. Adapters on
       providers that can't honor the choice raise `UserError`.
     * `'custom'`: discovery is performed by a callable on our side; provider adapters

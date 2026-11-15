@@ -91,6 +91,9 @@ from ..conftest import try_import
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
 
+with try_import() as openai_live_installed:
+    from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
+
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
 
@@ -671,7 +674,8 @@ async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config
     ).session() as session:
         _ = [event async for event in session]
 
-    assert capability.id is not None and 'SENTINEL-mcp-path-token' in capability.id
+    # The id is derived from the hostname alone, so the path's token never reaches it.
+    assert capability.id == 'mcp.example.test'
     spans = {span.name: span for span in exporter.get_finished_spans()}
     for name in ('invoke_agent agent', 'chat gpt-realtime'):
         attributes = spans[name].attributes
@@ -684,7 +688,7 @@ async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config
 
 @pytest.mark.parametrize('include_content', [True, False])
 def test_realtime_chat_and_session_mask_url_derived_native_names(include_content: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     settings, exporter = _settings(include_content=include_content)
     instrumentation = SessionInstrumentation(
         settings,
@@ -793,6 +797,37 @@ async def test_request_config_respects_include_model_request_parameters() -> Non
             {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
         ]
         # The spec-standard setting is still emitted when the serialized blobs are gated off.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+@pytest.mark.skipif(not openai_live_installed(), reason='openai not installed')
+async def test_request_config_omits_model_settings_without_content() -> None:
+    # Provider settings can carry prompt text (GPT-Live's spoken-behavior instructions, Gemini's
+    # `google_config_overrides`, ...), so with `include_content=False` the serialized `model_settings`
+    # blob is left off. The spec-standard `gen_ai.request.max_tokens` still goes out, like the classic path.
+    settings, exporter = _settings(include_content=False)
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_request_parameters=ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')]),
+        model_settings=OpenAILiveModelSettings(
+            max_tokens=4096, openai_live_instructions='You are Ada, a secret persona.'
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert 'model_settings' not in attributes
+        assert 'model_settings' not in json.loads(str(attributes['logfire.json_schema']))['properties']
+        assert 'secret persona' not in json.dumps(dict(attributes))
+        assert 'model_request_parameters' in attributes
         assert attributes['gen_ai.request.max_tokens'] == 4096
 
 
@@ -944,6 +979,25 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
 
     interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
     assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 1500}
+
+
+async def test_interrupt_at_playback_without_truncation_records_the_offset() -> None:
+    # Without output truncation (xAI), no position goes to the provider, but the span still records how far
+    # playback got, as history does.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([AudioDelta(b'a' * 4800), AudioDelta(b'b' * 4800)], hold_open=True),
+        _ok_runner,
+        instrumentation=settings,
+        profile=RealtimeModelProfile(supports_interruption=True, supports_output_truncation=False),
+    )
+    async with session:
+        stream = session.stream_audio()
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert await session.interrupt(played_bytes=4800) is True
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 100}
 
 
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
@@ -1376,6 +1430,12 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         # session span renders it as an object.
         'model_request_parameters': {'type': 'object'},
     }
+    # Each response's `chat` span reports the session's instructions, like a classic run's.
+    chat = next(s for s in exporter.get_finished_spans() if s.name.startswith('chat'))
+    assert chat.attributes is not None
+    assert json.loads(str(chat.attributes['gen_ai.system_instructions'])) == [
+        {'type': 'text', 'content': 'Keep answers concise.'}
+    ]
 
 
 async def test_session_span_marks_seeded_history_boundary() -> None:

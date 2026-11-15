@@ -97,6 +97,13 @@ class Shell(AbstractCapability[AgentDepsT]):
     `shell` tool are rejected.
     """
 
+    max_log_bytes: int | None = field(default=100_000_000, kw_only=True)
+    """Size past which a background or `shell` command's log is emptied, leaving a notice. Must be positive.
+
+    Checked once a second while the command runs, which keeps running, and once more when it ends. Bounds the disk a
+    chatty or runaway command (such as one reading its own log) can fill. `None` disables it.
+    """
+
     persist_cwd: bool = False
     """If True, track cd commands and adjust the working directory for subsequent calls."""
 
@@ -171,6 +178,7 @@ class Shell(AbstractCapability[AgentDepsT]):
             default_timeout=self.default_timeout,
             max_output_chars=self.max_output_chars,
             max_file_bytes=self.max_file_bytes,
+            max_log_bytes=self.max_log_bytes,
             persist_cwd=self.persist_cwd,
             allow_interactive=self.allow_interactive,
             env=self.env,

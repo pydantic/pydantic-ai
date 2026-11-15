@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, ClassVar, Concatenate, Literal, ParamSpec, Protocol, TypeVar, overload
@@ -22,10 +22,8 @@ from pydantic_ai.durable_exec import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import Model
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
+from pydantic_ai.tools import AgentDepsT
 
 try:
     from render import Options, Retry, TaskContext, Workflows
@@ -39,27 +37,12 @@ except ModuleNotFoundError as _import_error:  # pragma: no cover - optional SDK 
     ) from _import_error
 
 from ._compat import (
-    CapabilityMethodDeclaration,
     RenderRunContextCodec,
-    ToolsetCallToolParams,
     function_tool_original_name,
-    prepare_function_call_params,
 )
 from ._context import activate_task_context, current_task_context
 from ._operation_backend import RenderOperationBackend
-from ._transports import (
-    RenderCancelTransport,
-    RenderCapabilityOperationTransport,
-    RenderCompactMessagesTransport,
-    RenderDynamicCallTransport,
-    RenderDynamicGetToolsTransport,
-    RenderEventStreamHandlerTransport,
-    RenderFunctionCallTransport,
-    RenderGetToolsTransport,
-    RenderMCPCallTransport,
-    RenderModelRequestTransport,
-    RenderWorkspaceCallTransport,
-)
+from ._transports import RenderParameterTransports
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -68,8 +51,6 @@ ToolOptionsResolver = Callable[
     [DurableOperationId, object | None, str],
     Options | Literal[False] | None,
 ]
-
-Instructions = str | InstructionPart | Sequence[str | InstructionPart] | None
 
 
 class TaskDecorator(Protocol):
@@ -282,12 +263,14 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
             deps_type=self._deps_type,
             agent=agent,
             resolve_model=self._resolve_child_task_model,
+            engine_spec=self.engine_spec,
         )
         self._operation_backend = RenderOperationBackend(
             self.app,
             runtime=self,
             agent_name=self.name,
             config=self._operation_config,
+            parameter_transports=RenderParameterTransports(self._codec, engine_spec=self.engine_spec),
         )
         # Bind events first because the durable wrappers capture this operation.
         # The backend queues SDK registration until all core binding checks succeed.
@@ -321,70 +304,3 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         """Resolve a child task's model from this worker's model registry."""
         registry_key = model_id or 'default'
         return self._models_by_id.get(registry_key)
-
-    async def _prepare_function_call_params(
-        self,
-        toolset: FunctionToolset[AgentDepsT],
-        params: ToolsetCallToolParams,
-    ) -> ToolsetCallToolParams:
-        """Revalidate JSON-decoded arguments against the worker-local tool."""
-        agent = self._agent
-        if agent is None:  # pragma: no cover - binding always supplies the agent
-            raise UserError('`RenderWorkflows` must be bound before a function tool can run.')
-        return await prepare_function_call_params(agent, toolset, params)
-
-    def _workspace_call_transport(self) -> RenderWorkspaceCallTransport[AgentDepsT]:
-        return RenderWorkspaceCallTransport(self._codec())
-
-    def _capability_operation_parameter_transport(
-        self, declaration: CapabilityMethodDeclaration
-    ) -> RenderCapabilityOperationTransport[AgentDepsT]:
-        return RenderCapabilityOperationTransport(self._codec(), declaration)
-
-    def _function_call_parameter_transport(
-        self, toolset: FunctionToolset[AgentDepsT]
-    ) -> RenderFunctionCallTransport[AgentDepsT]:
-        return RenderFunctionCallTransport(self._codec(), toolset)
-
-    def _get_tools_parameter_transport(
-        self, toolset: AbstractToolset[AgentDepsT]
-    ) -> RenderGetToolsTransport[AgentDepsT]:
-        del toolset
-        return RenderGetToolsTransport(self._codec(), result_type=dict[str, ToolDefinition])
-
-    def _get_instructions_parameter_transport(
-        self, toolset: AbstractToolset[AgentDepsT]
-    ) -> RenderGetToolsTransport[AgentDepsT]:
-        del toolset
-        return RenderGetToolsTransport(self._codec(), result_type=Instructions)
-
-    def _dynamic_get_tools_parameter_transport(
-        self, toolset: DynamicToolset[AgentDepsT]
-    ) -> RenderDynamicGetToolsTransport[AgentDepsT]:
-        del toolset
-        return RenderDynamicGetToolsTransport(self._codec())
-
-    def _dynamic_call_parameter_transport(
-        self, toolset: DynamicToolset[AgentDepsT]
-    ) -> RenderDynamicCallTransport[AgentDepsT]:
-        del toolset
-        return RenderDynamicCallTransport(self._codec())
-
-    def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> RenderMCPCallTransport[AgentDepsT]:
-        return RenderMCPCallTransport(self._codec(), toolset)
-
-    def _model_request_parameter_transport(self, result_type: object) -> RenderModelRequestTransport[AgentDepsT]:
-        return RenderModelRequestTransport(self._codec(), result_type=result_type)
-
-    def _cancel_suspended_response_parameter_transport(
-        self,
-    ) -> RenderCancelTransport[AgentDepsT]:
-        return RenderCancelTransport(self._codec())
-
-    def _compact_messages_parameter_transport(self) -> RenderCompactMessagesTransport[AgentDepsT]:
-        return RenderCompactMessagesTransport(self._codec())
-
-    def _event_stream_handler_parameter_transport(
-        self,
-    ) -> RenderEventStreamHandlerTransport[AgentDepsT]:
-        return RenderEventStreamHandlerTransport(self._codec())

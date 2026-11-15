@@ -1,4 +1,24 @@
-"""Live Docker integration tests for the LocalStack capability."""
+"""Live Docker integration tests for the LocalStack capability.
+
+Run them with `LOCALSTACK_AUTH_TOKEN=<token> make integration-localstack`. The
+container tests skip unless Docker, an AWS CLI-compatible executable, and an
+auth token are available, since the default `localstack/localstack` image needs
+a token to start. Keep the token in your shell or CI secret store, never in the repo.
+
+Environment variables:
+
+- `LOCALSTACK_AUTH_TOKEN`: token forwarded to the container; `LOCALSTACK_API_KEY`
+  is the legacy fallback.
+- `LOCALSTACK_REQUIRE_AUTH_TOKEN=1`: fail instead of skipping when no token is
+  set, as CI does.
+- `LOCALSTACK_AWS_CLI`: CLI executable; defaults to `aws` when available, then
+  `awslocal`.
+- `LOCALSTACK_IMAGE`: Docker image; defaults to `localstack/localstack`.
+- `LOCALSTACK_ENDPOINT_URL`: an existing LocalStack service to test against; the
+  test that uses it skips when it is unset.
+- `LOCALSTACK_SKIP_MANAGED_CONTAINERS=1`: skip the tests that start their own
+  containers.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +31,7 @@ import uuid
 from pathlib import Path
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 
@@ -157,7 +177,7 @@ def _assert_success(output: str) -> None:
 
 
 async def _info(endpoint_url: str) -> dict[str, object]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx2.AsyncClient(timeout=10.0) as client:
         response = await client.get(endpoint_url.rstrip('/') + '/_localstack/info')
     response.raise_for_status()
     return _LOCALSTACK_INFO.validate_json(response.content)
@@ -165,9 +185,9 @@ async def _info(endpoint_url: str) -> dict[str, object]:
 
 async def _is_reachable(endpoint_url: str) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=1.0) as client:
+        async with httpx2.AsyncClient(timeout=1.0) as client:
             await client.get(endpoint_url.rstrip('/') + '/_localstack/health')
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         return False
     return True
 

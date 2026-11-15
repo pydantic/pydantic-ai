@@ -5,6 +5,7 @@ import base64
 import hashlib
 import threading
 import webbrowser
+from collections.abc import Callable
 from io import StringIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -38,7 +39,7 @@ def test_invalid_code(text: str) -> None:
 @pytest.mark.parametrize(
     'mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'declined', 'timeout', 'cancel']
 )
-async def test_login(mode: str) -> None:
+async def test_login(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
     output = StringIO()
     console = Console(file=output)
     browser_ready = asyncio.Event()
@@ -47,6 +48,14 @@ async def test_login(mode: str) -> None:
     urls: list[str] = []
     requests: list[httpx.Request] = []
     loop = asyncio.get_running_loop()
+    servers: list[asyncio.Server] = []
+    create_server = loop.create_server
+
+    async def recorded_server(factory: Callable[[], asyncio.BaseProtocol], host: str, port: int) -> asyncio.Server:
+        servers.append(server := await create_server(factory, host, port))
+        return server
+
+    monkeypatch.setattr(loop, 'create_server', recorded_server)
 
     def browser(url: str) -> bool:
         urls.append(url)
@@ -116,9 +125,9 @@ async def test_login(mode: str) -> None:
         assert (await login).get_secret_value() == 'private-api-key'
         assert len(requests) == 1
     assert prompt_closed.is_set()
-    with pytest.raises(httpx.ConnectError):
-        async with httpx.AsyncClient() as client:
-            await client.get(callback)
+    # The callback server itself: by now another test may listen on the port it released.
+    [server] = servers
+    assert not server.is_serving()
     assert 'private-api-key' not in output.getvalue()
     assert 'secret-code' not in output.getvalue()
     if mode in ('manual', 'browser_error'):

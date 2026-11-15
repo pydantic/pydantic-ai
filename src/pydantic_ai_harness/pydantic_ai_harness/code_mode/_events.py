@@ -9,19 +9,38 @@ subscribing with [`on_event`][pydantic_ai.capabilities.on_event].
 Every event carries the `run_code` part's tool call id in the inherited
 [`tool_call_id`][pydantic_ai.messages.CapabilityEvent.tool_call_id] field, so one streamed
 snippet's events correlate across the stream and execution phases. Launch-scoped events share a
-`launch_id` unique within the run. A launch always ends in exactly one of claimed or evicted; a
-settled event arrives in between when stream traffic allows.
+`launch_id` unique within the run. A launch ends in exactly one of claimed or evicted, except
+that launches still unclaimed when the run ends are cancelled without an event; a settled event
+arrives in between when stream traffic allows.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import AliasChoices, Field
+from typing_extensions import deprecated
 
 from pydantic_ai.messages import CapabilityEvent
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 CODE_MODE_EVENTS = 'code_mode'
 """Namespace for `CodeMode` capability events."""
+
+_SandboxFunctionName = Annotated[str, Field(validation_alias=AliasChoices('sandbox_function_name', 'sandbox_function'))]
+
+
+class _SandboxFunction:
+    sandbox_function_name: str
+
+    @property
+    @deprecated(
+        '`sandbox_function` is deprecated, use `sandbox_function_name` instead.', category=HarnessDeprecationWarning
+    )
+    def sandbox_function(self) -> str:
+        """Deprecated alias for `sandbox_function_name`."""
+        return self.sandbox_function_name
 
 
 @dataclass(kw_only=True)
@@ -30,25 +49,39 @@ class SpeculativeCodeUpdateEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
 
     Emitted per argument delta while a `run_code` tool call streams, carrying the full decoded
     code prefix, so consumers render live code without re-implementing partial-JSON decoding.
-    `closed_statements` marks the boundary between statements that are provably complete and
+    `closed_statement_count` marks the boundary between statements that are provably complete and
     the still-growing tail. Mirrors the model's delta cadence; debounce for fewer repaints.
     """
 
     code: str
     """The decoded code prefix streamed so far."""
 
-    closed_statements: int
+    closed_statement_count: Annotated[
+        int, Field(validation_alias=AliasChoices('closed_statement_count', 'closed_statements'))
+    ]
     """Top-level statements at the front of `code` that are provably complete."""
+
+    @property
+    @deprecated(
+        '`closed_statements` is deprecated, use `closed_statement_count` instead.', category=HarnessDeprecationWarning
+    )
+    def closed_statements(self) -> int:
+        """Deprecated alias for `closed_statement_count`."""
+        return self.closed_statement_count
 
 
 @dataclass(kw_only=True)
-class SpeculativeCallLaunchedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
-    """A sandbox tool call started executing while its snippet was still streaming."""
+class SpeculativeCallLaunchedEvent(_SandboxFunction, CapabilityEvent, namespace=CODE_MODE_EVENTS):
+    """A sandbox tool call was launched while its snippet was still streaming.
+
+    While a parallel `InputGuardrail` is still deciding, the launched call waits for its verdict
+    before it executes, and durations measured from the launch include that wait.
+    """
 
     launch_id: str
     """Identifier shared by this launch's later settled and claimed/evicted events."""
 
-    sandbox_function: str
+    sandbox_function_name: _SandboxFunctionName
     """The function name as written in the snippet (possibly sanitized)."""
 
     wrapped_tool_name: str
@@ -108,15 +141,17 @@ class SpeculativeCallClaimedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
 
 
 @dataclass(kw_only=True)
-class SpeculativeCallMissedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
+class SpeculativeCallMissedEvent(_SandboxFunction, CapabilityEvent, namespace=CODE_MODE_EVENTS):
     """The executing snippet dispatched a speculation-eligible call that no launch matched.
 
     Only emitted for calls whose function was eligible to speculate this step; dispatches of
-    never-eligible tools are ordinary calls, not misses. A miss is always safe (the call runs
-    cold), but a systematic miss pattern signals broken claim keying rather than bad luck.
+    never-eligible tools are ordinary calls, not misses. A dispatch also misses when its matching
+    launch started before a call to a tool that is not eligible, since the launch may hold a stale
+    result. A miss is always safe (the call runs cold). In snippets that make no such calls, a
+    systematic miss pattern signals broken claim keying rather than bad luck.
     """
 
-    sandbox_function: str
+    sandbox_function_name: _SandboxFunctionName
     wrapped_tool_name: str
     nested_tool_call_id: str
 
@@ -126,8 +161,9 @@ class SpeculativeCallEvictedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
     """A launch was discarded without being claimed: wasted work.
 
     Emitted when the snippet finishes without dispatching a matching call (untaken branch,
-    rewritten plan). Launches still unclaimed when the run ends are cancelled without an
-    event, since the stream has closed by then.
+    rewritten plan), or when the matching call ran cold because the launch started before a call
+    to a tool that is not eligible. Launches still unclaimed when the run ends are cancelled
+    without an event, since the stream has closed by then.
     """
 
     launch_id: str

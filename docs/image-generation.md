@@ -296,7 +296,7 @@ ratio and answers for itself. Every Grok Imagine dash is the transport rather th
 `ImageAspectRatio` enum `xai-sdk` generates has no member for `1:4`, `1:8`, `4:1`, `4:5`, `5:4`, `8:1` or `21:9`, so
 the request cannot carry them.
 
-| Ratio | GPT Image 1.x | GPT Image 2 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
+| Ratio | GPT Image 1.x | GPT Image 2 and 2.6 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
 | --- | --- | --- | --- | --- | --- | --- |
 | `1:1` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` |
 | `1:2` | — | `704×1408` | — | — | — | `704×1408` |
@@ -327,7 +327,7 @@ them exactly:
 | Model family | Exact dimensions accepted |
 | --- | --- |
 | GPT Image 1.x (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`) | `1024×1024`, `1024×1536`, or `1536×1024`. |
-| GPT Image 2 | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
+| GPT Image 2 and 2.6 (`gpt-image-2`, `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`) | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
 | Any other OpenAI model except DALL·E | Any positive dimensions, forwarded as `size` for OpenAI to accept or reject. |
 | Gemini 2.5 Flash Image | The ten dimensions shown in its canonical column above. This model has no separate resolution tier. |
 | Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
@@ -465,7 +465,12 @@ Image generation raises the same exceptions as the rest of Pydantic AI:
   type the selected provider does not accept, or `dimensions` the selected model cannot produce exactly.
 - [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] for other 4xx and 5xx provider responses, and
   [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the provider cannot be reached. xAI's gRPC status codes
-  are mapped onto these same two exceptions.
+  are mapped onto these same two exceptions. From Google, OpenAI and xAI, the error is also an instance of an error
+  category like [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
+  [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, as
+  when a [model request fails](models/overview.md#handling-model-api-errors). From all three, a provider that cannot
+  be reached raises a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], or a
+  [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] when an attempt times out.
 
 Because a block is reported as an exception rather than an empty result, you can retry a rejected prompt explicitly:
 
@@ -520,7 +525,7 @@ Each call opens a span named `image_generation {model}` carrying `gen_ai.operati
 `gen_ai.output.type='image'`. `image_generation` is a custom operation name: the OpenTelemetry GenAI conventions
 enumerate no value for image generation, while `image` is one of their standard output types.
 
-See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
 
 ## Testing
 

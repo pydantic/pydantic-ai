@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "clai2 0.x: the `read_clai_customization_guide` tool is replaced by the deferred `clai_customization` capability that `customization_guide()` returns; load it with `load_capability`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+}

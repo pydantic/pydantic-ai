@@ -21,7 +21,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import RenderWorkflows
 from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 
 class RuntimeDeps(TypedDict):
@@ -78,8 +78,13 @@ class RuntimeEffectEvent(CustomEvent, name='render_local_runtime.effect'):
 
 
 def _tool_returns(messages: list[ModelMessage]) -> dict[str, ToolReturnPart]:
-    """Index tool results from serialized model history by public tool name."""
-    return {part.tool_name: part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    """Index successful tool results from serialized model history by public tool name."""
+    return {
+        part.tool_name: part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+    }
 
 
 def grandchild_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

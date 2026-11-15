@@ -30,6 +30,7 @@ from . import _function_schema, _utils, messages as _messages
 from ._deferred import (
     DeferredToolApprovalResult as DeferredToolApprovalResult,
     DeferredToolCallResult as DeferredToolCallResult,
+    DeferredToolKind as DeferredToolKind,
     DeferredToolRequests as DeferredToolRequests,
     DeferredToolResult as DeferredToolResult,
     DeferredToolResults as DeferredToolResults,
@@ -160,24 +161,26 @@ ToolsPrepareFunc: TypeAlias = Callable[
 This is useful if you want to customize the definition of multiple tools or you want to register
 a subset of tools for a given step. Both sync and async functions are accepted.
 
-Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
+Example — here `turn_on_strict_if_supported` is valid as a `ToolsPrepareFunc`. It reads the profile's
+`supports_json_schema_output` as a stand-in, since there's no provider-agnostic strict-tools flag:
 
 ```python {noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.models import Model
 from pydantic_ai.tools import ToolDefinition
 
 
-def turn_on_strict_if_openai(
+def turn_on_strict_if_supported(
     ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition]:
-    if ctx.model.system == 'openai':
+    if isinstance(ctx.model, Model) and ctx.model.profile.get('supports_json_schema_output', False):
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
-agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(turn_on_strict_if_openai)])
+agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(turn_on_strict_if_supported)])
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
@@ -834,6 +837,29 @@ class ToolDefinition:
     semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).
     """
 
+    if TYPE_CHECKING:
+        unless_tool_kind: _ToolKindField = _ToolKindField()
+    else:
+        unless_tool_kind: ToolPartKind | None = None
+    """If set, this tool is left out of the run step when another tool in it has this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind].
+
+    Set it to a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id; either way it reads back as the id.
+
+    The local-tool counterpart of [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native]: a
+    capability's own reader tool can name the kind of a general file reader, and then steps aside
+    whenever such a reader is on the agent, whatever that tool is called. It is resolved when the run
+    step's tools are collected, after `prepare_tools`, so the tool left out is neither sent to the model
+    nor callable, and [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind]
+    doesn't return it. A tool hidden by deferred loading counts as present, so the decision doesn't
+    change when that tool is revealed mid-run.
+
+    A tool is only left out in favor of a tool that stays. When tools would each be left out in favor
+    of the other, the one listed first in the step's tools stays, and every tool whose kind it names
+    steps aside. A tool is never left out unless a tool it names stays, so a cycle that can't meet every
+    rule can keep a tool beside one whose kind it names.
+    See [Superseding a tool by kind](../tools-advanced.md#unless-tool-kind).
+    """
+
     return_schema: ObjectJsonSchema | None = None
     """The JSON schema for the tool's return value.
 
@@ -892,6 +918,8 @@ class ToolDefinition:
     def __post_init__(self) -> None:
         if self.tool_kind is not None and self.tool_kind.__class__ is not str:
             self.tool_kind = _tool_kind_id(self.tool_kind)
+        if self.unless_tool_kind is not None and self.unless_tool_kind.__class__ is not str:
+            self.unless_tool_kind = _tool_kind_id(self.unless_tool_kind)
 
     @property
     def defer(self) -> bool:

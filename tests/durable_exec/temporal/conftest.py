@@ -85,6 +85,19 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
         Agent.instrument_all(False)
 
 
+@pytest.fixture
+async def complex_agent_mcp() -> AsyncIterator[None]:
+    """Keep the shared agent's subprocess across activities, then close it before its event loop ends."""
+    from ._shared import complex_mcp_transport
+
+    # The agent is shared across modules with separate event loops. Leaving its keep-alive
+    # transport open lets a later module inherit a connection task cancelled by loop teardown.
+    try:
+        yield
+    finally:
+        await complex_mcp_transport.close()
+
+
 # One dev server (and thus one xdist group) per test module so the four temporal files can
 # run on four xdist workers concurrently instead of forming one serial chain. `start_local`
 # picks the port: anyio's `free_tcp_port_factory` only probes and releases, so the port sits
@@ -101,7 +114,15 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     # server binds `port + 1000` without probing it first, and a bind failure there aborts the whole
     # process — surfacing as `ConnectionRefused` on the healthy gRPC port. No test reads the UI.
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
-        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        # `suggestContinueAsNew` is lowered from its default so the continue-as-new tests can reach
+        # the suggestion threshold in a handful of turns. Other tests are unaffected: the suggestion
+        # is only read when `continue_as_new` is configured.
+        dev_server_extra_args=[
+            '--dynamic-config-value',
+            'frontend.enableServerVersionCheck=false',
+            '--dynamic-config-value',
+            'limit.historyCount.suggestContinueAsNew=10',
+        ],
         download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env

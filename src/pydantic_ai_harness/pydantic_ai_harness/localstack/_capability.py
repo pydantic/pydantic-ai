@@ -10,11 +10,12 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
-from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset
+from pydantic_ai_harness.localstack._container import endpoint_port, managed_endpoint_url, validate_host_address
+from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset, validate_settings
 
 _INSTRUCTIONS = (
     'You have access to an emulated AWS environment powered by LocalStack at {endpoint_url}. '
-    'Use the `aws_cli` tool to run AWS CLI commands against it — pass the command without the '
+    'Use the `aws_cli` tool to run AWS CLI commands against it. Pass the command without the '
     'leading `aws` and without `--endpoint-url`; the endpoint, region, and credentials are '
     'injected automatically. Use `localstack_health` to see which AWS services are available. '
     'This is a local emulator: resources are not real AWS resources and may be reset when '
@@ -27,9 +28,10 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """Access to an emulated AWS environment via LocalStack.
 
     Gives the agent AWS CLI tooling wired to a running LocalStack instance, so it
-    can provision and interact with AWS services (S3, DynamoDB, SQS, Lambda, …)
+    can provision and interact with AWS services (S3, DynamoDB, SQS, Lambda, etc.)
     without touching real AWS. Start LocalStack separately (`localstack start` or
-    its Docker image) before running the agent.
+    its Docker image) before running the agent, or set `manage_container=True`
+    to have the capability start a container for you.
 
     ```python
     from pydantic_ai import Agent
@@ -58,7 +60,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     access_key_id: str = 'test'
     """AWS access key id. LocalStack accepts any value; defaults to its `test` convention."""
 
-    secret_access_key: str = 'test'
+    secret_access_key: str = field(default='test', repr=False)
     """AWS secret access key. LocalStack accepts any value; defaults to its `test` convention."""
 
     allowed_services: Sequence[str] = field(default_factory=list[str])
@@ -79,7 +81,9 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     manage_container: bool = False
     """If True, start a LocalStack Docker container for each run and stop it when the run ends.
 
-    Requires Docker. When False (default), the agent connects to a LocalStack
+    Inside `async with agent:`, one container is started when the agent is
+    entered, shared by every run inside, and stopped when the agent context
+    exits. Requires Docker. When False (default), the agent connects to a LocalStack
     instance you started separately at `endpoint_url`.
     """
 
@@ -98,7 +102,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     container_name: str | None = None
     """Optional name for the managed container. Leave None to let Docker assign one."""
 
-    container_env: Mapping[str, str] = field(default_factory=dict[str, str])
+    container_env: Mapping[str, str] = field(default_factory=dict[str, str], repr=False)
     """Environment variables passed to the managed container, e.g. `{'DEBUG': '1'}`."""
 
     docker_path: str = 'docker'
@@ -114,6 +118,16 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     id: str | None = 'localstack'
     """Stable identity for durable execution, which records commands against an external instance under it."""
 
+    def __post_init__(self) -> None:
+        validate_settings(
+            allowed_services=self.allowed_services,
+            denied_services=self.denied_services,
+            max_output_chars=self.max_output_chars,
+        )
+        if self.manage_container:
+            endpoint_port(self.endpoint_url)
+            validate_host_address(self.host_address)
+
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
@@ -123,12 +137,19 @@ class LocalStack(AbstractCapability[AgentDepsT]):
         """Explain the emulated environment to the model, unless disabled."""
         if not self.include_instructions:
             return None
-        return _INSTRUCTIONS.format(endpoint_url=self.endpoint_url)
+        endpoint_url = (
+            managed_endpoint_url(self.host_address, endpoint_port(self.endpoint_url))
+            if self.manage_container
+            else self.endpoint_url
+        )
+        return _INSTRUCTIONS.format(endpoint_url=endpoint_url)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT]:
         """Build and return the LocalStack toolset."""
         # A managed container starts empty in the process that recovers a run, so its commands run
         # again there to rebuild its state, rather than replaying recorded output into an empty one.
+        # Runs that share one container inside `async with agent:` share its state too, so a run that
+        # recovers on DBOS while it is up re-runs its commands against resources that already exist.
         operations = (
             None
             if self.manage_container

@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
 import anyio
@@ -18,7 +17,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -30,33 +28,12 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeReplStore, CodeModeToolset
+from tests.harness.code_mode.repl_store import MemoryReplStore
 
 from .._recording_durability import RecordingDurability
 
 READINESS_WAIT_TIMEOUT = 10
 """Seconds to wait for a background tool to reach a step; generous so loaded xdist workers do not flake."""
-
-
-@dataclass
-class MemoryReplStore:
-    """REPL states keyed by conversation, recording every load and save."""
-
-    states: dict[str, bytes] = field(default_factory=dict[str, bytes])
-    loads: list[str] = field(default_factory=list[str])
-    saves: list[tuple[str, bool]] = field(default_factory=list[tuple[str, bool]])
-
-    async def load(self, ctx: RunContext[None]) -> bytes | None:
-        assert ctx.conversation_id is not None
-        self.loads.append(ctx.conversation_id)
-        return self.states.get(ctx.conversation_id)
-
-    async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
-        assert ctx.conversation_id is not None
-        self.saves.append((ctx.conversation_id, state is not None))
-        if state is None:
-            self.states.pop(ctx.conversation_id, None)
-        else:
-            self.states[ctx.conversation_id] = state
 
 
 def add(a: int, b: int) -> int:
@@ -75,9 +52,9 @@ def _reply(messages: list[ModelMessage], scripts: Mapping[str, Mapping[str, obje
         if args is None:
             return ModelResponse(parts=[TextPart('no code')])
         return ModelResponse(parts=[ToolCallPart('run_code', dict(args))])
-    if isinstance(part, RetryPromptPart):
-        return ModelResponse(parts=[TextPart(f'retry: {part.content}')])
     assert isinstance(part, ToolReturnPart)
+    if part.outcome == 'retried':
+        return ModelResponse(parts=[TextPart(f'retry: {part.content}')])
     return ModelResponse(parts=[TextPart(str(part.content))])
 
 
@@ -120,6 +97,20 @@ def agent_with(
     store: CodeModeReplStore[None], scripts: Mapping[str, Mapping[str, object]] = SCRIPTS, *, eager: bool = False
 ) -> Agent[None, str]:
     agent = Agent(scripted(scripts), deps_type=type(None), capabilities=[CodeMode[None](repl_store=store, eager=eager)])
+    agent.tool_plain(add)
+    return agent
+
+
+def snippet_agent(store: CodeModeReplStore[None], snippets: Sequence[Mapping[str, object]]) -> Agent[None, str]:
+    """An agent whose run makes each of `snippets` its own `run_code` call in turn, then answers `done`."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        done = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if done == len(snippets):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_code', dict(snippets[done]))])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[CodeMode[None](repl_store=store)])
     agent.tool_plain(add)
     return agent
 
@@ -256,22 +247,69 @@ class TestCodeModeReplStore:
 
         assert (store.loads, store.saves) == ([], [])
 
-    async def test_store_errors_do_not_fail_the_run(self, caplog: pytest.LogCaptureFixture) -> None:
-        @dataclass
-        class BrokenStore:
-            async def load(self, ctx: RunContext[None]) -> bytes | None:
-                raise OSError('disk unavailable')
-
-            async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
-                raise OSError('disk full')
-
-        agent = agent_with(BrokenStore(), {'fresh': {'code': 'x = 1\nx'}})
+    @pytest.mark.parametrize(
+        ('load_error', 'save_error', 'warning'),
+        [
+            pytest.param(OSError('disk unavailable'), None, 'could not load the saved REPL state', id='load'),
+            pytest.param(None, OSError('disk full'), 'could not save the REPL state', id='save'),
+        ],
+    )
+    async def test_store_errors_do_not_fail_the_run(
+        self,
+        load_error: OSError | None,
+        save_error: OSError | None,
+        warning: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = MemoryReplStore(load_error=load_error, save_error=save_error)
+        agent = agent_with(store, {'fresh': {'code': 'x = 1\nx'}})
 
         with caplog.at_level(logging.WARNING):
             assert (await agent.run('fresh', conversation_id='c1')).output == '1'
 
-        assert 'could not load the saved REPL state' in caplog.text and 'disk unavailable' in caplog.text
-        assert 'could not save the REPL state' in caplog.text and 'disk full' in caplog.text
+        assert warning in caplog.text and str(load_error or save_error) in caplog.text
+
+    async def test_failed_load_does_not_overwrite_the_stored_state(self) -> None:
+        """A store that cannot be read for one run still holds the state for the next, and is read once per run."""
+        store = MemoryReplStore()
+        agent = agent_with(store)
+        await agent.run('set', conversation_id='c1')
+        stored = dict(store.states)
+
+        store.load_error = OSError('disk unavailable')
+        failing = snippet_agent(store, [{'code': 'y = 1'}, {'code': 'y + 1'}])
+        assert (await failing.run('two snippets', conversation_id='c1')).output == 'done'
+        store.load_error = None
+
+        assert store.states == stored
+        assert store.saves == [('c1', True)]
+        assert (await agent.run('get', conversation_id='c1')).output == '42'
+        assert store.loads == ['c1', 'c1', 'c1']
+
+    @pytest.mark.parametrize(
+        ('restart_code', 'saves', 'output'),
+        [
+            pytest.param('z = 2', [('c1', True), ('c1', True)], "name 'x' is not defined", id='replaced'),
+            pytest.param(
+                'await add(a="bad", b=1)', [('c1', True), ('c1', False)], '`x` used when not defined', id='forgotten'
+            ),
+        ],
+    )
+    async def test_restart_after_failed_load_discards_the_stored_state(
+        self, restart_code: str, saves: list[tuple[str, bool]], output: str
+    ) -> None:
+        """`restart: true` discards the stored state on purpose, so a failed `load` before it does not stop that."""
+        store = MemoryReplStore()
+        agent = agent_with(store)
+        await agent.run('set', conversation_id='c1')
+
+        store.load_error = OSError('disk unavailable')
+        restarting = snippet_agent(store, [{'code': 'y = 1'}, {'code': restart_code, 'restart': True}])
+        assert (await restarting.run('restart', conversation_id='c1')).output == 'done'
+        store.load_error = None
+
+        assert store.saves == saves
+        assert output in (await agent.run('get', conversation_id='c1')).output
 
     async def test_a_save_past_the_timeout_is_abandoned(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

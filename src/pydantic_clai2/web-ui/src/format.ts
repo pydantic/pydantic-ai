@@ -1,6 +1,8 @@
-/** `1234` as `1.2k`, `56789` as `57k`; `?` when unknown. */
+/** `1234` as `1.2k`, `56789` as `57k`, `1500000` as `1.5M`; `?` when unknown. */
 export function compact(tokens: number | null | undefined): string {
   if (tokens === null || tokens === undefined) return '?'
+  // From the count that would round to `1000k`, as the TUI's status row switches.
+  if (tokens >= 999_500) return `${Number((tokens / 1_000_000).toFixed(1))}M`
   if (tokens < 1000) return String(tokens)
   return `${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k`
 }

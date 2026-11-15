@@ -29,7 +29,13 @@ from pydantic_ai._agent_graph import _interrupted_stream_response  # pyright: ig
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    SkipModelRequest,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -457,8 +463,9 @@ async def test_cost_limit_mid_continuation_cancels_job(
         else:
             await agent.run('go', usage_limits=limits)
 
-    assert model.cancelled[-1].provider_response_id == f'r{expected_calls}'
-    assert model.cancelled[-1].state == 'suspended'
+    # Cancelled exactly once: the streamed composite's own cancel leaves nothing for the graph to cancel again.
+    assert [response.provider_response_id for response in model.cancelled] == [f'r{expected_calls}']
+    assert model.cancelled[0].state == 'suspended'
     if stream:
         assert model.request_stream_calls == expected_calls
     else:
@@ -824,6 +831,36 @@ async def test_nonstream_usage_limit_mid_continuation_cancels_job() -> None:
     assert model.cancelled[0].state == 'suspended'
 
 
+@pytest.mark.parametrize('resumed', [False, True])
+async def test_nonstream_usage_limit_mid_continuation_keeps_billed_usage(resumed: bool) -> None:
+    """A continuation that trips a limit leaves the usage billed so far on the run's usage.
+
+    A resumed run counts only what it billed itself, not the suspended response it resumed from history.
+    """
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('paused')], state='suspended', usage=RequestUsage(input_tokens=100, output_tokens=1)
+        )
+
+    history: list[ModelMessage] | None = None
+    if resumed:
+        seed = ModelResponse(
+            parts=[TextPart('earlier')], state='suspended', usage=RequestUsage(input_tokens=1000, output_tokens=10)
+        )
+        history = [ModelRequest(parts=[UserPromptPart(content='go')]), seed]
+    usage = RunUsage()
+    with pytest.raises(UsageLimitExceeded):
+        await Agent(FunctionModel(fn)).run(
+            None if resumed else 'go',
+            message_history=history,
+            usage=usage,
+            usage_limits=UsageLimits(input_tokens_limit=5),
+        )
+
+    assert usage == RunUsage(input_tokens=100, output_tokens=1)
+
+
 async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> None:
     """A token-limit trip on an already-`'complete'` final merge raises without cancelling anything.
 
@@ -849,13 +886,18 @@ async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> Non
 
 
 async def test_error_on_first_streamed_segment_propagates_from_consumer_and_cancels_wrap() -> None:
-    """A streamed model error surfaces in the consumer task and cancels the model-request wrapper."""
+    """A streamed model error after the first event surfaces in the consumer task and cancels the model-request wrapper.
+
+    An error before the first event is raised while the stream is primed instead, where an
+    `on_model_request_error` hook can still handle it: see `test_model_request_attempts.py`.
+    """
 
     @dataclass
     class _ExplodingStream(StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='partial'):
+                yield event
             raise RuntimeError('stream exploded')
-            yield  # pragma: no cover
 
         async def close_stream(self) -> None:
             pass
@@ -909,8 +951,8 @@ async def test_error_on_first_streamed_segment_propagates_from_consumer_and_canc
     agent = Agent(_ExplodingModel(), capabilities=[hooks])
 
     with pytest.raises(RuntimeError, match='stream exploded'):
-        async with agent.run_stream('go'):
-            pass
+        async with agent.run_stream('go') as result:
+            await result.get_output()
 
     assert calls == ['wrap:before', 'wrap:cancelled']
 
@@ -1163,8 +1205,14 @@ async def test_streamed_background_detach_records_suspended_and_resumes() -> Non
     assert new_messages[-1].state == 'complete'
 
 
-async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('polled', [False, True], ids=['continued', 'polled'])
+async def test_nonstream_model_change_chain_counts_against_strict_ceiling(
+    polled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A model-change replace chain is bound by `MAX_GENERATION_CONTINUATIONS`, not the poll backstop.
+
+    Also when the model waits between segments: only a batch request, whose model bounds its own polls, is
+    counted as a poll under a new ID.
 
     Each suspended segment reports a different `model_name`, so the merge *replaces* — but as *fresh*
     generation, not a same-id re-poll of one background job. It must therefore count against the strict
@@ -1192,6 +1240,12 @@ async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkey
             _suspended_model_change('m3', 'r3'),
         ]
     )
+    if polled:
+
+        def poll_at_once(response: ModelResponse) -> float:
+            return 0.0
+
+        monkeypatch.setattr(model, 'continuation_delay', poll_at_once)
     agent = Agent(model)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):
@@ -1591,6 +1645,46 @@ async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:
     # The still-live background job was cancelled best-effort so it doesn't leak.
     assert len(model.cancelled) == 1
     assert model.cancelled[0].provider_response_id == 'job1'
+
+
+class _FailingContinuationModel(_ScriptedModel):
+    """A `_ScriptedModel` whose continuation request (every `request_stream` after the first) fails."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        if self.request_stream_calls:
+            raise ModelAPIError('scripted', 'continuation failed')
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+            yield response
+
+
+async def test_run_stream_continuation_error_cancels_job_once() -> None:
+    """A continuation request that fails mid-`run_stream` cancels the suspended job exactly once.
+
+    The streamed composite cancels the job itself when a later segment fails, so the response it then
+    reports must not look like a resumable detach, or the graph's interrupted-stream path cancels it again.
+    """
+    model = _FailingContinuationModel(
+        segments=[
+            _StreamSegment(texts=[], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2)
+        ]
+    )
+
+    with capture_run_messages() as messages:
+        with pytest.raises(ModelAPIError, match='continuation failed'):
+            # The suspended segment streams no output, so opening the stream already reaches the failing continuation.
+            async with Agent(model).run_stream('go'):
+                pass  # pragma: no cover
+
+    assert [response.provider_response_id for response in model.cancelled] == ['job1']
+    assert isinstance(messages[-1], ModelResponse)
+    assert messages[-1].state == 'interrupted'  # non-resumable: the job is gone
 
 
 async def test_iter_node_stream_early_break_records_suspended() -> None:

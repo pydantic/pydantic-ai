@@ -14,9 +14,9 @@ from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 from pydantic_ai_harness.browser_use._toolset import (
     BrowserAgentFactory,
     BrowserUseToolset,
-    _normalize_allowed_domains,  # pyright: ignore[reportPrivateUsage]
-    _normalize_profile_allowed_domains,  # pyright: ignore[reportPrivateUsage]
     default_browser_agent,
+    normalize_allowed_domains,
+    session_prohibited_domains,
 )
 
 try:
@@ -68,7 +68,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     Adds one tool, `browse_web`, which hands a self-contained natural-language
     goal to a browser-use `Agent`. That agent drives a real Chromium over CDP
     with its own perception-action loop (indexed DOM, screenshots, planning,
-    self-healing) and returns a text result; the browser session is killed when
+    recovery from failed actions) and returns a text result; the browser session is killed when
     the run ends, on success or failure.
 
     ```python
@@ -104,6 +104,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     settings, including its content-redaction policy. browser-use's hosted model is opt-in: pass
     `browser_use.ChatBrowserUse()`, which needs a browser-use account and
     `BROWSER_USE_API_KEY`.
+
+    Calls on a Pydantic AI model count toward the host run's usage and are bounded
+    by its `UsageLimits`; a browser-use chat model's calls are neither.
     """
 
     browser_profile: BrowserProfile | None = field(default=None, repr=False)
@@ -125,7 +128,10 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     blocked. Glob patterns like `'*.example.com'` are supported. A bare
     scheme-qualified host such as `'https://example.com'` is normalized with a
     path boundary before browser-use receives it. When set, it overrides the
-    `browser_profile`'s own `allowed_domains`.
+    `browser_profile`'s own `allowed_domains`. A `browser_profile` allowlist given as
+    a set is matched the same way; an allowlist that normalizes to 100 or more
+    entries raises `ValueError`, because browser-use would match it by exact
+    hostname only.
     """
 
     block_ip_addresses: bool = True
@@ -146,14 +152,15 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     max_steps: int = 50
     """Hard cap on the sub-agent's perception-action steps per `browse_web` call.
 
-    Each step is one LLM call. When the cap is hit before the task finishes,
-    the tool reports that the agent stopped without a result.
+    Each step is one LLM call, not counting planning, judge, and extraction calls. On the
+    last step browser-use makes the agent give a final answer, which the tool labels
+    as incomplete when the agent reports failure.
     """
 
     use_vision: bool | Literal['auto'] = True
     """Send page screenshots to the sub-agent's model.
 
-    Vision makes the agent markedly better on visual layouts but adds image
+    Vision makes the agent better on visual layouts but adds image
     tokens on every step; turn it off for text-heavy tasks on a budget, or use
     `'auto'` to follow the model's declared vision support.
     """
@@ -167,19 +174,23 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     """
 
     sensitive_data: dict[str, str | dict[str, str]] | None = field(default=None, repr=False)
-    """Secrets the sub-agent may type without its model ever seeing the values.
+    """Secrets the sub-agent may type without the values entering its own messages.
 
     Kept out of `repr()`, so the values do not reach a traceback, a log line, or a span
-    attribute. Keeping them from the sub-agent's model and then printing them in a dataclass
-    repr would be an odd place to stop.
+    attribute.
 
     browser-use shows the model only the placeholder keys (e.g.
     `{'x_password': '...'}`; the model writes `<secret>x_password</secret>`)
-    and substitutes the real values in the browser. Scope entries per domain
-    with the nested form `{'https://example.com': {'x_password': '...'}}`. Flat
-    entries require a non-empty `allowed_domains` on the capability or
-    `browser_profile` with explicit hostnames. Secret-bearing sessions process
-    same-origin frames only.
+    and substitutes the real values into the action. Screenshots are not redacted,
+    so a value typed into a visible, non-password field reaches the model when
+    `use_vision` is on, and the page-extraction and judge models receive a value
+    the agent writes into an `extract` query or its final answer. Scope entries per domain with the nested form
+    `{'https://example.com': {'x_password': '...'}}`. Flat entries require a
+    non-empty `allowed_domains` on the capability or `browser_profile` with explicit
+    hostnames, and are substituted only on the hosts that allowlist names.
+    Secret-bearing sessions process same-origin frames only, `evaluate` is removed
+    from the `settings.tools` every agent factory receives, and `browse_web`
+    replaces any secret value in its result with the placeholder.
     """
 
     extend_system_message: str | None = None
@@ -252,18 +263,30 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     """The cached toolset, so `'agent'`-scoped session state has one owner."""
 
     def __post_init__(self) -> None:
-        """Require an effective navigation allowlist when flat secrets are configured."""
+        """Require an effective navigation allowlist when flat secrets are configured.
+
+        Also reports a prohibited list browser-use would match by exact hostname at
+        construction rather than on the first `browse_web` call.
+        """
         self._validate_sensitive_data()
+        if self.browser_profile is not None:
+            session_prohibited_domains(
+                self.browser_profile.prohibited_domains,
+                block_ip_addresses=self.block_ip_addresses,
+                allowed_domains=self.allowed_domains
+                if self.allowed_domains is not None
+                else self.browser_profile.allowed_domains,
+            )
 
     def _validate_sensitive_data(self) -> None:
         """Validate the mutable secret configuration before creating its toolset."""
         if self.allowed_domains is not None:
-            self.allowed_domains = _normalize_allowed_domains(self.allowed_domains)
-        elif self.browser_profile is not None:
+            self.allowed_domains = normalize_allowed_domains(self.allowed_domains)
+        elif self.browser_profile is not None and self.browser_profile.allowed_domains is not None:
             # Only when `allowed_domains` is absent: `BrowserSession` lets a non-`None`
             # one replace the profile's list, so validating an overridden profile
             # allowlist would reject a configuration whose effective allowlist is safe.
-            normalized_allowed_domains = _normalize_profile_allowed_domains(self.browser_profile.allowed_domains)
+            normalized_allowed_domains = normalize_allowed_domains(self.browser_profile.allowed_domains)
             if normalized_allowed_domains != self.browser_profile.allowed_domains:
                 self.browser_profile = self.browser_profile.model_copy(
                     update={'allowed_domains': normalized_allowed_domains}
@@ -366,6 +389,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
         cdp_url: str | None = None,
         guidance: str | None = None,
         browser_use_telemetry: bool = False,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> BrowserUse[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -386,4 +412,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
             cdp_url=cdp_url,
             guidance=guidance,
             browser_use_telemetry=browser_use_telemetry,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

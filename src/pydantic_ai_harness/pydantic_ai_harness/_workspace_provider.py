@@ -12,7 +12,7 @@ from typing import TypeVar
 import anyio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
@@ -54,6 +54,30 @@ def running_on_asyncio() -> bool:
         return _sniffio.current_async_library() == 'asyncio'
     except _sniffio.AsyncLibraryNotFoundError:
         return False
+
+
+def require_asyncio(message: str) -> None:
+    """Raise `UserError` with `message` unless the caller runs on asyncio."""
+    if not running_on_asyncio():
+        raise UserError(message)
+
+
+def reject_defer_loading(owner: str, defer_loading: bool) -> None:
+    """Raise `UserError` if the workspace capability `owner` is set to load deferred.
+
+    Core picks the run's workspace from the always-on capabilities only.
+    """
+    if defer_loading:
+        raise UserError(
+            f'`{owner}` does not support `defer_loading=True`: '
+            'the workspace is selected before deferred capabilities load.'
+        )
+
+
+def check_provider(ref: WorkspaceRef, provider: str) -> None:
+    """Raise `ValueError` unless `ref` names a workspace of `provider`."""
+    if ref.provider != provider:
+        raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {provider!r}')
 
 
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.
@@ -187,6 +211,12 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
     return list(command)
 
 
+def check_env_types(env: Mapping[str, str] | None) -> None:
+    """Raise `TypeError` unless `env` is `None` or maps strings to strings."""
+    if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+        raise TypeError('env keys and values must be strings')
+
+
 def check_env(env: Mapping[str, str] | None) -> None:
     """Raise unless `env` maps non-empty names without `=` or NUL to strings without NUL.
 
@@ -194,8 +224,7 @@ def check_env(env: Mapping[str, str] | None) -> None:
     """
     if env is None:
         return
-    if any(type(key) is not str or type(value) is not str for key, value in env.items()):
-        raise TypeError('env keys and values must be strings')
+    check_env_types(env)
     if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
         raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
 

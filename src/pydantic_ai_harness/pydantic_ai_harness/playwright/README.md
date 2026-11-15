@@ -21,6 +21,28 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
 > capability runs its own browser, so a session opened by one is not visible to
 > the other.
 
+```mermaid
+flowchart TB
+    accTitle: Playwright Browser: the model drives a real browser
+    accDescr: The model calls PlaywrightBrowser tools (navigate, snapshot, click and 15 more), one call per action, for page text or screenshot. They run Chromium from the first call to run end. An egress guard passes every request to allowed sites, except navigation and data requests to other domains (allowed_domains) and loopback, private and metadata addresses (block_private_addresses).
+    model(["model"])
+    browser["PlaywrightBrowser()<br/>navigate, snapshot, click<br/>and 15 more tools"]:::capability
+    chromium["Chromium<br/>starts on the first call,<br/>closes at run end"]:::external
+    guard["egress guard"]:::capability
+    web["allowed sites<br/>on the web"]:::external
+    offlist["navigation and<br/>data requests<br/>to other domains"]:::blocked
+    private["loopback, private<br/>and metadata<br/>addresses"]:::blocked
+    model <-->|"one tool call per action,<br/>page text or screenshot"| browser
+    browser <--> chromium
+    chromium -->|"every request"| guard
+    guard --> web
+    guard -.-x|"allowed_domains"| offlist
+    guard -.-x|"block_private_addresses"| private
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Installation
 
 The `playwright` extra pulls in Playwright, and Chromium is a separate binary
@@ -156,6 +178,17 @@ not raised to abort the agent run.
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
 | `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
+
+## Two of them
+
+`PlaywrightBrowser` declares the default `id` `'playwright_browser'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PlaywrightBrowser`s on one agent that
+share it are one browser stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. Merging them instead could widen the egress one of them was given. To keep two, give each its own `id` and wrap them
+in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since both register the same browser tools.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Authenticated sites
 
@@ -415,7 +448,9 @@ classifies it, so a name pointing at an internal address (`169.254.169.254.nip.i
 and similar wildcard DNS services) is refused rather than followed. That lookup runs
 for every kind, matching the literal check, so a spelling does not decide the
 verdict; answers are cached, which makes it a lookup per distinct host rather than
-per request. `resolved_kinds` sets which kinds are looked up.
+per request. `resolved_kinds` sets which kinds are looked up. A host that
+`allowed_domains` or `blocked_domains` already refuses by name is refused with
+that reason and not looked up.
 
 A lookup that does not answer within two seconds is a refusal, not an allow:
 whoever controls a name controls whether its lookup answers, so a stall would
@@ -475,6 +510,12 @@ that string as the reason, which the model can read through `network_requests`.
 An override that narrows what `refuse` allows should override `describe` too:
 `describe` is what the model is told about its reach, and it reads only the
 fields.
+
+The built-in policy does not look up a host its domain lists refuse, but an
+override of `refuse` may permit such a host, so a policy that overrides `refuse`
+has every host looked up as before. If your override refuses some hosts by name,
+also override `needs_resolution` to return `False` for them, so they are not
+looked up.
 
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through

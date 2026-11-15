@@ -6,6 +6,7 @@ import subprocess
 import sys
 from contextlib import closing
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,33 @@ async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
     assert conversation_text(messages).startswith('user: repair renderer')
     with closing(sqlite3.connect(store.database)) as conn:
         assert conn.execute('SELECT count(*) FROM media').fetchone()[0] >= 2
+
+
+async def test_listing_newest_first_reads_an_index_not_every_transcript(tmp_path: Path) -> None:
+    """A database from before the index gains it, so listing never orders by reading every saved transcript."""
+    database = tmp_path / 'sessions.db'
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.execute(
+            'CREATE TABLE conversations (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, metadata TEXT NOT NULL, '
+            'messages TEXT NOT NULL, search_text TEXT NOT NULL, updated_at TEXT NOT NULL)'
+        )
+    store = SqliteConversationStore(database=database)
+    first = await store.save(summary=ConversationSummary(workspace='/a', title='First'), messages=[])
+    second = await store.save(summary=ConversationSummary(workspace='/a', title='Second'), messages=[])
+    assert [e.id for e in await store.listing()] == [second.id, first.id]
+    assert [e.id for e in await store.listing(query='first')] == [first.id]
+    with closing(sqlite3.connect(database)) as conn:
+        # The query `listing(archived=False)` runs.
+        plan = conn.execute(
+            'EXPLAIN QUERY PLAN SELECT metadata FROM conversations '
+            "WHERE (? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
+            'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
+            (False, False, 200, 0),
+        ).fetchall()
+    # SQLite versions word the plan differently; a temporary B-tree would mean sorting every row.
+    steps = ' '.join(row[-1] for row in plan)
+    assert 'USING INDEX conversations_updated_at' in steps
+    assert 'TEMP B-TREE' not in steps
 
 
 async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
@@ -123,6 +151,60 @@ async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path:
     assert (await store.get(conversation_id=saved.id)).summary == saved
 
 
+async def test_creation_time_survives_later_saves(tmp_path: Path) -> None:
+    """`created_at` is set by the first save and kept by later ones, whatever summary they pass."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    assert first.created_at == first.updated_at
+    second = await store.save(summary=replace(first, created_at=None), messages=[])
+    assert second.created_at == first.created_at
+    assert second.updated_at > first.updated_at
+    assert (await store.get(conversation_id=first.id)).summary.created_at == first.created_at
+
+
+async def test_listing_pages_by_creation_when_asked(tmp_path: Path) -> None:
+    """With `order_by='created_at'`, using an old conversation again leaves the first page as it was."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    old = await store.save(summary=ConversationSummary(workspace='/a', title='Old'), messages=[])
+    legacy = await store.save(summary=ConversationSummary(workspace='/a', title='Legacy'), messages=[])
+    new = await store.save(summary=ConversationSummary(workspace='/a', title='New'), messages=[])
+    with closing(sqlite3.connect(store.database)) as conn, conn:
+        conn.execute(
+            "UPDATE conversations SET metadata = json_remove(metadata, '$.created_at') WHERE id = ?", (legacy.id,)
+        )
+    await store.save(summary=old, messages=[])
+    assert [e.id for e in await store.listing()] == [old.id, new.id, legacy.id]
+    assert [e.id for e in await store.listing(order_by='created_at')] == [new.id, legacy.id, old.id], (
+        'one saved without a creation time sorts by its last activity'
+    )
+    assert [e.id for e in await store.listing(order_by='created_at', limit=1)] == [new.id]
+
+
+async def test_metadata_saved_before_creation_time_existed_keeps_its_last_activity(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    with closing(sqlite3.connect(store.database)) as conn, conn:
+        conn.execute("UPDATE conversations SET metadata = json_remove(metadata, '$.created_at')")
+    [legacy] = await store.listing()
+    assert legacy.created_at is None
+    assert (await store.save(summary=legacy, messages=[])).created_at == saved.updated_at
+
+
+async def test_a_fork_records_its_source_which_listing_filters_by(tmp_path: Path) -> None:
+    """`forked_from` survives later saves, so an application can find a conversation's forks again."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    source = await store.save(summary=ConversationSummary(workspace='/a', title='Source'), messages=[])
+    other = await store.save(summary=ConversationSummary(workspace='/a', title='Other'), messages=[])
+    fork = await store.save(summary=ConversationSummary(workspace='/a', forked_from=source.id), messages=[])
+    fork = await store.save(summary=fork, messages=[ModelRequest(parts=[UserPromptPart('more')])])
+    assert fork.forked_from == source.id
+    assert [e.id for e in await store.listing(forked_from=source.id)] == [fork.id]
+    assert await store.listing(forked_from=other.id) == []
+    assert [e.id for e in await store.listing()] == [fork.id, other.id, source.id]
+    await store.set_archived(conversation_id=fork.id, archived=True)
+    assert await store.listing(forked_from=source.id, archived=False) == []
+
+
 async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
@@ -164,6 +246,24 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(os, 'kill', denied)
     with pytest.raises(ConversationConflict):
         ensure_inactive(running)
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Process start times come from Linux `/proc`.')
+def test_a_pid_reused_since_the_save_is_not_busy() -> None:
+    """A turn saved before its recorded PID's process started belongs to a process that has gone."""
+    running = ConversationSummary(
+        workspace='/a', outcome='running', owner_pid=os.getpid(), updated_at=datetime.now(UTC)
+    )
+    with pytest.raises(ConversationConflict, match='busy'):
+        ensure_inactive(running)
+    # No test process has run for a day, so this PID belongs to another process than the one that saved.
+    ensure_inactive(replace(running, updated_at=datetime.now(UTC) - timedelta(days=1)))
+    # A naive time is taken as UTC.
+    ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)))
+    with pytest.raises(ConversationConflict, match='busy'):
+        ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None)))
+    # A PID no process has, so it has no start time and is not busy.
+    ensure_inactive(replace(running, owner_pid=2**22 + 12345))
 
 
 async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Path) -> None:

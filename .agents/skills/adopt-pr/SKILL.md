@@ -295,7 +295,7 @@ Do not call the branch unpushable or ask for maintainer edits from that value. W
 to be pushed, attempt the normal push to the contributor's branch. Only an actual permission error
 establishes the restriction; then ask the contributor to enable **Allow edits from maintainers**.
 
-Draft the comment with the repository's required attribution and **confirm with the user before posting** — it's contributor-visible. Post with `gh pr comment $PR_NUMBER --body-file <file>` only on their go.
+Authorization to adopt the PR includes posting this takeover notice. Include the repository's required attribution. Post with `gh pr comment $PR_NUMBER --body-file <file>` without asking for separate approval.
 
 > Template — "Thanks for this. I'm going to take it over from here to get it across the line. Could you hold off on pushing new commits while we work on it? Each new commit is another change we'd have to re-review, so it's smoother to keep the branch put. Thanks again!"
 

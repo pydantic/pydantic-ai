@@ -1,0 +1,91 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.fireworks.ai/inference/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "503"
+      content-type:
+      - application/json
+      host:
+      - api.fireworks.ai
+    body:
+      type: json
+      content:
+        model: accounts/fireworks/models/kimi-k3
+        stream: false
+        messages:
+        - role: system
+          content: |
+
+            Always respond with a JSON object that's compatible with this schema:
+
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false, "title": "City"}
+
+            Don't include any text or Markdown fencing before or after.
+        - role: user
+          content: Where is the Eiffel Tower?
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1169"
+      content-type:
+      - application/json
+      fireworks-backend-server-time-to-first-token:
+      - "0.418"
+      fireworks-prompt-tokens:
+      - "179"
+      fireworks-server-processing-time:
+      - "4.624"
+      fireworks-server-time-to-first-token:
+      - "1.433"
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-baf166bc
+        choices:
+        - index: 0
+          message:
+            content: "{\"city\": \"Paris\", \"country\": \"France\"}"
+            role: assistant
+            reasoning_content: |-
+              The user is asking where the Eiffel Tower is. The system prompt says I should always respond with a JSON object matching this schema:
+
+              {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false, "title": "City"}
+
+              The Eiffel Tower is in Paris, France. So the answer should be:
+
+              {"city": "Paris", "country": "France"}
+
+              I should not include any text or Markdown fencing before or after.
+          finish_reason: stop
+          logprobs: null
+          raw_output: null
+        created: 1792719837
+        model: accounts/fireworks/models/kimi-k3
+        service_tier: null
+        system_fingerprint: null
+        object: chat.completion
+        usage:
+          prompt_tokens: 179
+          completion_tokens: 142
+          total_tokens: 321
+          prompt_tokens_details:
+            cached_tokens: 178
+          completion_tokens_details:
+            accepted_prediction_tokens: null
+            reasoning_tokens: 117
+            rejected_prediction_tokens: null
+  recorded_at: 2026-10-23T01:44:01.483272+00:00

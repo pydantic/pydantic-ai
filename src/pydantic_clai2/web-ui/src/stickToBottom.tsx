@@ -93,7 +93,11 @@ export function useStickToBottom<T extends HTMLElement>(content: unknown, restar
     }
   }, [follow, settle])
 
-  useLayoutEffect(follow, [restart, follow])
+  useLayoutEffect(() => {
+    follow()
+    // A kept transcript shown again starts here too: a scroll its browser reset while hidden is not the reader's.
+    if (scroller.current) top.current = scroller.current.scrollTop
+  }, [restart, follow])
 
   useLayoutEffect(() => {
     const element = scroller.current

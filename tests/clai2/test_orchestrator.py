@@ -1,17 +1,17 @@
-"""The web UI's orchestrator and its tools, driving a workspace's CLAI: a real web app served in this process.
+"""The web UI's orchestrator and its tools, running a session in each workspace: a live session of the same CLAI.
 
-The workspace's `clai2 --web` is not spawned: the launcher's process stand-in serves an in-process shell on
-the port and with the token the launcher chose, so every tool talks to the real web UI over loopback.
+The parent CLAI serves its live sessions as `clai2 --web` does, so a workspace's session is built in its
+checkout, runs the workspace model below, and is followed in-process as a page watching it would.
 """
 
 import asyncio
 import io
 import os
-import signal
+import shutil
 import subprocess
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import anyio
@@ -20,7 +20,7 @@ import pytest
 from pydantic import TypeAdapter
 from rich.console import Console
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -32,36 +32,49 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_clai2.builtin_plugins.web import WebPlugin, workspace_tools as tools_module
-from pydantic_clai2.builtin_plugins.web.app import HEADER
+from pydantic_clai2.builtin_plugins import web as web_module
+from pydantic_clai2.builtin_plugins.web import WebPlugin, live as live_module, workspace_tools as tools_module
+from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WaitOutcome
+from pydantic_clai2.builtin_plugins.web.local_client import LocalClient
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    DialogOpened,
     Item,
     ItemAdded,
+    LiveChanged,
+    Notice,
     OrchestratorEvent,
     OrchestratorMessage,
     QuestionAsked,
     ServerMessage,
+    SessionsChanged,
+    Snapshot,
     TurnEnded,
-    WorkspacesInfo,
 )
+from pydantic_clai2.builtin_plugins.web.service import WebService
 from pydantic_clai2.builtin_plugins.web.workspace_tools import SessionAnswer, WorkspaceTools, summarize
-from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
-from pydantic_clai2.builtin_plugins.workspaces import manager
-from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher
+from pydantic_clai2.builtin_plugins.web.workspaces import checkouts, open_workspace, required_workspaces
+from pydantic_clai2.builtin_plugins.workspaces import Workspaces, WorktreeKind
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import ConversationChanged, LiveSession
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.runtime.session_workspace import SessionWorkspace
+
+from .test_web import HOSTS, TOKEN, static_dir
 
 pytestmark = pytest.mark.anyio
 
 QUESTION = {
     'questions': [{'question': 'Which colour?', 'header': 'Colour', 'options': [{'label': 'Red'}, {'label': 'Blue'}]}]
 }
+WEB = PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings={'open_browser': False})
+WORKSPACES = PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces')
 
 
 def git(directory: Path, *args: str) -> str:
@@ -126,119 +139,50 @@ def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
 
 
 @dataclass
-class Child:
-    """The workspace's CLAI, served in this process when the launcher starts it."""
-
-    shell: SessionRuntime[None, str]
-    web: WebPlugin
-    blocked: anyio.Event = field(default_factory=anyio.Event)
-
-
-@dataclass
-class InProcess:
-    """`Processes` that serve `child` instead of running `clai2 --web`."""
-
-    child: Child
-    running: set[int] = field(default_factory=set[int])
-    signals: list[int] = field(default_factory=list[int])
-
-    def spawn(self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], log: Path) -> int:
-        web = self.child.web
-        web.port = int(argv[argv.index('--port') + 1])
-        web.token = Path(argv[argv.index('--token-file') + 1]).read_text(encoding='utf-8').strip()
-
-        async def serve() -> None:
-            await web.start()
-            assert web.server is not None
-            web.port = web.server.port  # Started again in a test, it comes back on the same port.
-            log.write_text(f'Web UI running at http://127.0.0.1:{web.port}/\n', encoding='utf-8')
-
-        asyncio.get_running_loop().create_task(serve())
-        self.running.add(4242)
-        return 4242
-
-    def alive(self, pid: int) -> bool:
-        return pid in self.running
-
-    def signal(self, pid: int, signum: int) -> None:
-        self.signals.append(signum)
-        self.running.discard(pid)
-        asyncio.get_running_loop().create_task(self.child.web.stop())
-
-
-@asynccontextmanager
-async def child_serving(tmp_path: Path) -> AsyncGenerator[Child]:
-    tools = Capability[None]()
-    child = None
-
-    @tools.tool_plain
-    async def block() -> str:
-        """Wait forever."""
-        assert child is not None
-        child.blocked.set()
-        await anyio.sleep_forever()
-        return 'never'  # pragma: no cover
-
-    agent = Agent(FunctionModel(child_model, stream_function=child_stream), deps_type=type(None), capabilities=[tools])
-    shell = create_shell(
-        agent,
-        deps=None,
-        plugins=(),
-        usage_limits=None,
-        console=Console(file=io.StringIO(), width=100),
-        settings=None,
-        store=SettingsStore(tmp_path / 'child.db'),
-        builtin_plugins=[
-            PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings={'open_browser': False}),
-            PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces'),
-        ],
-        project=ProjectSettings(),
-        headless=True,
-    )
-    await shell.loader.load_all()
-    [web] = [entry.loaded.plugin for entry in shell.loader.entries() if entry.name == 'web' and entry.loaded]
-    assert isinstance(web, WebPlugin)
-    child = Child(shell=shell, web=web)
-    try:
-        async with anyio.create_task_group() as group:
-            group.start_soon(shell.run)
-            yield child
-            group.cancel_scope.cancel()
-    finally:
-        await shell.loader.close('exit')
-
-
-@dataclass
 class Parent:
     shell: SessionRuntime[None, str]
     web: WebPlugin
     tools: WorkspaceTools
-    processes: InProcess
+    blocked: anyio.Event
+    """Set once the workspace model's `block` tool runs."""
+    built: list[Path]
+    """The folders the sessions CLAI opened beside the launch session were built in."""
+
+    @property
+    def service(self) -> WebService:
+        return self.web.service
 
     @property
     def orchestrator(self) -> Orchestrator:
-        return self.web.service.orchestrator
+        return self.service.orchestrator
+
+    def sessions_in(self, folder: Path) -> list[LiveSession]:
+        return [session for session in self.service.live.listing() if session.workspace == folder]
 
 
 @asynccontextmanager
 async def parent(
-    tmp_path: Path,
-    child: Child,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    workspaces: bool = True,
-    model: FunctionModel | None = None,
+    tmp_path: Path, *, workspaces: bool = True, model: FunctionModel | None = None
 ) -> AsyncGenerator[Parent]:
-    """A shell with `web`, and `workspaces` unless told otherwise, whose launcher serves `child`.
+    """`clai2 --web` with `web`, and `workspaces` unless told otherwise, whose other sessions run the workspace model.
 
-    `model` is the agent's own, which the orchestrator uses too while no default model is saved.
+    `model` is the launch session's agent's own, which the orchestrator uses too while no default model is saved.
     """
-    processes = InProcess(child)
-    launcher = Launcher(processes=processes, python='python', interval=0.01, startup_timeout=10, stop_timeout=5)
-    monkeypatch.setattr(manager, 'Launcher', lambda: launcher)
-    builtin = [PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings={'open_browser': False})]
-    if workspaces:
-        builtin.append(PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces'))
+    blocked = anyio.Event()
+    blocking = Capability[None]()
+
+    @blocking.tool_plain
+    async def block() -> str:
+        """Wait forever."""
+        blocked.set()
+        await anyio.sleep_forever()
+        return 'never'  # pragma: no cover
+
+    child = Agent(
+        FunctionModel(child_model, stream_function=child_stream), deps_type=type(None), capabilities=[blocking]
+    )
+    home = tmp_path / 'home'
+    home.mkdir()
     shell = create_shell(
         Agent(model or FunctionModel(child_model), deps_type=type(None)),
         deps=None,
@@ -247,49 +191,99 @@ async def parent(
         console=Console(file=io.StringIO(), width=100),
         settings=None,
         store=SettingsStore(tmp_path / 'parent.db'),
-        builtin_plugins=builtin,
+        builtin_plugins=[WEB, WORKSPACES] if workspaces else [WEB],
         project=ProjectSettings(),
         headless=True,
-        workspace=tmp_path,
+        workspace=home,
     )
+    built: list[Path] = []
+
+    def build(directory: Path | None) -> SessionRuntime[None, str]:
+        assert directory is not None, 'every workspace session starts in its checkout'
+        built.append(directory)
+        runtime = create_shell(
+            child,
+            deps=None,
+            plugins=(),
+            usage_limits=None,
+            console=Console(file=io.StringIO(), width=100),
+            settings=None,
+            store=None,
+            builtin_plugins=(),
+            project=ProjectSettings(),
+            headless=True,
+            workspace=directory,
+            process=shell.process,
+            signals=False,
+        )
+        # As `clai2 --web` does: `/workspace DIRECTORY` and `/resume` move it.
+        SessionWorkspace(
+            session=runtime.session,
+            context=runtime.context,
+            loader=runtime.loader,
+            status=runtime.status,
+            settings=lambda project: runtime.context.settings,
+        ).attach(sessions=runtime.sessions, commands=runtime.commands)
+        return runtime
+
+    shell.process.live.build = build
     await shell.loader.load_all()
     [web] = [entry.loaded.plugin for entry in shell.loader.entries() if entry.name == 'web' and entry.loaded]
     assert isinstance(web, WebPlugin)
-    tools = WorkspaceTools(web.host)
-    try:
-        yield Parent(shell=shell, web=web, tools=tools, processes=processes)
-    finally:
-        await tools.close()
-        await shell.loader.close('exit')
+    serving = anyio.Event()
+
+    async def serve() -> None:
+        # As `clai2 --web` does: the other sessions close as serving ends, then the launch session's plugins.
+        async with shell.process.live.serving():
+            serving.set()
+            reason = await shell.run()
+        await shell.close(reason)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(serve)
+        await serving.wait()
+        tools = WorkspaceTools(web.service)
+        try:
+            yield Parent(shell=shell, web=web, tools=tools, blocked=blocked, built=built)
+        finally:
+            await tools.close()
+            shell.send_input('/exit')
 
 
 async def created(tools: WorkspaceTools, repository: Path) -> str:
-    """A relative `repo` is in the parent session's directory, not the process's."""
-    made = await tools.workspace_create(kind='local-worktree', repo=repository.name, ref='main')
-    return made.split()[2].removesuffix('.')
+    """A relative `repo` is in the launch session's directory, not the process's."""
+    made = await tools.workspace_create(kind='local-worktree', repo=f'../{repository.name}', ref='main')
+    return made.split()[2]
 
 
-async def test_a_workspace_session_from_start_to_answer(
-    tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Make a workspace, start its CLAI with a prompt, wait, read, steer, answer its question, and interrupt."""
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
+async def test_a_workspace_session_from_start_to_answer(tmp_path: Path, repository: Path) -> None:
+    """Make a workspace, start a session there with a prompt, wait, read, steer, answer its question, and interrupt."""
+    async with parent(tmp_path) as made:
         tools = made.tools
         assert await tools.workspace_list() == 'No workspaces yet.\nKinds: local-worktree.'
         workspace = await created(tools, repository)
         assert workspace.startswith('project-')
-        listed = await tools.workspace_list()
-        assert listed.startswith(f'{workspace}  ready  local-worktree  clai-{workspace}  ')
+        path = (await tools.workspaces().get(workspace)).path
+        assert await tools.workspace_list() == (
+            f'{workspace}  local-worktree  clai-{workspace}  {path}\nKinds: local-worktree.'
+        )
 
         started = await tools.session_start(workspace, 'say hi')
-        port = child.web.port
+        conversation = (await tools.workspaces().get(workspace)).conversation
         assert started == (
-            f'Workspace {workspace} runs at http://127.0.0.1:{port}/; the prompt is sent. Wait with `session_wait`.'
+            f'Workspace {workspace} runs session {conversation}, listed in the sidebar under its repository; '
+            'the prompt is sent. Wait with `session_wait`.'
         )
+        assert made.built == [path] and [session.id for session in made.sessions_in(path)] != []
         waited = await tools.session_wait(workspace, timeout=10)
         assert waited.startswith(f'Workspace {workspace} is idle; last turn: completed. Its final answer:\n')
         assert 'Hello from the workspace: say hi.' in waited and waited.endswith('… (1,034 more characters)')
-        assert child.web.token not in started + waited + listed
+
+        # The sidebar lists it under its repository, on the workspace's branch, as any other session.
+        [project] = [project for project in await made.service.projects() if project.name == 'project']
+        [checkout] = project.worktrees
+        assert (checkout.root, checkout.label) == (str(path), f'clai-{workspace}')
+        assert [session.id for session in checkout.sessions] == [conversation]
 
         read = await tools.session_read(workspace, last=1)
         assert read.startswith(
@@ -299,28 +293,25 @@ async def test_a_workspace_session_from_start_to_answer(
 
         assert await tools.session_send(workspace, 'ask me') == 'Sent. Wait with `session_wait`.'
         asking = await tools.session_wait(workspace, timeout=10)
-        [request] = (await tools.view(await tools.workspaces().get(workspace))).questions
+        [request] = (await tools.view(workspace)).questions
         assert asking == (
             f'Workspace {workspace} asks:\nQuestion request {request}:\n  - Colour: Which colour? Options: Red, Blue\n'
             'Answer with `session_answer`.'
         )
         assert f'Question request {request}' in await tools.session_read(workspace)
-        assert (
-            await tools.session_answer(workspace, 'nope')
-            == f"Workspace {workspace} has no open question or dialog 'nope'."
-        )
+        assert await tools.session_answer(workspace, 'nope') == f"Workspace {workspace} has no open question 'nope'."
         answered = await tools.session_answer(workspace, request, [SessionAnswer(header='Colour', selected=['Blue'])])
         assert answered == 'Answered. Wait with `session_wait`.'
         assert 'Done after the tool.' in await tools.session_wait(workspace, timeout=10)
 
         await tools.session_send(workspace, 'ask me again')
         await tools.session_wait(workspace, timeout=10)
-        [request] = (await tools.view(await tools.workspaces().get(workspace))).questions
+        [request] = (await tools.view(workspace)).questions
         await tools.session_answer(workspace, request, [SessionAnswer(header='Colour', custom='Teal')])
         assert 'Done after the tool.' in await tools.session_wait(workspace, timeout=10)
 
         await tools.session_send(workspace, 'block')
-        await child.blocked.wait()
+        await made.blocked.wait()
         assert 'is still running' in await tools.session_wait(workspace, timeout=0.05)
         assert 'a turn is running' in await tools.session_read(workspace)
         assert await tools.session_interrupt(workspace) == 'Interrupted.'
@@ -329,33 +320,7 @@ async def test_a_workspace_session_from_start_to_answer(
         await tools.session_send(workspace, 'fail')
         await tools.session_wait(workspace, timeout=10)
         assert 'Last turn: failed (' in await tools.session_read(workspace)
-
-
-async def test_answering_a_dialog(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
-        tools = made.tools
-        workspace = await created(tools, repository)
-        await tools.session_start(workspace, 'hi')
-        await tools.session_wait(workspace, timeout=10)
-        view = await tools.view(await tools.workspaces().get(workspace))
-        results: list[int] = []
-        async with (
-            httpx.AsyncClient(base_url=view.client.url, trust_env=False) as page,
-            anyio.create_task_group() as group,
-        ):
-
-            async def act() -> None:
-                answer = await page.post('/api/plugins/workspaces/fields/add/action', headers={HEADER: child.web.token})
-                results.append(answer.status_code)
-
-            group.start_soon(act)
-            with anyio.fail_after(10):
-                while not view.dialogs:
-                    await anyio.sleep(0.01)
-            [dialog] = view.dialogs
-            assert f'Dialog {dialog} (text): New workspace kind' in await tools.session_wait(workspace, timeout=1)
-            assert await tools.session_answer(workspace, dialog, value='docs') == 'Answered the dialog.'
-        assert results == [200]
+        assert made.built == [path], 'one session the whole time'
 
 
 def destroy_question(workspace: str) -> dict[str, object]:
@@ -423,7 +388,7 @@ async def converse(
     with anyio.fail_after(30):
         while True:
             message = WIRE.validate_json(await queue.get())
-            # The session's own messages, if any, are skipped.
+            # The sessions' own messages, and the sidebar's, are skipped.
             event = message.message if isinstance(message, OrchestratorMessage) else None
             seen += [] if event is None else [event]
             if isinstance(event, QuestionAsked):
@@ -436,21 +401,17 @@ async def converse(
                 return seen
 
 
-async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
-    tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The orchestrator's own agent makes a workspace, prompts its CLAI, reads it, and destroys it once the user agrees.
+async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(tmp_path: Path, repository: Path) -> None:
+    """The orchestrator's own agent makes a workspace, prompts a session there, reads it, and destroys it once agreed.
 
     `workspace_destroy` refuses until the user picked `Destroy ID` in the orchestrator chat: declining and
-    keeping it are no confirmation. The model never answers for the user.
+    keeping it are no confirmation. The model never answers for the user. Destroying closes the session first.
     """
-    model = orchestrating(repository)
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, model=model) as made:
+    async with parent(tmp_path, model=orchestrating(repository)) as made:
         orchestrator = made.orchestrator
-        with made.web.service.hub.subscribe() as client:
-            queue = client.queue
+        with made.service.hub.subscribe() as client:
             await orchestrator.send('Say hi in a new workspace, then clean up.')
-            seen = await converse(orchestrator, queue, [1, None, 0])
+            seen = await converse(orchestrator, client.queue, [1, None, 0])
         end = seen[-1]
         assert isinstance(end, TurnEnded) and end.outcome == 'completed'
         tools = [event.item.name for event in seen if isinstance(event, ItemAdded) and event.item.kind == 'tool']
@@ -465,11 +426,13 @@ async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
         assert results[5].startswith('Not destroyed.'), 'keeping it is no confirmation'
         assert results[6].startswith('Not destroyed.'), 'declining is no confirmation'
         assert results[7] == f'Destroyed workspace {workspace}; its checkout at {path} was removed, its branch kept.'
-        assert not path.exists() and made.processes.signals == [signal.SIGINT]
+        assert made.built == [path] and not path.exists()
+        assert made.sessions_in(path) == [], 'its session closed before the checkout went'
+        assert [session.workspace for session in made.service.live.listing()] == [tmp_path / 'home']
         assert await made.tools.workspace_list() == 'No workspaces yet.\nKinds: local-worktree.'
 
         # The conversation is saved, so another load of the web UI shows it.
-        again = Orchestrator(host=made.web.host, publish=lambda message: None)
+        again = Orchestrator(service=made.service)
         kinds = [item.kind for item in (await again.state()).items]
         assert (
             kinds[0] == 'user'
@@ -491,24 +454,36 @@ def test_a_later_keep_takes_back_an_earlier_destroy() -> None:
     assert not tools_module.confirmed([answer('Destroy other')], 'w')
 
 
+class Silent(LocalClient):
+    """A client whose messages end at once, before any snapshot."""
+
+    @asynccontextmanager
+    async def messages(self) -> AsyncGenerator[AsyncIterator[ServerMessage]]:
+        async def nothing() -> AsyncIterator[ServerMessage]:
+            for message in list[ServerMessage]():
+                yield message  # pragma: no cover
+
+        yield nothing()
+
+
 async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
+    async with parent(tmp_path) as made:
         tools = made.tools
         assert (await tools.workspace_list()).startswith('No workspaces')
         workspace = await created(tools, repository)
+        path = (await tools.workspaces().get(workspace)).path
         reading = tools_module.reported(tools.session_read)
-        assert await reading(workspace) == (
-            f'Error: Workspace {workspace} has no CLAI running. Start it with `session_start`.'
-        )
+        no_session = f'Error: Workspace {workspace} has no session yet. Start one with `session_start`.'
+        assert await reading(workspace) == no_session
+        await tools.workspaces().attach(workspace, 'never-saved')
+        assert await reading(workspace) == no_session, 'a session never saved is no session'
         assert await tools_module.reported(tools.workspace_create)(kind='docker') == (
             "Error: No workspace kind 'docker'. Kinds: local-worktree."
         )
 
-        # A CLAI that stopped: the connection ends, and the next use connects again once it runs.
+        # A session that closes ends the following; the next use opens it again, as it was saved.
         await tools.session_start(workspace, 'block')
-        await child.blocked.wait()
-        # Stop it once `session_wait` waits on the connection. `anyio.wait_all_tasks_blocked` cannot tell:
-        # it counts a task awaiting a worker thread as blocked, and uvicorn's 0.1 s tick can keep it polling for minutes.
+        await made.blocked.wait()
         entered = anyio.Event()
         wait = SessionView.wait
 
@@ -526,44 +501,107 @@ async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, mo
 
                 group.start_soon(waiting)
                 await entered.wait()
-                await child.web.stop()
-        assert stopped == [f'The CLAI of workspace {workspace} stopped.']
-        await child.web.start()
-        assert await tools.session_interrupt(workspace) == 'Interrupted.'
-        assert 'last turn: cancelled' in await tools.session_wait(workspace, timeout=10)
+                [session] = made.sessions_in(path)
+                await made.service.live.close(session.id)
+        assert stopped == [f'The session of workspace {workspace} closed.']
+        # A turn cut off by closing may not have saved its end, so it can open again in a fork (`'block (fork)'`).
+        reread = await tools.session_read(workspace)
+        assert reread.startswith(f"Workspace {workspace}: idle; session 'block"), reread
+        assert made.built == [path, path], 'opened again in its checkout'
         await tools.disconnect(workspace)
-        assert 'Last turn' not in await tools.session_read(workspace)
         waited = await tools.session_wait(workspace, timeout=10)
         assert waited.startswith(f'Workspace {workspace} is idle; last turn: no turn ran.')
 
-        # A CLAI that does not answer cannot be connected to.
-        current = await tools.workspaces().get(workspace)
-        assert current.session is not None
+        # Falling too far behind ends the following too; the next use follows it again from a snapshot.
+        view = await tools.view(workspace)
+        with monkeypatch.context() as patched:
+            patched.setattr(live_module, 'QUEUE_LIMIT', 3)
+            for _ in range(3):
+                made.service.hub.publish(SessionsChanged())
+        with anyio.fail_after(10):
+            await tools.links[workspace].task  # Following ends.
+        assert view.closed and await tools.view(workspace) is not view
+
+        # A session whose messages end before its snapshot cannot be followed.
         await tools.disconnect(workspace)
-        await child.web.stop()
-        monkeypatch.setattr(tools_module, 'CONNECT_TIMEOUT', 5)
-        assert await reading(workspace) == f'Error: Could not connect to the CLAI of workspace {workspace}.'
+        monkeypatch.setattr(tools_module, 'LocalClient', Silent)
+        assert await reading(workspace) == f'Error: Could not follow the session of workspace {workspace}.'
 
         await tools.close()
         assert tools.links == {}
 
 
-async def test_without_the_workspaces_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, workspaces=False) as made:
+async def test_the_pages_dialogs_are_not_a_sessions(tmp_path: Path, repository: Path) -> None:
+    """A settings dialog the user opened in the page never shows to the orchestrator, which cannot answer it."""
+    async with parent(tmp_path) as made:
+        tools, service = made.tools, made.service
+        workspace = await created(tools, repository)
+        await tools.session_start(workspace, 'hi')
+        await tools.session_wait(workspace, timeout=10)
+        view = await tools.view(workspace)
+        with service.hub.subscribe() as page:
+            async with anyio.create_task_group() as group:
+                group.start_soon(service.run_menu_action, 'workspaces', 'add')
+                await published(page.queue, DialogOpened)
+                [dialog] = service.dialogs.dialogs
+                # Followed again, its snapshot leaves the open dialog out too.
+                await tools.disconnect(workspace)
+                view = await tools.view(workspace)
+                assert view.dialogs == {}
+                assert (await tools.session_wait(workspace, timeout=1)).startswith(f'Workspace {workspace} is idle;')
+                with pytest.raises(LookupError, match='dialogs belong to the page'):
+                    await view.client.answer_dialog(dialog.id, 'docs')
+                service.answer_dialog(dialog.id, None)
+        await tools.session_send(workspace, 'hi again')
+        assert 'hi again' in await tools.session_wait(workspace, timeout=10)
+        assert view.dialogs == {}
+
+        # A bare command that opens a menu in the page is no input for a session.
+        with pytest.raises(ValueError, match='/set opens a menu in the page'):
+            await LocalClient(service, made.sessions_in((await tools.workspaces().get(workspace)).path)[0].id).send(
+                '/set'
+            )
+
+
+async def test_without_the_workspaces_plugin(tmp_path: Path) -> None:
+    async with parent(tmp_path, workspaces=False) as made:
         listing = tools_module.reported(made.tools.workspace_list)
         assert await listing() == 'Error: The `workspaces` plugin is off. Ask the user to turn it on.'
-    alone = WorkspaceTools(PluginHost(name='web', console=Console(file=io.StringIO()), settings={}))
-    assert 'is off' in await tools_module.reported(alone.workspace_list)()
+        assert await checkouts(made.web.host.plugins) == []
+    assert await checkouts(None) == []
+    with pytest.raises(RuntimeError, match='plugin is off'):
+        required_workspaces(None)
 
 
-async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A `/command` would run in the workspace with no one to confirm it, as `/workspaces destroy` would."""
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
+async def test_a_live_change_queued_before_a_switch_does_not_end_the_stream(tmp_path: Path) -> None:
+    """A `LiveChanged` queued before `/new` names the old conversation, but the session is still live."""
+    async with parent(tmp_path, workspaces=False) as made:
+        service = made.service
+        channel = service.default()
+        before = channel.id
+        async with LocalClient(service, channel.session.id).messages() as received:
+            assert isinstance(await anext(received), Snapshot)
+            with service.hub.subscribe() as page:
+                service.watch(page, [before])
+                await published(page.queue, Snapshot)
+                service.hub.publish(service.live_message())
+                channel.send('/new')
+                # Switched before the client reads what was queued for it earlier.
+                switched = await published(page.queue, Snapshot)
+            assert isinstance(switched, Snapshot) and switched.session.id != before
+            message = await anext(received, None)
+        assert isinstance(message, LiveChanged), 'the stream ended while the session was still live'
+        assert [entry.id for entry in message.sessions] == [before]
+
+
+async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path) -> None:
+    """A `/command` would run in the workspace's session with no one to confirm it, as `/workspaces destroy` would."""
+    async with parent(tmp_path) as made:
         workspace = await created(made.tools, repository)
         refusal = 'Error: Send prompts only. A `/command`, such as `/workspaces destroy`'
         starting = tools_module.reported(made.tools.session_start)
         assert (await starting(workspace, ' /workspaces destroy other')).startswith(refusal)
-        assert (await made.tools.workspaces().get(workspace)).status == 'ready', 'nothing started'
+        assert (await made.tools.workspaces().get(workspace)).conversation is None, 'nothing started'
         await made.tools.session_start(workspace, 'hi')
         sending = tools_module.reported(made.tools.session_send)
         assert (await sending(workspace, '/plugins add evil evil:Plugin')).startswith(refusal)
@@ -586,37 +624,242 @@ def test_items_in_short() -> None:
     assert summarize(Item(id='a', kind='assistant', text=' short ')) == '- assistant: short'
 
 
-async def test_tools_never_see_a_token(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The record keeps the token in a file; nothing a tool returns, nor the workspace's listing, carries it."""
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
-        tools = made.tools
-        workspace = await created(tools, repository)
-        said = [await tools.session_start(workspace, 'hi'), await tools.session_wait(workspace, timeout=10)]
-        said += [await tools.session_read(workspace, last=10), await tools.workspace_list()]
-        record = await tools.workspaces().get(workspace)
-        assert record.session is not None and replace(record).session == record.session
-        assert all(child.web.token not in text for text in said)
+async def test_the_page_opens_a_workspaces_session(tmp_path: Path, repository: Path) -> None:
+    """The sidebar lists a workspace's checkout under its repository, and a tool card's link opens its session here."""
+    async with parent(tmp_path) as made:
+        service = made.service
+        workspace = await created(made.tools, repository)
+        path = (await made.tools.workspaces().get(workspace)).path
+        gone = await created(made.tools, repository)
+        shutil.rmtree((await made.tools.workspaces().get(gone)).path)
+        # Before any session runs there, for New session to offer; a search lists sessions only, and a checkout
+        # removed meanwhile is not offered.
+        [project] = [project for project in await service.projects() if project.name == 'project']
+        assert [(checkout.root, checkout.label, checkout.sessions) for checkout in project.worktrees] == [
+            (str(path), f'clai-{workspace}', [])
+        ]
+        assert [project.name for project in await service.projects('hi')] == []
+
+        app = create_app(service=service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path))
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url='http://testserver', headers={HEADER: TOKEN}
+        ) as page:
+            opened = (await page.post(f'/api/workspaces/{workspace}/open')).json()['id']
+            assert (await made.tools.workspaces().get(workspace)).conversation == opened
+            assert service.default().id == opened, 'the page shows it'
+            assert [session.conversation.conversation_id for session in made.sessions_in(path)] == [opened]
+            assert (await page.post(f'/api/workspaces/{workspace}/open')).json()['id'] == opened, 'the same one'
+            assert (await page.post('/api/workspaces/nope-1/open')).status_code == 404
+        assert made.built == [path]
 
 
-async def test_the_sidebar_lists_and_opens_workspaces(
+async def published(queue: asyncio.Queue[str], kind: type[ServerMessage]) -> ServerMessage:
+    """The next message of `kind` the hub sent, the others skipped."""
+    with anyio.fail_after(10):
+        while not isinstance(message := WIRE.validate_json(await queue.get()), kind):
+            pass
+    return message
+
+
+def applied(view: SessionView, wanted: Callable[[ServerMessage], bool], monkeypatch: pytest.MonkeyPatch) -> anyio.Event:
+    """An event set once `view` has applied a message that is `wanted`."""
+    seen = anyio.Event()
+    apply = view.apply
+
+    def applying(message: ServerMessage) -> None:
+        apply(message)
+        if wanted(message):
+            seen.set()
+
+    monkeypatch.setattr(view, 'apply', applying)
+    return seen
+
+
+async def test_the_sidebar_and_one_session_per_workspace(tmp_path: Path, repository: Path) -> None:
+    """Creating and destroying refresh the sidebar, and tool calls the model makes at once share one session."""
+    async with parent(tmp_path) as made:
+        tools, service = made.tools, made.service
+        with service.hub.subscribe() as client:
+            workspace = await created(tools, repository)
+            await published(client.queue, SessionsChanged)
+        path = (await tools.workspaces().get(workspace)).path
+        # The page's Open and two tool calls at once start one session, followed once.
+        shown, first, second = await asyncio.gather(
+            open_workspace(service, workspace), tools.view(workspace, start=True), tools.view(workspace, start=True)
+        )
+        assert first is second and made.built == [path]
+        assert (await tools.workspaces().get(workspace)).conversation == shown
+
+        # A session that another process holds goes on in a copy here, which is the workspace's from then on.
+        await tools.disconnect(workspace)
+        [session] = made.sessions_in(path)
+        await service.live.close(session.id)
+        copy = await service.live.new(workspace=path)
+        opened = service.live.open
+
+        async def copying(conversation_id: str) -> LiveSession:
+            return (
+                copy
+                if first.session is not None and conversation_id == first.session.id
+                else await opened(conversation_id)
+            )
+
+        with pytest.MonkeyPatch.context() as patched:
+            patched.setattr(service.live, 'open', copying)
+            await tools.view(workspace)
+        assert (await tools.workspaces().get(workspace)).conversation == copy.conversation.conversation_id
+
+        with service.hub.subscribe() as client:
+            confirmed = ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ask_user_question',
+                        content={f'Destroy workspace {workspace}?': [f'Destroy {workspace}']},
+                        tool_call_id='asked',
+                    )
+                ]
+            )
+            ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[confirmed])
+            assert (await tools.workspace_destroy(ctx, workspace)).startswith(f'Destroyed workspace {workspace};')
+            await published(client.queue, SessionsChanged)
+        assert workspace not in service.workspace_locks
+
+
+async def test_destroying_a_kept_checkout_leaves_its_sessions(tmp_path: Path, repository: Path) -> None:
+    """A kind that keeps the checkout closes none of the sessions working there: they go on in the folder."""
+    async with parent(tmp_path) as made:
+        kept = Workspaces(
+            kinds={'kept': WorktreeKind(repo=str(repository), teardown='keep')}, directory=tmp_path / 'kept'
+        )
+        workspace = await kept.create(kind='kept')
+        session = await made.service.live.new(workspace=workspace.path)
+        assert (await kept.destroy(workspace.id, live=made.service.live)).teardown == 'keep'
+        assert workspace.path.exists() and await kept.listing() == []
+        assert made.sessions_in(workspace.path) == [session], 'still live'
+
+
+async def test_falling_behind_mid_wait_is_no_close(
     tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The web UI's Workspaces section reads the registry, and only its own page gets a workspace's token."""
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
-        workspace = await created(made.tools, repository)
-        # The workspace's own CLAI has `workspaces` on too and shares the registry, so its page serves the section.
-        await made.tools.session_start(workspace, 'hi')
-        headers = {HEADER: child.web.token}
-        async with httpx.AsyncClient(base_url=f'http://127.0.0.1:{child.web.port}', trust_env=False) as page:
-            shown = await page.get('/api/workspaces', headers=headers)
-            info = TypeAdapter(WorkspacesInfo).validate_json(shown.content)
-            [row] = info.workspaces
-            assert info.enabled
-            assert (row.id, row.status, row.url) == (workspace, 'running', f'http://127.0.0.1:{child.web.port}/')
-            opened = await page.post(f'/api/workspaces/{workspace}/open', headers=headers)
-            assert opened.json() == {'url': f'http://127.0.0.1:{child.web.port}/?token={child.web.token}'}
-            assert (await page.post('/api/workspaces/nope-1/open', headers=headers)).status_code == 404
-        await made.tools.session_wait(workspace, timeout=10)
-    assert await listing(None) == WorkspacesInfo(enabled=False, workspaces=[])
-    with pytest.raises(LookupError, match='The `workspaces` plugin is off'):
-        await open_workspace(None, 'any')
+    """A wait whose following falls too far behind says the session is still open, so the model waits again."""
+    async with parent(tmp_path) as made:
+        tools = made.tools
+        workspace = await created(tools, repository)
+        await tools.session_start(workspace, 'block')
+        await made.blocked.wait()
+        entered = anyio.Event()
+        wait = SessionView.wait
+
+        async def entering(view: SessionView, *, timeout: float) -> WaitOutcome:
+            entered.set()
+            return await wait(view, timeout=timeout)
+
+        waited: list[str] = []
+        monkeypatch.setattr(SessionView, 'wait', entering)
+        async with anyio.create_task_group() as group:
+
+            async def waiting() -> None:
+                waited.append(await tools.session_wait(workspace, timeout=10))
+
+            group.start_soon(waiting)
+            await entered.wait()
+            with monkeypatch.context() as patched:
+                patched.setattr(live_module, 'QUEUE_LIMIT', 3)
+                for _ in range(3):
+                    made.service.hub.publish(SessionsChanged())
+        assert waited == [
+            f'Lost track of the session of workspace {workspace}, which is still open. Wait again to follow it.'
+        ]
+        assert await tools.session_interrupt(workspace) == 'Interrupted.', 'followed again, mid-turn'
+
+
+async def test_the_workspace_session_is_the_users_too(
+    tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user can type in the workspace's session too.
+
+    A destroy there is refused. A `/new` there is the workspace's from then on, even after it closed (or a fork
+    of it, when the close beat its turn's last save). Moved to another folder with `/workspace`, it is not, even
+    before the orchestrator's view hears of the move, and the workspace gets a session in its checkout again.
+    The page follows a switch even when recording it for the workspace fails.
+    """
+    async with parent(tmp_path) as made:
+        tools, service = made.tools, made.service
+        workspace = await created(tools, repository)
+        await tools.session_start(workspace, 'say hi')
+        await tools.session_wait(workspace, timeout=10)
+        view = await tools.view(workspace)
+        path = (await tools.workspaces().get(workspace)).path
+        [session] = made.sessions_in(path)
+        channel = service.channel(session)
+        before = channel.id
+
+        refused = applied(view, lambda message: isinstance(message, Notice), monkeypatch)
+        channel.send(f'/workspaces destroy {workspace}')
+        with anyio.fail_after(10):
+            await refused.wait()
+        assert 'Run this from a session outside it.' in view.notices[-1].text
+        assert path.exists(), 'nothing was destroyed'
+
+        switched = applied(
+            view, lambda message: isinstance(message, Snapshot) and message.session.id != before, monkeypatch
+        )
+        channel.send('/new')
+        with anyio.fail_after(10):
+            await switched.wait()
+        assert view.session is not None and view.session.id != before
+        renewed = view.session.id
+        assert (await tools.workspaces().get(workspace)).conversation == renewed, 'recorded as the page saw it'
+        assert await tools.view(workspace) is view, 'still followed'
+        assert await open_workspace(service, workspace) == renewed, 'the page opens it too'
+        await tools.session_send(workspace, 'again')
+        assert 'Hello from the workspace: again.' in await tools.session_wait(workspace, timeout=10)
+        # Closed, it opens again in the conversation the user switched to, or in a fork of it: closed right after
+        # its turn, before that turn's end was saved, it reads as still running elsewhere.
+        await tools.disconnect(workspace)
+        await service.live.close(session.id)
+        view = await tools.view(workspace)
+        reopened = view.session
+        assert reopened is not None and reopened.title is not None and reopened.title.startswith('again')
+        assert (await tools.workspaces().get(workspace)).conversation == reopened.id and made.built == [path, path]
+        renewed = reopened.id
+
+        [session] = made.sessions_in(path)
+        elsewhere = tmp_path / 'elsewhere'
+        elsewhere.mkdir()
+        # The view never hears of the move, as when the orchestrator asks before its snapshot arrives:
+        # the live session, not the view, tells that it left.
+        moved = anyio.Event()
+        apply = view.apply
+
+        def unaware(message: ServerMessage) -> None:
+            if isinstance(message, Snapshot) and message.session.workspace == str(elsewhere.resolve()):
+                moved.set()
+            else:
+                apply(message)
+
+        monkeypatch.setattr(view, 'apply', unaware)
+        service.channel(session).send(f'/workspace {elsewhere}')
+        with anyio.fail_after(10):
+            await moved.wait()
+        assert view.session is not None and view.session.workspace == str(path)
+        assert (await tools.workspaces().get(workspace)).conversation == renewed, "not the workspace's any more"
+        again = await tools.view(workspace)
+        assert again is not view and again.session is not None and again.session.workspace == str(path)
+        assert made.built == [path, path, path], 'a session in the checkout again'
+
+        # The page hears of a switch even when recording it for the workspace fails.
+        async def failing(service: WebService, event: ConversationChanged) -> None:
+            raise OSError('the registry is read-only')
+
+        monkeypatch.setattr(web_module, 'conversation_switched', failing)
+        current = again.session.id
+        switched = applied(
+            again, lambda message: isinstance(message, Snapshot) and message.session.id != current, monkeypatch
+        )
+        [session] = made.sessions_in(path)
+        service.channel(session).send('/new')
+        with anyio.fail_after(10):
+            await switched.wait()
+        assert (await tools.workspaces().get(workspace)).conversation == current

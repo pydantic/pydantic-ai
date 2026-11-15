@@ -186,6 +186,7 @@ def test_serialization_round_trip():
                 'content': 'Be brief.',
                 'timestamp': IsDatetime(iso_string=True),
                 'dynamic_ref': None,
+                'context_id': None,
                 'scope': 'conversation',
                 'metadata': {'origin': 'my_app', 'version': 2},
                 'part_kind': 'system-prompt',

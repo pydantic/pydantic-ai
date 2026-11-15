@@ -47,6 +47,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
@@ -85,6 +86,7 @@ class _Backend(CallableOperationBackend[dict[str, Any]]):
             call = cache_key[0]
             assert isinstance(call, WorkspaceCall)
             name = f'{name}:{call.method}'
+            self._durability.calls.append(call)
         self._durability.units.append(name)
         return await body()
 
@@ -103,6 +105,7 @@ class FakeDurability(BaseDurabilityCapability[Any]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.units: list[str] = []
+        self.calls: list[WorkspaceCall] = []
 
     @property
     def in_durable_context(self) -> bool:
@@ -312,6 +315,47 @@ async def test_a_matching_explicit_workspace_policy_is_kept(tmp_path: Path) -> N
     assert isinstance(result.workspace, DurableWorkspace)
     assert isinstance(result.workspace.wrapped, PolicyWorkspace)
     assert result.workspace.wrapped.durable_policy() == ('open',)
+
+
+async def test_an_explicit_workspace_with_another_authority_is_rejected(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path, authority='user'), FakeDurability()])
+    backend = LocalWorkspaceBackend(tmp_path)
+
+    with pytest.raises(UserError, match=r'a `workspace=` policy would be lost'):
+        await agent.run('go', workspace=AuthorityWorkspace(Workspace(backend), authority='none'))
+
+    result = await agent.run('go', workspace=AuthorityWorkspace(Workspace(backend), authority='user'))
+    assert isinstance(result.workspace, DurableWorkspace)
+    assert result.workspace.authority == 'user'
+
+
+async def test_path_authority_survives_the_durable_layer(tmp_path: Path) -> None:
+    (tmp_path / 'vendor').mkdir()
+    (tmp_path / 'link.md').symlink_to(tmp_path / 'vendor' / 'AGENTS.md')
+    durability = FakeDurability()
+    agent = Agent(
+        TestModel(call_tools=['probe']),
+        name='ws',
+        capabilities=[LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}), durability],
+    )
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> list[str]:
+        return [await ctx.workspace.authority_of(path) for path in ('AGENTS.md', 'vendor/AGENTS.md', 'link.md')]
+
+    result = await agent.run('go')
+    assert result.output == '{"probe":["operator","none","none"]}'
+    # Called outside a unit, the symlink resolution it needs runs in units.
+    durability.units.clear()
+    assert await result.workspace.authority_of('link.md') == 'none'
+    assert durability.units and all(unit.endswith('workspace.call:realpath') for unit in durability.units)
+
+    backend = LocalWorkspaceBackend(tmp_path)
+    with pytest.raises(UserError, match=r'a `workspace=` policy would be lost'):
+        await agent.run(
+            'go',
+            workspace=AuthorityWorkspace(Workspace(backend), authority='operator', path_authority={'vendor': 'user'}),
+        )
 
 
 def test_a_policy_capability_follows_the_wrapped_answer(tmp_path: Path) -> None:
@@ -601,6 +645,21 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await agent.run('go', workspace=WorkspaceRef(provider='other', id='x'))
     with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='expired'))
+
+
+async def test_run_journals_cwd_and_checks_it_inside_the_unit(tmp_path: Path) -> None:
+    (tmp_path / 'sub').mkdir()
+    durability = FakeDurability()
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), durability])
+    workspace = (await agent.run('go')).workspace
+
+    assert (await workspace.run(['pwd'], cwd='sub')).stdout == f'{tmp_path.resolve() / "sub"}\n'
+    with pytest.raises(FileNotFoundError):
+        await workspace.run(['pwd'], cwd='missing')
+    assert _workspace_units(durability) == ['ensure', 'run', 'run']
+    assert [call.cwd for call in durability.calls if call.method == 'run'] == ['sub', 'missing']
+    call = durability.calls[-1]
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, call)) == call
 
 
 def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:

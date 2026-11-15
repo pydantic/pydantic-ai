@@ -120,6 +120,8 @@ class PtyRun:
         self._close_follower()
         self._stack.enter_context(raw_mode(self.terminal.input))
         self._stack.enter_context(resize_notifications(self._resize_soon))
+        # The terminal may have been resized while the command started, before anything listened.
+        self._resize()
         loop.add_reader(self.leader, self._output)
         self._stack.callback(loop.remove_reader, self.leader)
         loop.add_reader(self.terminal.input, self._key)
