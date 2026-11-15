@@ -305,13 +305,14 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
         ('meta/muse-spark-1.3', False),
         ('qwen/qwen3.8-flash', False),
         ('qwen/qwen3.8-2.4t-a95b', False),
-        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`, including other routes
-        # of the same families.
+        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
         ('google/gemini-2.5-flash', True),
         ('openai/gpt-5-mini', True),
+        ('unknown/model', True),
+        # Routes outside the table keep the default. GLM-5.3 accepts `'required'` while reasoning but rejects a
+        # named function, which this flag can't express.
         ('qwen/qwen3.8-27b', True),
         ('z-ai/glm-5.3', True),
-        ('unknown/model', True),
     ],
 )
 def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:

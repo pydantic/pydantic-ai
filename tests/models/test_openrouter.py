@@ -2211,8 +2211,9 @@ async def test_openrouter_forced_tool_choice_with_thinking(
 async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
     allow_model_requests: None, model_name: str, settings: dict[str, Any], expected_error: str
 ) -> None:
-    """An explicitly forced `tool_choice` errors instead of silently losing either the forcing or thinking.
+    """An explicitly forced `tool_choice` raises before the request is sent while the route can't force and think.
 
+    Otherwise OpenRouter would silently drop reasoning on Anthropic routes, and Qwen3.8 Flash would return a 400.
     Mirrors `AnthropicModel`, which raises for explicit forcing under thinking and only falls back softly
     for a forcing the `tool_choice` resolution logic inferred.
     """
