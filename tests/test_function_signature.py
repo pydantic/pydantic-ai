@@ -1994,3 +1994,127 @@ def test_ref_that_does_not_resolve_keeps_rendering():
     schema = {'type': 'object', 'properties': {'x': {'$ref': '#/definitions/U'}}, 'required': ['x']}
     signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
     assert _catalog(signature) == 'def a(*, x: U) -> Any:\n    ...'
+
+
+def _render_module(td: ToolDefinition) -> str:
+    """Render a tool's type definitions and signature as one module, the way code mode presents them."""
+    sig = td.function_signature
+    conflicting = FunctionSignature.get_conflicting_type_names([sig])
+    return '\n\n'.join(
+        [
+            *FunctionSignature.render_type_definitions([sig], conflicting),
+            td.render_signature('...', conflicting_type_names=conflicting),
+        ]
+    )
+
+
+def test_property_names_that_are_not_python_identifiers_render_as_valid_python():
+    """Keyword and non-identifier property names, common in MCP and OpenAPI tools, still render as valid Python.
+
+    A parameter takes a sanitized name, since code passes it as a keyword argument. An object field keeps its
+    schema name, since code builds the object as a `dict`, so its type uses the functional `TypedDict` syntax.
+    """
+    td = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'from': {'type': 'string', 'description': 'The sender.'},
+                'user-id': {'type': 'string'},
+                'filter': {
+                    'type': 'object',
+                    'title': 'Filter',
+                    'description': 'Narrows the search.\n\nAll fields combine.',
+                    'properties': {
+                        '@type': {'type': 'string', 'description': 'The kind of record.'},
+                        'from': {'type': 'integer'},
+                    },
+                    'required': ['@type'],
+                },
+                'page[size]': {'type': 'integer', 'default': 10},
+            },
+            'required': ['from', 'user-id', 'filter'],
+        },
+    )
+    rendered = _render_module(td)
+    assert rendered == snapshot('''\
+# Narrows the search.
+#
+# All fields combine.
+Filter = TypedDict('Filter', {
+    # The kind of record.
+    '@type': str,
+    'from': NotRequired[int],
+})
+
+def search(*, from_: str, user_id: str, filter: Filter, page_size_: int = 10) -> Any:
+    """
+    Args:
+        from_: The sender.
+        filter: Narrows the search.
+
+            All fields combine.
+    """
+    ...\
+''')
+    ast.parse(rendered)
+    assert {name: param.name for name, param in td.function_signature.params.items()} == snapshot(
+        {'from': 'from_', 'user-id': 'user_id', 'filter': 'filter', 'page[size]': 'page_size_'}
+    )
+
+
+def test_sanitized_parameter_names_do_not_collide():
+    """A sanitized name another parameter already has gets a number; names that are already valid never change."""
+    sig = FunctionSignature.from_schema(
+        name='lookup',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'user-id': {'type': 'string'},
+                'user_id': {'type': 'string'},
+                'user.id': {'type': 'string'},
+                'user_id_2': {'type': 'string'},
+                '2fa': {'type': 'string'},
+                'class': {'type': 'string'},
+                '': {'type': 'string'},
+            },
+            'required': ['user-id', 'user_id', 'user.id', 'user_id_2', '2fa', 'class', ''],
+        },
+    )
+    assert {name: param.name for name, param in sig.params.items()} == snapshot(
+        {
+            'user-id': 'user_id_3',
+            'user_id': 'user_id',
+            'user.id': 'user_id_4',
+            'user_id_2': 'user_id_2',
+            '2fa': '_2fa',
+            'class': 'class_',
+            '': '_',
+        }
+    )
+    rendered = sig.render('...')
+    assert rendered == snapshot(
+        'def lookup(*, user_id_3: str, user_id: str, user_id_4: str, user_id_2: str, _2fa: str, class_: str, _: str) -> Any:\n    ...'
+    )
+    ast.parse(rendered)
+
+
+def test_functional_typed_dict_comment_stays_a_comment():
+    """A description rendered as a comment can't end the comment early or carry a null byte into the source."""
+    ts = TypeSignature(
+        name='Event',
+        fields={
+            'event-type': TypeFieldSignature(
+                name='event-type', type=SimpleTypeExpr('str'), required=True, description='Line one.\nLine two\0.'
+            ),
+        },
+    )
+    rendered = ts.render_definition()
+    assert rendered == snapshot("""\
+Event = TypedDict('Event', {
+    # Line one.
+    # Line two\\x00.
+    'event-type': str,
+})\
+""")
+    ast.parse(rendered)

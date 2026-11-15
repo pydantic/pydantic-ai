@@ -192,29 +192,22 @@ def _cut_off_where_speech_is_unreported(sim: Simulation, violation: InvariantVio
 
 
 def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A response already under way when an input arrived ended the wait for the input's own reply.
-
-    The violation names the input, or, on GPT-Live, the response whose exchange the wait was owed: then the input is
-    one of that response's tool results, and the response under way is a delegation the model started on its own.
-    """
+    """A response already under way when an input arrived ended the wait for the input's own reply."""
     truth = sim.truth
-    if (named := truth.responses.get(violation.context.get('response', ''))) is not None:
-        if sim.provider != 'gpt-live':
-            return False
-        inputs = [input_ for input_ in truth.inputs if input_.key in named.tool_calls]
-    else:
-        inputs = [input_] if (input_ := truth.input(violation.context.get('input', ''))) is not None else []
+    if (
+        violation.context.get('response', '') in truth.responses
+        or (input_ := truth.input(violation.context.get('input', ''))) is None
+    ):
+        return False
     # Under way as far as the client could see: it hadn't read the response's end when the input went out.
     return any(
-        response is not named
-        and response.seq_start < input_.seq
+        response.seq_start < input_.seq
         and (
             response.seq_end is None
             or response.seq_end > input_.seq
             or response.terminal_read is None
             or response.terminal_read > input_.seq
         )
-        for input_ in inputs
         for response in truth.responses.values()
     )
 
@@ -225,10 +218,8 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
         'where the provider gives no signal, a response it started before an input arrived, but that the client '
         "hadn't read yet, is taken for that input's reply, so `wait_for_reply()` returns when it ends: on a Gemini "
         'native-audio model (which finishes its reply rather than cutting it off for the input), on Vertex '
-        "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), on ElevenLabs "
-        'Agents, and on GPT-Live when a delegation the model started on its own settles first: under way unread as a '
-        "delegated tool round's results went out, it ends the round's wait (fixed where the provider says: the OpenAI "
-        'protocol asks again for a request server VAD overtook, '
+        "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), and on ElevenLabs "
+        'Agents (fixed where the provider says: the OpenAI protocol asks again for a request server VAD overtook, '
         'Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text in the reply under way, '
         'and ElevenLabs Agents names the typed turns a reply answers; and, otherwise, on GPT-Live for a delegation the '
         'model starts on its own while a delegated tool round is owed its answer, which the reply that called the '
@@ -237,7 +228,7 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
     codes=frozenset({'wait.early', 'turn_complete.while_owed'}),
-    providers=frozenset({'gpt-live', 'gemini', 'elevenlabs-agents'}),
+    providers=frozenset({'gemini', 'elevenlabs-agents'}),
     matches=lambda sim, violation: (
         _cut_off_where_speech_is_unreported(sim, violation) or _reply_taken_by_earlier_response(sim, violation)
     ),

@@ -17,6 +17,7 @@ collect_ignore = (
         'test_models.py',
         'test_client_toolsets.py',
         'test_persistence.py',
+        'test_deprecated_names.py',
     ]
     if importlib.util.find_spec('acp') is None
     else []

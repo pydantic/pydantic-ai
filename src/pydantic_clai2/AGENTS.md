@@ -244,7 +244,8 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   A `run.permissions` no wider than the user's own applies at once, since it
   cannot widen anything. `update_channel` is user-only, rejected in a project file.
   Approval is a `/command` only, never a `clai2` subcommand, because the agent
-  can run `clai2` from its shell. Unapproved `instructions` go to the model as
+  can run `clai2` from its shell. For the same reason `clai2 config` refuses a
+  change `widens` (`refuse_widening`), and `clai2 plugins` only lists. Unapproved `instructions` go to the model as
   `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
@@ -332,7 +333,11 @@ one that is not.
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
   `hotkeys` so they type into the search instead of firing while the user
-  searches.
+  searches. For searchable `FieldMenu` lists, use `slash_search` only when a row offers Space cycling.
+  Eligible rows have multiple declared choices and no action/submenu mapping.
+  Cycle choices in declaration order and wrap. Start at the first choice when the current value is absent or unlisted.
+  Keep searchable field lists without eligible rows on type-to-filter with uppercase `R` reset.
+  Keep nonsearchable field lists without search and with lowercase `r` reset.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
@@ -391,7 +396,9 @@ streamed fences, shell command headers, and theme previews. Shell command header
 add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
 a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
-from the palette.
+from the palette until their lightness differs, so colour-blind readers can tell them apart.
+`theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
+(or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 
 ## Source layout
 
@@ -512,6 +519,10 @@ The resume browser is a focused exception to the single `MenuBuilder` convention
 it needs independently focused projects/sessions and two-line cards. Keep its
 frame pure, inject keys/size/IO, use Termflow terminal ownership and layout, and
 run through `menu_worker`. Metadata refreshes must preserve selection by ID.
+`/tasks` is the other exception: a `termflow.live` app, because a transcript that
+streams beside an input needs a frame loop. Its actions are Ctrl chords, since
+letters type the message. Keep `TaskView` free of the terminal and the event loop:
+`snapshot`, `act` and `size` are injected, and tests pass `open_tasks` a scripted `run`.
 History-changing plugins use `await conversation.commit_messages`, not the legacy
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 

@@ -24,7 +24,8 @@ else:
 
 
 DeepSeekModelName = Literal[
-    'deepseek-chat', 'deepseek-flash', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'
+    'deepseek-v4-pro',
+    'deepseek-flash',
 ]
 
 
@@ -37,7 +38,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.deepseek.com'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -107,6 +108,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -115,6 +117,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -125,6 +128,8 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 ' to use the DeepSeek provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.deepseek.com'
         if openai_client is not None:
             self._client = openai_client
         else:

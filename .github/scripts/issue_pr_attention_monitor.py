@@ -75,8 +75,8 @@ _WEEKLY_TEXT_LIMIT = 30_000
 REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
 MAINTAINER_OWNERS = ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')
 ROUTING_RECOVERY_EPOCH = '2026-08-18'
-# Triage priority labels: the first two open the assignment gate in
-# `semantic_owner_router`; issues carrying none of the four are still awaiting triage.
+# Triage priority labels: the first two mark issues that need a maintainer owner;
+# issues carrying none of the four are still awaiting triage.
 PRIORITY_GATE_LABELS = ('p:1-highest', 'p:2-high')
 _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15

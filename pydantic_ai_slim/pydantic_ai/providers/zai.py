@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
 
@@ -63,6 +64,7 @@ class ZaiProvider(_OpenAISDKProvider):
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
             ),
+            special_token_route_profile('zai', model_name),
         )
 
     @overload

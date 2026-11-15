@@ -1,5 +1,7 @@
 """Edit and Retry of an earlier prompt from the browser, which rewind the conversation as the terminal's Esc Esc does."""
 
+from typing import ClassVar
+
 import anyio
 import pytest
 from starlette.testclient import WebSocketTestSession
@@ -8,6 +10,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.protocol import (
     PROTOCOL,
+    LiveChanged,
     Notice,
     SessionsChanged,
     Snapshot,
@@ -16,6 +19,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     image_id,
 )
 from pydantic_clai2.commands import Command
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.plugins import Plugin, TurnEnd
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
 from tests.clai2.test_web import TOKEN, MakeWeb, encoded, make_web, png, receive_until
@@ -24,6 +29,31 @@ from tests.clai2.test_web_queue import ORIGIN, waiting_agent
 __all__ = ['make_web']
 
 BUSY = 'Wait for the running turn, command, or queued input to end.'
+
+
+class HeldTurnEnd(Plugin):
+    """Holds each turn's end until `end` lets it go, as a slow `TurnEnd` hook does."""
+
+    holding: ClassVar[anyio.Event]
+    release: ClassVar[anyio.Event]
+
+    @classmethod
+    def arm(cls) -> None:
+        cls.holding, cls.release = anyio.Event(), anyio.Event()
+
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        HeldTurnEnd.holding.set()
+        await HeldTurnEnd.release.wait()
+
+    @classmethod
+    async def end(cls) -> None:
+        """Let the held turn end, and hold the next one's."""
+        await cls.holding.wait()
+        cls.release.set()
+        cls.arm()
+
+
+HELD = PluginSettings(id='held-turn-end', factory=f'{__name__}:HeldTurnEnd')
 
 
 def settle(socket: WebSocketTestSession) -> None:
@@ -121,6 +151,28 @@ def test_rewinding_waits_for_the_running_turn(make_web: MakeWeb) -> None:
             ('A context file the agent found.', False),
             ('focus', False),
         ]
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+def test_a_session_ending_its_turn_is_busy(make_web: MakeWeb) -> None:
+    """The page reads ready while `TurnEnd` hooks run, so `live` says the session is busy until they end (#12603)."""
+    HeldTurnEnd.arm()
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None)), extra=[HELD])
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'A'})
+        _, turn = receive_until(socket, TurnStarted)
+        receive_until(socket, TurnEnded)
+        _, live = receive_until(socket, LiveChanged)
+        assert [(entry.state, entry.busy) for entry in live.sessions] == [('idle', True)]
+        assert turn.item is not None and turn.item.run_id is not None
+        busy = web_.post(f'/api/rewind/{turn.item.run_id}', {'text': 'again'})
+        assert (busy.status_code, busy.json()) == (409, {'detail': BUSY})
+        web_.portal.call(HeldTurnEnd.end)
+        _, live = receive_until(socket, LiveChanged)
+        assert [(entry.state, entry.busy) for entry in live.sessions] == [('idle', False)]
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
 

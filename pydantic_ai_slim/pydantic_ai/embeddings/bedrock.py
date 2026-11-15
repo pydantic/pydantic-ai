@@ -45,12 +45,11 @@ if TYPE_CHECKING:
 
 
 LatestBedrockEmbeddingModelNames = Literal[
-    'amazon.titan-embed-text-v1',
+    'amazon.nova-2-multimodal-embeddings-v1:0',
+    'cohere.embed-v4:0',
     'amazon.titan-embed-text-v2:0',
     'cohere.embed-english-v3',
     'cohere.embed-multilingual-v3',
-    'cohere.embed-v4:0',
-    'amazon.nova-2-multimodal-embeddings-v1:0',
 ]
 """Latest Bedrock embedding model names.
 
