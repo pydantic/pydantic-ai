@@ -199,12 +199,18 @@ def as_os_handler(os_access: CodeModeOS | None) -> AbstractOS | OsHandler | None
     return handler
 
 
+def _active_durability(ctx: RunContext[object]) -> list[BaseDurabilityCapability[object]]:
+    """The run's durability capabilities whose durable container is executing this code."""
+    return [
+        capability
+        for capability in ctx.capabilities.values()
+        if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+    ]
+
+
 def in_durable_execution(ctx: RunContext[object]) -> bool:
     """Whether a durable executor is active, where streamed execution tiers must stay disabled."""
-    return any(
-        isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
-        for capability in ctx.capabilities.values()
-    )
+    return bool(_active_durability(ctx))
 
 
 def _replay_safe_limits(configured: ResourceLimits, *, replayed: bool) -> ResourceLimits:
@@ -221,8 +227,7 @@ def _nondeterminism_error_types(ctx: RunContext[object]) -> tuple[type[BaseExcep
     """The errors the run's durable engine fails a diverged replay with, which must not reach the sandbox."""
     return tuple(
         error_type
-        for capability in ctx.capabilities.values()
-        if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+        for capability in _active_durability(ctx)
         for error_type in capability.engine_spec.nondeterminism_error_types
     )
 
