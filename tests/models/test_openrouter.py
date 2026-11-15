@@ -2103,6 +2103,28 @@ _TOOL_FORCING_REQUEST_PARAMETERS = ModelRequestParameters(
             ['get_weather', 'final_result'],
             id='google-thinking-explicit-required',
         ),
+        # Qwen3.8 Flash returns a 400 for a forced `tool_choice` while it reasons, which it does by default.
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            {'thinking': 'low'},
+            'auto',
+            ['get_weather', 'final_result'],
+            id='qwen-flash-thinking-inferred-required',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            {},
+            'auto',
+            ['get_weather', 'final_result'],
+            id='qwen-flash-thinking-by-default-inferred-required',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            {'thinking': False},
+            'required',
+            ['get_weather', 'final_result'],
+            id='qwen-flash-thinking-disabled',
+        ),
     ],
 )
 async def test_openrouter_forced_tool_choice_with_thinking(
@@ -2112,10 +2134,11 @@ async def test_openrouter_forced_tool_choice_with_thinking(
     expected_tool_choice: Any,
     expected_tool_names: list[str],
 ) -> None:
-    """OpenRouter drops `reasoning` when a forced `tool_choice` reaches an Anthropic downstream model.
+    """A forced `tool_choice` Pydantic AI inferred falls back to `auto` where a route can't force while thinking.
 
-    Anthropic itself rejects that combination with an error, but the gateway swallows it and returns a
-    response with zero reasoning tokens, so an inferred forcing is downgraded to `auto` to keep thinking.
+    Anthropic rejects that combination with an error, but OpenRouter swallows it and returns a response with zero
+    reasoning tokens. Qwen3.8 Flash returns a 400 instead. Either way the inferred forcing is downgraded to `auto`
+    to keep thinking.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request body, so
     a VCR test would keep passing against a stale recording if `tool_choice` regressed.
@@ -2146,10 +2169,11 @@ async def test_openrouter_forced_tool_choice_with_thinking(
 
 
 @pytest.mark.parametrize(
-    ('tool_choice', 'expected_error'),
+    ('model_name', 'settings', 'expected_error'),
     [
         pytest.param(
-            'required',
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'tool_choice': 'required'},
             "tool_choice='required' is not supported by model 'anthropic/claude-sonnet-4.6'. This model does not "
             'support forcing tool use while thinking is enabled. OpenRouter would silently drop reasoning. Disable '
             "thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use "
@@ -2157,17 +2181,35 @@ async def test_openrouter_forced_tool_choice_with_thinking(
             id='required',
         ),
         pytest.param(
-            ['get_weather'],
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'tool_choice': ['get_weather']},
             "tool_choice=['get_weather'] is not supported by model 'anthropic/claude-sonnet-4.6'. This model does "
             'not support forcing tool use while thinking is enabled. OpenRouter would silently drop reasoning. '
             "Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use "
             "`tool_choice='auto'`.",
             id='list',
         ),
+        # Qwen3.8 Flash returns a 400 rather than dropping reasoning, including the reasoning it does by default.
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            {'thinking': 'low', 'tool_choice': 'required'},
+            "tool_choice='required' is not supported by model 'qwen/qwen3.8-flash'. This model does not support "
+            'forcing tool use while thinking is enabled. Disable thinking with `thinking=False` or '
+            "`openrouter_reasoning={'enabled': False}`, or use `tool_choice='auto'`.",
+            id='qwen-flash-required',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            {'tool_choice': 'required'},
+            "tool_choice='required' is not supported by model 'qwen/qwen3.8-flash'. This model does not support "
+            'forcing tool use while thinking is enabled. Disable thinking with `thinking=False` or '
+            "`openrouter_reasoning={'enabled': False}`, or use `tool_choice='auto'`.",
+            id='qwen-flash-required-thinking-by-default',
+        ),
     ],
 )
 async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
-    allow_model_requests: None, tool_choice: Any, expected_error: str
+    allow_model_requests: None, model_name: str, settings: dict[str, Any], expected_error: str
 ) -> None:
     """An explicitly forced `tool_choice` errors instead of silently losing either the forcing or thinking.
 
@@ -2175,17 +2217,18 @@ async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
     for a forcing the `tool_choice` resolution logic inferred.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
 
     with pytest.raises(UserError) as exc_info:
         await model_request(
             model,
             [ModelRequest.user_text_prompt('hello')],
-            model_settings=cast(OpenRouterModelSettings, {'thinking': 'low', 'tool_choice': tool_choice}),
+            model_settings=cast(OpenRouterModelSettings, settings),
             model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
         )
 
     assert str(exc_info.value) == expected_error
+    assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
 @pytest.mark.parametrize(
@@ -2320,14 +2363,19 @@ async def test_openrouter_forcing_on_anthropic_model_that_thinks_by_default(
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
 
 
-@pytest.mark.parametrize('model_name', ['anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.1'])
-async def test_openrouter_forced_tool_choice_on_anthropic_model_that_rejects_it(
+@pytest.mark.parametrize(
+    'model_name',
+    ['anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.1', 'meta/muse-spark-1.3', 'qwen/qwen3.8-2.4t-a95b'],
+)
+async def test_openrouter_forced_tool_choice_on_model_that_rejects_it(
     allow_model_requests: None, model_name: str
 ) -> None:
-    """Claude Opus 5.5 and Fable 5.1 reject a forced `tool_choice` with a 400, and OpenRouter passes it back.
+    """These routes return a 400 for a forced `tool_choice` on every request, and OpenRouter passes it back.
 
-    The Anthropic profile's `supports_forced_tool_choice=False` reaches the OpenRouter route too, so an inferred
-    forcing falls back to `auto` and an explicit one raises before the request is sent.
+    Claude Opus 5.5 and Fable 5.1 reject forcing outright, and the Anthropic profile's
+    `supports_forced_tool_choice=False` reaches the OpenRouter route too. Muse Spark 1.3 and Qwen3.8 2.4T reject it
+    while reasoning, which they always do. So an inferred forcing falls back to `auto` and an explicit one raises
+    before the request is sent.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))

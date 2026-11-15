@@ -109,6 +109,8 @@ Claude answers a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_
 
 When you ask for thinking explicitly on an `anthropic/` model, an explicit `tool_choice='required'` (or a list of tool names) also raises a [`UserError`][pydantic_ai.exceptions.UserError], where the direct API would send it: OpenRouter doesn't reject that combination but silently drops the `reasoning` field from the request, so the response would come back with no thinking at all. Disable thinking or use `tool_choice='auto'` instead.
 
+Some other routes reject a forced `tool_choice` with an error while the model reasons: `meta/muse-spark-1.3` and `qwen/qwen3.8-2.4t-a95b`, which always reason, and `qwen/qwen3.8-flash`, which reasons unless you pass `thinking=False`. On these, whenever the request reasons, including without a thinking setting, a choice that Pydantic AI resolved on your behalf falls back to `'auto'`, and an explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
 If a resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
 
 ## Mid-conversation system prompts

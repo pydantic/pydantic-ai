@@ -208,6 +208,18 @@ Each Sonar Deep Research call runs a paid research job, so it wasn't probed, and
 effort values.
 """
 
+_FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'meta': ('muse-spark-1.3',),
+    'qwen': ('qwen3.8-flash', 'qwen3.8-2.4t'),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that reject forcing a tool while reasoning.
+
+A live probe (2026-10-31) got a 400 for both `tool_choice='required'` and a named function on these routes: "The
+tool_choice parameter does not support being set to required or object in thinking mode" on Qwen, "only `auto` is
+supported for `tool_choice`" on Muse Spark. OpenRouter's model list advertises `tool_choice` for all of them, so it
+can't be used to find these routes.
+"""
+
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
     'anthropic': ('claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
@@ -306,7 +318,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
             # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
             profile = _glm_5_3_schema_profile(model_name)
 
-        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+        mandatory_reasoning = model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ()))
+        if mandatory_reasoning:
             low_floor = model_name.lower().startswith(_LOW_REASONING_FLOOR_MODEL_PREFIXES.get(provider, ()))
             profile = merge_profile(
                 profile,
@@ -314,6 +327,19 @@ class OpenRouterProvider(_OpenAISDKProvider):
                     thinking_always_enabled=True,
                     openrouter_lowest_reasoning_effort='low' if low_floor else 'minimal',
                 ),
+            )
+        forcing_rejected_while_reasoning = model_name.lower().startswith(
+            _FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES.get(provider, ())
+        )
+        if forcing_rejected_while_reasoning:
+            profile = merge_profile(
+                profile,
+                # A route that always reasons never accepts forcing. The others reason unless told not to
+                # (`reasoning.default_enabled` in OpenRouter's model list), so a request without a thinking
+                # setting counts as reasoning.
+                ModelProfile(supports_forced_tool_choice=False)
+                if mandatory_reasoning
+                else ModelProfile(thinking_enabled_by_default=True),
             )
         # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
         supports_mid_conversation_effort = model_name.lower().startswith(
@@ -378,7 +404,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
                 # drops `reasoning` from the request and returns a response with no reasoning at all.
                 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-                supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                # The routes in `_FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES` return a 400 instead.
+                supports_forced_tool_choice_with_thinking=provider != 'anthropic'
+                and not forcing_rejected_while_reasoning,
                 # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
                 # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
                 # writes. Other routed caches have no OpenRouter-level retention commitment.
