@@ -105,7 +105,7 @@ agent = Agent(
 ...
 ```
 
-The tier that served a non-streamed request is stored in `ModelResponse.provider_details['service_tier']`.
+The tier that served a non-streamed request is stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
 
 ## SDK retries {#sdk-retries}
 
