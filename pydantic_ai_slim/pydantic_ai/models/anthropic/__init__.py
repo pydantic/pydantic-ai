@@ -871,7 +871,7 @@ def _build_extra_body(
     return merged
 
 
-def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
+def _extra_body_thinking(model_settings: ModelSettings) -> dict[str, object] | None:
     """The `thinking` object a caller hand-rolled in `extra_body`, if any.
 
     `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
@@ -895,7 +895,7 @@ def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
 
 
 def _effective_thinking(
-    model_settings: AnthropicModelSettings, thinking: BetaThinkingConfigParam | Omit
+    model_settings: ModelSettings, thinking: BetaThinkingConfigParam | Omit
 ) -> dict[str, object] | Omit:
     """Resolve the thinking object that reaches the wire after `extra_body` precedence."""
     if (caller_thinking := _extra_body_thinking(model_settings)) is not None:
@@ -1551,10 +1551,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
+        # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+        wire_thinking = _effective_thinking(merged, merged.get('anthropic_thinking') or OMIT)
         if (
             profile.get('anthropic_disallows_budget_thinking', False)
-            and (anthropic_thinking := merged.get('anthropic_thinking'))
-            and anthropic_thinking.get('type') == 'enabled'
+            and not isinstance(wire_thinking, Omit)
+            and wire_thinking.get('type') == 'enabled'
         ):
             raise UserError(
                 f'{self.model_name!r} does not support '
