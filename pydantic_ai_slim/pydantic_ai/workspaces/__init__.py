@@ -7,11 +7,14 @@ from .protocol import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsPlatform,
     SupportsRealpath,
+    SupportsRunInDirectory,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceOutputLimitError,
+    WorkspacePlatform,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -19,7 +22,8 @@ from .protocol import (
 )
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
-from .workspace import Workspace, WrapperWorkspace
+from .windows import WindowsWorkspaceBackend
+from .workspace import Workspace, WorkspacePaths, WrapperWorkspace
 
 __all__ = (
     'AuthorityWorkspace',
@@ -27,7 +31,10 @@ __all__ = (
     'FileEntry',
     'LocalWorkspaceBackend',
     'ReadOnlyWorkspace',
+    'WindowsWorkspaceBackend',
     'Workspace',
+    'WorkspacePaths',
+    'WorkspacePlatform',
     'WrapperWorkspace',
     'WorkspaceBackend',
     'WorkspaceCommand',
@@ -39,6 +46,8 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsPlatform',
     'SupportsRealpath',
+    'SupportsRunInDirectory',
     'UnavailableWorkspace',
 )

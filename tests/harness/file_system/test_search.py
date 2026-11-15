@@ -327,7 +327,10 @@ async def test_posix_search_reports_failed_sort(tmp_path: Path) -> None:
         await tools.list_files(workspace=backend)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason='root reads a mode-000 file')
+@pytest.mark.skipif(
+    os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+    reason='root reads a mode-000 file, and Windows does not enforce POSIX file modes',
+)
 async def test_posix_grep_skips_an_unreadable_file(tmp_path: Path, no_rg_path: str) -> None:
     (tmp_path / 'a.txt').write_text('needle\n')
     locked = tmp_path / 'locked.txt'
