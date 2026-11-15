@@ -18,16 +18,17 @@ import contextlib
 import os
 import signal
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypeGuard
 
 import anyio
 import grpc
 import grpc.aio
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 from google.protobuf.message import Message
+from k8s_agent_sandbox.async_connector import AsyncSandboxConnector
 from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
 _GRACE = 0.3
@@ -87,6 +88,23 @@ def _messages() -> dict[str, type[Message]]:
 MESSAGES = _messages()
 
 
+class _ProcessConfig(Protocol):
+    @property
+    def command(self) -> Sequence[str]: ...
+    @property
+    def env_vars(self) -> Mapping[str, str]: ...
+
+
+class _StartRequest(Protocol):
+    @property
+    def config(self) -> _ProcessConfig: ...
+
+
+def _is_start_request(message: Message) -> TypeGuard[_StartRequest]:
+    """The message classes are built at runtime, so their fields have no static type: the descriptor says which it is."""
+    return message.DESCRIPTOR.full_name == 'fake.process.v1.StartRequest'
+
+
 class FakeSandboxd:
     """A sandboxd `ProcessService` serving host processes in `root`."""
 
@@ -130,8 +148,10 @@ class FakeSandboxd:
         assert self.server is not None
         await self.server.stop(grace=0)
 
-    # `request` is a message class built at runtime, so its fields have no static type.
-    async def _start(self, request: Any, context: grpc.aio.ServicerContext[Message, Message]) -> AsyncIterator[Message]:
+    async def _start(
+        self, request: Message, context: grpc.aio.ServicerContext[Message, Message]
+    ) -> AsyncIterator[Message]:
+        assert _is_start_request(request)
         Response = MESSAGES['StartResponse']
         command = list(request.config.command)
         call_env = dict(request.config.env_vars)
@@ -279,13 +299,14 @@ class FakeSandbox:
         self.sandbox_id = self.sandboxd.sandbox_id
         self.k8s_helper = FakeK8sHelper(self.cluster)
         self.connector = FakeConnector(self)
-        # The executor only calls the connector methods `FakeConnector` has.
-        connector: Any = self.connector
-        self.commands = AsyncCommandExecutor(connector, tracer=None, trace_service_name='sandbox-client')
+        self.commands = AsyncCommandExecutor(self.connector, tracer=None, trace_service_name='sandbox-client')
 
 
-class FakeConnector:
-    """The SDK's connector, as much of it as `commands.start()` calls: one gRPC channel to the fake sandboxd."""
+class FakeConnector(AsyncSandboxConnector):
+    """The SDK's connector, as much of it as `commands.start()` calls: one gRPC channel to the fake sandboxd.
+
+    It overrides every method the executor calls and skips the SDK's constructor, which needs a cluster.
+    """
 
     def __init__(self, sandbox: FakeSandbox) -> None:
         self.sandbox = sandbox
@@ -295,8 +316,8 @@ class FakeConnector:
     def is_sandboxd(self) -> bool:
         return True
 
-    async def connect(self) -> None:
-        pass
+    async def connect(self) -> str:
+        return f'http://{self.sandbox.sandboxd.target}'
 
     async def grpc_channel(self) -> grpc.aio.Channel:
         if self.sandbox.cluster.channel_error is not None:
@@ -306,7 +327,9 @@ class FakeConnector:
             self.channels.append(self.channel)
         return self.channel
 
-    async def invalidate_sandboxd_transport(self, channel: grpc.aio.Channel) -> None:
+    async def invalidate_sandboxd_transport(
+        self, channel: grpc.aio.Channel | None, *, transport_token: object | None = None
+    ) -> None:
         pass
 
 
