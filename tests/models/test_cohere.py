@@ -17,6 +17,7 @@ from pydantic_ai import (
     Agent,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -1553,28 +1554,6 @@ Alternatively, 17*20 is 340, right? Because 17*20 is 340. But since 19 is one le
     )
 
 
-def test_finish_reason_timeout_maps_to_error(allow_model_requests: None):
-    """TIMEOUT normalizes to 'error' while the raw value is preserved in `provider_details`."""
-    c = ChatResponse(
-        id='123',
-        finish_reason='TIMEOUT',
-        message=AssistantMessageResponse(
-            content=[TextAssistantMessageResponseContentItem(text='world')],
-            role='assistant',
-        ),
-    )
-    mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-
-    result = agent.run_sync('hello')
-
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.finish_reason == 'error'
-    assert response.provider_details == {'finish_reason': 'TIMEOUT'}
-
-
 @pytest.mark.parametrize(
     ('finish_reason', 'expected'),
     [
@@ -1587,7 +1566,7 @@ def test_finish_reason_timeout_maps_to_error(allow_model_requests: None):
     ],
 )
 def test_finish_reason_map_covers_all_sdk_values(
-    finish_reason: cohere.ChatFinishReason, expected: str, allow_model_requests: None
+    finish_reason: cohere.ChatFinishReason, expected: FinishReason, allow_model_requests: None
 ):
     """Every `ChatFinishReason` value the SDK defines normalizes without dropping the raw value."""
     c = ChatResponse(
