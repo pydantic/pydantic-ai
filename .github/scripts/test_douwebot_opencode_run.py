@@ -24,14 +24,27 @@ import category_classify_opencode
 import douwebot_opencode_run
 from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, check_symlinks
 
+LIMIT = (
+    'OpenCode Go 5 hour usage limit reached. Switch to a free model, '
+    'or turn on Extra Usage on the Go page in OpenCode Console to keep going.'
+)
+WORKSPACE = 'wrk_go_limit'
+
+
+def go_limit_error(metadata: object) -> dict[str, object]:
+    """The `error` OpenCode 2.2.5 writes for an OpenCode Go 429 whose response body carries `metadata`.
+
+    See https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/test/session-error.test.ts
+    """
+    body = {'type': 'error', 'error': {'type': 'GoUsageLimitError', 'message': 'Go usage limit exceeded'}}
+    response = {'body': json.dumps({**body, 'metadata': metadata})}
+    return {'type': 'provider.go-limit', 'message': LIMIT, 'status': 429, 'response': response, 'retryAfterMs': 120_000}
+
+
 # What OpenCode 2.2.5 writes when OpenCode Go's usage limit refuses the first request: a step starts, none finishes.
-LIMIT = 'OpenCode Go weekly usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page.'
 REFUSED: list[dict[str, object]] = [
     {'type': 'step_start', 'part': {'messageID': 'msg_1', 'type': 'step-start'}},
-    {
-        'type': 'error',
-        'error': {'type': 'provider.go-limit', 'message': LIMIT, 'status': 429, 'response': {'body': '{}'}},
-    },
+    {'type': 'error', 'error': go_limit_error({'workspace': WORKSPACE, 'limitName': '5 hour'})},
 ]
 FINISHED = [
     {'type': 'text', 'part': {'messageID': 'msg_1', 'text': '{}'}},
@@ -134,8 +147,9 @@ def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str
             5,
         )
         assert isinstance(request.data, bytes)
-        # Neither the provider's message nor its response body leaves the job.
+        # Neither the provider's message nor its response body, Go's workspace id included, leaves the job.
         assert b'Rate limit reached' not in request.data and LIMIT.encode() not in request.data
+        assert WORKSPACE.encode() not in request.data
         [resource] = json.loads(request.data)['resourceSpans']
         service = {'key': 'service.name', 'value': {'stringValue': 'opencode-fallback'}}
         assert resource['resource'] == {'attributes': [service]}
@@ -280,7 +294,10 @@ def test_fallback_steps_hand_opencode_the_logfire_token(job: str, step: str) -> 
     assert (env['LOGFIRE_TOKEN'], env['LOGFIRE_URL']) == ('${{ secrets.LOGFIRE_TOKEN }}', '${{ vars.LOGFIRE_URL }}')
 
 
-GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.go-limit, status 429.'
+GO_RUN_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go'
+GO_LIMIT_LOG = (
+    f'{GO_RUN_LOG} failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
+)
 NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type.'
 TO_ZAI_LOG = (
     'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
@@ -512,6 +529,8 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.go-limit',
             'opencode_fallback.error_status': '429',
+            'opencode_fallback.limit_name': '5 hour',
+            'opencode_fallback.retry_after_ms': '120000',
             'opencode_fallback.step_finish': False,
         },
         {
@@ -697,6 +716,57 @@ def test_go_failure_stays_on_go(
     assert_runs_on(call, OPENCODE_GO)
     assert review_env.read_text(encoding='utf-8') == ''
     assert capsys.readouterr().out == ('' if log is None else log + '\n')
+
+
+@pytest.mark.parametrize(
+    ('error', 'described'),
+    [
+        pytest.param(
+            go_limit_error({'workspace': WORKSPACE, 'limitName': 'monthly'}),
+            'error type provider.go-limit, status 429, monthly limit, retry after 120000 ms',
+            id='monthly',
+        ),
+        pytest.param(
+            go_limit_error({'limitName': 5}),
+            'error type provider.go-limit, status 429, retry after 120000 ms',
+            id='name-not-a-string',
+        ),
+        pytest.param(
+            go_limit_error({'limitName': WORKSPACE}),
+            'error type provider.go-limit, status 429, retry after 120000 ms',
+            id='name-not-shaped-like-a-window',
+        ),
+        pytest.param(
+            go_limit_error(None), 'error type provider.go-limit, status 429, retry after 120000 ms', id='no-metadata'
+        ),
+        pytest.param(
+            {**go_limit_error({'limitName': 'weekly'}), 'retryAfterMs': '120000'},
+            'error type provider.go-limit, status 429, weekly limit',
+            id='retry-after-not-a-number',
+        ),
+        pytest.param(
+            {**go_limit_error({'limitName': 'weekly'}), 'type': 'provider.quota'},
+            'error type provider.quota, status 429',
+            id='not-a-go-limit',
+        ),
+    ],
+)
+def test_go_limit_names_its_window_and_retry_after(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: dict[str, object],
+    described: str,
+) -> None:
+    """A Go limit's job log names its window and retry-after only when each is shaped like one, never its workspace."""
+    monkeypatch.delenv('ZAI_API_KEY')
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY')
+    fake_opencode(
+        monkeypatch, ([REFUSED[0], {'type': 'error', 'error': error}], subprocess.CalledProcessError(1, 'opencode'))
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert capsys.readouterr().out == f'{GO_RUN_LOG} failed with {described}.\n'
 
 
 @pytest.mark.parametrize(
