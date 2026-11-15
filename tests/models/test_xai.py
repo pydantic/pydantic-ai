@@ -1918,10 +1918,7 @@ async def test_xai_service_tier(allow_model_requests: None, service_tier: Servic
 async def test_xai_service_tier_provider_details(
     allow_model_requests: None, served_tier: Literal['default', 'priority']
 ):
-    """The tier xAI reports serving the response at lands in `provider_details`.
-
-    A response with no tier set has no `provider_details`, as every other test here shows.
-    """
+    """The tier xAI reports serving the response at lands in `provider_details`."""
     response = create_response(content='test response')
     response.proto.service_tier = service_tier_to_proto(served_tier)
     mock_client = MockXai.create_mock([response])
