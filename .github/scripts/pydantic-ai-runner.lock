@@ -3,8 +3,8 @@ revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform != 'win32'",
@@ -18,7 +18,6 @@ exclude-newer-span = "P7D"
 pillow = "2026-10-16T22:19:00Z"
 prefect = "2026-10-21T03:46:00Z"
 pydantic-monty-runtime = false
-k8s-agent-sandbox = "2026-11-06T18:47:00Z"
 pydantic-handlebars = false
 pydantic-extra-types = false
 pydantic = false
@@ -1198,6 +1197,7 @@ requires-dist = [
     { name = "genai-prices", specifier = ">=0.0.71" },
     { name = "httpx2", specifier = ">=2.7" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
+    { name = "ipykernel", marker = "python_full_version >= '3.15' and extra == 'ipython'", specifier = ">=6.30.0" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
     { name = "json-repair", marker = "extra == 'coder'", specifier = ">=0.58.0" },
     { name = "json-repair", marker = "extra == 'repair-tool-arguments'", specifier = ">=0.58.0" },

@@ -29,7 +29,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileSystem
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
 from tests.conftest import without_admin_server
 from tests.harness._temporal import skip_temporal_sandbox_on_314

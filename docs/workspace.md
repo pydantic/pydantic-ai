@@ -799,9 +799,30 @@ Local commands that exceed the 10 MiB combined output limit raise `WorkspaceOutp
 The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
 works without shell support, but cannot run commands.
 
+On Windows, use [`WindowsWorkspace`][pydantic_ai.capabilities.WindowsWorkspace] in place of `LocalWorkspace`.
+It takes the same options and also isolates nothing. Commands run in PowerShell (`pwsh` when it is on `PATH`,
+else Windows PowerShell), and paths are Windows paths (`C:\Users\me\project`). Each command runs in a Windows Job
+Object, so a timeout or cancellation ends the processes it started too; a process it started in the background
+outlives a command that returns. Commands get only the variables Windows tools need to start (`PATH`, `PATHEXT`,
+`SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like), plus `env`.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WindowsWorkspace
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[WindowsWorkspace('.')])
+```
+
+A backend whose shell and paths are not POSIX says so with
+[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform]; tools read it as
+[`Workspace.platform`][pydantic_ai.workspaces.Workspace.platform], and use
+[`Workspace.paths`][pydantic_ai.workspaces.Workspace.paths] (`posixpath` or `ntpath`) for its paths.
+The [conformance suite](#checking-a-backend) checks a `'windows'` backend's commands in PowerShell.
+
 ## Limits
 
-- `LocalWorkspace` runs only on POSIX systems (macOS and Linux) and isolates nothing. Create its root
+- `LocalWorkspace` runs only on POSIX systems (macOS and Linux), and `WindowsWorkspace` only on Windows; neither
+  isolates anything. Create its root
   first: every operation needs it. While it exists, absolute paths outside it are allowed.
   `defer_loading=True` is rejected because the workspace must be selected before deferred
   capabilities load. Its ref normalizes `.` and `..` without resolving symlinks, so differently

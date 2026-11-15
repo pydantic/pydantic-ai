@@ -33,6 +33,9 @@ def test_voyageai_provider() -> None:
     provider = VoyageAIProvider(api_key='api-key')
     assert provider.name == 'voyageai'
     assert provider.base_url == 'https://api.voyageai.com/v1'
+    assert VoyageAIProvider(api_key='api-key', base_url='https://gateway.example/v1').base_url == (
+        'https://gateway.example/v1'
+    )
     assert isinstance(provider.client, AsyncClient)
 
 

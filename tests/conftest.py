@@ -457,11 +457,16 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
-    # example printing from inside a running event loop trips the detector on the harness's own
-    # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
-    # code detectable.
+    # pytest-examples finds the caller of a captured `print()` with `inspect.stack()`, which resolves
+    # each frame's file with `os.path.abspath`, and matches it to the example with `Path.samefile`,
+    # which calls `os.stat`. An example printing from inside a running event loop trips the detector
+    # on the harness's own calls. Exempting the capture entry point leaves these calls from example
+    # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
+    # On Windows, `ntpath.relpath` makes each path absolute with `GetFullPathNameW`, which reads no disk for
+    # the absolute paths the file tools pass it.
+    ('os.path.abspath', 'pydantic_ai_harness/file_system/_toolset.py', '_relative'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
@@ -508,7 +513,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # A local workspace built with a relative `working_dir` resolves it against the current directory
     # once, at construction, which may happen in async code.
-    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai/workspaces/_host.py', '__init__'),
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),
@@ -522,9 +527,13 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
-    # durable capability operations persist their results through them.
-    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    # durable capability operations persist their results through them. Its `_resolve_path` builds each result's
+    # storage path with `Path(basepath).resolve()`. Before Python 3.13 that calls `os.path.abspath` and stats the
+    # result; on Windows, `ntpath.realpath` also reads the current directory, even for an absolute path.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path', '_resolve_path')),
     ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    ('os.path.abspath', 'prefect/filesystems.py', '_resolve_path'),
+    ('os.getcwd', 'prefect/filesystems.py', '_resolve_path'),
     # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
@@ -540,7 +549,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
-        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
         for func in ('os.stat', 'os.access', 'os.path.abspath')
         for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
     ),
@@ -1244,6 +1253,22 @@ def fail_function_model_prefix_violations(
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+def gave_up_on(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A mock transport handler raising what a retrying transport raises once it gave up on `handler`'s response.
+
+    That's the `HTTPStatusError` its `validate_response` raised for the error status, carrying the response, which
+    the provider SDK then never sees.
+    """
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
 
 
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
