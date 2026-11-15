@@ -6613,32 +6613,43 @@ async def test_translated_tool_search_history_pairs_every_call(case: TranslatedH
 class AcceptedHistoryCase:
     id: str
     history: list[ModelMessage]
-    agent: list[tuple[str, str]]
-    fallback: list[tuple[str, str]]
+    fallback: bool
+    expected: list[tuple[str, str]]
 
 
 ACCEPTED_HISTORY_CASES = [
     AcceptedHistoryCase(
-        id='openai-output-ids',
+        id='openai-output-ids-agent',
         history=_OPENAI_OUTPUT_ID_HISTORY,
-        agent=snapshot([('call', 'tsc_1'), ('interrupted', 'tsc_1'), ('call', 'tsc_2'), ('interrupted', 'tsc_2')]),
-        fallback=snapshot([('call', 'tsc_1'), ('success', 'tso_1'), ('call', 'tsc_2'), ('success', 'tso_2')]),
+        fallback=False,
+        expected=snapshot([('call', 'tsc_1'), ('interrupted', 'tsc_1'), ('call', 'tsc_2'), ('interrupted', 'tsc_2')]),
     ),
     AcceptedHistoryCase(
-        id='anthropic-unanswered-search',
+        id='openai-output-ids-fallback',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        fallback=True,
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tso_1'), ('call', 'tsc_2'), ('success', 'tso_2')]),
+    ),
+    AcceptedHistoryCase(
+        id='anthropic-unanswered-search-agent',
         history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
-        agent=snapshot(
+        fallback=False,
+        expected=snapshot(
             [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
         ),
-        fallback=snapshot([('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1')]),
+    ),
+    AcceptedHistoryCase(
+        id='anthropic-unanswered-search-fallback',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        fallback=True,
+        expected=snapshot([('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1')]),
     ),
 ]
 
 
-@pytest.mark.parametrize('fallback', [False, True], ids=['agent', 'fallback'])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in ACCEPTED_HISTORY_CASES])
 async def test_translated_tool_search_history_is_sent_as_translated_where_the_api_accepts_it(
-    case: AcceptedHistoryCase, fallback: bool
+    case: AcceptedHistoryCase,
 ) -> None:
     """A model whose API takes an unpaired tool call or result gets the translated history as before.
 
@@ -6653,11 +6664,11 @@ async def test_translated_tool_search_history_is_sent_as_translated_where_the_ap
         return ModelResponse(parts=[TextPart('done')])
 
     function_model = FunctionModel(respond)
-    agent = Agent(FallbackModel(function_model) if fallback else function_model, toolsets=[_METRICS_TOOLSET])
+    agent = Agent(FallbackModel(function_model) if case.fallback else function_model, toolsets=[_METRICS_TOOLSET])
 
     await agent.run('and for Q3?', message_history=case.history)
 
-    assert _tool_exchange(received) == (case.fallback if fallback else case.agent)
+    assert _tool_exchange(received) == case.expected
 
 
 def test_prepare_messages_answers_only_translated_calls_before_the_frontier() -> None:
