@@ -8,6 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._family import vendor_family_model_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
+from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
@@ -48,7 +49,8 @@ class TogetherProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = vendor_family_model_profile(model_name, overrides={'openai': _gpt_oss_only_profile})
-        if model_name.lower().startswith('deepseek-ai/deepseek-v4-'):
+        vendor, _, family_model_name = model_name.lower().partition('/')
+        if vendor == 'deepseek-ai' and _DEEPSEEK_V4_PATTERN.match(family_model_name):
             # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
             # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
             # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
