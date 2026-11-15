@@ -207,6 +207,16 @@ def in_durable_execution(ctx: RunContext[object]) -> bool:
     )
 
 
+def _nondeterminism_error_types(ctx: RunContext[object]) -> tuple[type[BaseException], ...]:
+    """The errors the run's durable engine fails a diverged replay with, which must not reach the sandbox."""
+    return tuple(
+        error_type
+        for capability in ctx.capabilities.values()
+        if isinstance(capability, BaseDurabilityCapability)
+        for error_type in capability.engine_spec.nondeterminism_error_types
+    )
+
+
 def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
     """Which `CodeModeResourceLimits` limit this runtime error reports, or `None` for anything else.
 
@@ -1350,9 +1360,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         in_workflow = in_temporal_workflow()
         configured = _resolve_resource_limits(self.resource_limits)
-        # `run_code` executes in workflow code and Temporal replays it. An elapsed timer may make the
-        # original run and replay take different branches, which Temporal cannot record.
-        limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
+        # `run_code` executes in workflow code and every durable engine replays it. An elapsed timer may
+        # make the original run and replay take different branches, so they call tools in another order.
+        limits = configured | {'max_feed_duration_secs': None} if in_durable_execution(ctx) else configured
+        reraise = _nondeterminism_error_types(ctx)
         if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
             # The type checker would reject the names the restored state defines.
             fresh_repl = type_check = False
@@ -1371,10 +1382,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 sequential_names=sequential_tools,
                 global_sequential=global_sequential,
                 portal=run_state.portal,
-                # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
+                # The configured limit, kept under durable execution too: Monty's elapsed-time
                 # check is dropped there for replay, but sleeps are charged what they request.
                 max_sleep_seconds=configured.get('max_feed_duration_secs'),
                 os_handler=os_handler,
+                reraise=reraise,
             ).run(
                 partial(
                     session.feed_start,
@@ -1386,6 +1398,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 )
             )
             run_state.has_executed_feed = True
+        except reraise:
+            await run_state.reset()
+            raise
         except BaseException as exc:
             retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:

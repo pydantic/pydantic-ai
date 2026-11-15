@@ -28,12 +28,13 @@ from tests.conftest import detach_dbos_logging, without_admin_server
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from dbos._error import DBOSUnexpectedStepError
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, ToolDefinition
+from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
@@ -191,6 +192,81 @@ def run_gather_agent(prompt: str) -> str:
     return gather_agent.run_sync(prompt).output
 
 
+class _ReplayCrash(BaseException):
+    """Leave the workflow pending after its first step is recorded, so recovery replays it."""
+
+
+_lookups = 0
+_replay_model_calls: list[list[str]] = []
+
+
+@DBOS.step(name='code_mode_lookup_v1')
+async def _lookup_v1() -> str:
+    return 'v1'
+
+
+@DBOS.step(name='code_mode_lookup_v2')
+async def _lookup_v2() -> str:
+    return 'v2'
+
+
+async def lookup() -> str:
+    """Look up a value. The first attempt crashes, and the recovery calls a differently named step."""
+    global _lookups
+    _lookups += 1
+    if _lookups == 1:
+        await _lookup_v1()
+        raise _ReplayCrash
+    return await _lookup_v2()
+
+
+def _replay_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    seen = [str(part.content) for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    _replay_model_calls.append(seen)
+    if seen:
+        return ModelResponse(parts=[TextPart(content='final answer')])
+    prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+    code = f"try:\n    r = await {prompt}()\nexcept Exception:\n    r = 'caught'\nr"
+    if prompt == 'lookup_in_order':
+        code = f"try:\n    r = {prompt}()\nexcept Exception:\n    r = 'caught'\nr"
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='replay')])
+
+
+replay_agent = Agent(
+    FunctionModel(_replay_model),
+    name='code_mode_dbos_replay_agent',
+    toolsets=[FunctionToolset(tools=[lookup, Tool(lookup, name='lookup_in_order', sequential=True)], id='lookup')],
+    capabilities=[CodeMode(), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_replay_agent(prompt: str) -> str:
+    return replay_agent.run_sync(prompt).output
+
+
+def _spin_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    last = messages[-1]
+    assert isinstance(last, ModelRequest)
+    for part in last.parts:
+        if isinstance(part, ToolReturnPart):
+            return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
+    code = 'y = 0\nfor i in range(1_000_000):\n    y += 1\ny'
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='spin')])
+
+
+spin_agent = Agent(
+    FunctionModel(_spin_model),
+    name='code_mode_dbos_spin_agent',
+    capabilities=[CodeMode(resource_limits={'max_duration_seconds': 0.001}), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_spin_agent(prompt: str) -> str:
+    return spin_agent.run_sync(prompt).output
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -331,3 +407,30 @@ def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
         output = run_gather_agent('Gather three fetches.')
 
     assert output == "done: ['a', 'b', 'c']"
+
+
+@pytest.mark.parametrize('tool_name', ['lookup', 'lookup_in_order'])
+def test_replay_divergence_in_nested_call_fails_the_workflow(dbos_instance: DBOS, tool_name: str) -> None:
+    """DBOS's error for a diverged replay fails the workflow, as it does for a native tool call.
+
+    It must not reach the sandbox, where a `try/except` would hide it and the run would succeed (#12539).
+    """
+    global _lookups
+    _lookups = 0
+    _replay_model_calls.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_ReplayCrash):
+        run_replay_agent(tool_name)
+
+    handle = DBOS.resume_workflow(workflow_id)
+    with pytest.raises(DBOSUnexpectedStepError, match='code_mode_lookup_v1 was recorded when code_mode_lookup_v2'):
+        handle.get_result()
+    assert _replay_model_calls == [[]]
+
+
+def test_elapsed_time_limit_is_off_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """DBOS replays `run_code`, so an elapsed-time limit could make a replay take another path (#12539)."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        output = run_spin_agent('Spin.')
+
+    assert output == 'done: 1000000'

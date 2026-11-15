@@ -1190,15 +1190,15 @@ class TestCodeMode:
         assert '(50 items total)' in message  # long list cut to its first few
         assert '(10000 items total)' in message  # mapping items are cut before rendering
 
-    async def test_temporal_disables_elapsed_time_limits_but_keeps_memory_limit(
+    async def test_durable_execution_disables_elapsed_time_limits_but_keeps_memory_limit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Temporal replays `run_code`, so its elapsed timer cannot decide workflow control flow."""
+        """Durable engines replay `run_code`, so its elapsed timer cannot decide workflow control flow."""
 
-        def in_temporal_workflow() -> bool:
+        def in_durable_execution(ctx: object) -> bool:
             return True
 
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.in_temporal_workflow', in_temporal_workflow)
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.in_durable_execution', in_durable_execution)
         options: tuple[CodeModeResourceLimits | None, ...] = (
             None,
             {'max_duration_seconds': 0.001, 'max_memory': 8 * 1024 * 1024},

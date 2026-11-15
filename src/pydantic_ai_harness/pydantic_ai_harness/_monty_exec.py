@@ -299,6 +299,8 @@ class MontyExecutor:
     # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
     # parallel dispatch only: under `global_sequential`, calls start after this.
     flush: Callable[[], Awaitable[None]] | None = None
+    # Errors from dispatched calls that end the feed instead of being raised at the sandbox call site.
+    reraise: tuple[type[BaseException], ...] = ()
 
     _slept_seconds: float = field(default=0.0, init=False)
     # Parallel calls deferred but not yet resolved, keyed by Monty call id.
@@ -376,14 +378,14 @@ class MontyExecutor:
             # `_pending`, so if it existed while the barrier awaits and we were cancelled
             # there, `run`'s cleanup would never close it.
             for cid in list(self._pending):
-                self._pre_resolved[cid] = await _await_external(self._pending.pop(cid))
+                self._pre_resolved[cid] = await _await_external(self._pending.pop(cid), self.reraise)
             try:
                 call = self._dispatch(snapshot, parallel=False)
             except Exception as exc:
                 return await self._raise_in_sandbox(snapshot, exc)
             # The wrapped outcome (`{'return_value': ...}` / `{'exception': ...}`) is already
             # exactly the payload `resume` expects.
-            return await call_monty(self.portal, snapshot.resume, await _await_external(call))
+            return await call_monty(self.portal, snapshot.resume, await _await_external(call, self.reraise))
 
         # Deferred execution -- resolved later at FutureSnapshot.
         try:
@@ -474,7 +476,7 @@ class MontyExecutor:
         # insertion-ordered, but `pending_call_ids` may list the ids in any order.
         if self.global_sequential:
             for cid in [cid for cid in self._pending if cid in pending_ids]:
-                results[cid] = await _await_external(self._pending.pop(cid))
+                results[cid] = await _await_external(self._pending.pop(cid), self.reraise)
 
         # Gather any remaining parallel tasks concurrently. They stay in `_pending` until
         # gather returns, so the cleanup in `run` can still cancel them if this is cancelled.
@@ -483,16 +485,20 @@ class MontyExecutor:
             settled = await asyncio.gather(*(self._pending[cid].call for cid in gather_ids), return_exceptions=True)
             for cid, outcome in zip(gather_ids, settled):
                 del self._pending[cid]
-                results[cid] = _wrap_gathered(outcome)
+                results[cid] = _wrap_gathered(outcome, self.reraise)
 
         return await call_monty(self.portal, snapshot.resume, results)
 
 
-async def _await_external(call: PendingCall) -> ExternalReturnValue | ExternalException:
+async def _await_external(
+    call: PendingCall, reraise: tuple[type[BaseException], ...]
+) -> ExternalReturnValue | ExternalException:
     """Await a single deferred call and wrap its outcome for Monty."""
     token = otel_context.attach(call.context)
     try:
         result = await call.call
+    except reraise:
+        raise
     except Exception as exc:
         return ExternalException(exception=exc)
     finally:
@@ -500,10 +506,10 @@ async def _await_external(call: PendingCall) -> ExternalReturnValue | ExternalEx
     return ExternalReturnValue(return_value=result)
 
 
-def _wrap_gathered(outcome: Any) -> ExternalReturnValue | ExternalException:
+def _wrap_gathered(outcome: Any, reraise: tuple[type[BaseException], ...]) -> ExternalReturnValue | ExternalException:
     """Wrap an `asyncio.gather(return_exceptions=True)` outcome for Monty."""
+    if isinstance(outcome, BaseException) and (isinstance(outcome, reraise) or not isinstance(outcome, Exception)):
+        raise outcome
     if isinstance(outcome, Exception):
         return ExternalException(exception=outcome)
-    if isinstance(outcome, BaseException):
-        raise outcome
     return ExternalReturnValue(return_value=outcome)
