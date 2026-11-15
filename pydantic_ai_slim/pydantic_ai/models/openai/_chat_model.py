@@ -50,7 +50,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...exceptions import UserError
+from ...exceptions import ModelRequestRejectedError, UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -532,16 +532,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
         # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
-        # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too.
+        # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too. The error is the
+        # category of that 400, so `FallbackModel` and `except ModelAPIError` handle it as they handle the 400.
         if (
             tools
             and profile.get('openai_chat_function_tools_require_reasoning_off', False)
             and reasoning_active(profile, model_settings, model_request_parameters)
         ):
             remedy = ', or disable reasoning with `thinking=False`' if supports_reasoning_effort_none(profile) else ''
-            raise UserError(
+            raise ModelRequestRejectedError(
+                self.model_name,
                 f'OpenAI rejects function tools while reasoning is enabled on {self.model_name!r} over Chat '
-                f'Completions. Use `OpenAIResponsesModel`{remedy} instead.'
+                f'Completions. Use `OpenAIResponsesModel`{remedy} instead.',
             )
 
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)

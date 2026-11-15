@@ -33,6 +33,7 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelProfile,
     ModelRequest,
+    ModelRequestRejectedError,
     ModelResponse,
     ModelRetry,
     ModelServerError,
@@ -2659,7 +2660,7 @@ async def test_chat_completions_tools_with_reasoning_rejected_before_send(
     else:
         agent = Agent(m, output_type=_Forecast)
 
-    with pytest.raises(UserError) as exc_info:
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
         if stream:
             async with agent.run_stream('What is the temperature in Tokyo?'):
                 pass  # pragma: no cover
@@ -2669,6 +2670,26 @@ async def test_chat_completions_tools_with_reasoning_rejected_before_send(
     assert str(exc_info.value) == snapshot(
         "OpenAI rejects function tools while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or disable reasoning with `thinking=False` instead."
     )
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_chat_completions_tools_with_reasoning_rejection_falls_back(allow_model_requests: None) -> None:
+    """`FallbackModel` falls back on the guard's error by default, as it does on the API's 400.
+
+    A unit test: the guard fires before any request, so there is nothing to record.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='unused', role='assistant')))
+    primary = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(FallbackModel(primary, backup))
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'{city}: 21°C'  # pragma: no cover
+
+    result = await agent.run('What is the temperature in Tokyo?')
+
+    assert result.output == 'from backup'
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
@@ -2698,7 +2719,7 @@ async def test_chat_completions_function_tools_reasoning_error_remedy_copy_per_i
     def echo(text: str) -> str:
         return text  # pragma: no cover
 
-    with pytest.raises(UserError, match='OpenAIResponsesModel') as exc_info:
+    with pytest.raises(ModelRequestRejectedError, match='OpenAIResponsesModel') as exc_info:
         await agent.run('echo')
 
     assert ('thinking=False' in str(exc_info.value)) == thinking_false_remedy
@@ -2738,7 +2759,7 @@ async def test_chat_completions_function_tools_thinking_false_escapes_on_none_su
         assert kwargs.get('reasoning_effort') == 'none'
         assert kwargs.get('tools')
     else:
-        with pytest.raises(UserError, match='OpenAIResponsesModel'):
+        with pytest.raises(ModelRequestRejectedError, match='OpenAIResponsesModel'):
             await agent.run('echo')
         assert get_mock_chat_completion_kwargs(mock_client) == []
 
