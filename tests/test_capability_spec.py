@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import Capability as TopLevelCapability
 from pydantic_ai._run_context import RunContext
@@ -66,6 +67,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    NATIVE_TOOL_TYPES,
     AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -2861,6 +2863,28 @@ def test_native_tool_flat_form_schema_requires_kind():
     assert list(validator_for(schema)(schema).iter_errors(spec))
     with pytest.raises(ValueError, match="Failed to instantiate capability 'NativeTool'"):
         Agent.from_spec(spec)
+
+
+def test_slotted_native_tool_class(tmp_path: Path):
+    """`@dataclass(slots=True)` recreates the class; the recreated class registers and loads under its kind."""
+    with patch.dict(NATIVE_TOOL_TYPES):
+
+        @dataclass(kw_only=True, slots=True)
+        class SlottedTool(AbstractNativeTool):
+            kind: str = 'slotted'
+            size: int = 0
+
+        @dataclass(kw_only=True)
+        class FieldDefaultTool(AbstractNativeTool):
+            kind: str = field(default='field_default')
+
+        assert NATIVE_TOOL_TYPES['slotted'] is SlottedTool
+        adapter = TypeAdapter[AbstractNativeTool](AbstractNativeTool)
+        tool = SlottedTool(size=1)
+        assert adapter.validate_python(tool) == tool
+        assert adapter.validate_json(adapter.dump_json(tool)) == tool
+        assert adapter.validate_python({'kind': 'field_default'}) == FieldDefaultTool()
+        AgentSpec(model='test').to_file(tmp_path / 'agent.yaml')
 
 
 def test_save_schema(tmp_path: str):

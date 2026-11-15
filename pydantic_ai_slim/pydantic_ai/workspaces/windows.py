@@ -269,7 +269,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             self._jobs[process.pid] = job
         return process
 
-    def _kill_tree(self, process: anyio.abc.Process) -> PermissionError | None:
+    def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         job = self._jobs.get(process.pid)
         if job is not None:
             _job_objects().terminate(job)
@@ -278,7 +278,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
                 process.kill()
             except ProcessLookupError:
                 pass
-        return None
+        return None, None
 
     async def _close(self, process: anyio.abc.Process) -> None:
         try:

@@ -564,6 +564,33 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     await _assert_process_gone(pid)
 
 
+async def test_timeout_with_denied_group_and_child_kill_still_raises_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """When nothing may signal the command, the timeout still raises `WorkspaceTimeoutError` with the
+    partial output, and `run` returns without waiting for an exit it cannot force."""
+    workspace = LocalWorkspaceBackend(tmp_path)
+    pids = _record_spawned_pids(monkeypatch)
+    real_killpg = os.killpg
+
+    def deny_signal(pid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
+
+    monkeypatch.setattr(os, 'killpg', deny_signal)
+    monkeypatch.setattr(os, 'kill', deny_signal)
+    with pytest.raises(WorkspaceTimeoutError, match='may still be running') as exc_info:
+        # `exec` makes the shell's own PID the sleeping direct child.
+        await workspace.run('echo partial; exec sleep 10', shell=True, timeout=0.5)
+    assert exc_info.value.stdout == 'partial\n'
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, PermissionError)
+    assert isinstance(cause.__context__, PermissionError)
+    [pid] = pids
+    assert await _process_running(pid)
+    real_killpg(pid, signal.SIGKILL)
+    await _assert_process_gone(pid)
+
+
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
 async def test_local_rejects_invalid_command_timeout(tmp_path: Path, timeout: Any):
     with pytest.raises(ValueError, match='timeout must be a positive finite number or None'):

@@ -9,7 +9,6 @@ from __future__ import annotations as _annotations
 import os
 import signal
 from collections.abc import Mapping
-from contextlib import suppress
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
@@ -76,16 +75,20 @@ class LocalWorkspaceBackend(
             command, cwd=working_dir, env=env, stdin=DEVNULL, stdout=PIPE, stderr=PIPE, start_new_session=True
         )
 
-    def _kill_tree(self, process: anyio.abc.Process) -> PermissionError | None:
+    def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         except PermissionError as error:
-            with suppress(ProcessLookupError):
+            try:
                 process.kill()
-            return error
-        return None
+            except ProcessLookupError:
+                pass
+            except PermissionError as child_denial:
+                return error, child_denial
+            return error, None
+        return None, None
 
     def _open_for_read(self, target: Path) -> int:
         # O_NONBLOCK lets us inspect FIFOs and devices without opening a blocking stream.
