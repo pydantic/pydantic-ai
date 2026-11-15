@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
@@ -104,6 +104,9 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -281,7 +284,7 @@ def _modal_sandbox() -> AbstractCapability[Any]:
     return ModalSandbox(warn_if_no_tools=False)
 
 
-def _kubernetes_sandbox() -> AbstractCapability[Any]:
+def _kubernetes_sandbox() -> KubernetesSandbox:
     # Imported here, so collecting this file never imports the agent-sandbox SDK. The test has already
     # skipped when it isn't installed (`OPTIONAL_DEPENDENCIES`).
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
