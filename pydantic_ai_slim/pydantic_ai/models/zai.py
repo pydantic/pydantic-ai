@@ -187,9 +187,9 @@ class ZaiModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk] | ModelResponse:
         if stream and model_request_parameters.function_tools and self.profile.get('zai_supports_tool_stream', False):
-            # GLM-4.6+ stream tool call arguments incrementally, but only when the request opts in via `tool_stream`.
+            # Flagged GLM models stream tool call arguments incrementally only when the request opts in via `tool_stream`.
             # A `tool_stream` the user passed via `extra_body` wins.
-            extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+            extra_body = dict(cast(dict[str, object], model_settings.get('extra_body', {})))
             if 'tool_stream' not in extra_body:
                 extra_body['tool_stream'] = True
             model_settings = {**model_settings, 'extra_body': extra_body}

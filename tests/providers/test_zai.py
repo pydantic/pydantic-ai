@@ -96,8 +96,6 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
     # glm-4.7 only supports thinking on/off, so no per-request reasoning effort.
     assert profile.get('zai_supports_reasoning_effort', False) is False
-    # GLM-4.6 and later stream tool call arguments when the request sets `tool_stream`.
-    assert profile.get('zai_supports_tool_stream') is True
 
     # GLM-5.2 additionally accepts a per-request reasoning effort level.
     profile_5_2 = provider.model_profile('glm-5.2')
@@ -118,10 +116,12 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_5_3.get('zai_reasoning_effort_mapping') == {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
     assert profile_5_2.get('zai_reasoning_effort_mapping') is None
 
-    # `glm-5.3-flash` inherits the whole GLM-5.3 profile from the shared prefix.
+    # `glm-5.3-flash` inherits the whole GLM-5.3 profile from the shared prefix, except `tool_stream`, which
+    # Z.AI's API reference lists only for `glm-5.3` itself.
     profile_5_3_flash = provider.model_profile('glm-5.3-flash')
     zai_model_profile_mock.assert_called_with('glm-5.3-flash')
-    assert profile_5_3_flash == profile_5_3
+    assert profile_5_3_flash is not None
+    assert {**profile_5_3_flash, 'zai_supports_tool_stream': True} == profile_5_3
 
     # `glm-5.1` reasons and can still be told not to, and predates per-request effort.
     profile_5_1 = provider.model_profile('glm-5.1')
@@ -137,7 +137,6 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_air.get('supports_thinking') is True
     assert profile_air.get('openai_chat_thinking_field') == 'reasoning_content'
     assert profile_air.get('openai_chat_send_back_thinking_parts') == 'field'
-    assert 'zai_supports_tool_stream' not in profile_air
 
     # Vision models support thinking too, per the Z.AI docs.
     profile_vision = provider.model_profile('glm-4.6v')
@@ -154,6 +153,32 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_non_thinking is not None
     assert profile_non_thinking.get('supports_thinking', False) is False
     assert profile_non_thinking.get('openai_chat_thinking_field') == 'reasoning_content'
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        pytest.param('glm-5.3', True, id='glm-5.3'),
+        pytest.param('glm-5.2', True, id='glm-5.2'),
+        pytest.param('glm-5.1', True, id='glm-5.1'),
+        pytest.param('glm-5', True, id='glm-5'),
+        pytest.param('glm-4.7', True, id='glm-4.7'),
+        pytest.param('glm-4.6', True, id='glm-4.6'),
+        pytest.param('GLM-4.6', True, id='upper-case'),
+        pytest.param('glm-5.3-flash', None, id='glm-5.3-flash'),
+        pytest.param('glm-5.3-flashx', None, id='glm-5.3-flashx'),
+        pytest.param('glm-5-turbo', None, id='glm-5-turbo'),
+        pytest.param('glm-5v-turbo', None, id='glm-5v-turbo'),
+        pytest.param('glm-4.7-flash', None, id='glm-4.7-flash'),
+        pytest.param('glm-4.6v', None, id='glm-4.6v'),
+        pytest.param('glm-4.5-air', None, id='glm-4.5-air'),
+    ],
+)
+def test_zai_provider_tool_stream_flag(model_name: str, expected: bool | None):
+    """Only the ids Z.AI's API reference lists for `tool_stream` on the text-model request get the flag."""
+    profile = ZaiProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('zai_supports_tool_stream') is expected
 
 
 def test_infer_zai_model(env: TestEnv):

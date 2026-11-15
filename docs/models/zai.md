@@ -85,7 +85,7 @@ See the [Z.AI thinking mode documentation](https://docs.z.ai/guides/capabilities
 
 ## Tool call streaming
 
-On GLM-4.6 and later (model names starting with `glm-4.6`, `glm-4.7`, or `glm-5`), streamed requests with function tools send Z.AI's `tool_stream` parameter, so tool call arguments arrive incrementally instead of in a single chunk. To set it yourself, for example to turn it off, pass `extra_body={'tool_stream': False}` in [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings]; an explicit value is sent as-is.
+On the models Z.AI's API reference lists for it (`glm-4.6`, `glm-4.7`, `glm-5`, `glm-5.1`, `glm-5.2` and `glm-5.3`), streamed requests with function tools send Z.AI's `tool_stream` parameter, so tool call arguments arrive incrementally instead of in a single chunk. To set it yourself, for example to turn it off, pass `extra_body={'tool_stream': False}` in [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings]; an explicit value is sent as-is.
 
 See the [Z.AI tool streaming documentation](https://docs.z.ai/guides/tools/stream-tool) for more details.
 
