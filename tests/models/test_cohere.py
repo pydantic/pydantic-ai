@@ -1568,7 +1568,10 @@ Alternatively, 17*20 is 340, right? Because 17*20 is 340. But since 19 is one le
 def test_finish_reason_map_covers_all_sdk_values(
     finish_reason: cohere.ChatFinishReason, expected: FinishReason, allow_model_requests: None
 ):
-    """Every `ChatFinishReason` value the SDK defines normalizes without dropping the raw value."""
+    """Every `ChatFinishReason` value the SDK defines normalizes without dropping the raw value.
+
+    The mock reaches finish reasons such as `TIMEOUT` and `ERROR`, which a VCR response cannot reliably trigger.
+    """
     c = ChatResponse(
         id='123',
         finish_reason=finish_reason,
