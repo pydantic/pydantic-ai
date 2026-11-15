@@ -6833,13 +6833,13 @@ def _chain_provider_details(
 ) -> ProviderDetailsDelta:
     """Combine two `ThinkingPartDelta`s' `provider_details`, `new` applying on top of `existing`."""
     if callable(new):
-        if callable(existing):
 
-            def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
-                return new(existing(d))
+        def chained(d: dict[str, Any] | None) -> dict[str, Any]:
+            resolved_existing = existing(d) if callable(existing) else existing
+            merged = {**(d or {}), **(resolved_existing or {})} or None
+            return {**(merged or {}), **new(merged)}
 
-            return chained_both
-        return new  # pragma: no cover
+        return chained
     if callable(existing):
 
         def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:

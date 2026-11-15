@@ -780,6 +780,47 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
+@pytest.mark.parametrize('first_callable', [False, True])
+@pytest.mark.parametrize('base_details', [None, {'base': 0, 'shared': 'base'}])
+def test_thinking_part_delta_chained_provider_details(first_callable: bool, base_details: dict[str, object] | None):
+    """Delta composition preserves the intermediate merge, even for partial callback results."""
+    first_details: dict[str, object] = {'first': 1, 'shared': 'first'}
+    first_inputs: list[dict[str, object] | None] = []
+    second_inputs: list[dict[str, object] | None] = []
+
+    def first_update(details: dict[str, object] | None) -> dict[str, object]:
+        first_inputs.append(details)
+        return first_details
+
+    def second_update(details: dict[str, object] | None) -> dict[str, object]:
+        second_inputs.append(details)
+        return {'second': 2, 'shared': 'second'}
+
+    part = ThinkingPart('', provider_details=base_details)
+    first = ThinkingPartDelta(content_delta='a', provider_details=first_update if first_callable else first_details)
+    second = ThinkingPartDelta(content_delta='b', provider_details=second_update)
+    combined = second.apply(first)
+    assert isinstance(combined, ThinkingPartDelta)
+    assert not first_inputs
+    assert not second_inputs
+
+    result = combined.apply(part)
+    expected_details = (
+        {'base': 0, 'first': 1, 'second': 2, 'shared': 'second'}
+        if base_details
+        else {'first': 1, 'second': 2, 'shared': 'second'}
+    )
+    assert result.provider_details == expected_details
+    assert result.content == 'ab'
+    assert first_inputs == ([base_details] if first_callable else [])
+    assert second_inputs == [
+        {'base': 0, 'first': 1, 'shared': 'first'} if base_details else {'first': 1, 'shared': 'first'}
+    ]
+    assert result == second.apply(first.apply(part))
+    assert part.provider_details == (None if base_details is None else {'base': 0, 'shared': 'base'})
+    assert first_details == {'first': 1, 'shared': 'first'}
+
+
 def test_thinking_part_delta_callable_provider_details_serializable():
     # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable
     # `provider_details` to `handle_thinking_delta`, which emits it verbatim inside a `PartDeltaEvent`
