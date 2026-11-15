@@ -317,6 +317,8 @@ async def test_vllm_provider_no_duplicate_thinking_parts(allow_model_requests: N
     [
         ('Qwen/Qwen3-32B', False, 'none'),
         ('Qwen/Qwen3-32B', 'high', 'high'),
+        ('google/gemma-4-26B-A4B-it', False, 'none'),
+        ('google/gemma-4-26B-A4B-it', 'high', 'high'),
         ('Qwen/Qwen3-235B-A22B-Thinking-2507', False, None),
         ('Qwen/Qwen3-Coder-480B-A35B-Instruct', 'high', None),
         ('Qwen/Qwen3.8-27B', 'high', None),
