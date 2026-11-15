@@ -10,7 +10,7 @@ import time
 import uuid
 import warnings
 from collections import Counter, deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -5555,9 +5555,27 @@ async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(db
     assert added.calls == 1
 
 
-@pytest.mark.parametrize('shape', ['nested', 'rewrapped', 'from_agent'])
+@dataclass(frozen=True)
+class _RebindCase:
+    """An `override(capabilities=...)` list holding the bound durability other than by an item of `root_capability`."""
+
+    id: str
+    capabilities: Callable[[Agent[object, str], AbstractCapability[object]], list[AbstractCapability[object]]]
+    """Builds the list from the agent and its bound durability."""
+    wrap_durability: bool = False
+    """Whether the agent is constructed with its durability behind a `WrapperCapability`."""
+
+
+REBIND_CASES = [
+    _RebindCase('nested', lambda agent, bound: [CombinedCapability([*agent.root_capability.capabilities])]),
+    _RebindCase('rewrapped', lambda agent, bound: [WrapperCapability(wrapped=bound)]),
+    _RebindCase('from_agent', lambda agent, bound: [bound], wrap_durability=True),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
 async def test_dbos_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
-    dbos: DBOS, caplog: pytest.LogCaptureFixture, shape: str
+    dbos: DBOS, caplog: pytest.LogCaptureFixture, case: _RebindCase
 ) -> None:
     """The bound `DBOSDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
 
@@ -5567,35 +5585,57 @@ async def test_dbos_durability_override_capabilities_refuses_a_list_that_would_b
     durability = DBOSDurability()
     agent = Agent(
         _durability_fn_model,
-        name=f'durability_override_{shape}',
-        capabilities=[WrapperCapability(wrapped=durability) if shape == 'from_agent' else durability],
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
     )
     bound = DBOSDurability.from_agent(agent)
     assert bound is not None
-    if shape == 'nested':
-        capabilities: list[AbstractCapability[object]] = [CombinedCapability([*agent.root_capability.capabilities])]
-    elif shape == 'rewrapped':
-        capabilities = [WrapperCapability(wrapped=bound)]
-    else:
-        capabilities = [bound]
+    capabilities = case.capabilities(agent, bound)
 
     dbos_logger = logging.getLogger('dbos')
     dbos_logger.addHandler(caplog.handler)
     try:
-        with patch.object(
-            DBOSDurability,
-            '_bind_for_agent',
-            autospec=True,
-            side_effect=DBOSDurability._bind_for_agent,  # pyright: ignore[reportPrivateUsage]
-        ) as bind_for_agent:
-            with pytest.raises(UserError, match='must keep, unchanged, the item'):
-                with agent.override(capabilities=capabilities):
-                    pass
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
     finally:
         dbos_logger.removeHandler(caplog.handler)
 
-    assert bind_for_agent.call_count == 0
     assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
+
+
+async def test_dbos_durability_override_capabilities_entered_inside_a_workflow(dbos: DBOS) -> None:
+    """An override entered inside a workflow follows the per-run rules there, as one carried in from outside does.
+
+    A list of just the bound `DBOSDurability` and `Instrumentation` runs: the auto-injected capabilities the override
+    builds afresh for a list without them are infrastructure, not additions.
+    """
+    agent = Agent(_durability_fn_model, name='durability_override_inside', capabilities=[DBOSDurability()])
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        with agent.override(capabilities=[bound, Instrumentation(InstrumentationSettings())]):
+            return (await agent.run('Hello')).output
+
+    @DBOS.workflow()
+    async def run_with_operation() -> None:
+        with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideAddedOperation()]):
+            await agent.run('Hello')
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: _OverrideAddedOperation. DBOS '
+            'registers durable steps when a capability is bound to the agent, before the workflow starts. A '
+            'capability added per-run therefore has no registered durable steps for the toolsets it contributes '
+            'or its own `@durable_operation` methods. Attach all capabilities at agent construction time so '
+            '`DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_operation()
 
 
 @pytest.mark.parametrize('kind', ['mcp', 'dynamic'])

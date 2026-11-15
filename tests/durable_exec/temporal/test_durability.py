@@ -419,7 +419,7 @@ class _OverrideExtra(AbstractCapability[object]):
 @workflow.defn
 class StackedOverrideDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str, added: str) -> str:
+    async def run(self, prompt: str, added: Literal['extra', 'instrumentation']) -> str:
         extra = _OverrideExtra() if added == 'extra' else Instrumentation(InstrumentationSettings())
         with simple_durable_agent.override(capabilities=[*simple_durable_agent.root_capability.capabilities, extra]):
             return (await simple_durable_agent.run(prompt)).output
@@ -2195,27 +2195,41 @@ def test_durability_override_capabilities_keeps_a_wrapped_durability():
             pass
 
 
-@pytest.mark.parametrize('shape', ['nested', 'rewrapped', 'from_agent'])
-def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(shape: str):
+@dataclass(frozen=True)
+class _RebindCase:
+    """An `override(capabilities=...)` list holding the bound durability other than by an item of `root_capability`."""
+
+    id: str
+    capabilities: Callable[[Agent[object, str], AbstractCapability[object]], list[AbstractCapability[object]]]
+    """Builds the list from the agent and its bound durability."""
+    wrap_durability: bool = False
+    """Whether the agent is constructed with its durability behind a `WrapperCapability`."""
+
+
+REBIND_CASES = [
+    _RebindCase('nested', lambda agent, bound: [CombinedCapability([*agent.root_capability.capabilities])]),
+    _RebindCase('rewrapped', lambda agent, bound: [WrapperCapability(wrapped=bound)]),
+    _RebindCase('from_agent', lambda agent, bound: [bound], wrap_durability=True),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(case: _RebindCase):
     """The bound `TemporalDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
 
     Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
-    `for_agent` again and register its activities a second time.
+    `for_agent` again and register its activities a second time. Temporal keeps no registry to observe that in, so
+    the test counts `_bind_for_agent` calls.
     """
     durability = TemporalDurability()
     agent = Agent(
         _durability_fn_model,
-        name=f'durability_override_{shape}',
-        capabilities=[WrapperCapability(wrapped=durability) if shape == 'from_agent' else durability],
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    if shape == 'nested':
-        capabilities: list[AbstractCapability[object]] = [CombinedCapability([*agent.root_capability.capabilities])]
-    elif shape == 'rewrapped':
-        capabilities = [WrapperCapability(wrapped=bound)]
-    else:
-        capabilities = [bound]
+    capabilities = case.capabilities(agent, bound)
 
     with patch.object(
         TemporalDurability,

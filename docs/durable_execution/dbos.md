@@ -213,7 +213,7 @@ Attach [capabilities](../capabilities/overview.md) when the agent is constructed
 
 Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
 
-[`agent.override(capabilities=...)`][pydantic_ai.agent.AbstractAgent.override] replaces the agent's capabilities, so build its list from `agent.root_capability.capabilities` to keep the bound `DBOSDurability`: a list without it raises a `UserError`. Inside a workflow, the capabilities the list adds are held to the same rule as `agent.run(capabilities=[...])`.
+[`agent.override(capabilities=...)`][pydantic_ai.agent.AbstractAgent.override] replaces the agent's capabilities, so build its list from `agent.root_capability.capabilities` to keep the bound [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]: a list without it raises a [`UserError`][pydantic_ai.exceptions.UserError]. Inside a workflow, the capabilities the list adds are held to the same rule as `agent.run(capabilities=[...])`.
 
 ### Streaming
 

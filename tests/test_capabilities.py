@@ -20,7 +20,7 @@ from pydantic_ai import AgentInstructions, SourcedInstruction, _agent_graph
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, AgentInstructions as AgentModuleAgentInstructions
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     AgentInstructions as CapabilitiesAgentInstructions,
@@ -52,6 +52,7 @@ from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     AgentRunError,
     CallDeferred,
+    ContentFilterError,
     ModelRetry,
     ToolFailed,
     UserError,
@@ -4922,7 +4923,7 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
 
 async def test_instruction_types_publicly_importable() -> None:
     """`AgentInstructions` and `SourcedInstruction` are importable from public entry points."""
-    assert AgentInstructions is CapabilitiesAgentInstructions
+    assert AgentInstructions is CapabilitiesAgentInstructions is AgentModuleAgentInstructions
     assert SourcedInstruction is CapabilitiesSourcedInstruction
 
     # `AgentInstructions` annotates what a capability's `get_instructions` accepts.
@@ -4985,6 +4986,24 @@ async def test_override_capabilities_kwarg() -> None:
         await agent.run('Hello')
         assert 'base instructions' in captured_instructions[-1]
         assert 'extra instructions' in captured_instructions[-1]
+
+
+async def test_override_capabilities_take_precedence_over_spec_capabilities() -> None:
+    """With both set, `override(capabilities=...)` replaces the agent's capabilities and the spec's go unused."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('filtered')], finish_reason='content_filter')
+
+    agent = Agent(FunctionModel(respond))
+    spec: dict[str, Any] = {'capabilities': ['RaiseContentFilterError']}
+
+    with agent.override(spec=spec):
+        with pytest.raises(ContentFilterError):
+            await agent.run('Hello')
+
+    with agent.override(spec=spec, capabilities=[]):
+        result = await agent.run('Hello')
+    assert result.output == 'filtered'
 
 
 async def test_override_capabilities_binds_only_the_capabilities_it_adds() -> None:

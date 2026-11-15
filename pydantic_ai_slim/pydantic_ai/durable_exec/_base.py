@@ -882,13 +882,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
-        """Refuse an `override(capabilities=...)` list that doesn't pass this bound copy through.
+        """Validate what `override(capabilities=...)` keeps of the agent's own capabilities.
 
         `capabilities` are the leaves of the list's items taken unchanged from `root_capability.capabilities`.
-        Dropping this copy would run the agent without durability, and reaching it any other way, as a copy
-        you constructed or inside another capability, would bind it again and register this engine's durable
-        units a second time. Checked wherever the override is entered, inside or outside a durable container,
-        because DBOS and Prefect carry an override entered outside a workflow or flow into it.
+        A durability capability refuses a list that doesn't pass its bound copy through: dropping it would run
+        the agent without durability, and reaching it any other way, as a copy you constructed or inside
+        another capability, would bind it again and register this engine's durable units a second time.
+        Checked wherever the override is entered, inside or outside a durable container, because DBOS and
+        Prefect carry an override entered outside a workflow or flow into it.
         """
         for capability in capabilities:
             while isinstance(capability, WrapperCapability):

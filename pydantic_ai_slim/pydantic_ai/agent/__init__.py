@@ -3590,6 +3590,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _inject_auto_capabilities(override_caps)
         _reject_second_of_a_kind(override_caps)
         configured = {id(capability) for capability in self._root_capability.capabilities}
+        # Private on `AbstractCapability` for the same reason as `_validate_runtime_capabilities`.
         self._root_capability._validate_override_capabilities(  # pyright: ignore[reportPrivateUsage]
             [
                 leaf
