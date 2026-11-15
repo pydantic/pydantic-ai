@@ -2148,9 +2148,9 @@ jobs:
           go-version: stable
           cache: false
 
-      # The release the backend's sandboxd assumptions were verified against; `GOTOOLCHAIN=auto`
+      # The oldest release the docs support; the nightly live job runs the newest. `GOTOOLCHAIN=auto`
       # fetches the Go version its module requires.
-      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.11
+      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7
         env:
           GOBIN: ${{ github.workspace }}/.bin
           GOTOOLCHAIN: auto
