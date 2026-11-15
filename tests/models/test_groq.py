@@ -6505,3 +6505,35 @@ async def test_service_tier(allow_model_requests: None, case: ServiceTierCase) -
         'timestamp': IsDatetime(),
         'service_tier': case.served_tier,
     }
+
+
+async def test_service_tier_streamed_request(allow_model_requests: None) -> None:
+    """A streamed request carries the tier in its body too.
+
+    A mock transport stands in for a cassette, for the same reason as in `test_service_tier`.
+    """
+    bodies: list[dict[str, object]] = []
+    chunk = {
+        'id': '1',
+        'object': 'chat.completion.chunk',
+        'created': 0,
+        'model': 'llama-3.3-70b-versatile',
+        'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'world'}, 'finish_reason': 'stop'}],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=f'data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n'.encode(),
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AsyncGroq(api_key='test', base_url='http://localhost', max_retries=0, http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client)))
+        async with agent.run_stream('hello', model_settings={'service_tier': 'flex'}) as result:
+            assert await result.get_output() == 'world'
+
+    [body] = bodies
+    assert (body['stream'], body['service_tier']) == (True, 'flex')

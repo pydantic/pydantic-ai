@@ -198,10 +198,8 @@ class GroqModelSettings(ModelSettings, total=False):
     """The service tier to request from Groq.
 
     Takes precedence over the top-level
-    [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier], which is mapped onto
-    Groq's tiers: `'auto'` → `'auto'`, `'default'` → `'on_demand'` and `'flex'` → `'flex'`;
-    unified `'priority'` is omitted. Groq's enterprise-only `'performance'` tier is only
-    reachable through this field.
+    [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier], and is the only way to request
+    Groq's enterprise `'performance'` tier.
 
     See [the Groq docs](https://console.groq.com/docs/service-tiers) for more details.
     """

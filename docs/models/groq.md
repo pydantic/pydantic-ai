@@ -89,7 +89,7 @@ The unified field maps as follows for Groq:
 
 - `'auto'`: passed through as `'auto'`, so Groq picks the best tier available to you.
 - `'default'`: maps to `'on_demand'`, Groq's standard tier.
-- `'flex'`: passed through as `'flex'`. Flex requests fail fast with a 498 error when Groq is at capacity.
+- `'flex'`: passed through as `'flex'`. Flex requests [fail fast with a 498 error](https://console.groq.com/docs/flex-processing) when flex capacity is unavailable.
 - `'priority'`: not part of Groq's tier model and silently ignored.
 
 Groq's enterprise `'performance'` tier is only reachable through `groq_service_tier`.
