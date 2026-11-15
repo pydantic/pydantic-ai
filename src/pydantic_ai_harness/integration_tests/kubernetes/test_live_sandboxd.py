@@ -29,12 +29,12 @@ import socket
 import subprocess
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
-from typing import Any
 
 import anyio
 import grpc.aio
 import httpx
 import pytest
+from k8s_agent_sandbox.async_connector import AsyncSandboxConnector
 from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
@@ -43,8 +43,11 @@ from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, Kubernetes
 
 SANDBOXD = os.environ.get('SANDBOXD_BIN') or shutil.which('sandboxd')
 
-# `grpc.aio` and the SDK run on asyncio only.
-pytestmark = [pytest.mark.anyio, pytest.mark.parametrize('anyio_backend', ['asyncio'])]
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run once under asyncio, the only loop `grpc.aio` and the SDK support."""
+    return 'asyncio'
 
 
 @pytest.fixture(autouse=True)
@@ -120,7 +123,7 @@ class Cluster:
         self.base = base
         self.claims: dict[tuple[str, str], Daemon] = {}
 
-    def client(self, **config: Any) -> Client:
+    def client(self, **config: object) -> Client:
         """Stands in for the `AsyncSandboxClient` class: the backend constructs clients through this."""
         return Client(self)
 
@@ -138,7 +141,7 @@ class Client:
         self.k8s_helper = Helper(cluster)
 
     async def create_sandbox(
-        self, warmpool: str, namespace: str = 'default', *, claim_name: str, **kwargs: Any
+        self, warmpool: str, namespace: str = 'default', *, claim_name: str, **kwargs: object
     ) -> Sandbox:
         daemon = Daemon(self.cluster.base / namespace / claim_name)
         self.cluster.claims[namespace, claim_name] = daemon
@@ -163,10 +166,10 @@ class Helper:
     def __init__(self, cluster: Cluster) -> None:
         self.cluster = cluster
 
-    async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
+    async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, str] | None:
         return {} if (namespace, name) in self.cluster.claims else None
 
-    async def get_sandbox(self, name: str, namespace: str) -> dict[str, Any] | None:
+    async def get_sandbox(self, name: str, namespace: str) -> dict[str, str] | None:
         return {} if (namespace, name) in self.cluster.claims else None
 
     async def delete_sandbox_claim(self, name: str, namespace: str) -> None:
@@ -177,7 +180,7 @@ class Helper:
 
 
 class Sandbox:
-    """The SDK's `AsyncSandbox` and its connector, as much as the backend uses.
+    """The SDK's `AsyncSandbox`, as much as the backend uses.
 
     `commands` is the SDK's own executor, so commands reach the daemon through its real `commands.start()`.
     """
@@ -188,25 +191,37 @@ class Sandbox:
         self.claim_name = claim_name
         self.sandbox_id = claim_name
         self.k8s_helper = client.k8s_helper
-        self.connector = self
-        # The executor only calls the connector methods this class has.
-        connector: Any = self
-        self.commands = AsyncCommandExecutor(connector, tracer=None, trace_service_name='sandbox-client')
+        self.connector = Connector(self)
+        self.commands = AsyncCommandExecutor(self.connector, tracer=None, trace_service_name='sandbox-client')
+
+
+class Connector(AsyncSandboxConnector):
+    """The SDK's connector, as much of it as `commands.start()` calls: a gRPC channel to the claim's `Daemon`.
+
+    It overrides every method the executor calls and skips the SDK's constructor, which needs a cluster.
+    """
+
+    def __init__(self, sandbox: Sandbox) -> None:
+        self.sandbox = sandbox
 
     def is_sandboxd(self) -> bool:
         return True
 
-    async def connect(self) -> None:
-        pass
+    async def connect(self) -> str:
+        return f'http://127.0.0.1:{self._daemon().grpc_port}'
 
-    async def invalidate_sandboxd_transport(self, channel: grpc.aio.Channel) -> None:
+    async def invalidate_sandboxd_transport(
+        self, channel: grpc.aio.Channel | None, *, transport_token: object | None = None
+    ) -> None:
         pass
 
     async def grpc_channel(self) -> grpc.aio.Channel:
-        daemon = self.client.cluster.claims[self.namespace, self.claim_name]
-        channel = grpc.aio.insecure_channel(f'127.0.0.1:{daemon.grpc_port}')
-        self.client.channels.append(channel)
+        channel = grpc.aio.insecure_channel(f'127.0.0.1:{self._daemon().grpc_port}')
+        self.sandbox.client.channels.append(channel)
         return channel
+
+    def _daemon(self) -> Daemon:
+        return self.sandbox.client.cluster.claims[self.sandbox.namespace, self.sandbox.claim_name]
 
 
 @pytest.fixture
