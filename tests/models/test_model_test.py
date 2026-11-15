@@ -870,7 +870,7 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
 
 
 def test_int_inclusive_upper_bound_reachable():
-    """Plain inclusive integer ranges include their ceiling without changing other ranges."""
+    """Plain inclusive integer ranges reach their ceiling, and the ranges here with an exclusive key don't."""
 
     class MyOutput(BaseModel):
         integer: Annotated[int, Field(ge=2, le=5)]
