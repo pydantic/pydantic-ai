@@ -38,7 +38,10 @@ SERVICE_TIER_CASES = [
     ),
     ServiceTierCase(id='unified-priority-omitted', settings={'service_tier': 'priority'}, sent={}),
     ServiceTierCase(
-        id='groq-performance', settings={'groq_service_tier': 'performance'}, sent={'service_tier': 'performance'}
+        id='groq-performance',
+        settings={'groq_service_tier': 'performance'},
+        sent={'service_tier': 'performance'},
+        served_tier='performance',
     ),
     ServiceTierCase(
         id='groq-wins-over-unified',
