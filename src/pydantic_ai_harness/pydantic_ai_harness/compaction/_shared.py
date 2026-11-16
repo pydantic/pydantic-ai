@@ -229,6 +229,9 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
 _CJK = re.compile(r'[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]')
 """Hangul, CJK and kana code points: about one token each."""
 
+_ASTRAL = re.compile(r'[\U00010000-\U0010ffff]')
+"""Code points outside the BMP (emoji, CJK Extension B and later): about three tokens each."""
+
 _ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
 """A base64 or base64url-like run; `_is_encoded` rules out paths and identifiers."""
 
@@ -241,6 +244,7 @@ _DENSE_CHARS_PER_TOKEN = 1.5
 _DENSE_SURCHARGE = 1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
 _TOKEN_SURCHARGE = 1 - 1 / CHARS_PER_TOKEN
 _DIGIT_SURCHARGE = 1 / 2 - 1 / CHARS_PER_TOKEN
+_ASTRAL_SURCHARGE = 3 - 1 / CHARS_PER_TOKEN
 
 
 def _is_encoded(run: str) -> bool:
@@ -257,9 +261,12 @@ def _dense_surcharge(text: str) -> float:
     ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
     non_ascii = len(text) - ascii_chars
     cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
+    astral = len(text) - len(_ASTRAL.sub('', text)) if non_ascii else 0
     runs = [run for run in _ENCODED_RUN.findall(text) if _is_encoded(run)]
     encoded = sum(map(len, runs))
-    surcharge = cjk * _TOKEN_SURCHARGE + (non_ascii - cjk + encoded) * _DENSE_SURCHARGE
+    surcharge = (
+        cjk * _TOKEN_SURCHARGE + astral * _ASTRAL_SURCHARGE + (non_ascii - cjk - astral + encoded) * _DENSE_SURCHARGE
+    )
     punctuation = sum(text.count(c) for c in _JSON_PUNCTUATION)
     if ascii_chars - encoded >= 32 and punctuation * 5 >= len(text) - encoded:
         digits = sum(text.count(c) - sum(run.count(c) for run in runs) for c in string.digits)
@@ -277,7 +284,7 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
+    """Token count of text segments: per segment with *tokenizer* or the text estimate, truncated once over the sum."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
     return int(sum(len(s) / CHARS_PER_TOKEN + _dense_surcharge(s) for s in segments))

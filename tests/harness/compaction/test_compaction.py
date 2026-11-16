@@ -344,6 +344,8 @@ class TestEstimateTokenCount:
             pytest.param('Привет, как дела? ' * 100, 991, id='cyrillic'),
             # cl100k_base: 800 tokens.
             pytest.param('日本語のテキスト' * 100, 800, id='cjk'),
+            # cl100k_base: 900 tokens.
+            pytest.param('𠀀𠀁𠀂' * 100, 900, id='cjk-extension-b'),
             pytest.param('a' * 512, 128, id='repeated-letter'),
             pytest.param('src/pydantic_ai_harness/compaction/_shared.py', 11, id='path'),
             pytest.param('some_really_long_identifier_name_here', 9, id='identifier'),

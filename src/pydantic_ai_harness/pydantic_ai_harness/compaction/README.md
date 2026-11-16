@@ -59,7 +59,8 @@ Token counts anchor on the provider-reported usage of the most recent model resp
 available: its `input_tokens` measured the whole request that produced it (instructions, tool
 definitions, every prior message), so only the messages added since are estimated. The estimate for
 those, and the fallback when no response carries usage yet, is the text estimate: ~4 characters per
-token for English-like prose, one token per CJK character, ~1.5 characters per token for other
+token for English-like prose, one token per CJK character, three per emoji or
+other character outside the Basic Multilingual Plane, ~1.5 characters per token for other
 non-ASCII text and base64-like runs, and in compact JSON one token per punctuation character and
 half a token per digit. Dense content is deliberately estimated high, since an undercount can send a
 request over the context window. The same estimate measures `keep_tokens`, `max_part_tokens`,
