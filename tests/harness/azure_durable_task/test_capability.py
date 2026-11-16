@@ -65,7 +65,7 @@ with try_import() as imports_successful:
     from durabletask.client import OrchestrationFailedError
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
-    from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
+    from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
     from pydantic_ai_harness.shell import Shell
 
     from .worker import (
@@ -223,8 +223,8 @@ class TestAzureDurableTaskDurability:
         )
         requests: list[str] = []
 
-        @agent.on_event(FileChangeRequestEvent)
-        async def record(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+        @agent.on_event(FileChangeRequestedEvent)
+        async def record(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
             requests.append(event.operation)
             if veto and event.operation == 'edit':
                 event.cancel('denied')

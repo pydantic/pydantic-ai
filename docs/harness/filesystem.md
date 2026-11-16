@@ -536,7 +536,7 @@ or a workspace capability in Python).
 
 `FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](azure-durable-task.md), and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
-On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners re-run on every orchestrator replay: keep them deterministic and idempotent. On Render, events from the other tools are carried back to the run.
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners run in orchestrator code: they re-run on every replay, so keep them deterministic and idempotent, and they can't do I/O, so interactive approval of file changes through a UI or external service isn't supported on Azure yet. On Render, listeners run in the parent task, and events from the other tools are carried back to the run.
 
 ## Further reading
 

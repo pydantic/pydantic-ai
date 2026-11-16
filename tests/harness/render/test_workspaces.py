@@ -19,8 +19,8 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.filesystem import (
-    FileChangeRequestEvent,
+from pydantic_ai_harness.file_system import (
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileReadEvent,
     FileSystem,
@@ -120,12 +120,12 @@ async def test_file_system_and_shell_tools(tmp_path: Path, veto: bool) -> None:
     )
     events: list[str] = []
 
-    @agent.on_event(FileChangeRequestEvent, FileWrittenEvent, FileEditedEvent, FileReadEvent)
+    @agent.on_event(FileChangeRequestedEvent, FileWrittenEvent, FileEditedEvent, FileReadEvent)
     async def record(
-        ctx: RunContext[None], event: FileChangeRequestEvent | FileWrittenEvent | FileEditedEvent | FileReadEvent
+        ctx: RunContext[None], event: FileChangeRequestedEvent | FileWrittenEvent | FileEditedEvent | FileReadEvent
     ) -> None:
         events.append(type(event).__name__)
-        if veto and isinstance(event, FileChangeRequestEvent) and event.operation == 'edit':
+        if veto and isinstance(event, FileChangeRequestedEvent) and event.operation == 'edit':
             event.cancel('denied')
 
     output = await run_agent_in_task(agent, runtime, RecordingTaskContext())
@@ -133,5 +133,11 @@ async def test_file_system_and_shell_tools(tmp_path: Path, veto: bool) -> None:
     assert f'shell-{content}' in output
     assert ("'note.txt' was not edited: denied" in output) is veto
     edited = [] if veto else ['FileEditedEvent']
-    assert events == ['FileChangeRequestEvent', 'FileWrittenEvent', 'FileChangeRequestEvent', *edited, 'FileReadEvent']
+    assert events == [
+        'FileChangeRequestedEvent',
+        'FileWrittenEvent',
+        'FileChangeRequestedEvent',
+        *edited,
+        'FileReadEvent',
+    ]
     assert (tmp_path / 'note.txt').read_text() == content
