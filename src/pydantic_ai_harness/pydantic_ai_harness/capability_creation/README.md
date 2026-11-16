@@ -209,9 +209,9 @@ validation is still saved and loaded by the next `load_active()`; disable it if 
 want it. Other authoring, listing, and disabling calls are not held up by it.
 `store.load_active()` runs authored code in its calling thread, so an authored module that
 blocks also blocks that call. `creation.load_active()` runs it in a worker thread: cancelling
-it stops waiting, but the thread runs until the code returns. Loads of the same source from different threads run one at a
-time, so it also holds up every other load of that source, such as a `load_active()` call
-in another thread.
+it stops waiting, but the thread runs until the code returns. Loads of the same source from
+different threads run one at a time, so it also holds up every other load of that source,
+such as a `load_active()` call in another thread.
 
 To have a person approve authored code before any of it runs, require approval for
 `author_capability` with a
