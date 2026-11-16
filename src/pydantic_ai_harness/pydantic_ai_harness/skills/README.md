@@ -5,7 +5,8 @@ specialized instructions without putting every instruction in its initial
 prompt.
 
 Point `Skills` at one or more skill libraries. The model first sees each
-skill's name and description. When a skill is useful, the model loads it with
+skill's name and description, followed by its `when_to_use` text if it has one.
+When a skill is useful, the model loads it with
 the `load_capability` tool to receive that skill's instructions.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/skills/)
@@ -82,7 +83,7 @@ At the start of every run, `Skills`:
 2. Scans the immediate child directories and validates the selected `SKILL.md` files.
 3. Offers each selected skill as a
    [deferred capability](https://pydantic.dev/docs/ai/capabilities/on-demand/)
-   named after it: the model sees its name and description, and loads it with the
+   named after it: the model sees its name, description and `when_to_use`, and loads it with the
    `load_capability` tool.
 
 Loading a skill returns a `# Skill: <name>` heading, a line naming the skill's
@@ -169,6 +170,7 @@ The loader uses these parts of `SKILL.md`:
 |---|---|
 | `name` | Optional. Defaults to the parent directory name. If provided, it must match the directory after Unicode normalization. |
 | `description` | Required and non-blank. The Agent Skills limit is 1,024 characters; longer descriptions load with a warning. This appears in the initial catalog. |
+| `when_to_use` | Optional. Appended to the description in the catalog, so write the whole trigger clause, such as "Use when ...". A blank value counts as unset. |
 | Markdown body | Optional. This is loaded under a generated `# Skill: <name>` heading. |
 | `disable-model-invocation` | Optional, `true` or `false`. `true` leaves the skill out of the model's catalog; see [Invoke a skill yourself](#invoke-a-skill-yourself). |
 | `user-invocable` | Optional, `true` or `false`. `false` tells a host not to offer the skill as a command; the model still sees it. |
