@@ -93,7 +93,7 @@ value); return `bool(...)` instead.
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|---|
 | block | skip the model call; message becomes the response | raise `OutputBlocked` | raise `OutputBlocked`, part never released | skip tool; message is the tool result | message replaces the result |
-| replace | rewrite the prompt (text prompts, sequential only) | stream a same-type text or thinking part instead (events only); `UserError` for a tool call | run with new args mapping | substitute result |
+| replace | rewrite the prompt (text prompts, sequential only) | substitute output | stream a same-type text or thinking part instead (events only); `UserError` for a tool call | run with new args mapping | substitute result |
 | retry | `UserError` | `ModelRetry` to the model (counts output retries) | `UserError` | `ModelRetry` | `ModelRetry` (tool already ran) |
 | approve | `UserError` | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
 

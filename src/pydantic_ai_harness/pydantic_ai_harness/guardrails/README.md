@@ -32,7 +32,7 @@ flowchart TB
 
 ## How it works
 
-Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -- each backed by a `guard` callable you supply. The guard inspects a value and returns one of five outcomes. For the run's two edges:
+Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -- each backed by a `guard` callable you supply. The guard inspects a value and returns one of five outcomes. A fourth, `StreamGuardrail`, screens each streamed part before the caller sees it (see [Streaming](#streaming)). For the run's two edges:
 
 | Outcome | `InputGuardrail` | `OutputGuardrail` |
 |---|---|---|
