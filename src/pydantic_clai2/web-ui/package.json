@@ -1,0 +1,26 @@
+{
+  "name": "clai2-web-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The browser UI of the CLAI 2 `web` plugin. `npm run build` writes ../pydantic_clai2/builtin_plugins/web/static.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "highlight.js": "^11.11.1",
+    "marked": "^16.1.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.2"
+  }
+}

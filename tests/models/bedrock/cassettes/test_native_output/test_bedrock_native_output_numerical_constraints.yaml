@@ -1,54 +1,47 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Rate this task: score 85.5 out of 100, rating 15, priority
-      high."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
-      {"jsonSchema": {"name": "TaskWithNumericalConstraints", "schema": "{\"properties\": {\"score\": {\"type\": \"number\",
-      \"description\": \"minimum=0.0, maximum=100.0\"}, \"rating\": {\"type\": \"integer\", \"description\": \"multipleOf=5\"},
-      \"priority\": {\"$ref\": \"#/$defs/Priority\"}}, \"required\": [\"score\", \"rating\", \"priority\"], \"type\": \"object\",
-      \"additionalProperties\": false, \"$defs\": {\"Priority\": {\"description\": \"Priority level.\", \"enum\": [\"low\",
-      \"medium\", \"high\"], \"type\": \"string\"}}}", "description": "Task with numerical constraints (minimum, maximum,
-      multipleOf)."}}}}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        ZmJjZjZkMWQtNTMzOC00MDYyLTg0MWUtYmFmMTJkODJiMTI3
+      - 872030d1-951a-4786-a46c-f82c8a4e5715
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '846'
+      - "833"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: "Rate this task: score 85.5 out of 100, rating 15, priority high."
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: TaskWithNumericalConstraints
+                schema: "{\"properties\":{\"score\":{\"type\":\"number\",\"description\":\"minimum=0.0, maximum=100.0\"},\"rating\":{\"type\":\"integer\",\"description\":\"multipleOf=5\"},\"priority\":{\"$ref\":\"#/$defs/Priority\"}},\"required\":[\"score\",\"rating\",\"priority\"],\"type\":\"object\",\"additionalProperties\":false,\"$defs\":{\"Priority\":{\"description\":\"Priority level.\",\"enum\":[\"low\",\"medium\",\"high\"],\"type\":\"string\"}}}"
+                description: Task with numerical constraints (minimum, maximum, multipleOf).
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '400'
       content-type:
-      - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 3758
-      output:
-        message:
-          content:
-          - text: '{"score": 85.5, "rating": 15, "priority": "high"}'
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 0
-        cacheWriteInputTokens: 0
-        inputTokens: 308
-        outputTokens: 23
-        serverToolUsage: {}
-        totalTokens: 331
-    status:
-      code: 200
-      message: OK
-version: 1
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        000000b2000000528a40b4c50b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30222c22726f6c65223a22617373697374616e74227d40ff8268000000c0000000577938f3e50b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a227b5c22227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a227db5eff863000000ce00000057c6084d840b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2273636f72655c223a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253227d93e61036000000c600000057f67806450b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222038352e352c205c22726174696e675c223a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41227dba75bcdc000000e500000057701953910b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222031352c205c227072696f726974795c223a205c2268696768227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253545556575859227da1da6455000000b00000005780ea132a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c227d227d2c2270223a226162636465666768696a6b6c6d6e6f7071727374227d55b7c8390000008b00000056211caa2b0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a2261626364656667227d4729a989000000b700000051dba96a0f0b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031222c2273746f70526561736f6e223a22656e645f7475726e227de061819d000001050000004ef7faef2b0b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a313735397d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253222c227573616765223a7b22696e707574546f6b656e73223a3330382c226f7574707574546f6b656e73223a32332c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a3333317d7d3f6a35d9
+  recorded_at: 2026-10-20T22:52:32.024724+00:00

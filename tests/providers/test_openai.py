@@ -10,7 +10,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
-    pytest.mark.anyio,
 ]
 
 

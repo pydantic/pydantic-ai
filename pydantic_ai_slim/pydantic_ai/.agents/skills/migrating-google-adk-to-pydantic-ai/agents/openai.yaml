@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate Google ADK to Pydantic AI"
+  short_description: "Migrate Google ADK applications safely"
+  default_prompt: "Use $migrating-google-adk-to-pydantic-ai to migrate the smallest complete Google ADK slice to Pydantic AI while preserving its observed contracts with proportionate tests."

@@ -1,0 +1,72 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "149"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-v4-pro
+        stream: false
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        reasoning_effort: max
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        id: 53886d6a-dab9-41bc-8def-a13e062a62db
+        object: chat.completion
+        created: 1792607925
+        model: deepseek-v4-pro
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "4"
+            reasoning_content: >-
+              We need answer user. Need comply with "Reply with just the number." So "4".
+              Need no extra.
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 109
+          completion_tokens: 25
+          total_tokens: 134
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 23
+          prompt_cache_hit_tokens: 0
+          prompt_cache_miss_tokens: 109
+        system_fingerprint: a307abda487cd1b463329ccb945ce396
+  recorded_at: 2026-10-21T18:38:46.971337+00:00

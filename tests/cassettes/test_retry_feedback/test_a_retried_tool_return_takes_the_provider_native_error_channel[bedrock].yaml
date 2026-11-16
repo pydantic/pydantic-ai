@@ -1,0 +1,160 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of Frankreich? Use the get_capital tool."}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_capital", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {"country": {"type": "string"}}, "required": ["country"], "type": "object"}}}}],
+      "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NWJhOTA2OWQtMWQxNi00OTIyLThiNzUtMzZjYjExNGRjOWVi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '398'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '527'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 743
+      output:
+        message:
+          content:
+          - text: |
+              <thinking> The User has asked for the capital of Frankreich. The term "Frankreich" is German for "France." I will use the get_capital tool to find the capital of France.</thinking>
+          - toolUse:
+              input:
+                country: France
+              name: get_capital
+              toolUseId: tooluse_9ZLSZRO1Kz6cMWZjqGOuxN
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 407
+        outputTokens: 57
+        serverToolUsage: {}
+        totalTokens: 464
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of Frankreich? Use the get_capital tool."}]},
+      {"role": "assistant", "content": [{"text": "<thinking> The User has asked for the capital of Frankreich. The term \"Frankreich\"
+      is German for \"France.\" I will use the get_capital tool to find the capital of France.</thinking>\n"}, {"toolUse":
+      {"toolUseId": "tooluse_9ZLSZRO1Kz6cMWZjqGOuxN", "name": "get_capital", "input": {"country": "France"}}}]}, {"role":
+      "user", "content": [{"toolResult": {"toolUseId": "tooluse_9ZLSZRO1Kz6cMWZjqGOuxN", "content": [{"text": "The country
+      is not supported. Use \"France\" instead."}], "status": "error"}}]}], "system": [], "inferenceConfig": {}, "toolConfig":
+      {"tools": [{"toolSpec": {"name": "get_capital", "inputSchema": {"json": {"additionalProperties": false, "properties":
+      {"country": {"type": "string"}}, "required": ["country"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTI4Y2UzMjAtMTIyMi00ODE4LTkxZjYtMTc5NWZkMDllMmQy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '946'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '593'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 549
+      output:
+        message:
+          content:
+          - text: '<thinking> The tool returned a message indicating that "Frankreich" should be translated to "France" in
+              English. Since "Frankreich" is German for "France," I''ll adjust the country name accordingly and use the get_capital
+              tool again.</thinking> '
+          - toolUse:
+              input:
+                country: France
+              name: get_capital
+              toolUseId: tooluse_1pzygov9qehYvARdETgJs6
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 502
+        outputTokens: 68
+        serverToolUsage: {}
+        totalTokens: 570
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of Frankreich? Use the get_capital tool."}]},
+      {"role": "assistant", "content": [{"text": "<thinking> The User has asked for the capital of Frankreich. The term \"Frankreich\"
+      is German for \"France.\" I will use the get_capital tool to find the capital of France.</thinking>\n"}, {"toolUse":
+      {"toolUseId": "tooluse_9ZLSZRO1Kz6cMWZjqGOuxN", "name": "get_capital", "input": {"country": "France"}}}]}, {"role":
+      "user", "content": [{"toolResult": {"toolUseId": "tooluse_9ZLSZRO1Kz6cMWZjqGOuxN", "content": [{"text": "The country
+      is not supported. Use \"France\" instead."}], "status": "error"}}]}, {"role": "assistant", "content": [{"text": "<thinking>
+      The tool returned a message indicating that \"Frankreich\" should be translated to \"France\" in English. Since \"Frankreich\"
+      is German for \"France,\" I''ll adjust the country name accordingly and use the get_capital tool again.</thinking> "},
+      {"toolUse": {"toolUseId": "tooluse_1pzygov9qehYvARdETgJs6", "name": "get_capital", "input": {"country": "France"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_1pzygov9qehYvARdETgJs6", "content": [{"text": "Paris"}],
+      "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_capital",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"type": "string"}}, "required": ["country"],
+      "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2VlN2M0YjgtZDEyMS00MWFkLWI1MTgtZjU3Zjg4YzFiNWU1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1514'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '296'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 383
+      output:
+        message:
+          content:
+          - text: The capital of France, also known as "Frankreich" in German, is Paris.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 598
+        outputTokens: 18
+        serverToolUsage: {}
+        totalTokens: 616
+    status:
+      code: 200
+      message: OK
+version: 1

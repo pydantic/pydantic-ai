@@ -1,0 +1,696 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      object: realtime.conversation
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000002
+- kind: message
+  direction: received
+  at: 1.141
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools:
+      - type: function
+        name: get_weather
+        description: Look up the weather for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000003
+- kind: message
+  direction: sent
+  at: 1.142
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  at: 1.142
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 1.19
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000004
+- kind: message
+  direction: received
+  at: 1.191
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000005
+- kind: message
+  direction: received
+  at: 1.846
+  data:
+    type: response.created
+    response:
+      id: resp_2301m5d26xjcf15vwx5f9wskxb0q
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000006
+- kind: message
+  direction: received
+  at: 1.847
+  data:
+    type: response.output_item.added
+    response_id: resp_2301m5d26xjcf15vwx5f9wskxb0q
+    output_index: 0
+    item:
+      id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      arguments: ''
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000007
+- kind: message
+  direction: received
+  at: 1.847
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+      type: function_call
+      role: null
+      content: null
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      name: get_weather
+      arguments: ''
+      output: null
+      status: in_progress
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000008
+- kind: message
+  direction: received
+  at: 1.847
+  data:
+    type: response.function_call_arguments.delta
+    response_id: resp_2301m5d26xjcf15vwx5f9wskxb0q
+    item_id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+    output_index: 0
+    call_id: chatcmpl-tool-a8bd19ade048b571
+    delta: '{"city": "London"}'
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000009
+- kind: message
+  direction: received
+  at: 1.847
+  data:
+    type: response.function_call_arguments.done
+    response_id: resp_2301m5d26xjcf15vwx5f9wskxb0q
+    item_id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+    output_index: 0
+    call_id: chatcmpl-tool-a8bd19ade048b571
+    name: get_weather
+    arguments: '{"city": "London"}'
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000010
+- kind: message
+  direction: received
+  at: 1.848
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+      type: function_call
+      role: null
+      content: null
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      name: get_weather
+      arguments: '{"city": "London"}'
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000011
+- kind: message
+  direction: received
+  at: 1.848
+  data:
+    type: response.output_item.done
+    response_id: resp_2301m5d26xjcf15vwx5f9wskxb0q
+    output_index: 0
+    item:
+      id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+      object: realtime.item
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      arguments: '{"city": "London"}'
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000012
+- kind: message
+  direction: received
+  at: 1.848
+  data:
+    type: response.done
+    response:
+      id: resp_2301m5d26xjcf15vwx5f9wskxb0q
+      object: realtime.response
+      status: completed
+      conversation_id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      output:
+      - id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+        object: realtime.item
+        type: function_call
+        status: completed
+        name: get_weather
+        call_id: chatcmpl-tool-a8bd19ade048b571
+        arguments: '{"city": "London"}'
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000013
+- kind: message
+  direction: received
+  at: 1.848
+  data:
+    type: rate_limits.updated
+    rate_limits: []
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000014
+- kind: message
+  direction: sent
+  at: 1.849
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: sent
+  at: 1.849
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 1.896
+  data:
+    type: conversation.item.added
+    previous_item_id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+    item:
+      id: msg_000001
+      type: function_call_output
+      role: null
+      content: null
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      name: null
+      arguments: null
+      output: It is foggy and 12 degrees in London.
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000015
+- kind: message
+  direction: received
+  at: 1.897
+  data:
+    type: conversation.item.done
+    previous_item_id: item_3001m5d26xjdfq4t8ga5dzxcwe9d
+    item:
+      id: msg_000001
+      type: function_call_output
+      role: null
+      content: null
+      call_id: chatcmpl-tool-a8bd19ade048b571
+      name: null
+      arguments: null
+      output: It is foggy and 12 degrees in London.
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000016
+- kind: message
+  direction: received
+  at: 2.099
+  data:
+    type: response.created
+    response:
+      id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000017
+- kind: message
+  direction: received
+  at: 2.099
+  data:
+    type: response.output_item.added
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    output_index: 0
+    item:
+      id: item_6501m5d26xtcem4v434keemaewzt
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000018
+- kind: message
+  direction: received
+  at: 2.1
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000001
+    item:
+      id: item_6501m5d26xtcem4v434keemaewzt
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000019
+- kind: message
+  direction: received
+  at: 2.1
+  data:
+    type: response.content_part.added
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000020
+- kind: message
+  direction: received
+  at: 2.1
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: The weather in London is foggy with a temperature of
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000021
+- kind: message
+  direction: received
+  at: 2.118
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: ' twelve degrees.'
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000022
+- kind: message
+  direction: received
+  at: 2.233
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAQABAAAAAAAB
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000023
+- kind: message
+  direction: received
+  at: 2.252
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: Sf1M/Yf99P0t/l3+WP5g/mz+kv7b/gX/Rf+0/4j/Tf+U
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000024
+- kind: message
+  direction: received
+  at: 2.258
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: BwnKCHoIPArMCS0KdAmCCf8IJAcQB9AGAAUtAoYAfv8r
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000025
+- kind: message
+  direction: received
+  at: 2.309
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: PAcpCe0GDwdrCN4JAwikBX8BTwDs/mT5avFj7Czz+fez
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000026
+- kind: message
+  direction: received
+  at: 2.415
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: jfVD9gf3bfg/+WT69/sf/bv9r/70/pv/UgB3Aw8I/AqV
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000027
+- kind: message
+  direction: received
+  at: 2.587
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: ZgQqA+AEwAbaBggDMgLGA2YCOwLRBWIFkwA+/2kAyQPg
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000028
+- kind: message
+  direction: received
+  at: 2.682
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: +f/5//v//v8DAAUAAQD//wIA/P8EAAEABwAHAAMABgAB
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000029
+- kind: message
+  direction: received
+  at: 2.803
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: GQoaA4z86fie9o/1sPeL+7wAWAR8BF8DBwGq+6/3HPb5
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000030
+- kind: message
+  direction: received
+  at: 2.953
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: OQANAJH/AQA7AEMAZABDABUA1f+m/43/NP+l/nn+uv1Y
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000031
+- kind: message
+  direction: received
+  at: 2.995
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAEAAAABAAAAAQACAAEAAgACAAEAAgABAAAAAAAA
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000032
+- kind: message
+  direction: received
+  at: 6.563
+  data:
+    type: response.output_audio.done
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000033
+- kind: message
+  direction: received
+  at: 6.563
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    transcript: The weather in London is foggy with a temperature of twelve degrees.
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000034
+- kind: message
+  direction: received
+  at: 6.563
+  data:
+    type: response.content_part.done
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    item_id: item_6501m5d26xtcem4v434keemaewzt
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: The weather in London is foggy with a temperature of twelve degrees.
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000035
+- kind: message
+  direction: received
+  at: 6.564
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000001
+    item:
+      id: item_6501m5d26xtcem4v434keemaewzt
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: The weather in London is foggy with a temperature of twelve degrees.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000036
+- kind: message
+  direction: received
+  at: 6.564
+  data:
+    type: response.output_item.done
+    response_id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+    output_index: 0
+    item:
+      id: item_6501m5d26xtcem4v434keemaewzt
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: The weather in London is foggy with a temperature of twelve degrees.
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000037
+- kind: message
+  direction: received
+  at: 6.564
+  data:
+    type: response.done
+    response:
+      id: resp_2301m5d26xtbfjftqvwdd7tbddq8
+      object: realtime.response
+      status: completed
+      conversation_id: conv_1201m5d26vr7fjhsz4rq1wjg94b6
+      output:
+      - id: item_6501m5d26xtcem4v434keemaewzt
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: The weather in London is foggy with a temperature of twelve
+            degrees.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1201m5d26vr7fjhsz4rq1wjg94b6_000038

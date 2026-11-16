@@ -1,0 +1,103 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '219'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Factor 3599 into two primes. Show only the answer.
+        role: user
+      model: gemini-3.8-flash
+      reasoning_effort: medium
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 59 × 61
+          reasoning_opaque: MPRBM2K0KafbGAgsGGqJK+pFxTU/LdNkksXJwqO+It4Fd/VcdbgqFNHsoRHrryOjRHX4oO3lE/SPwsfya5WVd+Hv7AZFZNpx5bLeli7/wgpdlG7rUrfHJgr3/g0bGXmpQR2gO3VGvOHOIxEjMr7WkXupzmCpVDhanaoDTBnqkGWyNAk2Wl/iicRLO8l9qxp6xOUMClKTVRYok6ym4cz6m4qizQNMoMeHwTdt9IVFUk15U3dPHUJQ8vAPHGXJ5MDOjpuGBZ/nvgPan1w8gxaiDpWo/VAIicX0IwmWWPJ8MPElRt0NPc9XC93rz8P2zSlWVdWZQ241uxQ/9/QxVSpPUsZyhbaPwhGBm3KJKP4jq3BUb0zdgH9e9HCVoistZC4s2ljevsUa5gPgoTHWw0iJiC3AdcK/Skm00O3n4NfWesi7q0hc8OM86M2aB9B1+zdeA9baI9+R5LXH01794C9GVPgWR1+DNFb54eMbDCAc8OAhSnPojZgvEKCfqdWZe6DB3/YzXlt3ez4AJiYocf1225x5xWW3zD1IY/PF+4tVxHra6vmmBTCtgUOo4uDr+As7nyqdJWj6rjmdYXzf4HJsbW4VT9iLiXp7dcwnE6rF8+GoIwedxWMn+TxuUCGkn63mfU+BJl4nAXbpDlO7m1983V32BWgCZRJx+Q2Q2Av98RQWsPfrrof5qG6fdCVhvPoiVjJ8whPHhFDG2cB0DosRPT3i/hN4VL6v4QXfebu3DdLqbPd8fr1NBAf/uwr9UrpxhGqcPGYuFN6U59FhiaykF5SRY9dX2SLYSh9hB3f6KKVm9KCm/bKGHA+JuOWMWHFwK3HDyigEaYOWAIFgr+8XCGruRqyU2j8zA+nIfu19rTHzl3yFYbUj+9QpzjdxojWkvFRmdzrwNk1dJKUewi4wPpC5vZP34QCCMhbh8gEGQVzQIrRDtEjugS1KULgkwciejLCAMNTpEAi7qktGCMGXqnH4Y4MoYHzqc02uICq8Itp5VSQYsdQr6amSIcuyF2IXDMVAWLXQWdVho1Cns85ejCnRr8AUfw==
+          reasoning_text: |+
+            **My Thought Process on Factoring 3599**
+
+            Here's how I approached factoring 3599, keeping in mind your expertise and the specific output request:
+
+            I immediately recognized that the request was to factor 3599 into two prime numbers and present only the final answer. My initial mental scan of the number 3599 suggested it was very close to a perfect square, which is a common technique for factoring numbers of this form. Specifically, 3599 is just one less than 3600.
+
+            My mind immediately went to the square root of 3600, which is a familiar value: 60. So, I could express 3599 as $60^2 - 1$. This form, $a^2 - b^2$, is a classic difference of squares, which factors as $(a-b)(a+b)$. Applying this, I saw that $60^2 - 1$ could be factored into $(60-1)(60+1)$.
+
+            This quickly yielded 59 and 61. My next crucial step, given the requirement for prime factors, was to confirm that both 59 and 61 are indeed prime. I mentally ran through the primality test for each. For 59, I considered potential divisors up to $\sqrt{59}$ (which is between 7 and 8), checking 2, 3, 5, and 7. None divide evenly into 59. Similarly, for 61, I checked divisors up to $\sqrt{61}$ (also between 7 and 8), testing 2, 3, 5, and 7. Again, no divisors were found.
+
+            Therefore, both 59 and 61 are prime. The factoring was successful, and the numbers 59 and 61 are the required prime factors. Since the instruction was to "show only the answer," I would present the result directly.
+
+          role: assistant
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 75000000000
+          model: gemini-3.8-flash
+          token_count: 18
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 7500000000
+          model: gemini-3.8-flash
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 0
+          model: gemini-3.8-flash
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 375000000000
+          model: gemini-3.8-flash
+          token_count: 6
+          token_type: output
+        total_nano_aiu: 3600000
+      created: 1788838777
+      id: doOfav3GC9eVotQPzoup4A4
+      model: gemini-3.8-flash
+      usage:
+        completion_tokens: 6
+        prompt_tokens: 18
+        prompt_tokens_details:
+          cached_tokens: 0
+        reasoning_tokens: 122
+        total_tokens: 146
+    status:
+      code: 200
+      message: OK
+version: 1
+...

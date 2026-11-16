@@ -1,0 +1,92 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "194"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: minimal
+          summary: auto
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "2456"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        top_logprobs: 0
+        temperature: 1.0
+        top_p: 1.0
+        service_tier: auto
+        model: muse-spark-1.3
+        reasoning:
+          effort: minimal
+          summary: auto
+        background: false
+        tools: []
+        tool_choice: auto
+        truncation: disabled
+        id: resp_6ace34b4ac7c3b46e4c14f69
+        object: response
+        status: completed
+        created_at: 1791898804.0
+        completed_at: 1791898804.0
+        error: null
+        incomplete_details: null
+        output:
+        - type: reasoning
+          id: rs_6ace34b4ac7c3b46e4c14f69:rs_01a1357de0eb763b85ca7bc0dbee489c
+          encrypted_content: >-
+            Q-PaDgEDJUH0gk0nYVBQ0gR7NE9rUyZHqSoYrzmApe_uYfpM0CwI5soibFaj-amJcbtWrjMIXoP1iTm6p13N0jzWy1aEgPG6NsIaBdVdXJBYB_o0uS7snyishaxKEjvEqmWj_KY0xa5rUlxF78YXcGKhA7XQhyP5jS3S3jCjQFMwv_7Nu_MXSP-cXkhVGL5o0L4hWl6SptsdXqD1rpZHkcKlrdws2f5j5th_k9S9QPPVTr6JrF9j6aqIZjhSL5OuH-NDuV3jjqPCKq9A9gRGdS7m1DLJwtDRaVVVtqmbN0s_FFeFLMLTqhPrkpkSc9Er95NwJ7jfMQRd7ifVEM3WpV0uZkLIUdhQx-NWCR7zelV4oBsfaQ_EpzhP04caYFtJqDSFKCSAT20ggD3bNTmfFL4IiZqcUQkvV0HbhGCer2BUNyRkkB4BcDbbfVUzbvclir9KhTJdGnCmgWfHTYGRAHhaz9Q8VsN62DGsZa8jvRzca_qpWo11AWzcnJ9JBdjddFGnkcrQhf6cF_54YrrZytc6gPD_wO3DBzeZABzm-QH1qz_P0nUhTik7-3XZQUay6mesfmDwI8vCXv04aDJEtSlBWs44IG96r2CxayFNqswrcU9Ja3fw9hpJAL_RiNuHgoj49x-OJVJ7sAsGZ_rQniSQltO8hr7l1gGS10ZLje9Qhpbe_u8jQEnSiLRs35mbjJjdb81wU_9wZ2AR3lQayd3XBVTisCBaH79IAKIMQ06R0WzV4idYdmruXVyWjJcT74lXc-ol3GNoWc2VcavVAdGNB3CBO_yS6v6bEwS2gM4HebHVD4ZKyHBslUjPSbzM6G1ZMUqpjKsd804EwA3oBqWuHkgjRUo0QoMlCPEH5hecf1wQJufPVvrOjOcdghggsJdjrvobvgYgVz50WiIi9OjdFdxdj0CFUA2u4z6qQR1rX2DQVEIXiMkB_r4IKLtzBERLah8NBeO0-0yVbAjbmFCxHz-n7LdujVCnJz5gkfEOFbvBdMjedMi-KeTAz79AuKgiqOg1p4kKXMJm6pQYzlqJ_0L0dViIVfufvypoKfBRC6VP-4vdvw1DhnA8eL9ovSZL-yQQ6ibDyy-Br__PqoTaxrKFU8_IPP7IeprpVcUzDau0yO0Nm1o88WxH85KfkS9d4kEWWksvRvo7UiSpPGdPoAzt5iSCee2S4zGJ6FCkQYLV4vYHhm1F7WnwZEczU_JHIr4j7-m_Qkn5jf_sAglnszsabINXc7DbAp0eHZm39lhEN4KLeczPYSocnxyKi66QkPKhgnvFBLHx0R36m8Wut1WCyKbFGYuzs_PC5Fmil-vE6wS1owXHKAGPKpm1NpwE0CGRBXr1vKwrutqqvSDvtXmIpTZbfxsUHzM9wPbTHc1ewgU1XVH2K-nriiIR7h6LMHigqIVFfCcWRA
+          summary: []
+          status: completed
+        - type: message
+          id: msg_01a1357de15473b79769e4481e0f22eb
+          role: assistant
+          content:
+          - type: output_text
+            text: OK
+            annotations: []
+            logprobs: []
+          status: completed
+        instructions: null
+        usage:
+          input_tokens: 12
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 5
+          total_tokens: 28
+        parallel_tool_calls: true
+        store: true
+  recorded_at: 2026-10-13T13:40:04.864219+00:00

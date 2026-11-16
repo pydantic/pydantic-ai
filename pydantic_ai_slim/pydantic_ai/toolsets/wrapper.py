@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart

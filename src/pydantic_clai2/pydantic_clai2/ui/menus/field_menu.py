@@ -1,0 +1,411 @@
+"""A full-screen editor for a set of named, validated fields. `/set`, `/model add`, and plugin settings use it."""
+
+import json
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
+from functools import partial
+
+from pydantic import JsonValue, ValidationError
+from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.pager import Pager
+from termflow.tui.terminal import terminal_size
+from termflow.tui.textinput import TextInput, TextInputResult
+
+from pydantic_clai2.plugins.menus import ChoicePreview, CloseMenu, FieldRow, FieldSource
+from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
+from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.rendering import markdown_style
+
+CUSTOM = 'Type a value...'
+KEEP = 'Keep current'
+SAVE_AND_CLOSE = 'Save & close'
+SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
+_LIST_HINT = 'Enter edit - R reset - Esc close'
+_PREVIEW_LIST_WIDTH = 30
+
+
+class _SaveAndClose:
+    """The value of the Save & close row; never a field key or a key name."""
+
+
+_CLOSE = _SaveAndClose()
+
+
+def save_and_close_item() -> MenuItem:
+    """The last row of every settings menu. Edits save as they happen, so choosing it only leaves."""
+    return MenuItem(SAVE_AND_CLOSE, value=_CLOSE)
+
+
+def is_save_and_close(item: MenuItem) -> bool:
+    """Whether `item` is the row built by `save_and_close_item`."""
+    return item.value is _CLOSE
+
+
+def picked(result: MenuResult) -> MenuItem | None:
+    """The chosen row, or `None` when the user left with Esc or the Save & close row."""
+    if result.cancelled or result.item is None or is_save_and_close(result.item):
+        return None
+    return result.item
+
+
+@dataclass(frozen=True)
+class _Reset:
+    """What the `r` key hands back to the loop instead of a row."""
+
+    key: str
+
+
+NOT_SET = '(not set)'
+"""What `shown` displays for a value that is not set; the editor starts empty instead."""
+
+
+def shown(value: JsonValue) -> str:
+    """Display a stored value the way the user would type it back."""
+    if value is None:
+        return NOT_SET
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+def first_error(exc: ValueError) -> str:
+    """The first validation message, which is all a one-line hint has room for."""
+    return exc.errors()[0]['msg'] if isinstance(exc, ValidationError) else str(exc)
+
+
+class FieldMenu:
+    """Rows, details, and the widgets that edit them."""
+
+    def __init__(self, source: FieldSource, *, searchable: bool = True) -> None:
+        """Everything the menu shows or saves goes through `source`."""
+        self._searchable = searchable
+        self._source = source
+        self.rows = list(source.rows())
+        self.messages: list[str] = []
+        self.action_keys: Collection[str] = ()
+        self.matching_filter_keys: set[str] = set()
+        self.retained_filter_keys: set[str] | None = None
+
+    def items(self) -> list[MenuItem]:
+        """One row per field with its current value, then Save & close."""
+        fields = [
+            MenuItem(
+                f'{row.label or row.key:<24} {row.display(self._source.current(row))}',
+                value=row.key,
+                description=f'{theme.sgr(theme.MUTED)}{row.note}' if row.note else '',
+            )
+            for row in self.rows
+        ]
+        return [*fields, save_and_close_item()]
+
+    def details(self, item: MenuItem) -> str:
+        """The right-hand panel: current value, default, choices, description."""
+        if is_save_and_close(item):
+            return SAVE_AND_CLOSE_DETAILS
+        row = self.row_for(item.value)
+        if row is None:
+            return ''
+        current = self._source.current(row)
+        lines = [
+            row.label or row.key,
+            '',
+            f'current  {row.display(current)}' + (' (default)' if current == row.default else ''),
+            f'default  {row.display(row.default)}',
+        ]
+        if row.note:
+            lines.append(f'origin   {row.note}')
+        if row.choices and len(row.choices) <= 8:
+            lines.append(f'choices  {", ".join(row.display(choice) for choice in row.choices)}')
+        elif row.choices:
+            lines.append(f'choices  {len(row.choices)} options; Enter opens a searchable list')
+        lines += ['', row.description]
+        return '\n'.join(lines)
+
+    def build(self, initial: int = 0) -> Menu:
+        """The field list: choice cycling uses slash search; other searchable lists filter as you type."""
+        self.rows = list(self._source.rows())
+        self.reset_filter()
+        cycle_hint = 'Space cycle - ' if any(self.can_cycle(row) for row in self.rows) else ''
+        builder = (
+            MenuBuilder(self._source.title)
+            .style(markdown_style())
+            .items(self.items())
+            .initial_index(min(initial, len(self.rows) - 1))
+            .preview(self.details)
+        )
+        if self._searchable and cycle_hint:
+            return slash_search(
+                builder.filter_fn(self.matches_filter),
+                footer=cycle_hint + _LIST_HINT,
+                key_source=menu_key,
+                hotkeys={' ': self.cycle, 'R': self._reset_key},
+                on_query_change=self.reset_filter,
+            )
+        # Only lists offering choice cycling need hotkey routing; keep ordinary filtering for the rest.
+        if self._searchable:
+            builder.searchable().on_key('R', self._reset_key).footer_hint('type to filter - ' + _LIST_HINT)
+        else:
+            builder.list_width(46).on_key('r', self._reset_key).footer_hint(
+                cycle_hint + 'Enter edit - r reset - Esc back'
+            )
+            if cycle_hint:
+                builder.on_key(' ', self.cycle)
+        return builder.key_source(menu_key).build()
+
+    def reset_filter(self) -> None:
+        """Editing or clearing the query recomputes matches from the current values."""
+        self.matching_filter_keys.clear()
+        self.retained_filter_keys = None
+
+    def matches_filter(self, query: str, item: MenuItem) -> bool:
+        """Keep a searched field set stable while its displayed values change."""
+        matches = query.lower() in item.label.lower()
+        if not isinstance(item.value, str):
+            return matches
+        if self.retained_filter_keys is not None:
+            return item.value in self.retained_filter_keys
+        if matches:
+            self.matching_filter_keys.add(item.value)
+        else:
+            self.matching_filter_keys.discard(item.value)
+        return matches
+
+    def can_cycle(self, row: FieldRow) -> bool:
+        """Rows with multiple choices cycle; action and submenu rows keep their own flow."""
+        return len(row.choices) > 1 and row.key not in self.action_keys
+
+    def cycle(self, menu: Menu, item: MenuItem) -> None:
+        """Space advances to the next declared choice, wrapping, without reopening the list."""
+        row = self.row_for(item.value)
+        if row is not None and self.can_cycle(row):
+            # Cycling can change the text that matched; retain the field set until the query changes.
+            if self.retained_filter_keys is None:
+                self.retained_filter_keys = self.matching_filter_keys.copy()
+            current = self._source.current(row)
+            index = row.choices.index(current) + 1 if current in row.choices else 0
+            self.messages.append(self.apply(row, row.choices[index % len(row.choices)]))
+            self.rows = list(self._source.rows())
+            menu.replace_items(self.items())
+
+    def reset_marker(self, menu: object, item: MenuItem) -> MenuResult:
+        """R: hand the row back to the loop tagged for reset."""
+        return MenuResult(item=MenuItem(item.label, value=_Reset(str(item.value))))
+
+    def _reset_key(self, menu: object, item: MenuItem) -> MenuResult | None:
+        """R on Save & close has nothing to reset, so the list stays open."""
+        return None if is_save_and_close(item) else self.reset_marker(menu, item)
+
+    def build_choices(self, row: FieldRow) -> Menu:
+        """A picker for fields with a fixed set of values, plus typing your own."""
+        current = self._source.current(row)
+        items = [
+            MenuItem(f'{row.display(choice)}{" (current)" if choice == current else ""}', value=choice)
+            for choice in row.choices
+        ]
+        if row.allow_custom:
+            items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
+        initial = row.choices.index(current) if current in row.choices else 0
+        builder = (
+            MenuBuilder(f'Choose {row.label or row.key}')
+            .style(markdown_style())
+            .items(items)
+            .searchable(len(row.choices) > 8)
+            .initial_index(initial)
+            .footer_hint('Enter select - Esc keep current')
+            .key_source(menu_key)
+        )
+        if row.preview is not None:
+            builder.list_width(_PREVIEW_LIST_WIDTH).preview(partial(self._preview, row.preview))
+        return builder.build()
+
+    @staticmethod
+    def _preview(render: ChoicePreview, item: MenuItem) -> str:
+        """Size the sample to the panel; the typed-value and keep rows have none."""
+        if not isinstance(item.value, str) or item.value in (CUSTOM, KEEP):
+            return ''
+        return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
+
+    def initial(self, row: FieldRow) -> str:
+        """The text the editor starts with: the current value, so Enter keeps it.
+
+        Empty for a secret, for a value that is not set, and for one at its default, which a source may
+        show as text you would not type, such as `LOGFIRE_API_KEY, if set`. Enter on empty resets, which
+        keeps the default. Text that is not printable is left out rather than drawn as control characters.
+        """
+        if row.secret:
+            return ''
+        current = self._source.current(row)
+        return '' if current in (row.default, NOT_SET) or not current.isprintable() else current
+
+    def build_editor(self, row: FieldRow) -> TextInput:
+        """A typed input that opens holding `initial(row)` and validates as you go; empty resets."""
+        builder = (
+            TextInputBuilder(f'New value for {row.label or row.key}')
+            .style(markdown_style())
+            .prompt('Value: ')
+            .initial(self.initial(row))
+            .placeholder(
+                'Enter a new secret' if row.secret else f'empty resets to {row.display(row.default) or "(empty)"}'
+            )
+            .validator(lambda text: None if not text.strip() else self._source.problem(row, text.strip()))
+            .footer_hint('Enter save - Esc cancel')
+            .key_source(menu_key)
+        )
+        if row.secret:
+            builder.mask()
+        return builder.build()
+
+    def apply(self, row: FieldRow, raw: str) -> str:
+        """Save and apply, or reset on empty input."""
+        raw = raw.strip()
+        if not raw:
+            return self.reset(row)
+        message = self._source.apply(row, raw)
+        # Only a listed choice is recorded: typed text can be a secret or a path.
+        chosen = {'choice': raw} if raw in row.choices and not row.secret else {}
+        telemetry.record('{menu} field {field} set', menu=self._source.title, field=row.key, **chosen)
+        return message
+
+    def reset(self, row: FieldRow) -> str:
+        """Forget the override and apply the default."""
+        message = self._source.reset(row)
+        telemetry.record('{menu} field {field} reset', menu=self._source.title, field=row.key)
+        return message
+
+    def row_for(self, key: object) -> FieldRow | None:
+        """Look a row up by its key."""
+        return next((row for row in self.rows if row.key == key), None)
+
+
+ListRunner = Callable[[Menu], MenuResult]
+TextRunner = Callable[[TextInput], TextInputResult]
+
+
+def run_menu(menu: Menu) -> MenuResult:
+    """Show a termflow menu on the real terminal."""
+    return menu.run()
+
+
+def run_text(widget: TextInput) -> TextInputResult:  # pragma: no cover -- needs a real terminal.
+    """Show a termflow text input on the real terminal."""
+    return widget.run()
+
+
+def run_pager(pager: Pager) -> object:  # pragma: no cover -- needs a real terminal.
+    """Show a termflow pager on the real terminal."""
+    return pager.run()
+
+
+@dataclass(frozen=True, kw_only=True)
+class Runners:
+    """How widgets get shown; tests swap these for scripted results."""
+
+    run_list: ListRunner = run_menu
+    run_choice: ListRunner = run_menu
+    run_text: TextRunner = run_text
+    run_pager: Callable[[Pager], object] = run_pager
+    edit: TextEditor = edit_text
+    """Multi-line text: `$VISUAL`, `$EDITOR`, or the built-in editor."""
+
+
+TERMINAL = Runners()
+"""The real terminal."""
+
+
+def run_flow(
+    menu: FieldMenu, runners: Runners = TERMINAL, *, submenus: dict[str, Callable[[], list[str]]] | None = None
+) -> list[str]:
+    """List, edit, back to the list, until Esc or Save & close. Returns the messages to show afterwards."""
+    messages: list[str] = []
+    cursor = 0
+    while True:
+        step = _next_step(menu, runners, cursor, messages, submenus or ())
+        if step is None:
+            return messages
+        row, cursor = step
+        if row is None:
+            continue
+        if submenus and row.key in submenus:
+            messages.extend(submenus[row.key]())
+            continue
+        message = _edit(menu, row, runners)
+        if message is not None:
+            messages.append(message)
+
+
+async def run_flow_async(
+    menu: FieldMenu,
+    runners: Runners = TERMINAL,
+    *,
+    submenus: Mapping[str, Callable[[], Awaitable[Sequence[str]]]] | None = None,
+) -> list[str]:
+    """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
+
+    Each widget runs in its own `run_worker`, so a submenu can open its own worker without nesting one
+    terminal owner inside another. A submenu that returns `CloseMenu` closes the list too.
+    """
+    messages: list[str] = []
+    cursor = 0
+    while True:
+        step = await run_worker(partial(_next_step, menu, runners, cursor, messages, submenus or ()))
+        if step is None:
+            return messages
+        row, cursor = step
+        if row is None:
+            continue
+        if submenus and row.key in submenus:
+            done = await submenus[row.key]()
+            messages.extend(done)
+            if isinstance(done, CloseMenu):
+                return messages
+            continue
+        message = await run_worker(partial(_edit, menu, row, runners))
+        if message is not None:
+            messages.append(message)
+
+
+def _next_step(
+    menu: FieldMenu, runners: Runners, cursor: int, messages: list[str], action_keys: Collection[str]
+) -> tuple[FieldRow | None, int] | None:
+    """Show the list and act on the pick in one step, so sources that touch the keyring stay off the event loop."""
+    menu.action_keys = action_keys
+    result = runners.run_list(menu.build(cursor))
+    messages.extend(menu.messages)
+    menu.messages.clear()
+    return _selected(menu, result, messages)
+
+
+def _selected(menu: FieldMenu, result: MenuResult, messages: list[str]) -> tuple[FieldRow | None, int] | None:
+    """`None` when the list closed; else the row to edit (or `None` after a reset) and the cursor to return to."""
+    item = picked(result)
+    if item is None:
+        return None
+    value = item.value
+    reset = isinstance(value, _Reset)
+    row = menu.row_for(value.key if isinstance(value, _Reset) else value)
+    if row is None:
+        return (None, 0) if reset else None
+    if reset:
+        messages.append(menu.reset(row))
+        return None, menu.rows.index(row)
+    return row, menu.rows.index(row)
+
+
+def _edit(menu: FieldMenu, row: FieldRow, runners: Runners) -> str | None:
+    if row.choices:
+        pick = runners.run_choice(menu.build_choices(row))
+        if pick.cancelled or pick.item is None or pick.item.value == KEEP:
+            return None
+        if isinstance(pick.item.value, str) and pick.item.value != CUSTOM:
+            return menu.apply(row, pick.item.value)
+    typed = runners.run_text(menu.build_editor(row))
+    if typed.cancelled or not isinstance(typed.value, str):
+        return None
+    raw = typed.value.strip()
+    # Enter on the value it opened with saves nothing: in `/set`, saving would copy a value from the
+    # project's settings file into your own.
+    if raw and raw == menu.initial(row).strip():
+        return None
+    return menu.apply(row, raw)

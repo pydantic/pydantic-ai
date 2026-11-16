@@ -65,7 +65,8 @@ class AgentSpec(BaseModel):
         """
         path = Path(path)
         fmt = _infer_fmt(path, fmt)
-        content = path.read_text(encoding='utf-8')
+        # Not `encoding='utf-8-sig'`: `read_text` returns '' for a lone b'\xef' or b'\xef\xbb' instead of raising.
+        content = path.read_text(encoding='utf-8').removeprefix('\ufeff')
         return cls.from_text(content, fmt=fmt)
 
     @classmethod

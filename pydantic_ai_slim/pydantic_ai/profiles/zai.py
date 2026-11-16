@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 
-from . import ModelProfile
+from . import InlineDefsJsonSchemaTransformer, ModelProfile
 
 
 class ZaiModelProfile(ModelProfile, total=False):
@@ -38,7 +38,7 @@ _GLM_5_3_REASONING_EFFORT_MAPPING = {'minimal': 'low', 'medium': 'high', 'xhigh'
 """GLM-5.3 only accepts `reasoning_effort` values `low`, `high`, and `max` (per the Z.AI docs, and the
 'please use low, high, or max' text of the error Z.AI returns for `thinking.type: 'disabled'` on the model),
 so the unified levels it doesn't accept map to the nearest supported one — the same fallback approach as
-Gemini's `MINIMAL` -> `LOW`. `xhigh` maps to `max`, which has no unified equivalent."""
+Gemini's `MINIMAL` -> `LOW`. `xhigh` maps up to `max`, which unified `max` sends unchanged."""
 
 
 def zai_model_profile(model_name: str) -> ModelProfile | None:
@@ -49,6 +49,9 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     Z.AI docs. GLM-5.2 and GLM-5.3 additionally accept a per-request reasoning effort level, flagged via
     `zai_supports_reasoning_effort=True`. GLM-5.3 always reasons and cannot disable thinking, flagged via
     `thinking_always_enabled=True`.
+
+    GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas
+    are inlined via `InlineDefsJsonSchemaTransformer`. See https://github.com/pydantic/pydantic-ai/issues/10243.
 
     The provider-specific request/response shape (e.g. the `reasoning_content` field used by Z.AI's API)
     is configured in `ZaiProvider.model_profile()` rather than here. Providers that serve GLM models under
@@ -66,4 +69,18 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     )
     if model_lower.startswith('glm-5.3'):
         profile['zai_reasoning_effort_mapping'] = _GLM_5_3_REASONING_EFFORT_MAPPING
+        profile['json_schema_transformer'] = InlineDefsJsonSchemaTransformer
     return profile
+
+
+def _glm_5_3_schema_profile(model_name: str) -> ModelProfile | None:  # pyright: ignore[reportUnusedFunction]
+    """The GLM-5.3 schema fix alone, for gateways that serve GLM models under Z.AI's `glm-*` ids.
+
+    GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs` wherever it's served, so its
+    schemas are inlined via `InlineDefsJsonSchemaTransformer`. See https://github.com/pydantic/pydantic-ai/issues/10243.
+    Unlike `zai_model_profile`, this leaves out Z.AI's native thinking settings, which a gateway may not accept, and
+    returns `None` for every other GLM model, so they keep the gateway's defaults.
+    """
+    if model_name.lower().startswith('glm-5.3'):
+        return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+    return None

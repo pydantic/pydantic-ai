@@ -1,0 +1,235 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Use tally when asked to tally, then confirm it in one short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Tally counts per color across named nodes.
+          name: tally
+          parameters:
+            properties:
+              counts:
+                type: OBJECT
+              nodes:
+                items:
+                  type: STRING
+                type: ARRAY
+            required:
+            - nodes
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.324
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.34
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Tally the nodes ["oak"].
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.711
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.724
+  data:
+    toolCall:
+      functionCalls:
+      - name: tally
+        args:
+          nodes:
+          - oak
+        id: fc_3391891222559639510
+- kind: message
+  direction: sent
+  at: 0.741
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_3391891222559639510
+        name: tally
+        response:
+          output: Tallied 1 nodes.
+- kind: message
+  direction: received
+  at: 1.111
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 1.13
+  data:
+    sessionResumptionUpdate:
+      newHandle: e0e41f34-74b9-46d2-b5ac-153def85cecf
+      resumable: true
+- kind: message
+  direction: received
+  at: 1.407
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+      outputTranscription:
+        text: The node
+- kind: message
+  direction: received
+  at: 1.424
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: egB4AH0AfwCBAIMAfQCBAH8AegB3AHIAcQB1AHcAeQB2
+- kind: message
+  direction: received
+  at: 1.448
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: WAiYCKkIjgfvBRQFZwQTBAMEbAQ4BaIGSghmCWwJXgjd
+- kind: message
+  direction: received
+  at: 1.489
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: j/EB7wXqzeeV4rfZS9O4zKLKQ8iXxNrAXcHFyhjbQPC2
+- kind: message
+  direction: received
+  at: 1.496
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: VRrpG2Ia0RZNELkJXQPd+yL2hvGB7fHsxe1F7onvXPDl
+- kind: message
+  direction: received
+  at: 1.663
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 3P/V/8n/x//D/8P/xf/H/8r/zv/T/93/6//1//n//P8D
+      outputTranscription:
+        text: ' "oak"'
+- kind: message
+  direction: received
+  at: 1.746
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: J/xr/Bb9tP38/Rr/s/9O/w4A3f/N/pj+rv6B/hj/cAAz
+      outputTranscription:
+        text: ' has'
+- kind: message
+  direction: received
+  at: 1.845
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: lwPfAnsC2gE4ASUBlADe/54Aw//Y/yH/v/47/rL+Hv3Y
+      outputTranscription:
+        text: ' been tallied.'
+- kind: message
+  direction: received
+  at: 1.863
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: If/8/lz/VgDHAGoAZ/9w/s7+0f9zAAQBPgA0/97+Pv9z
+- kind: message
+  direction: received
+  at: 1.869
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9/9v/iH+Q/6d/m/+8vyT+n340vZq9qv2tvZg93r47PjF
+- kind: message
+  direction: received
+  at: 1.886
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: YP9l/2P/YP9j/2b/bv91/3n/eP92/3X/dv98/4D/hP+H
+- kind: message
+  direction: received
+  at: 1.89
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: DAAKAAkACQAGAAkACgAGAAQAAwAEAAIAAwAKAAoABwAH
+- kind: message
+  direction: received
+  at: 1.903
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 3.409
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 487
+      responseTokenCount: 68
+      totalTokenCount: 555
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 355
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 57

@@ -1,0 +1,599 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "912"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Load the refunds capability, then tell me the refund status for order 123.
+        instructions: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Use for refund status.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: load_capability
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1405"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08860d37b5ad348d006acfecac393087d28ea3dd6799fb5fea
+        object: response
+        created_at: 1792011436
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792011437
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Use for refund status.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: fc_08860d37b5ad348d006acfecad282887d2ba3f25648ae4cc82
+          type: function_call
+          status: completed
+          arguments: "{\"id\":\"refunds\"}"
+          call_id: call_RfAIfywVqNaP94T1he1f9Wzi
+          name: load_capability
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          name: load_capability
+          output_schema: null
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 142
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 20
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 162
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:57:17.696688+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1630"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Load the refunds capability, then tell me the refund status for order 123.
+        - name: load_capability
+          arguments: "{\"id\":\"refunds\"}"
+          call_id: call_RfAIfywVqNaP94T1he1f9Wzi
+          type: function_call
+          id: fc_08860d37b5ad348d006acfecad282887d2ba3f25648ae4cc82
+        - type: function_call_output
+          call_id: call_RfAIfywVqNaP94T1he1f9Wzi
+          output: "{}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: refund_status
+            parameters:
+              additionalProperties: false
+              properties:
+                order_id:
+                  type: string
+              required:
+              - order_id
+              type: object
+            type: function
+            description: Look up the refund status for an order.
+            strict: true
+        instructions: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Use for refund status.
+        prompt_cache_options:
+          comparison_response_id: resp_08860d37b5ad348d006acfecac393087d28ea3dd6799fb5fea
+        reasoning:
+          context: all_turns
+        tool_choice:
+          type: function
+          name: refund_status
+        tools:
+        - name: load_capability
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1457"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08860d37b5ad348d006acfecadd41487d29dbd3f6f49e19933
+        object: response
+        created_at: 1792011437
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792011439
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Use for refund status.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: fc_08860d37b5ad348d006acfecaedcb887d2bb0cc447c2fd5d11
+          type: function_call
+          status: completed
+          arguments: "{\"order_id\":\"123\"}"
+          call_id: call_T442aGtZL5OVS8Ckwq4KQEGl
+          name: refund_status
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_08860d37b5ad348d006acfecac393087d28ea3dd6799fb5fea
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice:
+          type: function
+          name: refund_status
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          name: load_capability
+          output_schema: null
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          strict: true
+        - type: function
+          description: Look up the refund status for an order.
+          name: refund_status
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 297
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 20
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 317
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:57:19.359792+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1935"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Load the refunds capability, then tell me the refund status for order 123.
+        - name: load_capability
+          arguments: "{\"id\":\"refunds\"}"
+          call_id: call_RfAIfywVqNaP94T1he1f9Wzi
+          type: function_call
+          id: fc_08860d37b5ad348d006acfecad282887d2ba3f25648ae4cc82
+        - type: function_call_output
+          call_id: call_RfAIfywVqNaP94T1he1f9Wzi
+          output: "{}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: refund_status
+            parameters:
+              additionalProperties: false
+              properties:
+                order_id:
+                  type: string
+              required:
+              - order_id
+              type: object
+            type: function
+            description: Look up the refund status for an order.
+            strict: true
+        - name: refund_status
+          arguments: "{\"order_id\":\"123\"}"
+          call_id: call_T442aGtZL5OVS8Ckwq4KQEGl
+          type: function_call
+          id: fc_08860d37b5ad348d006acfecaedcb887d2bb0cc447c2fd5d11
+          namespace: refund_status
+        - type: function_call_output
+          call_id: call_T442aGtZL5OVS8Ckwq4KQEGl
+          output: "Order 123: refund issued on 2026-05-01."
+        instructions: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Use for refund status.
+        prompt_cache_options:
+          comparison_response_id: resp_08860d37b5ad348d006acfecadd41487d29dbd3f6f49e19933
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: load_capability
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1242"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08860d37b5ad348d006acfecaf809487d285a911f555776c81
+        object: response
+        created_at: 1792011439
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792011440
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Use for refund status.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_08860d37b5ad348d006acfecb029a487d28743d19d90f0220f
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Order 123's refund was issued on May 1, 2026.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_08860d37b5ad348d006acfecadd41487d29dbd3f6f49e19933
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          name: load_capability
+          output_schema: null
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          strict: true
+        - type: function
+          description: Look up the refund status for an order.
+          name: refund_status
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 344
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 20
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 364
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:57:20.834206+00:00

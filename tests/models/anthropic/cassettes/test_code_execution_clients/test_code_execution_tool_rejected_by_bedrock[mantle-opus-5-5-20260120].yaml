@@ -1,0 +1,54 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "202"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content: Use code execution to compute 2**100.
+        model: anthropic.claude-opus-5-5
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
+  response:
+    status: 400
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "217"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        type: error
+        request_id: req_ll4hxlitaub4eoihe7hdg5ijod2mblsmtbqg3vz3hmbacbd5zifa
+        error:
+          type: invalid_request_error
+          message: tool type 'code_execution_20260120' is not supported for this model
+  recorded_at: 2026-10-28T22:30:11.899307+00:00

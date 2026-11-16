@@ -1,0 +1,185 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "453"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Call accept with x=7, then say done.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Accept an integer
+            name: accept
+            parameters_json_schema:
+              type: object
+              properties:
+                x:
+                  type: integer
+                  description: The integer to accept
+              required:
+              - x
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1943
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: accept
+                args:
+                  x: 7
+                id: call_427460
+              thoughtSignature: >-
+                Ev8BCvwBAWkUfRNiPWijrehZNnslMukljOV3T/wWsZ95V2h4XJX9Sg3+X3pLf7PcdjQrBQ4DddVfdiysZ5fdrg2yHgQT0cHzXwYeyty4RvaQO6Zq5SGFqAq/X0RY7NOcUjypNVWmn5lQJSRdEr3k5RMw4A2pJH+4lxyzqZxfzc4wNp0KbK+SGcBQdCrEyCeMNAB6buxsJ4cSbgSAvCzcJUl1Dz63GlNSyJH7zykhDHbwsZUBzAZInSkFTMwx+Ka0KotFKvO+Agt9QZrbfzomSWMmQbVuW01A6Zcxhvbe/7pxZm8PLW8pRX8WBzHoKXxLksp49EfYT3yfN2C8Vb/d30Rb
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 59
+          candidatesTokenCount: 12
+          totalTokenCount: 114
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 59
+          thoughtsTokenCount: 43
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: WaDXarHxFLv7qtsPup2XGA
+  recorded_at: 2026-10-20T17:09:47.167966+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1064"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Call accept with x=7, then say done.
+          role: user
+        - parts:
+          - functionCall:
+              id: call_427460
+              args:
+                x: 7
+              name: accept
+            thoughtSignature: >-
+              Ev8BCvwBAWkUfRNiPWijrehZNnslMukljOV3T_wWsZ95V2h4XJX9Sg3-X3pLf7PcdjQrBQ4DddVfdiysZ5fdrg2yHgQT0cHzXwYeyty4RvaQO6Zq5SGFqAq_X0RY7NOcUjypNVWmn5lQJSRdEr3k5RMw4A2pJH-4lxyzqZxfzc4wNp0KbK-SGcBQdCrEyCeMNAB6buxsJ4cSbgSAvCzcJUl1Dz63GlNSyJH7zykhDHbwsZUBzAZInSkFTMwx-Ka0KotFKvO-Agt9QZrbfzomSWMmQbVuW01A6Zcxhvbe_7pxZm8PLW8pRX8WBzHoKXxLksp49EfYT3yfN2C8Vb_d30Rb
+          role: model
+        - parts:
+          - functionResponse:
+              id: call_427460
+              name: accept
+              response:
+                return_value: Accepted 7
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Accept an integer
+            name: accept
+            parameters_json_schema:
+              type: object
+              properties:
+                x:
+                  type: integer
+                  description: The integer to accept
+              required:
+              - x
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1857
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: done.
+              thoughtSignature: >-
+                EqIBCp8BAWkUfRMko9v5rAs/brXNHoXLOf/xfDM+Lk1/P0Ar86ABGNBaN+jKhKyFMwgqJPs9cO2aNN7vuklp7fSSmxve0R8T1P7rpBpBafXBlmwdVmaKrywJ+H2nZ7Hrx6tkqJJ8pD0OetfC1qBM8DB3WImUz985FxP+qyFnbdZ2apR8gNgMsJcmzMF/fCb9+UPbP2fqALmBRqUj3GYjwqLhVwlq
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 130
+          candidatesTokenCount: 2
+          totalTokenCount: 144
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 130
+          thoughtsTokenCount: 12
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: W6DXaonWFd6lmtkPjJL10QE
+  recorded_at: 2026-10-20T17:09:49.119114+00:00

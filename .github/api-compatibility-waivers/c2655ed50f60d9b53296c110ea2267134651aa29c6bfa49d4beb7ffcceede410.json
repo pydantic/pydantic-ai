@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+}

@@ -1,0 +1,103 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "997"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Fill in the form.
+            type: text
+        model: claude-haiku-4-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                field_0:
+                  type: string
+                  description: "{default: }"
+                field_1:
+                  type: string
+                  description: "{default: }"
+                field_2:
+                  type: string
+                  description: "{default: }"
+                field_3:
+                  type: string
+                  description: "{default: }"
+                field_4:
+                  type: string
+                  description: "{default: }"
+                field_5:
+                  type: string
+                  description: "{default: }"
+                field_6:
+                  type: string
+                  description: "{default: }"
+                field_7:
+                  type: string
+                  description: "{default: }"
+                field_8:
+                  type: string
+                  description: "{default: }"
+                field_9:
+                  type: string
+                  description: "{default: }"
+                field_10:
+                  type: string
+                  description: "{default: }"
+                field_11:
+                  type: string
+                  description: "{default: }"
+                field_12:
+                  type: string
+                  description: "{default: }"
+              additionalProperties: false
+        stream: true
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=48216
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-69886bfcafef5988fff2ab947360a628-665b3a088aee8ff8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: error
+        error:
+          type: invalid_request_error
+          message: Schema is too complex.
+        request_id: req_011CgRbfgUkt6BmdnK8AK9os
+  recorded_at: 2026-10-26T21:59:33.497166+00:00
