@@ -362,12 +362,12 @@ class _Steps:
     unsettled: bool = False
 
     async def settle(self) -> None:
-        """Wait `settle_seconds` after an action, before a zoom or the closing screenshot."""
+        """Wait `settle_seconds` after an action, before a zoom or a screenshot."""
         if self.unsettled and self.settle_seconds:
             await anyio.sleep(self.settle_seconds)
         self.unsettled = False
 
-    async def run(self, action: ComputerToolAction) -> None:
+    async def run(self, action: ComputerToolAction, *, last: bool) -> None:
         match action:
             case Wait(seconds=seconds):
                 await anyio.sleep(seconds)
@@ -381,6 +381,10 @@ class _Steps:
                     raise UnsupportedActionError('This display cannot report the pointer position.')
                 point = self.mapping.to_model(await self.display.cursor_position())
                 self.outputs.append(f'The pointer is at ({point.x}, {point.y}).')
+            case Screenshot() if not last:
+                # The result ends with the screen after the last action; one before it is captured where it is.
+                await self.settle()
+                self.outputs.append(BinaryImage(data=await self.display.screenshot(), media_type='image/png'))
             case Screenshot():
                 pass
             case _:
@@ -396,18 +400,18 @@ async def _perform(
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
 
-    After an action, the screen settles for `settle_seconds` before a zoom or the closing screenshot.
+    After an action, the screen settles for `settle_seconds` before a zoom or a screenshot.
     """
     steps = _Steps(display, mapping, settle_seconds)
     performed, error = 0, None
     held: list[MouseButton] = []
     try:
-        for action in actions:
+        for index, action in enumerate(actions):
             if isinstance(action, MouseDown):
                 # Counted before it runs, since a press can take effect and still fail.
                 held.append(action.button)
             try:
-                await steps.run(action)
+                await steps.run(action, last=index == len(actions) - 1)
             except WorkspaceUnavailableError:
                 raise
             except WorkspaceError as e:
@@ -584,8 +588,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
 
     settle_seconds: float = 0
-    """Pause after acting before the next zoom or the closing screenshot. Set it when screenshots show pages still
-    loading. A `wait` the model asks for adds to it."""
+    """Pause after acting before the next zoom or screenshot. Set it when screenshots show pages still loading. A
+    `wait` the model asks for adds to it."""
 
     action_limits: ComputerUseActionLimits = ComputerUseActionLimits()
     """The most one action may ask for, such as a `wait`'s seconds."""

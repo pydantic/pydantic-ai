@@ -170,7 +170,8 @@ class TestComputerUse:
         # `screenshot` and `wait` are the tool's own: they never reach the workspace.
         assert provider.actions == [Click(x=10, y=20), TypeText(text='hi'), PressKeys(keys=('ctrl', 's'))]
         first, second = _returns(result.all_messages())
-        assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT]
+        # The leading `screenshot` returns the screen before the click, then the call's closing screenshot.
+        assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT, SCREENSHOT]
         assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
@@ -373,6 +374,28 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert struct.unpack('>II', zoomed.data[16:24]) == (100, 50)
         assert pointer == 'The pointer is at (640, 400).'
         assert screenshot == SCREENSHOT
+
+    async def test_a_screenshot_before_the_last_action_comes_back_where_it_was_taken(self) -> None:
+        taken: list[int] = []
+
+        class Counted(ScreenBackend):
+            async def screenshot(self) -> bytes:
+                # How many actions had run when the screen was captured.
+                taken.append(len(self.screens.actions))
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Counted(self, ref)
+
+        provider = Provider()
+        model = _scripted([{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}, {'type': 'screenshot'}])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        # The first is captured before the click; the last action's is the screenshot the call ends with.
+        assert tool_return.content_items() == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT, SCREENSHOT]
+        assert taken == [0, 1]
 
     @pytest.mark.parametrize(
         'region,zoomed_size',
