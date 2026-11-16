@@ -116,6 +116,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
+from ..schema_too_complex_utils import CompilingModel
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
 pytest.importorskip('dbos')
@@ -6862,13 +6863,6 @@ class _Survey(BaseModel):
     answer: int
 
 
-class _CompilingModel(FunctionModel):
-    """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
-
-    def _classifies_schema_too_complex(self) -> bool:
-        return True
-
-
 @pytest.mark.moves_cache_prefix(
     reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
 )
@@ -6891,7 +6885,7 @@ async def test_dbos_too_complex_inferred_native_output_is_attempted_in_tool_outp
     def look_up() -> str:
         return 'found'
 
-    model = _CompilingModel(
+    model = CompilingModel(
         respond,
         model_name='compiler',
         profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),

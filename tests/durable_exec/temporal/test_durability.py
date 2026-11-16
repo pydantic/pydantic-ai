@@ -157,6 +157,7 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ...schema_too_complex_utils import CompilingModel
 
 try:
     from temporalio import activity, workflow
@@ -481,15 +482,8 @@ def _schema_too_complex_fn(messages: list[ModelMessage], info: AgentInfo) -> Mod
     return ModelResponse(parts=[ToolCallPart('final_result', {'label': 'survey', 'answer': 'answered'})])
 
 
-class _CompilingModel(FunctionModel):
-    """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
-
-    def _classifies_schema_too_complex(self) -> bool:
-        return True
-
-
 schema_too_complex_durable_agent = Agent(
-    _CompilingModel(
+    CompilingModel(
         _schema_too_complex_fn,
         model_name='compiler',
         profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),

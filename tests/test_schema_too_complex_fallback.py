@@ -24,6 +24,8 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.output import OutputMode, StructuredOutputMode
 from pydantic_ai.profiles import ModelProfile
 
+from .schema_too_complex_utils import CompilingModel
+
 FALLS_BACK_TO_TOOL_OUTPUT = pytest.mark.moves_cache_prefix(
     reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
 )
@@ -31,13 +33,6 @@ FALLS_BACK_TO_TOOL_OUTPUT = pytest.mark.moves_cache_prefix(
 
 class Survey(BaseModel):
     answer: int
-
-
-class CompilingModel(FunctionModel):
-    """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
-
-    def _classifies_schema_too_complex(self) -> bool:
-        return True
 
 
 def too_complex(model_name: str = 'compiler') -> ModelAPIError:
@@ -272,7 +267,8 @@ async def test_streamed_explicit_native_output_raises():
 
     with pytest.raises(ModelSchemaTooComplexError):
         async with agent.run_stream('Answer the survey.') as result:
-            await result.get_output()  # pragma: no cover  # opening the stream raises
+            # Opening the stream raises.
+            await result.get_output()  # pragma: no cover
     assert modes == ['native']
 
 

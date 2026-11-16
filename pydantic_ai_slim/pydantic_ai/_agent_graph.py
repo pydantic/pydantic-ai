@@ -1659,6 +1659,7 @@ def _keep_default_output_mode(
 
 def _inferred_output_params(params: models.ModelRequestParameters) -> models.ModelRequestParameters | None:
     """`params` if the model is left to infer their output mode, as for an `output_type` that doesn't choose one."""
+    # Its own function to keep `ModelRequestNode._prepare_attempt` from growing more complex.
     return params if params.output_mode == 'auto' else None
 
 
@@ -1693,12 +1694,11 @@ def _switch_to_tool_output(
     second request on, the run sends the mode it keeps (see `_keep_default_output_mode`). The kept mode only changes
     from Native to Tool Output, so a request is attempted again this way at most once.
     """
-    if (
-        inferred_params is None
-        or not isinstance(error, exceptions.ModelSchemaTooComplexError)
-        or not _can_switch_to_tool_output(request_context, inferred_params)
+    if not isinstance(error, exceptions.ModelSchemaTooComplexError) or not _can_switch_to_tool_output(
+        request_context, inferred_params
     ):
         return False
+    assert inferred_params is not None
     model = request_context.model
     try:
         with suppress_unsupported_setting_warnings():
