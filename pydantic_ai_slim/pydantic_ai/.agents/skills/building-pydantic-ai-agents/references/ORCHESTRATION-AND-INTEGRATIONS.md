@@ -59,6 +59,13 @@ result = graph.run_sync(inputs=3)
 
 Use `await graph.run(inputs=...)` from async code.
 
+For `BaseNode` workflows, use `g.add_reachable(RootNode)` to register reachable classes and infer missing outgoing edges.
+Configure bridge paths through steps, decisions and joins before discovery. Existing outgoing paths are preserved.
+Connect `g.start_node` explicitly. Node instances and constructor arguments still come from application code.
+For independent task functions, import the function and call `g.step(imported_function)` at the composition root.
+See [the graph guide](https://pydantic.dev/docs/ai/graph/graph/#registering-reachable-nodes) for recursive registration and module-qualified postponed annotations.
+
+
 ## Call the Model Without Using an Agent
 
 Use the direct API when the user wants a single model request without agent orchestration.
@@ -86,7 +93,7 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
-For human-in-the-loop approval inside the run, see `RequestInput` in [Tools Advanced](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop): it waits in process by default and durably on Temporal (`TemporalDurability`; resolve the token with `pydantic_ai.durable_exec.temporal.resolve_external_event(client, token, decision)`, which signals the workflow) and AWS Lambda durable functions; on DBOS and Prefect the engine refuses it with `UserError` (an unrecorded wait could diverge from the journal on replay), so end the run with `DeferredToolRequests` output there.
+For human-in-the-loop approval inside the run, see a `HandleDeferredToolCalls` handler that takes a resume token in [Tools Advanced](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop): it waits in process by default and durably on Temporal (`TemporalDurability`; resolve the token with `pydantic_ai.durable_exec.temporal.resolve_external_event(client, token, decision)`, which signals the workflow) and AWS Lambda durable functions; on DBOS and Prefect the engine refuses it with `UserError` (an unrecorded wait could diverge from the journal on replay), so end the run with `DeferredToolRequests` output there.
 
 For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
 

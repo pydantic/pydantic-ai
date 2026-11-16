@@ -48,16 +48,42 @@ def final_text(path: Path) -> str:
 
 
 def unfenced(text: str) -> str:
-    """Return the fenced block that ends `text`, or `text` itself when no fence ends it.
+    """Return the JSON object that ends the answer in `text`.
 
-    One pass over the lines: the answer is model-controlled, and a backtracking regex over it is quadratic.
+    The answer is the fenced block that ends `text`, or `text` itself when no fence ends it. Some models write prose
+    before a bare JSON object, and that prose can hold a `{`, so the object starts at the `{` that matches the answer's
+    final `}`. An answer that does not end with an object is returned whole, and fails validation.
+
+    One pass over the text: the answer is model-controlled, and a backtracking regex over it is quadratic.
     """
     *lines, closing = text.rstrip().split('\n')
     if _CLOSING_FENCE.fullmatch(closing):
         # The block between the opening and the closing fence has at least one line, possibly empty.
         for index in range(len(lines) - 2, -1, -1):
             if _OPENING_FENCE.fullmatch(lines[index]):
-                return '\n'.join(lines[index + 1 :])
+                text = '\n'.join(lines[index + 1 :])
+                break
+    answer = text.rstrip()
+    if not answer.endswith('}'):
+        return text
+    depth = 0
+    in_string = False
+    for index in range(len(answer) - 1, -1, -1):
+        char = answer[index]
+        if char == '"':
+            # A quote after an odd run of backslashes is escaped. Each run of backslashes precedes at most one quote,
+            # so counting runs stays linear.
+            backslashes = 0
+            while backslashes < index and answer[index - backslashes - 1] == '\\':
+                backslashes += 1
+            if backslashes % 2 == 0:
+                in_string = not in_string
+        elif not in_string and char == '}':
+            depth += 1
+        elif not in_string and char == '{':
+            depth -= 1
+            if not depth:
+                return answer[index:]
     return text
 
 
@@ -77,7 +103,10 @@ def review_result(path: Path) -> ReviewResult:
 
 def main() -> None:
     """Publish one compact validated result as a GitHub Actions output."""
-    result = review_result(Path(sys.argv[1]))
+    try:
+        result = review_result(Path(sys.argv[1]))
+    except ValueError as exc:
+        sys.exit(f'OpenCode returned an invalid review: {rejection_reason(exc)}')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write('result=' + json.dumps(result.model_dump(), separators=(',', ':')) + '\n')
 

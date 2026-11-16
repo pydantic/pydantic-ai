@@ -9,11 +9,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -59,6 +59,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -84,6 +85,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
@@ -1263,6 +1265,79 @@ async def test_single_model_arg_named_like_its_field_keeps_its_arguments(client:
     assert _received_jobs == [Job(data={'path': '/reports'}, dry_run=True)]
 
 
+class Place(BaseModel):
+    city: str = Field(alias='cityName')
+
+
+class Revision(BaseModel):
+    draft: int = Field(0, alias='draftNumber', exclude=True)
+    number: int = Field(alias='draft')
+
+
+_received_bookings: list[tuple[str, Place, Revision]] = []
+"""The arguments `book` ran with, recorded in the activity."""
+
+
+def book(guest: Annotated[str, Field(alias='guestName')], place: Place, revision: Revision) -> str:
+    """Book a place."""
+    _received_bookings.append((guest, place, revision))
+    return 'Booked.'
+
+
+def _book_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        args = {'guestName': 'Ada', 'place': {'cityName': 'Paris'}, 'revision': {'draft': 7}}
+        return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='c1')])
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_book_durable_agent = Agent(
+    FunctionModel(_book_model),
+    name='aliased_args_durable',
+    tools=[book],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_book_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_book_model), name='aliased_args_wrapped', tools=[book]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BookWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _book_durable_agent if path == 'durability' else _book_wrapped_agent
+        result = await agent.run('Book room A1 in Paris for Ada.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_aliased_args_reach_the_activity(client: Client, path: str):
+    """A tool's aliased arguments run in the activity with the values the workflow validated.
+
+    Validated arguments are keyed by Python name, `{'guest': 'Ada', ...}`, while the tool's schema reads
+    `guestName`. Temporal's converter ships nested models by alias, and they keep reading aliases: read by
+    name, `Revision.draft` would get the value of `number`, which ships under the key `draft`.
+    """
+    _received_bookings.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BookWorkflow],
+        plugins=[AgentPlugin(_book_durable_agent if path == 'durability' else _book_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            BookWorkflow.run,
+            args=[path],
+            id=f'{BookWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -1809,6 +1884,15 @@ class _HeartbeatProbeModel(FunctionModel):
         await asyncio.sleep(0.01)
         return ModelResponse(parts=[TextPart('compacted')])
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        await asyncio.sleep(0.01)
+        return RequestUsage(input_tokens=1)
+
 
 _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
@@ -1897,6 +1981,7 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__model_count_tokens': [request_params, None],
             f'{prefix}__model_cancel_suspended_response': [
                 _CancelParams(
                     response=ModelResponse(parts=[TextPart('suspended')]),
@@ -2290,3 +2375,143 @@ async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client
             ],
         )
     )
+
+
+# --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
+
+
+def _call_both_tools_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[ToolCallPart('first', {}, tool_call_id='1'), ToolCallPart('second', {}, tool_call_id='2')]
+    )
+
+
+def first() -> str:
+    return 'first'
+
+
+def second() -> str:
+    return 'second'
+
+
+def _tool_instances_agent(name: str, toolset: FunctionToolset[None]) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_call_both_tools_once),
+        name=name,
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, sequential=True)
+
+
+_shared_first = Tool(first)
+# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
+_sequential_toolset = FunctionToolset([_shared_first], sequential=True)
+
+_tool_instances_agents = {
+    'sequential': _tool_instances_agent(
+        'sequential_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', sequential=True)
+    ),
+    'defer_loading': _tool_instances_agent(
+        'deferred_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', defer_loading=True)
+    ),
+    'shared_sequential': _tool_instances_agent(
+        'shared_sequential_tool_instance', FunctionToolset([_shared_first, Tool(second)], id='tools')
+    ),
+    'prepare_sequential': _tool_instances_agent(
+        'prepare_sequential_tool_instances',
+        FunctionToolset(
+            [Tool(first, prepare=_force_sequential), Tool(second, prepare=_force_sequential)],
+            id='tools',
+            sequential=True,
+        ),
+    ),
+}
+
+
+@workflow.defn
+class ToolInstancesWorkflow:
+    @workflow.run
+    async def run(self, flag: str) -> str:
+        return (await _tool_instances_agents[flag].run('Call both tools.')).output
+
+
+def _tool_activity_events(history: WorkflowHistory) -> list[str]:
+    """When each `call_tool` activity was scheduled and completed, in history order."""
+    scheduled: set[int] = set()
+    events: list[str] = []
+    for event in history.events:
+        if event.HasField('activity_task_scheduled_event_attributes'):
+            if event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool'):
+                scheduled.add(event.event_id)
+                events.append('scheduled')
+        elif event.HasField('activity_task_completed_event_attributes'):
+            if event.activity_task_completed_event_attributes.scheduled_event_id in scheduled:
+                events.append('completed')
+    return events
+
+
+_at_once = ['scheduled', 'scheduled', 'completed', 'completed']
+_one_at_a_time = ['scheduled', 'completed', 'scheduled', 'completed']
+
+
+@pytest.mark.parametrize(
+    ('flag', 'unpatched_events', 'patched_events'),
+    [
+        ('sequential', _at_once, _one_at_a_time),
+        ('defer_loading', _at_once, []),
+        ('shared_sequential', _at_once, _one_at_a_time),
+        ('prepare_sequential', _one_at_a_time, _one_at_a_time),
+    ],
+)
+async def test_function_toolset_defaults_on_tool_instances_replay(
+    client: Client, monkeypatch: pytest.MonkeyPatch, flag: str, unpatched_events: list[str], patched_events: list[str]
+):
+    """A history recorded before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances replays.
+
+    Without the patch marker, the workflow lists the tools the way it did before: both calls are dispatched at once
+    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose own
+    `prepare` makes it sequential stays sequential. A new run gets the toolset's value. Unsandboxed, so
+    `workflow.patched` can be faked for the original run.
+    """
+    agent = _tool_instances_agents[flag]
+
+    async def run_workflow() -> WorkflowHistory:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[ToolInstancesWorkflow],
+            plugins=[AgentPlugin(agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await client.start_workflow(
+                ToolInstancesWorkflow.run,
+                args=[flag],
+                id=f'tool-instances-{flag}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+            await handle.result()
+        return await handle.fetch_history()
+
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    unpatched_history = await run_workflow()
+    monkeypatch.undo()
+    patched_history = await run_workflow()
+
+    assert _tool_activity_events(unpatched_history) == unpatched_events
+    assert _tool_activity_events(patched_history) == patched_events
+
+    replayer = Replayer(
+        workflows=[ToolInstancesWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    for history in (unpatched_history, patched_history):
+        assert (await replayer.replay_workflow(history)).replay_failure is None

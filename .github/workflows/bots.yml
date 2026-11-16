@@ -272,9 +272,12 @@ jobs:
           python3 .github/scripts/category_classify_opencode.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serve the classification when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          # Serve the classification on both Coding Plan accounts when OpenCode Go refuses it before its first step.
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
+          # A write-only ingest token for OpenCode's own telemetry; OpenCode has no tool that reads its environment.
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
           CLASSIFY_PROMPT: *category-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
@@ -307,8 +310,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLASSIFIED_CATEGORY: ${{ needs.category-classify.outputs.category || needs.category-classify-opencode.outputs.category }}
 
-  # A head that already has douwebot findings can never pass `review_gates.py`
-  # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
+  # A new review cannot clear douwebot findings already on a head: `review_gates.py`
+  # `douwebot_approval` passes it only once each is an approval's optional finding
+  # in a resolved thread, so reviewing it again buys no gate value. A head with a
   # clean approval, an incomplete review or a failed run is reviewed again. An
   # incomplete review is reviewed again to complete its coverage, even when its
   # findings already keep that head from passing the gate.
@@ -779,9 +783,12 @@ jobs:
           python3 .github/scripts/douwebot_opencode_run.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serve the review when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          # Serve the review on both Coding Plan accounts when OpenCode Go refuses it before its first step.
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
+          # A write-only ingest token for OpenCode's own telemetry; OpenCode has no tool that reads its environment.
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
           REVIEW_PROMPT: *douwebot-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
@@ -829,7 +836,7 @@ jobs:
         if: needs.prior-findings.outputs.review_url != ''
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
-            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and any finding, optional ones included, keeps a head from a clean douwebot approval. Push a new commit, then request a new review."
+            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and a new review cannot clear them. An approval's optional findings stop blocking a clean douwebot approval once their threads are resolved; for any other finding, push a new commit, then request a new review."
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}

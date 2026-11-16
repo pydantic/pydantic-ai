@@ -1,7 +1,7 @@
-"""Waiting for a decision inside a Temporal workflow, with `RequestInput`.
+"""Waiting for a decision inside a Temporal workflow, with `HandleDeferredToolCalls`.
 
-The run calls `ask` with a token that names the workflow, in a local activity whose result the history
-records. When `ask` answers, the run continues. Otherwise the workflow waits until a test resolves the
+The run calls the handler with a token that names the workflow, in a local activity whose result the history
+records. When the handler answers, the run continues. Otherwise the workflow waits until a test resolves the
 token with `resolve_external_event` or `fail_external_event`, which signal the workflow, or the
 timeout elapses, which Temporal's time-skipping test server fast-forwards to.
 """
@@ -20,7 +20,7 @@ import pytest
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import RequestInput
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -108,7 +108,7 @@ _approvals_agent = Agent(
     deps_type=type(None),
     capabilities=[
         TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
-        RequestInput[None](_hand_on, timeout=timedelta(minutes=30)),
+        HandleDeferredToolCalls[None](_hand_on, timeout=timedelta(minutes=30)),
     ],
 )
 _approvals_agent.tool_plain(name='delete', requires_approval=True)(_delete)
@@ -139,7 +139,7 @@ _policy_agent = Agent(
     deps_type=type(None),
     capabilities=[
         TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
-        RequestInput[None](_approve_all, timeout=timedelta(minutes=5)),
+        HandleDeferredToolCalls[None](_approve_all, timeout=timedelta(minutes=5)),
     ],
 )
 _policy_agent.tool_plain(name='delete', requires_approval=True)(_delete)
@@ -158,7 +158,7 @@ _two_approvals_agent = Agent(
     deps_type=type(None),
     capabilities=[
         TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
-        RequestInput[None](_hand_on, timeout=timedelta(minutes=30)),
+        HandleDeferredToolCalls[None](_hand_on, timeout=timedelta(minutes=30)),
     ],
 )
 _two_approvals_agent.tool_plain(name='delete', requires_approval=True)(_delete)

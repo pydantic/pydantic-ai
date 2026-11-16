@@ -166,7 +166,7 @@ Key restrictions:
 - No `import *`
 - Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
-- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
+- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler (or, for the clock, `os_policy`); `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
 - A sandboxed tool named after a Python builtin (`list`, `open`, `print`, ...) raises `UserError`; rename it or use `toolset.prefixed(...)`
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
@@ -209,6 +209,7 @@ CodeMode(
     max_tool_calls: int = 100,
     os_access: CodeModeOS | None = None,
     mount: CodeModeMount | None = None,
+    os_policy: CodeModeOSPolicy | None = None,  # Monty clock/timezone policies over the defaults
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
@@ -222,6 +223,7 @@ CodeMode(
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
+- `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.

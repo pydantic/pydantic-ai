@@ -46,6 +46,7 @@ from pydantic_ai import (
     ModelRequestTimeout,
     ModelResponse,
     MultiModalContent,
+    NativeOutput,
     PartDeltaEvent,
     PartStartEvent,
     PendingModelResponse,
@@ -240,6 +241,14 @@ with workflow.unsafe.imports_passed_through():
     from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
     from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+    from ..preamble_text import (
+        RunAndStreamResult,
+        StructuredOutput,
+        plain_run_and_stream,
+        preamble_text_agents,
+        preamble_text_before_output_tool,
+        run_and_stream,
+    )
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -2132,8 +2141,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for the agent's <agent> FunctionToolset + the external-event `ask`
-    assert len(bound.temporal_activities) == 7
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset + the external-event `ask`
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2151,8 +2160,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for both function toolsets + the external-event `ask`
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for both function toolsets + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2232,8 +2241,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for <agent> and the shared toolset (once) + the external-event `ask`
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once) + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_activity_config_not_mutated():
@@ -3405,6 +3414,80 @@ class RunStreamEventsDurableAgentWorkflow:
     async def run(self, prompt: str) -> list[str]:
         async with _run_stream_events_durable_agent.run_stream_events(prompt) as stream:
             return [type(event).__name__ async for event in stream]
+
+
+_preamble_text_agents = preamble_text_agents(lambda: TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+
+
+@workflow.defn
+class StructuredOutputAfterPreambleTextWorkflow:
+    @workflow.run
+    async def run(self) -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in _preamble_text_agents]
+
+
+async def test_durability_structured_output_after_preamble_text_in_workflow(client: Client) -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The workflow replays the activity's stream against the parameters the activity's model prepared, in which `'auto'`
+    has resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the activity and would see the live stream.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StructuredOutputAfterPreambleTextWorkflow],
+        plugins=[AgentPlugin(agent) for agent in _preamble_text_agents],
+    ):
+        output = await client.execute_workflow(
+            StructuredOutputAfterPreambleTextWorkflow.run,
+            id=StructuredOutputAfterPreambleTextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == await plain_run_and_stream()
+
+
+_rejected_native_output_agent = Agent(
+    FunctionModel(
+        stream_function=preamble_text_before_output_tool, profile=ModelProfile(supports_json_schema_output=False)
+    ),
+    name='durability_rejected_native_output',
+    output_type=NativeOutput(StructuredOutput),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RejectedNativeOutputWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        async with _rejected_native_output_agent.run_stream_events('hello') as stream:
+            return [type(event).__name__ async for event in stream]
+
+
+async def test_durability_streamed_request_the_model_rejects_fails_in_the_activity(client: Client) -> None:
+    """A streamed request the model rejects fails in the activity, as a request that isn't streamed does.
+
+    The workflow prepares the request again for the replay only once the activity has returned, so
+    `prepare_request` rejecting native output for this model reaches the workflow as an `ActivityError`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RejectedNativeOutputWorkflow],
+        plugins=[AgentPlugin(_rejected_native_output_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RejectedNativeOutputWorkflow.run,
+                id=RejectedNativeOutputWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert str(activity_error.cause) == snapshot('UserError: Native structured output is not supported by this model.')
 
 
 async def test_durability_run_stream_events_in_workflow(client: Client) -> None:

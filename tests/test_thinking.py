@@ -846,6 +846,26 @@ class TestGoogleThinkingTranslation:
         result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
 
+    @pytest.mark.parametrize(
+        ('model_name', 'effort', 'expected'),
+        [
+            ('gemini-3-flash-preview', 'xhigh', 'HIGH'),
+            ('gemini-3-flash-preview', 'max', 'HIGH'),
+            ('gemini-4-hydrogen', 'high', 'HIGH'),
+            ('gemini-4-hydrogen', 'xhigh', 'XHIGH'),
+            ('gemini-4-hydrogen', 'max', 'XHIGH'),
+        ],
+    )
+    def test_thinking_xhigh_reaches_only_models_that_list_it(
+        self, model_name: str, effort: ThinkingEffort, expected: str
+    ):
+        """Only a model that lists `XHIGH` gets it: Gemini 3 models reject it, so they snap to `HIGH`."""
+        model = FunctionModel(_echo, profile=google_model_profile(model_name))
+        params = ModelRequestParameters(thinking=effort)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(model, settings, params)
+        assert result == {'include_thoughts': True, 'thinking_level': expected}
+
     def test_thinking_false_maps_to_lowest_supported_level(self, flash_lite_image_model: FunctionModel):
         """`thinking=False` resolves through the lowest supported level, here `MINIMAL`."""
         params = ModelRequestParameters(thinking=False)

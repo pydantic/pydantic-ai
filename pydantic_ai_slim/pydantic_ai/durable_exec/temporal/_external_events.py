@@ -162,8 +162,8 @@ async def resolve_external_event(client: Client, token: str, payload: object) ->
     The token is the one a [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event]
     in a workflow running an agent with
     [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] handed to its `ask`, such
-    as [`RequestInput`][pydantic_ai.capabilities.RequestInput]'s. It names the workflow, which this signals
-    with the payload. Call it from anywhere with a client for the workflow's namespace, such as the
+    as the handler of [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. It
+    names the workflow, which this signals with the payload. Call it from anywhere with a client for the workflow's namespace, such as the
     endpoint your approval UI posts to.
 
     `payload` is converted to its JSON form, as it would be in process. Once the wait ended, because it
@@ -172,7 +172,7 @@ async def resolve_external_event(client: Client, token: str, payload: object) ->
     Args:
         client: A Temporal client for the namespace the workflow runs in.
         token: The resume token `ask` received.
-        payload: The answer, such as the JSON form of `DeferredToolResults` for `RequestInput`.
+        payload: The answer, such as the JSON form of `DeferredToolResults` for `HandleDeferredToolCalls`.
 
     Raises:
         UserError: The token was not handed out by a Temporal workflow, or `payload` can't be converted to JSON.
@@ -187,8 +187,8 @@ async def fail_external_event(client: Client, token: str, reason: str) -> None:
     """End a wait for an external event in a Temporal workflow without a payload.
 
     The wait raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] with `reason`,
-    as it does when it times out. [`RequestInput`][pydantic_ai.capabilities.RequestInput] then denies the
-    pending calls with `reason` in the message to the model.
+    as it does when it times out. [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+    then denies the pending calls with `reason` in the message to the model.
 
     Args:
         client: A Temporal client for the namespace the workflow runs in.

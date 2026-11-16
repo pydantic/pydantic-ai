@@ -14,7 +14,25 @@ alternative: they work with every model and keep the compaction logic (and its c
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
-![Compaction runs in the before_model_request hook, between the message history and the model. TieredCompaction runs its tiers in order: DeduplicateFileReads and ClearToolResults cost no model call, SummarizingCompaction makes one. After each tier it re-measures the history and stops as soon as it fits target_tokens, so in this example the summary tier never runs. The shortened history persists into the run.](https://pydantic.dev/docs/ai/img/harness/compaction.svg)
+```mermaid
+flowchart TB
+    accTitle: Compaction: keep the history inside the context window
+    accDescr: When the message history is over target_tokens, TieredCompaction runs in before_model_request, starting with DeduplicateFileReads, which makes no model call. If the history is still over, ClearToolResults runs, also with no model call, and if still over, SummarizingCompaction makes one model call. The history goes to the model once it fits, or after SummarizingCompaction.
+    history["message history<br/>over target_tokens"]
+    subgraph tiers["TieredCompaction()"]
+        dedupe["DeduplicateFileReads<br/>no model call"]:::capability
+        clear["ClearToolResults<br/>no model call"]:::capability
+        summary["SummarizingCompaction<br/>one model call"]:::capability
+    end
+    model(["model"])
+    history -->|"before_model_request"| dedupe
+    dedupe -->|"still over"| clear
+    clear -->|"still over"| summary
+    dedupe -->|"fits"| model
+    clear -->|"fits"| model
+    summary --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The menu
 
@@ -866,12 +884,17 @@ from pydantic_ai_harness.compaction import pin
 
 # In a ModelRequest placed in the run's message history (by a capability or the user):
 pinned = pin('Durable task state the model must never lose across compaction.')
+
+# Content a tool or the model wrote, framed so the model doesn't read it as the user's words:
+scratchpad = pin('Port 8421 is taken; use 8422.', source='model')
 ```
 
 A pinned part is never summarized away or dropped; if a strategy would have discarded it, the
-strategy re-injects it verbatim near the top of the surviving history. This is the least
-invasive marking available today: pins use model-invisible `TextContent.metadata`, so their
-contents remain ordinary user context while compaction can distinguish them from user turns.
+strategy re-injects it verbatim near the top of the surviving history. Pins use model-invisible
+`TextContent.metadata`, so compaction can distinguish them from user turns. A pin with the default
+`source='user'` reaches the model as ordinary user context. Pass `source='tool'` or
+`source='model'` for content the user didn't write: it reaches the model on the user channel as
+`<pinned source="tool">` or `<pinned source="model">` data, with any framing tags inside it escaped.
 
 `Planning` does **not** need pinning: when compaction removes or clears the plan tools' results that
 show the latest plan, the next request records the plan from its store. Pinning is for durable
